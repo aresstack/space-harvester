@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
+import static com.aresstack.spaceharvester.persistence.lucene.TestSnapshots.baseline;
 import static com.aresstack.spaceharvester.persistence.lucene.TestSnapshots.json;
 import static com.aresstack.spaceharvester.persistence.lucene.TestSnapshots.page;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -9,6 +10,8 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sync.SyncBaseline;
+import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,6 +19,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -235,7 +240,7 @@ class LucenePageCacheTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    // --- Schreibläufe und Synchronisierungsstand ------------------------------------------------------------------
+    // --- Schreibläufe und Generationen ------------------------------------------------------------------------------
 
     @Test
     void aBatchBecomesVisibleOnlyWithItsCommit() {
@@ -244,19 +249,18 @@ class LucenePageCacheTest {
 
         try (LucenePageCache.Batch batch = cache.begin()) {
             batch.save(snapshot);
-            batch.recordSpaceRun("wiki", "DEV", true, Instant.parse("2026-10-16T21:00:00Z"), 1);
+            batch.confirm(baseline("wiki", "DEV", 1, snapshot));
 
             assertThat(cache.find(snapshot.key())).isEmpty();
-            assertThat(cache.spaceState("wiki", "DEV")).isEmpty();
+            assertThat(cache.confirmedGeneration("wiki", "DEV")).isEmpty();
 
             batch.commit();
         }
 
         assertThat(cache.find(snapshot.key())).contains(snapshot);
-        SpaceSyncState state = cache.spaceState("wiki", "DEV").orElseThrow();
-        assertThat(state.generation()).isEqualTo(1);
-        assertThat(state.confirmedGeneration()).isEqualTo(1);
-        assertThat(state.confirmedPageCount()).isEqualTo(1);
+        assertThat(cache.confirmedGeneration("wiki", "DEV")).contains(
+                new ConfirmedGeneration("wiki", "DEV", 1, TestSnapshots.CONFIRMED, 0));
+        assertThat(cache.confirmed("wiki", "DEV")).contains(baseline("wiki", "DEV", 1, snapshot));
     }
 
     @Test
@@ -265,19 +269,19 @@ class LucenePageCacheTest {
         PageSnapshot confirmed = page("wiki", "101", "DEV", null, "1", json("{\"v\":1}"));
         try (LucenePageCache.Batch batch = cache.begin()) {
             batch.save(confirmed);
-            batch.recordSpaceRun("wiki", "DEV", true, Instant.parse("2026-10-16T20:00:00Z"), 1);
+            batch.confirm(baseline("wiki", "DEV", 1, confirmed));
             batch.commit();
         }
 
         try (LucenePageCache.Batch batch = cache.begin()) {
             batch.save(page("wiki", "101", "DEV", null, "2", json("{\"v\":2}")));
             batch.remove(new PageKey("wiki", "101"));
-            batch.recordSpaceRun("wiki", "DEV", true, Instant.parse("2026-10-16T21:00:00Z"), 0);
+            batch.confirm(baseline("wiki", "DEV", 2));
             // kein Commit: Abbruch
         }
 
         assertThat(cache.find(confirmed.key())).contains(confirmed);
-        assertThat(cache.spaceState("wiki", "DEV").orElseThrow().confirmedGeneration()).isEqualTo(1);
+        assertThat(cache.confirmed("wiki", "DEV")).contains(baseline("wiki", "DEV", 1, confirmed));
         // Der Writer arbeitet nach dem Abbruch weiter.
         PageSnapshot later = page("wiki", "102", "DEV", null, "1", json("{}"));
         cache.save(later);
@@ -291,52 +295,66 @@ class LucenePageCacheTest {
         cache.save(confirmed);
 
         LucenePageCache.Batch batch = cache.begin();
-        batch.save(page("wiki", "101", "DEV", null, "2", json("{\"v\":2}")));
-        batch.save(page("wiki", "102", "DEV", null, "1", json("{}")));
-        batch.recordSpaceRun("wiki", "DEV", true, Instant.parse("2026-10-16T21:00:00Z"), 2);
+        PageSnapshot newer = page("wiki", "101", "DEV", null, "2", json("{\"v\":2}"));
+        PageSnapshot added = page("wiki", "102", "DEV", null, "1", json("{}"));
+        batch.save(newer);
+        batch.save(added);
+        batch.confirm(baseline("wiki", "DEV", 1, newer, added));
         // Dienst endet, ohne den Lauf zu bestätigen.
         cache.close();
         batch.close();
 
         LucenePageCache recovered = open();
         assertThat(recovered.find(confirmed.key())).contains(confirmed);
-        assertThat(recovered.find(new PageKey("wiki", "102"))).isEmpty();
-        assertThat(recovered.spaceState("wiki", "DEV")).isEmpty();
+        assertThat(recovered.find(added.key())).isEmpty();
+        assertThat(recovered.confirmed("wiki", "DEV")).isEmpty();
     }
 
     @Test
-    void anIncompleteRunIsRecordedButNeverConfirmed() {
+    void aNewGenerationReplacesAllPageEntriesOfThePreviousOne() {
         LucenePageCache cache = open();
-        try (LucenePageCache.Batch batch = cache.begin()) {
-            batch.recordSpaceRun("wiki", "DEV", true, Instant.parse("2026-10-16T20:00:00Z"), 5);
-            batch.commit();
-        }
-        try (LucenePageCache.Batch batch = cache.begin()) {
-            batch.save(page("wiki", "101", "DEV", null, "2", json("{}")));
-            batch.recordSpaceRun("wiki", "DEV", false, Instant.parse("2026-10-16T21:00:00Z"), 3);
-            batch.commit();
-        }
+        PageSnapshot one = page("wiki", "101", "DEV", null, "1", json("{}"));
+        PageSnapshot two = page("wiki", "102", "DEV", "101", "1", json("{}"));
+        confirm(cache, baseline("wiki", "DEV", 1, one, two));
+        int documents = cache.documentCount();
 
-        SpaceSyncState state = reopen(cache).spaceState("wiki", "DEV").orElseThrow();
-        assertThat(state.generation()).isEqualTo(2);
-        assertThat(state.lastRunComplete()).isFalse();
-        assertThat(state.lastRunAt()).isEqualTo(Instant.parse("2026-10-16T21:00:00Z"));
-        assertThat(state.confirmedGeneration()).isEqualTo(1);
-        assertThat(state.confirmedAt()).isEqualTo(Instant.parse("2026-10-16T20:00:00Z"));
-        assertThat(state.confirmedPageCount()).isEqualTo(5);
+        confirm(cache, baseline("wiki", "DEV", 2, one));
+
+        assertThat(reopen(cache).confirmed("wiki", "DEV").orElseThrow().pages()).containsOnlyKeys("101");
+        assertThat(opened.get(opened.size() - 1).documentCount()).isEqualTo(documents - 1);
     }
 
     @Test
-    void aSpaceWithoutAnyCompleteRunIsNeverConfirmed() {
+    void aGenerationMustFollowTheConfirmedOne() {
         LucenePageCache cache = open();
+        confirm(cache, baseline("wiki", "DEV", 1));
+
         try (LucenePageCache.Batch batch = cache.begin()) {
-            batch.recordSpaceRun("wiki", "DEV", false, Instant.parse("2026-10-16T21:00:00Z"), 3);
-            batch.commit();
+            assertThatThrownBy(() -> batch.confirm(baseline("wiki", "DEV", 1)))
+                    .isInstanceOf(SyncConflictException.class);
+            assertThatThrownBy(() -> batch.confirm(baseline("wiki", "DEV", 3)))
+                    .isInstanceOf(SyncConflictException.class);
+        }
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            batch.confirm(baseline("wiki", "DEV", 2));
+            assertThatThrownBy(() -> batch.confirm(baseline("wiki", "DEV", 3)))
+                    .isInstanceOf(SyncConflictException.class);
         }
 
-        SpaceSyncState state = cache.spaceState("wiki", "DEV").orElseThrow();
-        assertThat(state.everConfirmed()).isFalse();
-        assertThat(state.confirmed()).isEmpty();
+        assertThat(cache.confirmedGeneration("wiki", "DEV").orElseThrow().generation()).isEqualTo(1);
+    }
+
+    @Test
+    void stalePagesAreCountedInTheGenerationHead() {
+        LucenePageCache cache = open();
+        PageSnapshot one = page("wiki", "101", "DEV", null, "1", json("{}"));
+        PageSnapshot two = page("wiki", "102", "DEV", null, "1", json("{}"));
+        SyncBaseline withStale = new SyncBaseline("wiki", "DEV", 1, TestSnapshots.CONFIRMED,
+                baseline("wiki", "DEV", 1, one, two).pages(), new TreeSet<>(Set.of("102")));
+        confirm(cache, withStale);
+
+        assertThat(cache.confirmedGeneration("wiki", "DEV").orElseThrow().stalePageCount()).isEqualTo(1);
+        assertThat(cache.confirmed("wiki", "DEV")).contains(withStale);
     }
 
     @Test
@@ -427,6 +445,13 @@ class LucenePageCacheTest {
 
         assertThatThrownBy(() -> cache.find(new PageKey("wiki", "101"))).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(cache::begin).isInstanceOf(IllegalStateException.class);
+    }
+
+    private static void confirm(LucenePageCache cache, SyncBaseline next) {
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            batch.confirm(next);
+            batch.commit();
+        }
     }
 
     private static PageHeader moved(PageSnapshot snapshot, String spaceKey, String parentId) {

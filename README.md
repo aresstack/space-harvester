@@ -183,8 +183,9 @@ space-harvester:
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
-  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space der Synchronisierungsstand.
-  Feldschema und Version (`page-cache/v1`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
+  der Synchronisierung.
+  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
 - **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
   `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
