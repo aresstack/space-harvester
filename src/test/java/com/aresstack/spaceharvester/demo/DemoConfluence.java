@@ -17,8 +17,8 @@ import java.util.Map;
  * Fake-Confluence für die dokumentierten Beispiele (docs/E2E.md) und die Ende-zu-Ende-Tests: feste Testdaten ohne
  * echte Instanz und ohne Zugangsdaten, über echtes HTTP auf 127.0.0.1.
  *
- * <p>Space {@code DEMO} hat zwei Wurzelseiten, verschachtelte Seiten, Makros, ein eingebettetes Bild mit Anhang und
- * Labels; Space {@code OPS} eine einzelne Seite. Eine unbekannte Seite (etwa {@code 9999}) beantwortet sie mit 404.
+ * <p>Space {@code DEMO} hat zwei Wurzelseiten, verschachtelte Seiten, Makros, ein eingebettetes Bild und ein
+ * draw.io-Diagramm als Verweise auf Anhänge sowie Labels; Space {@code OPS} eine einzelne Seite. Eine unbekannte Seite (etwa {@code 9999}) beantwortet sie mit 404.
  * Manuell starten mit {@code ./gradlew demoConfluence} (Port 8090).
  */
 public final class DemoConfluence implements AutoCloseable {
@@ -55,28 +55,43 @@ public final class DemoConfluence implements AutoCloseable {
     /** Legt die Demo-Testdaten in einer Fake-Confluence an, etwa um sie danach im Test zu verändern. */
     public static void demoData(FakeConfluence confluence) {
         confluence.space("DEMO", "Demo-Handbuch");
-        confluence.page("1000", "Start", "DEMO", "<p>Willkommen im Demo-Handbuch.</p>").labels("handbuch");
+        page(confluence, "1000", "Start", "DEMO", "<p>Willkommen im Demo-Handbuch.</p>").labels("handbuch");
+        // Storage-Format wie in Confluence: Makros als ac:structured-macro, Bilder und draw.io-Diagramme nur als
+        // Verweis auf Anhänge; die gerenderte Ansicht (body.view) weicht davon ab.
         confluence.page("1001", "Architektur", "DEMO",
-                "<p>Überblick</p>"
+                        "<p>Überblick</p><div class=\"confluence-information-macro\"><p>Nur Testdaten.</p></div>"
+                                + "<img src=\"/download/attachments/1001/diagramm.png\"/>")
+                .storage("<p>Überblick</p>"
                         + "<ac:structured-macro ac:name=\"info\"><ac:rich-text-body><p>Nur Testdaten.</p>"
                         + "</ac:rich-text-body></ac:structured-macro>"
-                        + "<ac:image><ri:attachment ri:filename=\"diagramm.png\"/></ac:image>")
+                        + "<ac:image><ri:attachment ri:filename=\"diagramm.png\" /></ac:image>"
+                        + "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">"
+                        + "architektur</ac:parameter></ac:structured-macro>")
                 .version(7, "2026-10-12T10:30:00.000+02:00").labels("architektur", "handbuch");
-        confluence.page("1002", "Schnittstellen", "DEMO",
+        page(confluence, "1002", "Schnittstellen", "DEMO",
                 "<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">json</ac:parameter>"
                         + "<ac:plain-text-body><![CDATA[{\"pageId\": \"1002\"}]]></ac:plain-text-body>"
                         + "</ac:structured-macro>");
-        confluence.page("1003", "Betrieb", "DEMO", "<p>Betriebshandbuch</p>");
-        confluence.page("2000", "Archiv", "DEMO", "<p>Alte Seiten</p>");
-        confluence.page("2001", "Altes Konzept", "DEMO", "<p>Abgelöst</p>");
+        page(confluence, "1003", "Betrieb", "DEMO", "<p>Betriebshandbuch</p>");
+        page(confluence, "2000", "Archiv", "DEMO", "<p>Alte Seiten</p>");
+        page(confluence, "2001", "Altes Konzept", "DEMO", "<p>Abgelöst</p>");
         confluence.child("1000", "1001");
         confluence.child("1001", "1002");
         confluence.child("1000", "1003");
         confluence.child("2000", "2001");
         confluence.homepage("DEMO", "1000");
         confluence.attachment("att1001", "1001", "diagramm.png", "image/png", "kein echtes PNG");
+        confluence.attachment("att1002", "1001", "architektur", "application/vnd.jgraph.mxfile",
+                "<mxfile><diagram name=\"Architektur\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                        + "<mxCell id=\"1\" value=\"Harvester\" vertex=\"1\"/></root></mxGraphModel></diagram></mxfile>");
         confluence.space("OPS", "Betrieb");
-        confluence.page("3000", "Runbook", "OPS", "<p>Bereitschaft</p>");
+        page(confluence, "3000", "Runbook", "OPS", "<p>Bereitschaft</p>");
+    }
+
+    /** Eine Seite, deren Storage-Format und gerenderte Ansicht übereinstimmen. */
+    public static FakeConfluence.FakePage page(FakeConfluence confluence, String id, String title, String spaceKey,
+                                               String storage) {
+        return confluence.page(id, title, spaceKey, storage).storage(storage);
     }
 
     /** Basis-URL inklusive Kontextpfad, wie sie unter {@code space-harvester.sources[].base-url} steht. */

@@ -38,7 +38,7 @@ TOKEN=demo-token-nur-lokal
 | Space | Seite | Elternseite | Besonderheit |
 |---|---|---|---|
 | `DEMO` | 1000 Start | – | Startseite des Space, Label `handbuch` |
-| `DEMO` | 1001 Architektur | 1000 | Version 7, Info-Makro, eingebettetes Bild `diagramm.png` als Anhang, zwei Labels |
+| `DEMO` | 1001 Architektur | 1000 | Version 7, Info-Makro, Bild `diagramm.png` und draw.io-Diagramm `architektur` als Verweise auf Anhänge, zwei Labels |
 | `DEMO` | 1002 Schnittstellen | 1001 | Code-Makro |
 | `DEMO` | 1003 Betrieb | 1000 | |
 | `DEMO` | 2000 Archiv | – | zweite Wurzelseite außerhalb des Baums der Startseite |
@@ -290,7 +290,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 }
 ```
 
-Die native Seite kommt Byte für Byte so zurück, wie Confluence sie geliefert hat. `ETag` ist ihr `rawSha256`; Revision
+Die native Seite kommt Byte für Byte so zurück, wie Confluence sie geliefert hat, im internen Storage-Format
+(`body.storage`), nicht als gerenderte Ansicht. Bilder und draw.io-Diagramme stehen darin nur als Verweis auf ihren
+Anhang (`ri:attachment`, Makro `drawio`); ihre Bytes gehören nicht zur Seite. `ETag` ist ihr `rawSha256`; Revision
 und Cache-Stand stehen in den Headern `X-Page-Revision`, `X-Cache-Generation` und `X-Cache-State` (mit `curl -i`
 sichtbar):
 
@@ -303,7 +305,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
   "id": "1001", "type": "page", "title": "Architektur",
   "space": { "key": "DEMO" },
   "version": { "number": 7, "when": "2026-10-12T10:30:00.000+02:00" },
-  "ancestors": [{ "id": "1000" }]
+  "ancestors": [{ "id": "1000" }],
+  "body": { "storage": { "representation": "storage" } }
 }
 ```
 

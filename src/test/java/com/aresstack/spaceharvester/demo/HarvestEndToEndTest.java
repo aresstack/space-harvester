@@ -134,6 +134,14 @@ class HarvestEndToEndTest {
                 + URLEncoder.encode(expand, StandardCharsets.UTF_8))).build(),
                 HttpResponse.BodyHandlers.ofByteArray()).body();
         assertThat(raw.body()).isEqualTo(source);
+        // Durchgereicht wird das interne Storage-Format; Bild und Diagramm bleiben Verweise auf Anhänge.
+        JsonNode storage = json.readTree(raw.body()).get("body").get("storage");
+        assertThat(storage.get("representation").asString()).isEqualTo("storage");
+        assertThat(storage.get("value").asString())
+                .contains("<ri:attachment ri:filename=\"diagramm.png\" />")
+                .contains("<ac:structured-macro ac:name=\"drawio\">")
+                .doesNotContain("<img", "data:image", "mxGraphModel");
+        assertThat(json.readTree(raw.body()).get("body").has("view")).isFalse();
         String sha = "sha256:" + sha256(raw.body());
         assertThat(raw.headers().firstValue("ETag")).hasValue("\"" + sha + "\"");
         JsonNode listed = pages.stream().filter(page -> page.get("pageId").asString().equals("1001")).findFirst()
@@ -144,10 +152,10 @@ class HarvestEndToEndTest {
     @Test
     @Order(4)
     void secondHarvestLoadsOnlyChangedPages() throws Exception {
-        CONFLUENCE.page("1003", "Betrieb", "DEMO", "<p>Betriebshandbuch, überarbeitet</p>")
+        DemoConfluence.page(CONFLUENCE, "1003", "Betrieb", "DEMO", "<p>Betriebshandbuch, überarbeitet</p>")
                 .version(4, "2026-10-15T09:00:00.000+02:00");
         CONFLUENCE.child("1000", "1003");
-        CONFLUENCE.page("1005", "Neue Seite", "DEMO", "<p>Neu</p>");
+        DemoConfluence.page(CONFLUENCE, "1005", "Neue Seite", "DEMO", "<p>Neu</p>");
         CONFLUENCE.child("1000", "1005");
         CONFLUENCE.move("2001", "OPS");
         int before = CONFLUENCE.requests().size();
@@ -212,9 +220,9 @@ class HarvestEndToEndTest {
     @Test
     @Order(6)
     void pageWithoutLoadableContentYieldsAnIncompleteExport() throws Exception {
-        CONFLUENCE.page("1006", "Gesperrt", "DEMO", "<p>Für das Dienstkonto nicht lesbar</p>");
+        // Gelistet, aber der Inhaltsabruf liefert kein gültiges JSON: die Seite bleibt ohne Inhalt.
+        DemoConfluence.page(CONFLUENCE, "1006", "Defekt", "DEMO", "<p>Nicht ladbar</p>").rawJson("{kein JSON");
         CONFLUENCE.child("1000", "1006");
-        CONFLUENCE.restrict("1006");
 
         JsonNode sync = syncUntilFinished();
         assertThat(sync.get("summary").get("complete").asBoolean()).isFalse();
