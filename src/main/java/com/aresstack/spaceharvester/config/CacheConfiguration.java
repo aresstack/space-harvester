@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -40,6 +41,12 @@ class CacheConfiguration {
     @Bean
     LucenePageCacheReader pageCacheReader(LucenePageCache pageCache) {
         return new LucenePageCacheReader(pageCache);
+    }
+
+    /** Titel- und Metadatensuche (#28) auf demselben Index. */
+    @Bean
+    LucenePageSearchIndex pageSearchIndex(LucenePageCache pageCache, CacheProperties properties) {
+        return new LucenePageSearchIndex(pageCache, properties.searchTimeout());
     }
 
     /** Bestätigte Generationen der Synchronisierung (#16) im selben Index wie die Seiten. */

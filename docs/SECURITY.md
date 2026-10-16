@@ -46,6 +46,8 @@ space-harvester:
   - `content`: native Payload (`body.storage` in der Confluence-JSON-Antwort) und alles daraus Abgeleitete:
     Enrichments, Bildbeschreibungen, Converter-Ergebnisse.
   - `export`: Exportjobs starten, abbrechen, ihren Status lesen, Artefakte herunterladen.
+  - `sync`: Abgleich eines Space mit der Quelle starten, abbrechen, seinen Status lesen. Gibt keinen Lesezugriff;
+    das Delta nennt Zähler, Seiten-IDs nur zusätzlich mit `metadata`.
 - **`spaces`:** Space-Keys genau so, wie die Quelle sie liefert, oder allein `"*"`.
 - Der Start bricht ab bei: Klartext statt Hash, doppeltem Token oder doppelter Client-ID, Freigabe für eine nicht
   konfigurierte Quelle, leerer `spaces`- oder `access`-Liste, `"*"` neben Space-Keys.

@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -310,6 +311,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     public final class Batch implements AutoCloseable {
 
         private final Set<String> confirmedSpaces = new HashSet<>();
+        /** Quellen, deren Suchgeneration dieser Lauf mit dem Commit erhöht. */
+        private final Set<String> touchedSources = new HashSet<>();
         private DirectoryReader uncommitted;
         private boolean done;
         private boolean dirty;
@@ -329,6 +332,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                         .length() + " Bytes groß, zulässig sind " + maxPayloadBytes + "; sie wird nicht gekürzt");
             }
             dirty = true;
+            touchedSources.add(snapshot.key().sourceId());
             write(() -> {
                 writer.updateDocument(PageCacheSchema.pageTerm(snapshot.key()),
                         PageCacheSchema.page(snapshot.header(), snapshot));
@@ -345,6 +349,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             PageSnapshot snapshot = existing != null && PageCacheSchema.hasSnapshot(existing)
                     ? PageCacheSchema.snapshot(existing) : null;
             dirty = true;
+            touchedSources.add(header.key().sourceId());
             write(() -> writer.updateDocument(PageCacheSchema.pageTerm(header.key()),
                     PageCacheSchema.page(header, snapshot)));
         }
@@ -359,6 +364,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             requireActive();
             boolean existed = lookup(key) != null;
             dirty = true;
+            touchedSources.add(key.sourceId());
             write(() -> {
                 writer.deleteDocuments(PageCacheSchema.pageTerm(key));
                 writer.deleteDocuments(PageCacheSchema.revisionsOfPage(key));
@@ -390,6 +396,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                         + next.spaceKey() + " folgt nicht auf die bestätigte " + current);
             }
             dirty = true;
+            touchedSources.add(next.sourceId());
             write(() -> {
                 writer.deleteDocuments(PageCacheSchema.baselineOf(next.sourceId(), next.spaceKey()));
                 List<Document> entries = new ArrayList<>(next.pages().size());
@@ -405,6 +412,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         public void commit() {
             requireActive();
             try {
+                Instant committedAt = Instant.now();
+                for (String sourceId : touchedSources) {
+                    // Unter der Schreibsperre ist der gelesene Stand der zuletzt bestätigte.
+                    long current = first(new TermQuery(PageCacheSchema.sourceTerm(sourceId)), null,
+                            PageCacheSchema::sourceGeneration).orElse(0L);
+                    writer.updateDocument(PageCacheSchema.sourceTerm(sourceId),
+                            PageCacheSchema.source(sourceId, current + 1, committedAt));
+                }
                 writer.commit();
             } catch (IOException | RuntimeException e) {
                 // Nichts Unbestätigtes im Writer zurücklassen, das ein späterer Commit mitnähme.
@@ -582,11 +597,12 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         });
     }
 
-    private interface SearcherCall<T> {
+    interface SearcherCall<T> {
         T apply(IndexSearcher searcher) throws IOException;
     }
 
-    private <T> T read(SearcherCall<T> call) {
+    /** Liest aus dem zuletzt bestätigten Commit; alle Abfragen eines Aufrufs sehen denselben Stand. */
+    <T> T read(SearcherCall<T> call) {
         requireOpen();
         try {
             IndexSearcher searcher = searchers.acquire();

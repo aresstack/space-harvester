@@ -75,14 +75,21 @@ public class SpaceSync {
      * @throws SyncConflictException wenn inzwischen ein anderer Lauf eine Generation bestätigt hat
      */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier) {
+        return run(sourceId, spaceKey, applier, SyncListener.NONE);
+    }
+
+    /** Wie {@link #run(String, String, PlanApplier)}, mit Rückmeldungen und Abbruchstellen für einen Auftrag. */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener) {
         SyncPlan plan = plan(sourceId, spaceKey);
+        listener.inventoried(plan.inventory().pages().size());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {
             return new SyncRun(plan, Set.of(), null, unconfirmable.get());
         }
         try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
-            Set<String> failed = applier.apply(plan, staged);
+            Set<String> failed = applier.apply(plan, staged, listener);
             SyncBaseline next = plan.nextBaseline(clock.instant(), failed);
+            listener.checkpoint();
             staged.commit(next);
             return new SyncRun(plan, failed, next, null);
         }
@@ -100,6 +107,10 @@ public class SpaceSync {
 
         public SyncRun {
             failedPageIds = Set.copyOf(failedPageIds);
+        }
+
+        public SyncSummary summary() {
+            return SyncSummary.of(this);
         }
     }
 }

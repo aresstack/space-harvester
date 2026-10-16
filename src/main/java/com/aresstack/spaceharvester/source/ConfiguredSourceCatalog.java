@@ -7,8 +7,10 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
+import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.ClientCertificateException;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceSources;
+import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -31,7 +33,7 @@ import javax.net.ssl.X509TrustManager;
  * und gemeinsam gemeldet, damit ein Start nicht an einer Quelle nach der anderen scheitert. Verbindungen werden erst
  * bei der ersten Anfrage aufgebaut; der Dienst startet also auch, wenn eine Quelle gerade nicht erreichbar ist.
  */
-public final class ConfiguredSourceCatalog implements SourceCatalog {
+public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
@@ -46,10 +48,23 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
             "clientCertificate.alias", "clientCertificate.use", "clientCertificate.keyStoreFile",
             "clientCertificate.keyStorePasswordRef");
 
-    private final Map<String, HarvestSource> sources;
+    /** Transport für native Seiten-Snapshots ({@code space-harvester.network.async-transport}, #47). */
+    public enum AsyncTransport {
+        /** Nur der synchrone Transport (Standard, Rückfallpfad). */
+        DISABLED,
+        /** Snapshots zusätzlich nicht blockierend über Spring WebClient auf Reactor Netty. */
+        WEB_CLIENT
+    }
 
-    private ConfiguredSourceCatalog(Map<String, HarvestSource> sources) {
+    private final Map<String, HarvestSource> sources;
+    private final Map<String, DelegatedConfluenceHttp> delegated;
+    private final AsyncSnapshotTransports async;
+
+    private ConfiguredSourceCatalog(Map<String, HarvestSource> sources,
+                                    Map<String, DelegatedConfluenceHttp> delegated, AsyncSnapshotTransports async) {
         this.sources = sources;
+        this.delegated = delegated;
+        this.async = async;
     }
 
     /** Ohne eigene Vertrauensquellen und ohne Proxy. */
@@ -78,11 +93,25 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
      */
     public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
                                              TrustBundles trustBundles, ProxySettings proxy) {
+        return of(configs, userAgent, trustBundles, proxy, AsyncTransport.DISABLED);
+    }
+
+    /**
+     * @param asyncTransport {@link AsyncTransport#WEB_CLIENT}: Quellen liefern native Seiten-Snapshots zusätzlich
+     *                       nicht blockierend ({@link HarvestSource#storedPageAsync})
+     */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             TrustBundles trustBundles, ProxySettings proxy,
+                                             AsyncTransport asyncTransport) {
         ProxyRoutes routes = ProxyRoutes.from(proxy);
         LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets();
+        AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
+                ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
+        LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "zusätzlich asynchron über WebClient");
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
+        Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
             SourceSettingsConfig config = configs.get(i);
@@ -112,7 +141,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                 continue;
             }
             KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, routes, userAgent, trust,
-                    certificate.enabled() ? certificate.thumbprint() : null);
+                    certificate.enabled() ? certificate.thumbprint() : null, async);
             SourceSettings settings = settings(config);
             List<String> invalid = provider.validate(settings);
             if (!invalid.isEmpty()) {
@@ -125,14 +154,25 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                 // stillschweigend ohne Client-Zertifikat zu betreiben.
                 sources.put(config.id(), new KnowledgeSourceHarvestSource(config.id(), config.type(), title,
                         provider.open(SourceAddress.of(config.id()), settings)));
+                delegated.put(config.id(), ConfluenceSources.delegatedHttp(config.baseUrl(), secrets, routes,
+                        userAgent, trust, certificate.enabled() ? certificate.thumbprint() : null,
+                        certificate.enabled() ? certificate.alias().trim() : null,
+                        certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12
+                                ? certificate.path() : null,
+                        certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12
+                                ? ConfiguredSecrets.certificateRefFor(config.id()) : null));
             } catch (ClientCertificateException e) {
                 problems.add(label + ": client-certificate: " + e.getMessage());
             }
         }
         if (!problems.isEmpty()) {
+            delegated.values().forEach(DelegatedConfluenceHttp::close);
+            if (async != null) {
+                async.close();
+            }
             throw new InvalidSourceConfigurationException(problems);
         }
-        return new ConfiguredSourceCatalog(sources);
+        return new ConfiguredSourceCatalog(sources, delegated, async);
     }
 
     private static List<String> check(SourceSettingsConfig config, Set<String> knownIds) {
@@ -291,5 +331,22 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return Optional.ofNullable(sources.get(sourceId));
+    }
+
+    /**
+     * Delegierte Aufrufe an die Confluence der Quelle mit dem Token des Nutzers (#24), über dieselbe Route und
+     * dasselbe Client-Zertifikat wie das Ernten; leer für unbekannte Quellen.
+     */
+    public Optional<DelegatedConfluenceHttp> delegatedHttp(String sourceId) {
+        return Optional.ofNullable(delegated.get(sourceId));
+    }
+
+    /** Gibt die Verbindungspools der delegierten und asynchronen Aufrufe frei (Spring ruft das beim Herunterfahren). */
+    @Override
+    public void close() {
+        delegated.values().forEach(DelegatedConfluenceHttp::close);
+        if (async != null) {
+            async.close();
+        }
     }
 }
