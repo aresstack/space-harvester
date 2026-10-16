@@ -25,6 +25,10 @@ management:
     build:
       enabled: true
 
+# Wissensquellen. Ohne Eintrag startet der Dienst ohne Quellen. Beispiel und Anmeldearten: README.md.
+space-harvester:
+  sources: []
+
 springdoc:
   api-docs:
     path: /v3/api-docs
