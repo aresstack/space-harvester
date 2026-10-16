@@ -299,6 +299,45 @@ class JobsTest {
     }
 
     @Test
+    void finishedJobsAreRemovedAfterTheirRetention() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofHours(1), Duration.ofDays(7)), clock);
+        JobStatus old = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        executor.runNext();
+        clock.advance(Duration.ofDays(3));
+        JobStatus recent = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a",
+                JobTask.blocking(context -> { }));
+        executor.runNext();
+        JobStatus running = jobs.submit(JobType.EXPORT, "confluence", "C", "client-a",
+                context -> new java.util.concurrent.CompletableFuture<>());
+        executor.runNext();
+
+        clock.advance(Duration.ofDays(4).plusSeconds(1));
+
+        assertThat(jobs.purgeExpired()).isEqualTo(1);
+        assertThatThrownBy(() -> jobs.status(old.id())).isInstanceOf(UnknownJobException.class);
+        assertThat(jobs.status(recent.id()).state()).isEqualTo(JobState.COMPLETED);
+        // Laufende Aufträge bleiben, egal wie alt.
+        assertThat(jobs.status(running.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
+    void expiredJobsAreRemovedOnStartAndOnSubmit() {
+        Jobs before = new Jobs(store, executor, new JobLimits(2, 5, Duration.ofHours(1), Duration.ofDays(1)), clock);
+        JobStatus done = before.submit(JobType.SYNC, "confluence", "A", null, JobTask.blocking(context -> { }));
+        executor.runNext();
+        clock.advance(Duration.ofDays(2));
+
+        new Jobs(store, executor, new JobLimits(2, 5, Duration.ofHours(1), Duration.ofDays(1)), clock);
+        assertThat(store.find(done.id())).isEmpty();
+
+        JobStatus other = before.submit(JobType.SYNC, "confluence", "B", null, JobTask.blocking(context -> { }));
+        executor.runNext();
+        clock.advance(Duration.ofDays(2));
+        before.submit(JobType.SYNC, "confluence", "C", null, JobTask.blocking(context -> { }));
+        assertThat(store.find(other.id())).isEmpty();
+    }
+
+    @Test
     void unknownJob() {
         Jobs jobs = jobs(1, 5);
 
