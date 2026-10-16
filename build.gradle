@@ -24,6 +24,8 @@ dependencies {
     implementation project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
     implementation libs.win.proxy.java
+    // Seiten-Cache und Index, nur im Paket persistence (#26)
+    implementation libs.lucene.core
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5
