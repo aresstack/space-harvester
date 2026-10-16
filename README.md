@@ -118,7 +118,8 @@ space-harvester:
 - **Ohne Konfiguration** bleibt alles direkt wie bisher. Loopback-Ziele gehen immer direkt. Falsche Einstellungen
   (fehlende `pac-url`, Windows-Modus auf Linux, nicht umgesetzte `windows-native-*`-Modi) verhindern den Start.
 - **Je Ziel-URL:** Das PAC-Skript bekommt bei HTTPS wie im Browser nur `https://host[:port]/`, bei HTTP die ganze
-  URL ohne Benutzerinfo. Unter genau diesem Schlüssel wird die Route gemerkt. Die Auflösung läuft auf einem eigenen
+  URL ohne Benutzerinfo. Unter genau diesem Schlüssel wird die Route gemerkt. Protokoll, Diagnose und
+  Fehlermeldungen zeigen Ziel- und PAC-URLs nur ohne Query (`?…`), auch in Meldungen der Bibliothek. Die Auflösung läuft auf einem eigenen
   Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage, nicht beim Start.
 - **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization` und Zugangsdaten gehen nur durch den Tunnel zum
   Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.

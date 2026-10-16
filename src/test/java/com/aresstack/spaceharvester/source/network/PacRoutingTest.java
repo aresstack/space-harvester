@@ -17,6 +17,9 @@ import java.util.Map;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 /**
  * PAC-Auswertung durch {@code win-proxy-java} mit GraalJS unter Java 21 und die tatsächliche Anwendung der Route im
@@ -24,6 +27,7 @@ import org.junit.jupiter.api.Test;
  * {@code src/test/resources/test-hosts}): Eine Direktverbindung würde also gelingen, ein Fehlschlag beweist
  * Fail-Closed.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class PacRoutingTest {
 
     private static final String SENTINEL = "PROXY 192.0.2.123:18080";
@@ -160,5 +164,44 @@ class PacRoutingTest {
         assertThat(lines.get(0)).isEqualTo("Resolving https://confluence.sentinel.test/ ...");
         assertThat(lines).anySatisfy(line -> assertThat(line).contains("PAC script downloaded"));
         assertThat(lines.get(lines.size() - 1)).startsWith("Result: PROXY 192.0.2.123:18080");
+    }
+
+    @Test
+    void secretsInTheTargetQueryReachThePacScriptButNotLogsDiagnosisOrErrors(CapturedOutput output) {
+        String secret = "GEHEIM-0815-token";
+        URI target = URI.create("http://user:pw-" + secret + "@other.example/only-this-path/x?api_key=" + secret);
+        ProxyRoutes routes = ProxyRoutes.from(pacSettings());
+
+        // Das PAC-Skript entscheidet weiter anhand der vollständigen URL.
+        assertThat(routes.routeFor(target)).isEqualTo(HttpRoute.proxy("192.0.2.123", 18080, "resolved"));
+        List<String> lines = routes.diagnose(target);
+        assertThat(lines.get(0)).isEqualTo("Resolving http://other.example/only-this-path/x?… ...");
+
+        // Fehler der Bibliothek nennen die Ziel-URL; Route, Diagnose und Log zeigen sie ohne Query.
+        pac.script("function FindProxyForURL(url, host) { throw new Error('kaputt ' + url); }");
+        ProxyRoutes broken = ProxyRoutes.from(pacSettings());
+        HttpRoute failed = broken.routeFor(target);
+        List<String> failedLines = broken.diagnose(target);
+
+        assertThat(failed.isUnavailable()).isTrue();
+        assertThat(failed.describe()).contains("other.example/only-this-path/x?…").doesNotContain(secret);
+        assertThat(lines).noneSatisfy(line -> assertThat(line).contains(secret));
+        assertThat(failedLines).noneSatisfy(line -> assertThat(line).contains(secret));
+        assertThat(failedLines).anySatisfy(line -> assertThat(line).contains("kaputt"));
+        assertThat(output.getAll()).contains("Proxy-Route für http://other.example/only-this-path/x?…")
+                .doesNotContain(secret);
+    }
+
+    @Test
+    void secretsInThePacUrlQueryStayOutOfDiagnosis() {
+        String secret = "PAC-GEHEIM-4711";
+        ProxySettings settings = new ProxySettings(ProxySettings.Mode.PAC_URL_MANUAL,
+                URI.create(pac.url() + "?ticket=" + secret), null, null, null, null, null, null);
+        ProxyRoutes routes = ProxyRoutes.from(settings);
+
+        assertThat(routes.describe()).doesNotContain(secret);
+        assertThat(routes.diagnose(URI.create("https://confluence.sentinel.test/")))
+                .noneSatisfy(line -> assertThat(line).contains(secret))
+                .anySatisfy(line -> assertThat(line).startsWith("Result: PROXY 192.0.2.123:18080"));
     }
 }

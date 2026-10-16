@@ -41,6 +41,9 @@ import org.slf4j.LoggerFactory;
  *       {@code https://host[:port]/} (Pfad und Query sind verschlüsselt und gehen das Skript nichts an), bei HTTP
  *       die URL ohne Benutzerinfo und Fragment. Genau diese URL ist der Cache-Schlüssel, eine gecachte Route
  *       entspricht also immer der Auswertung für dieselbe Eingabe.</li>
+ *   <li>Protokoll, Diagnose und Fehlerdetails zeigen Ziel- und PAC-URLs nur ohne Query und Fragment
+ *       ({@link #displayUrl(String)}); auch Meldungen der Bibliothek werden so bereinigt, weil sie die Ziel-URL
+ *       enthalten können. Das PAC-Skript selbst bekommt die URL unverändert.</li>
  *   <li>Routen werden {@link ProxySettings#cacheTtl()} lang gemerkt, Fehler {@link ProxySettings#failureTtl()} lang
  *       (höchstens {@value #MAX_CACHE_ENTRIES} Einträge). Die Bibliothek lädt das PAC-Skript bei jeder Auflösung neu;
  *       eine geänderte PAC-Datei wirkt also spätestens nach Ablauf des Eintrags.</li>
@@ -219,14 +222,15 @@ public final class ProxyRoutes implements HttpRoutePort {
             }
         }
         HttpRoute route = resolve(url);
+        String shown = displayUrl(url);
         long ttl = (route.isUnavailable() ? settings.failureTtl() : settings.cacheTtl()).toMillis();
         synchronized (cache) {
             cache.put(url, new Entry(route, now + ttl));
         }
         if (route.isUnavailable()) {
-            LOG.warn("Proxy-Route für {} ({}) nicht bestimmbar: {}", url, modeName(settings.mode()), route.describe());
+            LOG.warn("Proxy-Route für {} ({}) nicht bestimmbar: {}", shown, modeName(settings.mode()), route.describe());
         } else {
-            LOG.info("Proxy-Route für {} ({}): {}", url, modeName(settings.mode()), route.describe());
+            LOG.info("Proxy-Route für {} ({}): {}", shown, modeName(settings.mode()), route.describe());
         }
         return route;
     }
@@ -245,7 +249,7 @@ public final class ProxyRoutes implements HttpRoutePort {
     public List<String> diagnose(URI target) {
         List<String> lines = new ArrayList<>();
         String url = resolutionUrl(target);
-        lines.add("Resolving " + url + " ...");
+        lines.add("Resolving " + displayUrl(url) + " ...");
         lines.add("Mode: " + modeName(settings.mode()));
         HttpRoute fixed = fixedRoute(target.getHost());
         if (fixed != null) {
@@ -255,11 +259,11 @@ public final class ProxyRoutes implements HttpRoutePort {
         HttpRoute route;
         try {
             ProxyDiagnostics diagnostics = withTimeout(() -> resolver.diagnose(url));
-            diagnostics.getSteps().forEach(step -> lines.add("- " + step));
+            diagnostics.getSteps().forEach(step -> lines.add("- " + scrub(step, url)));
             if (diagnostics.getFailureDetail() != null && !diagnostics.getFailureDetail().isEmpty()) {
-                lines.add("Failure: " + diagnostics.getFailureDetail());
+                lines.add("Failure: " + scrub(diagnostics.getFailureDetail(), url));
             }
-            route = toRoute(diagnostics.getResult());
+            route = scrub(toRoute(diagnostics.getResult()), url);
             lines.add("Result: " + route.describe() + " [" + diagnostics.getDurationMillis() + " ms]");
             return lines;
         } catch (TimeoutException e) {
@@ -267,7 +271,7 @@ public final class ProxyRoutes implements HttpRoutePort {
         } catch (RejectedExecutionException e) {
             route = HttpRoute.unavailable(REASON_BUSY, busyDetail());
         } catch (Exception e) {
-            route = HttpRoute.unavailable(REASON_RESOLVER_FAILED, failureDetail(e));
+            route = HttpRoute.unavailable(REASON_RESOLVER_FAILED, scrub(failureDetail(e), url));
         }
         lines.add("Result: " + route.describe());
         return lines;
@@ -278,7 +282,7 @@ public final class ProxyRoutes implements HttpRoutePort {
         StringBuilder text = new StringBuilder(modeName(settings.mode()));
         switch (settings.mode()) {
             case MANUAL_PROXY -> text.append(' ').append(settings.proxyHost()).append(':').append(settings.proxyPort());
-            case PAC_URL_MANUAL -> text.append(' ').append(redact(settings.pacUrl()));
+            case PAC_URL_MANUAL -> text.append(' ').append(displayUrl(settings.pacUrl().toString()));
             default -> { }
         }
         if (!settings.nonProxyHosts().isEmpty()) {
@@ -310,14 +314,16 @@ public final class ProxyRoutes implements HttpRoutePort {
 
     private HttpRoute resolve(String url) {
         try {
-            return toRoute(withTimeout(() -> resolver.resolve(url)));
+            return scrub(toRoute(withTimeout(() -> resolver.resolve(url))), url);
         } catch (TimeoutException e) {
             return HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail());
         } catch (RejectedExecutionException e) {
             return HttpRoute.unavailable(REASON_BUSY, busyDetail());
         } catch (Exception e) {
-            LOG.warn("Proxy-Auflösung für {} gescheitert", url, e);
-            return HttpRoute.unavailable(REASON_RESOLVER_FAILED, failureDetail(e));
+            // Ohne Stacktrace: Ausnahmemeldungen der Bibliothek können die Ziel-URL samt Query enthalten.
+            String detail = scrub(failureDetail(e), url);
+            LOG.warn("Proxy-Auflösung für {} gescheitert: {}", displayUrl(url), detail);
+            return HttpRoute.unavailable(REASON_RESOLVER_FAILED, detail);
         }
     }
 
@@ -378,6 +384,63 @@ public final class ProxyRoutes implements HttpRoutePort {
         return url.toString();
     }
 
+    /**
+     * Die URL für Protokoll, Diagnose und Fehlermeldungen: ohne Benutzerinfo, Query und Fragment; eine vorhandene
+     * Query wird als {@code ?…} angedeutet.
+     */
+    static String displayUrl(String url) {
+        if (url == null) {
+            return "";
+        }
+        try {
+            URI uri = URI.create(url);
+            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
+                return url.replaceAll("[?#].*$", "");
+            }
+            String host = uri.getHost() != null ? uri.getHost() : "";
+            StringBuilder text = new StringBuilder(uri.getScheme()).append("://").append(host);
+            if (uri.getPort() >= 0) {
+                text.append(':').append(uri.getPort());
+            }
+            text.append(uri.getRawPath() == null ? "" : uri.getRawPath());
+            return uri.getRawQuery() == null ? text.toString() : text.append("?…").toString();
+        } catch (IllegalArgumentException e) {
+            return url.replaceAll("[?#].*$", "");
+        }
+    }
+
+    /** Entfernt Ziel-URL und PAC-URL samt Query aus einem Text der Bibliothek. */
+    private String scrub(String text, String url) {
+        if (text == null || text.isEmpty()) {
+            return text == null ? "" : text;
+        }
+        String result = scrubUrl(text, url);
+        return settings.pacUrl() == null ? result : scrubUrl(result, settings.pacUrl().toString());
+    }
+
+    private static String scrubUrl(String text, String url) {
+        String result = text.replace(url, displayUrl(url));
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            return result;
+        }
+        for (String part : new String[] {uri.getRawQuery(), uri.getQuery(), uri.getRawUserInfo(), uri.getUserInfo()}) {
+            if (part != null && !part.isEmpty()) {
+                result = result.replace(part, "…");
+            }
+        }
+        return result;
+    }
+
+    private HttpRoute scrub(HttpRoute route, String url) {
+        if (!route.isUnavailable()) {
+            return route;
+        }
+        return HttpRoute.unavailable(scrub(route.reason(), url), scrub(route.detail(), url));
+    }
+
     private boolean matchesNonProxyHost(String host) {
         if (host == null) {
             return false;
@@ -413,15 +476,6 @@ public final class ProxyRoutes implements HttpRoutePort {
 
     static String modeName(ProxySettings.Mode mode) {
         return mode.name().toLowerCase(Locale.ROOT).replace('_', '-');
-    }
-
-    private static String redact(URI uri) {
-        if (uri == null) {
-            return "-";
-        }
-        String text = uri.getScheme() + "://" + (uri.getHost() == null ? "" : uri.getHost())
-                + (uri.getPort() < 0 ? "" : ":" + uri.getPort()) + (uri.getRawPath() == null ? "" : uri.getRawPath());
-        return uri.getRawQuery() == null ? text : text + "?…";
     }
 
     private String timeoutDetail() {

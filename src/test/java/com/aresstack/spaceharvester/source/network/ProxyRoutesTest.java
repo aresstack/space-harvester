@@ -140,6 +140,27 @@ class ProxyRoutesTest {
     }
 
     @Test
+    void resolverExceptionMessagesLoseTheTargetQuery() {
+        ProxyRoutes routes = routes(pac(null, null), url -> {
+            throw new IllegalStateException("Could not evaluate PAC script for " + url + ".");
+        });
+
+        HttpRoute route = routes.routeFor(URI.create("http://wiki.example/rest?token=GEHEIM"));
+
+        assertThat(route.detail()).isEqualTo(
+                "IllegalStateException: Could not evaluate PAC script for http://wiki.example/rest?….");
+        assertThat(resolved).containsExactly("http://wiki.example/rest?token=GEHEIM");
+    }
+
+    @Test
+    void displayUrlDropsUserInfoQueryAndFragment() {
+        assertThat(ProxyRoutes.displayUrl("http://u:p@wiki.example:8080/a/b?x=1#f"))
+                .isEqualTo("http://wiki.example:8080/a/b?…");
+        assertThat(ProxyRoutes.displayUrl("https://confluence.example.org/")).isEqualTo("https://confluence.example.org/");
+        assertThat(ProxyRoutes.displayUrl("file:///etc/proxy.pac?x")).isEqualTo("file:///etc/proxy.pac");
+    }
+
+    @Test
     void loopbackNonProxyHostsAndDisabledModeGoDirectWithoutAskingTheLibrary() {
         ProxyRoutes routes = routes(pac(List.of("intranet.example", "*.corp.example"), null),
                 url -> ProxyResult.error("unexpected", "should not be asked"));
