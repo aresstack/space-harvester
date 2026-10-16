@@ -22,7 +22,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Ausgang eines Auftrags: {@link JobState#COMPLETED} nur mit bestätigter Generation. Kann keine bestätigt werden
  * (Inventur abgebrochen oder widersprüchlich), endet er als {@link JobState#FAILED} mit Code {@code SYNC_INCOMPLETE};
  * hat ein anderer Lauf zwischenzeitlich bestätigt, mit {@code SYNC_CONFLICT} und ohne Delta, weil sein Plan auf einer
- * überholten Generation beruht. Das Delta ({@link SyncSummary}) steht sonst nach dem Lauf bereit. Ein Abbruch verwirft
+ * überholten Generation beruht. Fehlt einer neuen Seite der Inhalt, weil ihr erster Abruf scheiterte, ist die
+ * Generation bestätigt, aber unvollständig ({@link SyncBaseline#complete()}); der Auftrag endet dann als
+ * {@link JobState#FAILED} mit {@code SYNC_PARTIAL}, nie als erfolgreiche Ernte. Das Delta ({@link SyncSummary}) steht sonst nach dem Lauf bereit. Ein Abbruch verwirft
  * alles Vorgemerkte.
  *
  * <p>Fehlen Cache-Speicher oder Inhaltsabruf (noch nicht angebunden), lehnt {@link #start} mit
@@ -32,6 +34,7 @@ public class SpaceSyncJobs {
 
     static final String INCOMPLETE = "SYNC_INCOMPLETE";
     static final String CONFLICT = "SYNC_CONFLICT";
+    static final String PARTIAL = "SYNC_PARTIAL";
 
     private final Jobs jobs;
     private final SourceQueries queries;
@@ -128,6 +131,11 @@ public class SpaceSyncJobs {
         summaries.put(context.jobId(), run.summary());
         if (run.confirmed() == null) {
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt: " + run.notConfirmed());
+        }
+        if (!run.confirmed().complete()) {
+            throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
+                    + " bestätigt, aber " + run.confirmed().missingPageIds().size()
+                    + " Seiten fehlen im Cache; der nächste Lauf lädt sie erneut");
         }
     }
 

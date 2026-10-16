@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -69,6 +70,7 @@ class SpaceSyncJobsTest {
         assertThat(summary.inventory()).isEqualTo(Inventory.Status.COMPLETE);
         assertThat(summary.added()).isEqualTo(3);
         assertThat(summary.generation()).isEqualTo(1);
+        assertThat(summary.complete()).isTrue();
         assertThat(summary.spaceFingerprint()).isEqualTo(
                 store.confirmed("wiki", "DOC").orElseThrow().spaceFingerprint());
         assertThat(store.repository.find(new PageKey("wiki", "2"))).isPresent();
@@ -107,6 +109,43 @@ class SpaceSyncJobsTest {
         assertThat(done.summary().notConfirmed()).isNotBlank();
         assertThat(store.confirmed("wiki", "DOC")).isEmpty();
         assertThat(store.repository.find(new PageKey("wiki", "1"))).isEmpty();
+    }
+
+    @Test
+    void aNewPageWithoutContentConfirmsAnIncompleteGenerationAndFailsTheJob() {
+        beforeFetch = pageId -> {
+            if (pageId.equals("1")) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
+                        null);
+            }
+        };
+
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        SpaceSyncJobs.SyncJob done = syncs.status(accepted.id(), "client:a");
+        assertThat(done.status().state()).isEqualTo(JobState.FAILED);
+        assertThat(done.status().error().code()).isEqualTo(SpaceSyncJobs.PARTIAL);
+        assertThat(done.status().progress().failed()).isEqualTo(1);
+        assertThat(done.summary().generation()).isEqualTo(1);
+        assertThat(done.summary().complete()).isFalse();
+        assertThat(done.summary().missingPageIds()).containsExactly("1");
+        SyncBaseline confirmed = store.confirmed("wiki", "DOC").orElseThrow();
+        assertThat(confirmed.complete()).isFalse();
+        assertThat(confirmed.pages()).containsOnlyKeys("2", "3");
+        assertThat(store.repository.find(new PageKey("wiki", "1"))).isEmpty();
+
+        beforeFetch = pageId -> {
+        };
+        JobStatus retry = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        SpaceSyncJobs.SyncJob repaired = syncs.status(retry.id(), "client:a");
+        assertThat(repaired.status().state()).isEqualTo(JobState.COMPLETED);
+        assertThat(repaired.summary().added()).isEqualTo(1);
+        assertThat(repaired.summary().complete()).isTrue();
+        assertThat(store.confirmed("wiki", "DOC").orElseThrow().complete()).isTrue();
+        assertThat(store.repository.find(new PageKey("wiki", "1"))).isPresent();
     }
 
     @Test
