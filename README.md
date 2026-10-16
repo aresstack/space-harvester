@@ -324,8 +324,8 @@ ein noch laufender Abgleich wird nicht doppelt gestartet.
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
 Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
 `running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
-kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile),
-`tree.json` (ID-Baum mit `roots`) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
+kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile, im Kopf `pageId` und `url`),
+`tree.json` (Baum aus Verweisen: `roots`, je Knoten `id` und `url` der Seite) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
 `…/{exportId}/artifact/{datei}`; die Rohdaten je Seite liegen unter `raw/` und werden Byte für Byte ausgeliefert.
 `artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
