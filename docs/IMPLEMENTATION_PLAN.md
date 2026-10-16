@@ -20,7 +20,7 @@ Space Harvester ist ein **headless, leichtgewichtiger, quellenunabhängiger Read
 - Primärer Schlüssel: mindestens `sourceId + pageId`; bei bewahrter Historie zusätzlich `revision`. Confluence-Page-IDs sind nicht über verschiedene Instanzen eindeutig.
 - Pro Seite werden Verwaltungsfelder wie `sourceId`, `spaceKey`, `pageId`, `parentId`, Titel, Version, Änderungsdatum, Quell-URL und Cache-/Abrufzeit indiziert.
 - **Native Payload:** Originalbytes des empfangenen Confluence-REST-JSON-HTTP-Bodys **nach Transportdekodierung**, einschließlich angeforderter `body.storage`-Repräsentation. Ein DTO dient ausschließlich Typisierung/Metadaten; die Payload wird **niemals aus DTOs rekonstruiert**.
-- `rawSha256` bezeichnet einen Hash **über diese tatsächlich gespeicherten Bytes**. `metadataHash` bezeichnet einen versioniert kanonisierten Satz ausgewählter Verwaltungsfelder (#6); andere Felder/Algorithmen dürfen nicht unter demselben Hashnamen vermischt werden.
+- `rawSha256` bezeichnet einen Hash **über diese tatsächlich gespeicherten Bytes**. `metadataHash` ist der mit PR #32 festgelegte Fingerprint über `page-metadata/v1` (`schema`, `sourceId`, `pageId`, `spaceKey`, `title`, `parentPageId`, `version`, `modifiedAt`), **ohne** `attributes`/Labels. Ein getrennter versionierter `attributesHash` über normalisierte, stabil verfügbare und sortierte Quellattribute erfasst z. B. Labeländerungen (#6/#16). Andere Felder/Algorithmen dürfen nicht unter demselben Hashnamen vermischt werden.
 - Original-JSON ist nur vollständig **im Umfang der abgerufenen REST-Antwort**. Anhänge, Plugin-Daten oder nicht angeforderte Expand-Felder sind nicht automatisch enthalten (#7).
 - **Bytegenaue Original-Ansicht** und **normalisierte Darstellung** sind verschiedene API-Produkte: in einem zusammengesetzten JSON-Container können sich Serialisierung und Whitespaces ändern, obwohl `data` dieselbe Struktur besitzt.
 
@@ -80,7 +80,7 @@ Schematisch, **kein bereits implementierter Vertrag**:
 | Ausgabe (#11/#30) | Plain JSON/NDJSON und später Converter-Ergebnisse, Manifest, Downloads | Raw-Original überschreiben |
 | Zugriffsschutz (#14/#24) | Technische Client-Rechte und spätere Nutzerdelegation trennen | Servicekonto-Leserecht als Endnutzerfreigabe behandeln |
 
-**Lucene-Layout:** Index-/StoredFields mindestens `sourceId`, `pageId`, `spaceKey`, `parentId`, `title`, `version`, `modifiedAt`, `metadataHash`, `rawSha256`, `rawJson` und Cachezustand. Exakte Queries/DocValues, Feldtypen, Historie, Segment-/Commitstrategie und Größenlimits werden in #26 spezifiziert. Ein einziger kontrollierter Writer je Index; Reader-Refresh und Index-Lebenszyklus explizit testen. Große Binärassets nicht in Lucene speichern; bei späterem Bedarf ein einfaches lokales Dateiverzeichnis verwenden. Bereits vorhandene Lucene-Bausteine aus dem Enterprise AI Client evaluieren (#2/#26), **ohne** sie ungeprüft als Snapshot-Repository einzusetzen.
+**Lucene-Layout:** Index-/StoredFields mindestens `sourceId`, `pageId`, `spaceKey`, `parentId`, `title`, `version`, `modifiedAt`, `metadataHash`, den getrennten `attributesHash` (#6/#16), `rawSha256`, `rawJson` und Cachezustand. Exakte Queries/DocValues, Feldtypen, Historie, Segment-/Commitstrategie und Größenlimits werden in #26 spezifiziert. Ein einziger kontrollierter Writer je Index; Reader-Refresh und Index-Lebenszyklus explizit testen. Große Binärassets nicht in Lucene speichern; bei späterem Bedarf ein einfaches lokales Dateiverzeichnis verwenden. Bereits vorhandene Lucene-Bausteine aus dem Enterprise AI Client evaluieren (#2/#26), **ohne** sie ungeprüft als Snapshot-Repository einzusetzen.
 
 ## 4. Eigene REST API vor Confluence-Kompatibilitätsfassade
 
@@ -93,7 +93,7 @@ Die folgenden Routen sind **Zielverträge**, keine bereits vorhandenen Funktione
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Live oder explizit als Cache-Ansicht ausgewiesene Metadaten ohne Body, paginiert (#5) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Einzelnes natives Quellobjekt aus dem geschützten Cache (Raw-View, ohne Harvester-Metadaten) (#27) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}?refresh=true` | Berechtigte explizite Aktualitätsprüfung der Seite gegen Confluence-Metadaten; Raw-Body bei Änderung aktualisieren. Bei Prüffehlern kein unmarkierter Stale-Fallback, sondern dokumentierter Fehler (#16/#27). Standard `refresh=false`: Cache-only mit gekennzeichnetem Stand. |
-| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/{pageId}/metadata` | Eigene Verwaltungsmetadaten, Hashes, Freshness und optionale Enrichments **ohne Body**; Source-/Space-Zuordnung prüfen (#6/#27). |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | **Kanonische Einzel-Metadatenroute** ohne Space-Key: Revision, Metadaten- und Attributhashes, Freshness und optionale Enrichments ohne Body. Ein Space-Wechsel ändert nicht die Page-ID (#6/#27). |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}?view=extended` | Container mit `data`, `metadata`, `enrichments` (#27) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache, **paginierte** Seitenliste; Content nur wenn ausdrücklich angefordert (#27) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Separater Baum mit `roots[]`, IDs und Kindern; mehrere Roots (#27) |
@@ -108,10 +108,10 @@ Flache JSON-Ausgabe: ein Array von Seiten mit `pageId`, Header (Version und verf
 ## 5. Cache-Aktualität und Synchronisierung
 
 1. **Inventarisieren:** Für jede konfigurierte Quelle Space- und Seitenmetadaten **vollständig paginiert** abrufen (#4/#5/#167); `discover("space:X")` ist wegen Homepage-Unterbaum und Limits kein geeigneter vollständiger Inventarlauf.
-2. **Abgleichen:** Normalisierte Metadaten und Versionen mit zuletzt **vollständig** bestätigtem Indexstand vergleichen (#6/#16).
+2. **Abgleichen:** Quellrevision und `metadataHash` (`page-metadata/v1`, PR #32) sowie den unabhängigen `attributesHash` mit dem zuletzt **vollständig** bestätigten Indexstand vergleichen (#6/#16). Eine reine Label-/Attributänderung erfordert lediglich eine Aktualisierung der Cache-Metadaten, nicht automatisch einen erneuten Abruf des nativen Bodys.
 3. **Inhalte nur gezielt laden:** Neue/geänderte Seiten über optionale native `StoredContentSource`-Capability upstream holen (#2/#7), Raw-JSON-Bytes speichern und Header/Parent-Beziehungen aktualisieren (#8/#26).
 4. **Löschungen/Unsichtbarkeit unterscheiden:** Eine fehlende Seite bei fehlerhafter Pagination, verlorenem Zugriff oder abgebrochenem Lauf darf nicht als bestätigte Löschung behandelt werden.
-5. **Sync-Generation veröffentlichen:** Erst nach vollständiger fehlerfrei geprüfter Enumeration eine neue bestätigte Bestands-Generation markieren; partieller Lauf bleibt sichtbar und nicht „vollständig“. Wiederaufnahme, Retry und Index-Commit dokumentieren (#12/#13/#16/#26).
+5. **Sync-Generation veröffentlichen:** `complete=true` beim letzten Cursor bedeutet nur das Ende der Pagination, **nicht** einen atomaren Confluence-Snapshot. Erst nach vollständiger, fehlerfrei und auf offensichtliche Inkonsistenzen geprüfter Enumeration eine neue bestätigte Bestands-Generation markieren; partieller Lauf bleibt sichtbar und nicht „vollständig“. Wiederaufnahme, Retry und Index-Commit dokumentieren (#12/#13/#16/#26).
 6. **Freshness kenntlich machen:** `lastCheckedAt`, Metadatenrevision, `cacheState` (z. B. fresh/stale/incomplete/not-fetched) und optionalen Abfrage-Modus dokumentieren. **Cache-Hit ist kein Beweis für Aktualität oder Zugriffsberechtigung.**
 7. **Enrichments invalidieren:** Bei verändertem Input-Hash oder Prozessor-/Modellversion ausschließlich die passenden abgeleiteten Ergebnisse als veraltet markieren (#29/#19).
 
@@ -133,12 +133,13 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 **M0 – Fundament / laufende Arbeit (bereits gestartet)**
 - [x] Spring-Boot-/REST-Grundgerüst: #1, PR #21.
 - [x] Headless-Vendoring von Confluence/source-api/adyton/network: PR #23.
-- [ ] Upstream-Pagination: [enterprise-ai-client PR #167](https://github.com/aresstack/enterprise-ai-client/pull/167) reviewen, grüne Checks, mergen und per Sync-Skript nach Harvester übernehmen (#2/#5).
-- [ ] YAML-Quellen, Basic/PAT, Spaces: [space-harvester PR #25](https://github.com/aresstack/space-harvester/pull/25) final prüfen/mergen (#3/#4/#24 Teil A). **Diese PRs nicht wegen der neuen Cache-Architektur erweitern.**
+- [x] Upstream-Pagination: [enterprise-ai-client PR #167](https://github.com/aresstack/enterprise-ai-client/pull/167) gemergt, über PR #32 in `enterprise-ai-sources` synchronisiert (#2/#5).
+- [x] YAML-Quellen, Basic/PAT, Spaces: [space-harvester PR #25](https://github.com/aresstack/space-harvester/pull/25) gemergt (#3/#4/#24 Teil A). **Laufende Folge-PRs nicht wegen der Cache-Architektur erweitern.**
 
 **M1 – Vollständige Metadaten (#5/#6)**
-- [ ] Paginierter Space-Inventar-Endpunkt ohne Content, Cursor/Limit, keine Trunkierung.
-- [ ] Deterministische, versionierte Metadatenhashes; Tests für Version, Parent, umbenannte und verschwundene Seiten.
+- [x] Paginierter **Live**-Space-Inventar-Endpunkt ohne Content, Cursor/Limit 1–100, keine Trunkierung: [PR #32](https://github.com/aresstack/space-harvester/pull/32) gemergt (#5).
+- [x] `metadataHash` nach dem festgelegten Schema `page-metadata/v1` mit Tests für Version/Parent/Titel/Space: PR #32 (Teil von #6).
+- [ ] #6: Einzel-Metadatenroute ohne Space-Key, getrennter versionierter `attributesHash` und optional aggregierter Space-Fingerprint; `history.createdDate`/`createdBy` zuerst im Upstream ergänzen.
 - **Abnahme:** alle Seiten eines Fake-Spaces inkl. mehrerer Root-Seiten über mehrere Cursor vollständig inventarisierbar.
 
 **M2 – Native Rohdaten und Snapshot (#7/#2/#8/#9/#24 Teil B)**
@@ -188,7 +189,7 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 
 **MVP-Definition:** Mehrere Quellen ohne externe Datenbank konfigurierbar; Confluence-Spaces und deren **vollständige** Seitenmetadaten abrufbar; Snapshot-Body nativ und ohne Content-Transformation erhalten; Lucene speichert Bytes, Revision, Parent, Hash und Freshness; Sync lädt nur neue/geänderte Seiten; Seiten flach, Baum separat, begrenzte Suche/Metadatencontainer; Plain JSON/NDJSON+Manifest; keine Bilderbytes; abgesicherte technische API und korrekte Fehl-/Unvollständigkeitszustände. Weder PostgreSQL/H2 noch Markdown/PDF/Word-Converter, LLM-Textextraktion oder vollständige Confluence-API-Kompatibilität erforderlich.
 
-**Regel für Änderungen:** Bestehende Quellbibliotheken in `enterprise-ai-sources` **nicht** patchen; Erweiterungen upstream entwickeln und synchronisieren. Laufende Draft-PRs #167/#25 nicht mit Architektur-Umbauten vermischen. Neue Arbeit als überprüfbare, möglichst kleine PRs auf aktuellem `main` durchführen und erst mit grünen Tests zusammenführen.
+**Regel für Änderungen:** Bestehende Quellbibliotheken in `enterprise-ai-sources` **nicht** patchen; Erweiterungen upstream entwickeln und synchronisieren. Abgeschlossene PRs #167/#25/#32 bleiben in ihrem Scope; neue Upstream-Fähigkeiten (z. B. `history`/`StoredContentSource`) in separaten PRs entwickeln. Neue Arbeit als überprüfbare, möglichst kleine PRs auf aktuellem `main` durchführen und erst mit grünen Tests zusammenführen.
 
 ## 9. Offene Detailentscheidungen (in den zugehörigen Issues abschließen)
 
