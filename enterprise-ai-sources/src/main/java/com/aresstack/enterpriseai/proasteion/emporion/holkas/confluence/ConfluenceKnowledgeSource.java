@@ -34,6 +34,8 @@ import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Attachment;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Page;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Session;
@@ -41,8 +43,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
@@ -91,8 +95,9 @@ import java.util.regex.Pattern;
  * HTTP-Request, weil z. B. KeePassRPC dafür eine Verbindung aufbaut) und vergisst sie mit dem Ende des Aufrufs.
  * Ohne {@link ConfluenceConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
-public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
-        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource {
+public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
+        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource,
+        StoredContentSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -107,6 +112,18 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
      * Gesamtzahl.
      */
     static final int MAX_PARTITION_BATCH = 100;
+    /**
+     * {@link StoredContent#nativeFormat()} der Seiten-Snapshots: REST-Content-JSON mit der sortierten
+     * {@code expand}-Liste; eine andere Liste ergibt ein anderes, nicht vergleichbares Format.
+     */
+    /**
+     * Metadatum {@code confluence.labels.complete=false}: {@code metadata.labels} war in der Antwort gekürzt, die
+     * Labels sind unvollständig. Fehlt es, gelten die gelieferten Labels als vollständig.
+     */
+    public static final String LABELS_COMPLETE = "confluence.labels.complete";
+
+    static final String SNAPSHOT_FORMAT = "confluence-rest-content+json;expand="
+            + sortedExpand(ConfluenceRestClient.SNAPSHOT_EXPAND);
     private static final String PARTITION_CURSOR_PREFIX = "p1.";
     private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Za-z0-9_-]{1,400})\\.([0-9]{1,9})");
 
@@ -121,6 +138,9 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
     private final ConfluenceRestClient client;
     private final SecretProvider secrets;
     private final VaultEntryOptions options;
+    /** Nur bei {@link AsyncConfluenceKnowledgeSource}: asynchroner Transport und Executor der JSON-Abbildung. */
+    private final ConfluenceAsyncHttpTransport async;
+    private final java.util.concurrent.Executor mapping;
 
     /**
      * @param transport z. B. {@link UrlConnectionConfluenceTransport} mit Proxy/mTLS aus der Composition Root
@@ -134,6 +154,15 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
 
     ConfluenceKnowledgeSource(SourceAddress sourceId, ConfluenceConfig config,
                               ConfluenceHttpTransport transport, SecretProvider secrets, VaultEntryOptions options) {
+        this(sourceId, config, transport, secrets, options, null, null);
+    }
+
+    ConfluenceKnowledgeSource(SourceAddress sourceId, ConfluenceConfig config,
+                              ConfluenceHttpTransport transport, SecretProvider secrets, VaultEntryOptions options,
+                              ConfluenceAsyncHttpTransport async, java.util.concurrent.Executor mapping) {
+        if ((async == null) != (mapping == null)) {
+            throw new IllegalArgumentException("async und mapping nur gemeinsam");
+        }
         if (sourceId == null || config == null || transport == null) {
             throw new IllegalArgumentException("sourceId, config und transport sind Pflicht");
         }
@@ -147,6 +176,8 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         this.client = new ConfluenceRestClient(config, transport);
         this.secrets = secrets;
         this.options = options;
+        this.async = async;
+        this.mapping = mapping;
     }
 
     @Override
@@ -613,19 +644,120 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
     /**
      * Metadaten einer Seite ohne Inhalt ({@code /rest/api/content/<id>?expand=version,space,metadata.labels,
      * ancestors,history}), dieselben Felder wie in {@link #resources}; unabhängig vom Space, in dem die Seite liegt.
+     * Eine für das Konto gesperrte Seite (HTTP 403) ist {@code NOT_FOUND} wie eine unbekannte: sie fehlt auch in den
+     * Listen, und ihr Dasein soll nicht durchscheinen.
      */
     @Override
     public KnowledgeResource resourceMetadata(final String localId) throws KnowledgeSourceException {
         if (!ConfluenceIds.isContentId(localId)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
         }
-        Page page = withSession(new Operation<Page>() {
-            @Override
-            public Page run(Session session) throws KnowledgeSourceException {
-                return client.page(session, localId, false);
+        Page page;
+        try {
+            page = withSession(new Operation<Page>() {
+                @Override
+                public Page run(Session session) throws KnowledgeSourceException {
+                    return client.page(session, localId, false);
+                }
+            });
+        } catch (ConfluenceRestClient.Forbidden e) {
+            throw notVisible(localId, e);
+        }
+        return pageResource(page, page.parentId);
+    }
+
+    private static KnowledgeSourceException notVisible(String localId, ConfluenceRestClient.Forbidden e) {
+        return new KnowledgeSourceException(Kind.NOT_FOUND, "Seite " + localId
+                + ": nicht gefunden oder für dieses Konto nicht sichtbar", e);
+    }
+
+    /**
+     * Die unveränderte JSON-Antwort einer Seite ({@code /rest/api/content/<id>?expand=}{@value
+     * ConfluenceRestClient#SNAPSHOT_EXPAND}) mit den Metadaten aus derselben Antwort, wie {@link #resourceMetadata};
+     * eine gesperrte Seite ist auch hier {@code NOT_FOUND}.
+     */
+    @Override
+    public StoredContent storedContent(final String localId) throws KnowledgeSourceException {
+        if (!ConfluenceIds.isContentId(localId)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
+        }
+        ConfluenceRestClient.StoredPage stored;
+        try {
+            stored = withSession(new Operation<ConfluenceRestClient.StoredPage>() {
+                @Override
+                public ConfluenceRestClient.StoredPage run(Session session) throws KnowledgeSourceException {
+                    return client.storedPage(session, localId);
+                }
+            });
+        } catch (ConfluenceRestClient.Forbidden e) {
+            throw notVisible(localId, e);
+        }
+        return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
+                mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
+    }
+
+    /**
+     * Asynchrone Fassung von {@link #storedContent} für {@link AsyncConfluenceKnowledgeSource}: dieselbe Anfrage,
+     * Anmeldung und Abbildung, nur über {@link ConfluenceAsyncHttpTransport}. Zugangsdaten liest der Aufrufer-Thread
+     * vor dem Start der Anfrage aus dem Tresor; die Header leben bis zur Antwort nur in der laufenden Anfrage.
+     */
+    final java.util.concurrent.CompletionStage<StoredContent> asyncStoredContent(final String localId) {
+        final java.util.concurrent.CompletableFuture<StoredContent> result =
+                new java.util.concurrent.CompletableFuture<StoredContent>();
+        if (async == null) {
+            throw new IllegalStateException("Quelle ohne asynchronen Transport");
+        }
+        if (!ConfluenceIds.isContentId(localId)) {
+            result.completeExceptionally(new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "Keine Seiten-ID dieser Quelle: " + localId));
+            return result;
+        }
+        final java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage> request;
+        try {
+            request = withSession(new Operation<java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage>>() {
+                @Override
+                public java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage> run(Session session) {
+                    return client.storedPageAsync(session, localId, async, mapping);
+                }
+            });
+        } catch (KnowledgeSourceException e) {
+            result.completeExceptionally(e);
+            return result;
+        }
+        request.whenComplete((stored, error) -> {
+            if (error != null) {
+                Throwable failure = error instanceof java.util.concurrent.CompletionException
+                        && error.getCause() != null ? error.getCause() : error;
+                result.completeExceptionally(failure instanceof ConfluenceRestClient.Forbidden
+                        ? notVisible(localId, (ConfluenceRestClient.Forbidden) failure) : failure);
+                return;
+            }
+            try {
+                result.complete(new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
+                        mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now()));
+            } catch (RuntimeException e) {
+                result.completeExceptionally(e);
             }
         });
-        return pageResource(page, page.parentId);
+        result.whenComplete((content, error) -> {
+            if (result.isCancelled()) {
+                request.toCompletableFuture().cancel(true);
+            }
+        });
+        return result;
+    }
+
+    private static String sortedExpand(String expand) {
+        List<String> fields = new ArrayList<String>(Arrays.asList(expand.split(",")));
+        Collections.sort(fields);
+        return join(fields);
+    }
+
+    /** Medientyp ohne Parameter ({@code application/json;charset=UTF-8} → {@code application/json}). */
+    private static String mediaType(String contentType) {
+        int semicolon = contentType.indexOf(';');
+        String type = (semicolon < 0 ? contentType : contentType.substring(0, semicolon)).trim();
+        return type.isEmpty() ? "application/json" : type.toLowerCase(Locale.ROOT);
     }
 
     /** Outgoing page links of the rendered body; Confluence has no reliable list of incoming links. */
@@ -881,6 +1013,10 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         }
         if (!page.labels.isEmpty()) {
             metadata.put("confluence.labels", join(page.labels));
+        }
+        if (page.labelsIncomplete) {
+            // Nur ein Teil der Labels kam mit; Aufrufer dürfen confluence.labels nicht als vollständig vergleichen.
+            metadata.put(LABELS_COMPLETE, "false");
         }
         if (page.createdAt != null) {
             metadata.put("confluence.createdAt", page.createdAt.toString());

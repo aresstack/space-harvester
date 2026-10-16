@@ -8,8 +8,10 @@ import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -53,8 +55,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     /** Erzwingt eine feste Antwort für alle Requests (Fehlerfälle). */
     ConfluenceHttpResponse forcedResponse;
     IOException forcedFailure;
+    /** Körper der letzten Antwort auf {@code /rest/api/content/<seiten-id>}, genau wie gesendet. */
+    byte[] lastPageBody;
     /** Liefert statt des echten Folgelinks einen Link außerhalb der REST-API. */
     String nextLinkOverride;
+    /** Fehler für die nächsten Anfragen, in Reihenfolge: HTTP-Status ({@link Integer}) oder {@link IOException}. */
+    final Deque<Object> scriptedFailures = new ArrayDeque<Object>();
 
     public FakePage page(String id, String title, String spaceKey, String html) {
         FakePage page = new FakePage(id, title, spaceKey, html);
@@ -75,7 +81,6 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         return attachment;
     }
 
-    /** Startseite eines Bereichs ({@code /rest/api/space/<key>} liefert sie als {@code homepage}). */
     /** Verschiebt eine Seite als Wurzelseite in einen anderen Space; die Content-ID bleibt wie in Confluence. */
     public void move(String pageId, String newSpaceKey) {
         FakePage page = pages.get(pageId);
@@ -86,6 +91,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         page.spaceKey = newSpaceKey;
     }
 
+    /** Körper der letzten Antwort auf eine Seite, genau wie gesendet; {@code null} vor dem ersten Abruf. */
+    public byte[] lastPageBody() {
+        return lastPageBody == null ? null : lastPageBody.clone();
+    }
+
+    /** Startseite eines Bereichs ({@code /rest/api/space/<key>} liefert sie als {@code homepage}). */
     public void homepage(String spaceKey, String pageId) {
         spaceHomepages.put(spaceKey, pageId);
     }
@@ -109,6 +120,22 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public void wrappedSearchResult(String id, String excerpt) {
         searchResults.add(id);
         wrappedSearchResults.put(id, excerpt);
+    }
+
+    /** Die nächsten {@code times} Anfragen beantworten mit {@code status} (z. B. 429, 503) statt mit Daten. */
+    public FakeConfluence failNext(int status, int times) {
+        for (int i = 0; i < times; i++) {
+            scriptedFailures.add(Integer.valueOf(status));
+        }
+        return this;
+    }
+
+    /** Die nächsten {@code times} Anfragen scheitern mit einem Netzfehler (Zeitüberschreitung). */
+    public FakeConfluence failNextWithTimeout(int times) {
+        for (int i = 0; i < times; i++) {
+            scriptedFailures.add(new java.net.SocketTimeoutException("Read timed out"));
+        }
+        return this;
     }
 
     /** Kopie aller bisher gesehenen Anfrage-URIs. */
@@ -135,6 +162,14 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public ConfluenceHttpResponse get(URI uri, Map<String, String> headers, int maxBytes) throws IOException {
         requests.add(uri);
         requestHeaders.add(headers);
+        Object scripted = scriptedFailures.poll();
+        if (scripted instanceof IOException) {
+            throw (IOException) scripted;
+        }
+        if (scripted != null) {
+            return new ConfluenceHttpResponse((Integer) scripted, "application/json",
+                    ("{\"statusCode\":" + scripted + "}").getBytes(StandardCharsets.UTF_8));
+        }
         if (forcedFailure != null) {
             throw forcedFailure;
         }
@@ -188,7 +223,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         if (path.equals("/rest/api/content") && query.containsKey("spaceKey")) {
             List<FakePage> inSpace = new ArrayList<FakePage>();
             for (FakePage page : pages.values()) {
-                if (page.spaceKey.equals(query.get("spaceKey"))
+                if (page.spaceKey.equals(query.get("spaceKey")) && !restricted.contains(page.id)
                         && (!query.containsKey("title") || page.title.equals(query.get("title")))) {
                     inSpace.add(page);
                 }
@@ -243,7 +278,16 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
                 return forbidden();
             }
             if (pages.containsKey(id)) {
-                return json(pageJson(pages.get(id), query.get("expand")));
+                FakePage page = pages.get(id);
+                String expand = query.get("expand");
+                byte[] body = page.rawJson != null && expand != null && expand.contains("body.storage")
+                        ? page.rawJson.getBytes(StandardCharsets.UTF_8)
+                        : pageJson(page, expand).toString().getBytes(StandardCharsets.UTF_8);
+                if (body.length > maxBytes) {
+                    throw new ConfluenceResponseTooLargeException(maxBytes);
+                }
+                lastPageBody = body;
+                return new ConfluenceHttpResponse(200, "application/json;charset=UTF-8", body);
             }
             if (attachments.containsKey(id)) {
                 return json(attachmentJson(attachments.get(id)));
@@ -360,6 +404,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         boolean withView = expand != null && expand.contains("body.view");
         boolean withExport = expand != null && expand.contains("body.export_view");
         boolean withLabels = expand != null && expand.contains("metadata.labels");
+        boolean withStorage = expand != null && expand.contains("body.storage") && page.storage != null;
         JsonObject json = new JsonObject();
         json.addProperty("id", page.id);
         json.addProperty("type", "page");
@@ -395,8 +440,14 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             childTypes.add("page", childPage);
             json.add("childTypes", childTypes);
         }
-        if (withView || withExport) {
+        if (withView || withExport || withStorage) {
             JsonObject body = new JsonObject();
+            if (withStorage) {
+                JsonObject storage = new JsonObject();
+                storage.addProperty("value", page.storage);
+                storage.addProperty("representation", "storage");
+                body.add("storage", storage);
+            }
             if (withView) {
                 // Wie Confluence: body.view lässt asynchrone Makros (Jira) als Platzhalter stehen.
                 JsonObject view = new JsonObject();
@@ -421,6 +472,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             }
             JsonObject labelPage = new JsonObject();
             labelPage.add("results", labels);
+            labelPage.addProperty("size", page.labels.size());
+            if (page.moreLabels) {
+                JsonObject labelLinks = new JsonObject();
+                labelLinks.addProperty("next", "/rest/api/content/" + page.id + "/label?start=" + page.labels.size());
+                labelPage.add("_links", labelLinks);
+            }
             JsonObject metadata = new JsonObject();
             metadata.add("labels", labelPage);
             json.add("metadata", metadata);
@@ -514,17 +571,33 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         final List<String> children = new ArrayList<String>();
         final List<String> attachments = new ArrayList<String>();
         final List<String> labels = new ArrayList<String>();
+        /** Confluence hat weitere Labels, die nicht in der Antwort stehen ({@code _links.next}). */
+        boolean moreLabels;
         String parentId;
         int version = 3;
         String when = "2026-10-01T08:15:00.000+02:00";
         String createdDate = "2026-09-01T09:00:00.000+02:00";
         String createdBy = "autorin";
+        /** {@code body.storage}; ohne Wert fehlt es in der Antwort wie bisher. */
+        String storage;
+        /** Feste Antwort für Abrufe mit {@code body.storage}, Byte für Byte (Leerraum, Escapes, Reihenfolge). */
+        String rawJson;
 
         FakePage(String id, String title, String spaceKey, String html) {
             this.id = id;
             this.title = title;
             this.spaceKey = spaceKey;
             this.html = html;
+        }
+
+        public FakePage storage(String value) {
+            this.storage = value;
+            return this;
+        }
+
+        public FakePage rawJson(String json) {
+            this.rawJson = json;
+            return this;
         }
 
         /** Setzt eine neue Version mit Änderungszeitpunkt. */
@@ -543,6 +616,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         /** Fügt Labels hinzu. */
         public FakePage labels(String... names) {
             Collections.addAll(labels, names);
+            return this;
+        }
+
+        /** Die Labels in der Antwort sind nur die erste Seite; Confluence verweist mit {@code _links.next} weiter. */
+        public FakePage moreLabels() {
+            this.moreLabels = true;
             return this;
         }
     }

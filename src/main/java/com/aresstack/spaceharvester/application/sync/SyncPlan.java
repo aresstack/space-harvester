@@ -56,6 +56,20 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
     }
 
     /**
+     * Warum aus diesem Plan keine Generation werden kann (Inventur abgebrochen oder widersprüchlich, eine fehlende Seite
+     * ist doch im Space), oder leer, wenn sie bestätigt werden kann.
+     */
+    public Optional<String> unconfirmable() {
+        if (!inventory.confirmed()) {
+            return Optional.of("Inventur " + inventory.status() + ": " + inventory.problem());
+        }
+        return removals.values().stream()
+                .filter(removal -> removal.verdict() == RemovalCheck.Verdict.STILL_PRESENT)
+                .map(removal -> "Seite " + removal.pageId() + " fehlt in der Inventur, ist laut Quelle aber im Space")
+                .findFirst();
+    }
+
+    /**
      * Die nächste Generation, nachdem die Änderungen angewendet wurden.
      *
      * <p>Seiten aus der Inventur übernehmen ihren neuen Stand. Ist ihr Abgleich fehlgeschlagen, behalten sie den
@@ -70,14 +84,9 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
      * @throws IllegalArgumentException   für eine fehlgeschlagene Seite, die der Plan nicht kennt
      */
     public SyncBaseline nextBaseline(Instant confirmedAt, Set<String> failedPageIds) {
-        if (!inventory.confirmed()) {
-            throw new UnconfirmableSyncException("Inventur " + inventory.status() + ": " + inventory.problem());
-        }
-        for (RemovalCheck.Result removal : removals.values()) {
-            if (removal.verdict() == RemovalCheck.Verdict.STILL_PRESENT) {
-                throw new UnconfirmableSyncException("Seite " + removal.pageId()
-                        + " fehlt in der Inventur, ist laut Quelle aber im Space");
-            }
+        Optional<String> unconfirmable = unconfirmable();
+        if (unconfirmable.isPresent()) {
+            throw new UnconfirmableSyncException(unconfirmable.get());
         }
         Set<String> failed = new HashSet<>(failedPageIds);
         SortedMap<String, BaselineEntry> pages = new TreeMap<>();
