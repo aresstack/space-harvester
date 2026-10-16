@@ -57,11 +57,14 @@ Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester
 - `api` – REST-Controller, Antwortmodelle, OpenAPI-Konfiguration
 - `application` – Anwendungsfälle, frameworkneutral (kein Spring)
 - `config` – Spring-Konfiguration, die Anwendungsfälle verdrahtet
-- `source` – Quellenadapter hinter einer quellenunabhängigen SPI (folgt mit #2)
+- `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen
 - `output` – Exportformate und Artefakte (folgt mit #11)
 
 `source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
 wird nicht übernommen.
+
+Der Confluence-Code stammt unverändert aus dem Enterprise AI Client und liegt als Kopie im Gradle-Subprojekt
+[`enterprise-ai-sources`](enterprise-ai-sources/UPSTREAM.md); dort stehen Herkunft, Regeln und der Abgleich.
 
 Versionen stehen zentral in `gradle/libs.versions.toml` (Spring Boot 4.1.1, springdoc-openapi 3.1.1);
 die Spring-Starter erhalten ihre Versionen aus der Spring-Boot-BOM. Das Jar wird reproduzierbar gebaut

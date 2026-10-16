@@ -6,9 +6,18 @@ springBoot = "4.1.1"
 springDependencyManagement = "1.1.7"
 springdoc = "3.1.1"
 archunit = "1.4.1"
+# enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
+gson = "2.10.1"
+jsoup = "1.17.2"
+jgraphx = "4.2.2"
+junit4 = "4.13.2"
 
 [libraries]
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
+junit4 = { module = "junit:junit", version.ref = "junit4" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

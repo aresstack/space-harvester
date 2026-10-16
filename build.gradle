@@ -19,9 +19,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation libs.springdoc.openapi.webmvc.ui
+    // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
+    implementation project(':enterprise-ai-sources')
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5
+    testImplementation testFixtures(project(':enterprise-ai-sources'))
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 

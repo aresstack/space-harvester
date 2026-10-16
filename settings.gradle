@@ -13,3 +13,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = 'space-harvester'
+
+// Unveränderte Kopie der Confluence-Quelle aus aresstack/enterprise-ai-client, siehe enterprise-ai-sources/UPSTREAM.md.
+include 'enterprise-ai-sources'

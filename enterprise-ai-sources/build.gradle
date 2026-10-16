@@ -1,0 +1,42 @@
+// Unveränderte Kopie der Confluence-Quelle und ihrer Basismodule aus aresstack/enterprise-ai-client
+// (astu-Auszug, adyton, network, source-api, source-confluence). Herkunft und Abgleich: UPSTREAM.md.
+// Der Code ist Java-8-kompatibel; er wird hier mit Java 21 gebaut, seine JUnit-4-Tests laufen mit.
+plugins {
+    id 'java-library'
+    id 'java-test-fixtures'
+}
+
+description = 'Confluence-Quelle und Knowledge-Source-Port aus enterprise-ai-client (Kopie).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    implementation libs.gson
+    implementation libs.jsoup
+    // draw.io-Diagramme als SVG (DrawioDiagramRenderer)
+    implementation libs.jgraphx
+
+    // FakeConfluence/FakeConfluenceServer und KnowledgeSourceContractTest (JUnit 4)
+    testFixturesImplementation libs.gson
+    testFixturesApi libs.junit4
+
+    testImplementation libs.junit4
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnit()
+    systemProperty 'java.awt.headless', 'true'
+}
