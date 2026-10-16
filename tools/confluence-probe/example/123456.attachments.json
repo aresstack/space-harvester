@@ -1,0 +1,1 @@
+{"results":[{"id":"att1","type":"attachment","title":"bild.png","version":{"number":1}},{"id":"att2","type":"attachment","title":"protokoll.xlsx","version":{"number":2}}],"start":0,"limit":50,"size":2,"_links":{"self":"https://wiki.example.org/confluence/rest/api/content/123456/child/attachment"}}
