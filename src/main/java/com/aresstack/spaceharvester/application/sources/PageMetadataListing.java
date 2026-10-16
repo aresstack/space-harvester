@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * Ein Stapel Seitenmetadaten einer Partition samt {@code metadataHash} je Seite, live aus der Quelle gelesen.
+ * Ein Stapel Seitenmetadaten einer Partition samt {@code metadataHash} und {@code attributesHash} je Seite, live aus der Quelle gelesen.
  *
  * @param sourceId     Quellen-ID
  * @param partitionKey Schlüssel der Partition (Space-Key)
@@ -23,7 +23,7 @@ public record PageMetadataListing(String sourceId, String partitionKey, List<Ent
         return nextCursor == null;
     }
 
-    /** Eine Seite mit ihrem Metadaten-Hash ({@link MetadataHash}). */
-    public record Entry(PageMetadata page, String metadataHash) {
+    /** Eine Seite mit ihren Fingerprints ({@link MetadataHash}, {@link AttributesHash}). */
+    public record Entry(PageMetadata page, String metadataHash, String attributesHash) {
     }
 }

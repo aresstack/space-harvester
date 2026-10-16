@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.MetadataHash;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -66,7 +67,8 @@ public class SourcesController {
                     + "außerhalb des Baums der Startseite und über mehrere Wurzelseiten, ohne Gesamtgrenze: "
                     + "nextCursor an den nächsten Aufruf übergeben, bis er null ist (complete=true). "
                     + "metadataHash ist ein Fingerprint der Verwaltungsmetadaten nach metadataHashSchema, "
-                    + "kein Inhalts-Hash.")
+                    + "attributesHash einer der weiteren Attribute (z. B. Labels) nach attributesHashSchema; "
+                    + "beide sind keine Inhalts-Hashes.")
     @ApiResponse(responseCode = "200", description = "Ein Stapel Seitenmetadaten")
     @ApiResponse(responseCode = "400", description = "Ungültiges limit (invalid-request) oder ein Cursor, der "
             + "nicht zu diesem Space gehört (source-unsupported)",
@@ -127,16 +129,18 @@ public class SourcesController {
      * @param origin               {@code live}: direkt aus der Quelle gelesen, nicht aus einem Cache
      * @param retrievedAt          Zeitpunkt der Abfrage bei der Quelle
      * @param metadataHashSchema   Schema und Version von {@code metadataHash}
+     * @param attributesHashSchema Schema und Version von {@code attributesHash}
      * @param nextCursor           Cursor für den nächsten Stapel oder {@code null}, wenn vollständig
      * @param complete             {@code true}, wenn dies der letzte Stapel ist
      */
     public record PageMetadataResponse(String sourceId, String spaceKey, String origin, Instant retrievedAt,
-                                       String metadataHashSchema, List<PageMetadataEntry> pages,
+                                       String metadataHashSchema, String attributesHashSchema,
+                                       List<PageMetadataEntry> pages,
                                        @Schema(nullable = true) String nextCursor, boolean complete) {
 
         static PageMetadataResponse of(PageMetadataListing listing) {
             return new PageMetadataResponse(listing.sourceId(), listing.partitionKey(), "live",
-                    listing.retrievedAt(), MetadataHash.SCHEMA,
+                    listing.retrievedAt(), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
                     listing.entries().stream().map(PageMetadataEntry::of).toList(), listing.nextCursor(),
                     listing.complete());
         }
@@ -152,20 +156,21 @@ public class SourcesController {
      * @param modifiedAt   letzte Änderung oder {@code null}, wenn unbekannt
      * @param url          Adresse in der Quelle oder {@code null}, wenn unbekannt
      * @param attributes   weitere Metadaten der Quelle, z. B. {@code confluence.labels}
-     * @param metadataHash {@code sha256:<hex>} nach {@code metadataHashSchema}
+     * @param metadataHash   {@code sha256:<hex>} nach {@code metadataHashSchema}
+     * @param attributesHash {@code sha256:<hex>} über {@code attributes} nach {@code attributesHashSchema}
      */
     public record PageMetadataEntry(String pageId, String resourceId, String title, String spaceKey,
                                     @Schema(nullable = true) String parentPageId,
                                     @Schema(nullable = true) String version,
                                     @Schema(nullable = true) Instant modifiedAt,
                                     @Schema(nullable = true) URI url, Map<String, String> attributes,
-                                    String metadataHash) {
+                                    String metadataHash, String attributesHash) {
 
         static PageMetadataEntry of(PageMetadataListing.Entry entry) {
             PageMetadata page = entry.page();
             return new PageMetadataEntry(page.pageId(), page.resourceId(), page.title(), page.partitionKey(),
                     page.parentPageId(), page.version(), page.modifiedAt(), page.url(), page.attributes(),
-                    entry.metadataHash());
+                    entry.metadataHash(), entry.attributesHash());
         }
     }
 }

@@ -51,7 +51,8 @@ public class SourceQueries {
         PageMetadataBatch batch = source.pageMetadata(partitionKey,
                 cursor == null || cursor.isEmpty() ? null : cursor, limit);
         List<PageMetadataListing.Entry> entries = batch.pages().stream()
-                .map(page -> new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page)))
+                .map(page -> new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
+                        AttributesHash.of(source.id(), page)))
                 .toList();
         return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant());
     }

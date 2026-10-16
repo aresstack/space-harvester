@@ -58,7 +58,7 @@ public final class MetadataHash {
         return json.append('}').toString();
     }
 
-    private static void string(StringBuilder json, String value) {
+    static void string(StringBuilder json, String value) {
         json.append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
@@ -73,7 +73,7 @@ public final class MetadataHash {
         json.append('"');
     }
 
-    private static byte[] sha256(String canonical) {
+    static byte[] sha256(String canonical) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
         } catch (NoSuchAlgorithmException e) {
