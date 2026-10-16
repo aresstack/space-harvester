@@ -182,6 +182,8 @@ Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI besch
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
+| `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status) |
+| `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -250,8 +252,20 @@ Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresst
 abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
 wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
 
+**Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
+antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
+`completed` nur mit neu bestätigter Generation; sonst `failed` mit `error.code` `SYNC_INCOMPLETE` oder
+`SYNC_CONFLICT`, oder `cancelled`. `summary` nennt das Delta (Zähler je Änderungsart, `failed`, `generation`,
+`spaceFingerprint`, `notConfirmed`; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
+auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
+(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
+`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
+ein noch laufender Abgleich wird nicht doppelt gestartet.
+
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
-([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
+([#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
 ## Aufbau
