@@ -169,9 +169,20 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 
-Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
-[ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+Standardmäßig nutzt der Adapter den synchronen `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
+Daneben gibt es den asynchronen `WebClientConfluenceTransport` (Spring WebClient auf Reactor Netty, #47) mit derselben
+Route je Ziel-URL, demselben Client-Zertifikat und denselben Grenzen. Mit
+
+```yaml
+space-harvester:
+  network:
+    async-transport: web-client   # Standard: disabled
+```
+
+laden native Seiten-Snapshots zusätzlich nicht blockierend darüber (`HarvestSource.storedPageAsync`); alle anderen
+Abrufe bleiben synchron. `disabled` ist der Rückfallpfad. Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+`--fetch=async` ruft jede Ziel-URL der Diagnose zusätzlich ohne Anmeldung über diesen Transport ab und zeigt nur
+Status und Größe.
 
 ## Seiten-Cache (Lucene)
 
@@ -183,12 +194,13 @@ space-harvester:
   cache:
     directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
     max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+    search-timeout: 5s                          # Standard; längere Suchen (#28) brechen mit 503 ab
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
   Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
   der Synchronisierung.
-  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+  Feldschema und Version (`page-cache/v3`): `PageCacheSchema`; Entscheidung und Aufbau: [ADR 0003](docs/adr/0003-lucene-cache.md). Zugangsdaten, Header oder Cookies stehen nie im Index.
 - **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
   `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
@@ -333,8 +345,8 @@ ein noch laufender Abgleich wird nicht doppelt gestartet.
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
 Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
 `running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
-kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile),
-`tree.json` (ID-Baum mit `roots`) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
+kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile, im Kopf `pageId` und `url`),
+`tree.json` (Baum aus Verweisen: `roots`, je Knoten `id` und `url` der Seite) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
 `…/{exportId}/artifact/{datei}`; die Rohdaten je Seite liegen unter `raw/` und werden Byte für Byte ausgeliefert.
 `artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,

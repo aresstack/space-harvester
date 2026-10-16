@@ -128,10 +128,10 @@ public class ConfluenceStoredContentTest {
     }
 
     @Test
-    public void unknownRestrictedAndForeignIdsAreDistinguished() throws Exception {
+    public void restrictedPagesLookLikeUnknownOnesAndForeignIdsAreUnsupported() throws Exception {
         confluence.restricted.add("101");
         assertKind(Kind.NOT_FOUND, "999");
-        assertKind(Kind.ACCESS_DENIED, "101");
+        assertKind(Kind.NOT_FOUND, "101");
         assertKind(Kind.UNSUPPORTED, "att123");
     }
 

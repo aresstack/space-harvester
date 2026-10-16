@@ -29,6 +29,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -53,7 +54,7 @@ import tools.jackson.databind.json.JsonMapper;
  *       {@code raw} (Datei, Größe, {@code sha256}, Revision und Abrufzeit der Payload) und {@code content} (die native
  *       JSON-Antwort inhaltlich gleich, nicht bytegleich)</li>
  *   <li>{@code raw/}: die Payload jeder Seite Byte für Byte, Dateiname aus der Seiten-ID</li>
- *   <li>{@code tree.json}: Hierarchie nur aus IDs ({@code roots})</li>
+ *   <li>{@code tree.json}: Hierarchie nur aus Verweisen ({@code roots}, je Knoten {@code id} und {@code url})</li>
  *   <li>{@code manifest.json}: Vollständigkeit, Generation, Zähler, Fehler, Warnungen, Dateien mit {@code sha256}</li>
  * </ul>
  *
@@ -203,6 +204,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final Path target;
         private final HashingOutputStream pages;
         private final List<String> warnings = new ArrayList<>();
+        /** Adresse je geschriebener Seite für die Verweise im Baum; nur Seiten mit bekannter Adresse. */
+        private final Map<String, String> urls = new HashMap<>();
         private boolean published;
 
         FileSession(String exportId, ExportScope scope, Path work, Path target) throws IOException {
@@ -222,6 +225,9 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             NativePayload payload = snapshot.payload();
             byte[] bytes = payload.bytes();
             String rawName = RAW + "/" + rawFileName(pageId, payload.mediaType());
+            if (header.metadata().url() != null) {
+                urls.put(pageId, header.metadata().url().toString());
+            }
             try {
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
                 Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
@@ -269,7 +275,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 pages.close();
                 List<ExportArtifact.File> files = new ArrayList<>();
                 files.add(new ExportArtifact.File(PAGES, pages.count, pages.sha256()));
-                files.add(writeJson(TREE, generator -> writeTree(generator, tree)));
+                files.add(writeJson(TREE, generator -> writeTree(generator, tree, urls)));
                 List<String> allWarnings = new ArrayList<>(summary.warnings());
                 allWarnings.addAll(warnings);
                 writeJson(MANIFEST, generator -> writeManifest(generator, summary, allWarnings, files));
@@ -318,6 +324,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         line.writeStringProperty("pageId", header.key().pageId());
         line.writeStringProperty("spaceKey", metadata.partitionKey());
         line.writeStringProperty("title", metadata.title());
+        line.writeStringProperty("url", metadata.url() == null ? null : metadata.url().toString());
         line.writeStringProperty("parentPageId", metadata.parentPageId());
         line.writeStringProperty("version", metadata.version());
         line.writeStringProperty("modifiedAt", text(metadata.modifiedAt()));
@@ -333,20 +340,21 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         line.writeEndObject();
     }
 
-    private static void writeTree(JsonGenerator generator, PageTree tree) {
+    private static void writeTree(JsonGenerator generator, PageTree tree, Map<String, String> urls) {
         generator.writeStartObject();
         generator.writeName("roots");
-        writeNodes(generator, tree.roots());
+        writeNodes(generator, tree.roots(), urls);
         generator.writeEndObject();
     }
 
-    private static void writeNodes(JsonGenerator generator, List<PageTree.Node> nodes) {
+    private static void writeNodes(JsonGenerator generator, List<PageTree.Node> nodes, Map<String, String> urls) {
         generator.writeStartArray();
         for (PageTree.Node node : nodes) {
             generator.writeStartObject();
             generator.writeStringProperty("id", node.pageId());
+            generator.writeStringProperty("url", urls.get(node.pageId()));
             generator.writeName("children");
-            writeNodes(generator, node.children());
+            writeNodes(generator, node.children(), urls);
             generator.writeEndObject();
         }
         generator.writeEndArray();

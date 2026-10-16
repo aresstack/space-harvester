@@ -5,7 +5,8 @@ Unveränderte Kopie der Confluence-Quelle aus
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`9a7ef9d0c0fae8bee60348d1a9958ae858a09c3e` (`main`, Merge von enterprise-ai-client#167 mit `PartitionListingSource`).
+`74004987fa8c4e54ae7f0ea19111425b35f92160`, der Merge von enterprise-ai-client#173 (asynchrone Transport-Naht und
+asynchrone Seiten-Snapshots, #47) auf `main`.
 
 ## Inhalt
 

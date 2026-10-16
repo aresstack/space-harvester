@@ -15,10 +15,13 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.BufferedReader;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -288,5 +291,32 @@ class FileSystemExportArtifactWriterTest {
         assertThat(writer.find("done")).isEmpty();
         assertThat(root.resolve("done")).doesNotExist();
         open.close();
+    }
+    @Test
+    void pagesAndTreeReferToEachPageByIdAndUrl() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        try (ExportArtifactWriter.Session session = writer.begin("urls", SCOPE)) {
+            write(session, withUrl("100", null, "https://wiki.example.org/pages/viewpage.action?pageId=100"));
+            write(session, withUrl("101", "100", "https://wiki.example.org/pages/viewpage.action?pageId=101"));
+            write(session, snapshot("102", "100", PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of(new PageTree.Node("101", List.of()),
+                    new PageTree.Node("102", List.of())))), summary("urls", 3, List.of(), true));
+        }
+
+        List<String> lines = Files.readAllLines(root.resolve("urls/pages.ndjson"));
+        assertThat(json.readTree(lines.get(1)).path("header").path("url").asString())
+                .isEqualTo("https://wiki.example.org/pages/viewpage.action?pageId=101");
+        assertThat(json.readTree(lines.get(2)).path("header").path("url").isNull()).isTrue();
+        JsonNode root100 = json.readTree(root.resolve("urls/tree.json").toFile()).path("roots").get(0);
+        assertThat(root100.path("url").asString()).isEqualTo("https://wiki.example.org/pages/viewpage.action?pageId=100");
+        assertThat(root100.path("children").get(0).path("url").asString()).endsWith("pageId=101");
+        assertThat(root100.path("children").get(1).path("url").isNull()).isTrue();
+    }
+
+    private static PageSnapshot withUrl(String pageId, String parentPageId, String url) {
+        PageMetadata metadata = new PageMetadata(pageId, "confluence:wiki.example.org/page/" + pageId,
+                "Seite " + pageId, "DEV", parentPageId, "3", NOW, URI.create(url), PageMetadata.sorted(java.util.Map.of()));
+        return PageSnapshot.of("confluence", metadata, new NativePayload(("{\"id\":\"" + pageId + "\"}")
+                .getBytes(StandardCharsets.UTF_8), "application/json", "confluence-rest-content+json"), NOW);
     }
 }

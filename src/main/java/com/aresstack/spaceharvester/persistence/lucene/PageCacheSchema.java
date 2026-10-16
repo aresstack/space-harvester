@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.persistence.lucene;
 
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -11,6 +12,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
@@ -20,6 +22,7 @@ import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KeywordField;
 import org.apache.lucene.document.LongField;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
@@ -36,8 +39,10 @@ import org.apache.lucene.util.BytesRef;
  *     <ul>
  *       <li>die <em>aktuellen Kopfdaten</em> ({@code PageHeader}) als Abfragefelder: {@code sourceId}, {@code pageId},
  *           {@code spaceKey}, {@code parentId}, {@code version}, {@code metadataHash}, {@code attributesHash} exakt
- *           mit DocValues, {@code title} analysiert für die spätere Titelsuche (#28), {@code modifiedAtMillis} als
- *           Zahl;</li>
+ *           mit DocValues, {@code title} analysiert für eine spätere Volltextsuche, {@code modifiedAtNanos} als
+ *           Zahl (Bereich und Sortierung); für die Titelsuche (#28) die Wörter des Titels exakt in
+ *           {@value #TITLE_WORD} und die Sortierschlüssel {@value #SORT_TITLE} und {@value #SORT_PAGE_ID} in
+ *           UTF-16-Reihenfolge ({@link #sortKey});</li>
  *       <li>der <em>Snapshot</em>: seine Kopfdaten nur gespeichert (Präfix {@code snapshot.}), {@code rawSha256}
  *           exakt, die Payload als binäres {@code StoredField} {@value #RAW_JSON} mit den Originalbytes. Fehlt, solange
  *           nur Kopfdaten bekannt sind.</li>
@@ -46,6 +51,8 @@ import org.apache.lucene.util.BytesRef;
  *   <li>{@code revision} – je Seite und Revision ein Verlaufseintrag ohne Payload.</li>
  *   <li>{@code space} – je {@code sourceId + spaceKey} die bestätigte Generation ({@code SyncBaseline} ohne Seiten):
  *       Nummer, Zeitpunkt, veraltete Seiten.</li>
+ *   <li>{@code source} – je {@code sourceId} die Suchgeneration: ein Zähler, den jeder Commit erhöht, der Seiten oder
+ *       Generationen dieser Quelle ändert, mit dem Commit-Zeitpunkt.</li>
  *   <li>{@code baseline} – je Seite einer bestätigten Generation ihr {@code BaselineEntry}, nur gespeichert und über
  *       {@value #BASELINE_OF} dem Space zugeordnet. Wird mit jeder Generation vollständig ersetzt.</li>
  * </ul>
@@ -59,7 +66,7 @@ public final class PageCacheSchema {
     /** Schlüssel der Schemaversion in den Commit-Daten. */
     public static final String SCHEMA_KEY = "space-harvester.schema";
     /** Aktuelle Schemaversion. */
-    public static final String VERSION = "page-cache/v2";
+    public static final String VERSION = "page-cache/v3";
 
     static final String TYPE = "type";
     static final String ID = "id";
@@ -75,7 +82,10 @@ public final class PageCacheSchema {
     static final String TITLE = "title";
     static final String VERSION_FIELD = "version";
     static final String MODIFIED_AT = "modifiedAt";
-    static final String MODIFIED_AT_MILLIS = "modifiedAtMillis";
+    static final String MODIFIED_AT_NANOS = "modifiedAtNanos";
+    static final String TITLE_WORD = "titleWord";
+    static final String SORT_TITLE = "sort.title";
+    static final String SORT_PAGE_ID = "sort.pageId";
     static final String URL = "url";
     static final String ATTRIBUTE_KEY = "attributeKey";
     static final String ATTRIBUTE_VALUE = "attributeValue";
@@ -92,6 +102,7 @@ public final class PageCacheSchema {
     static final String REV = "revision.";
     static final String SPACE_DOC = "space.";
     static final String BASELINE_DOC = "baseline.";
+    static final String SOURCE_DOC = "source.";
     static final String RAW_SHA256 = "rawSha256";
     static final String RAW_JSON = "rawJson";
     static final String PAYLOAD_BYTES = "payloadBytes";
@@ -109,6 +120,7 @@ public final class PageCacheSchema {
     static final String REVISION = "revision";
     static final String SPACE = "space";
     static final String BASELINE = "baseline";
+    static final String SOURCE = "source";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
     static final Set<String> HEADER_FIELDS = Set.of(SOURCE_ID, PAGE_ID, SPACE_KEY, PARENT_ID, RESOURCE_ID, TITLE,
@@ -138,6 +150,10 @@ public final class PageCacheSchema {
         return new Term(ID, id(SPACE, sourceId, spaceKey));
     }
 
+    static Term sourceTerm(String sourceId) {
+        return new Term(ID, id(SOURCE, sourceId));
+    }
+
     /** Alle Seiteneinträge der bestätigten Generation eines Space. */
     static Term baselineOf(String sourceId, String spaceKey) {
         return new Term(BASELINE_OF, id(SPACE, sourceId, spaceKey));
@@ -165,8 +181,13 @@ public final class PageCacheSchema {
             doc.add(new KeywordField(VERSION_FIELD, current.version(), Field.Store.YES));
         }
         if (current.modifiedAt() != null) {
-            doc.add(new LongField(MODIFIED_AT_MILLIS, current.modifiedAt().toEpochMilli(), Field.Store.NO));
+            doc.add(new LongField(MODIFIED_AT_NANOS, nanos(current.modifiedAt()), Field.Store.NO));
         }
+        for (String word : new TreeSet<>(PageSearchQuery.words(current.title()))) {
+            doc.add(new StringField(TITLE_WORD, word, Field.Store.NO));
+        }
+        doc.add(new SortedDocValuesField(SORT_TITLE, sortKey(current.title().toLowerCase(Locale.ROOT))));
+        doc.add(new SortedDocValuesField(SORT_PAGE_ID, sortKey(key.pageId())));
         storeMetadataDetails(doc, "", current);
         doc.add(new KeywordField(METADATA_HASH, header.metadataHash(), Field.Store.YES));
         doc.add(new KeywordField(ATTRIBUTES_HASH, header.attributesHash(), Field.Store.YES));
@@ -262,6 +283,47 @@ public final class PageCacheSchema {
         doc.add(new StoredField(BASELINE_DOC + METADATA_HASH, entry.metadataHash()));
         doc.add(new StoredField(BASELINE_DOC + ATTRIBUTES_HASH, entry.attributesHash()));
         return doc;
+    }
+
+    /** Suchgeneration einer Quelle; {@code generation} zählt ab 1. */
+    static Document source(String sourceId, long generation, Instant committedAt) {
+        Document doc = new Document();
+        doc.add(new StringField(TYPE, SOURCE, Field.Store.NO));
+        doc.add(new StringField(ID, sourceTerm(sourceId).text(), Field.Store.NO));
+        doc.add(new StoredField(SOURCE_DOC + GENERATION, generation));
+        doc.add(new StoredField(SOURCE_DOC + CONFIRMED_AT, committedAt.toString()));
+        return doc;
+    }
+
+    static long sourceGeneration(Document source) {
+        return number(source, SOURCE_DOC + GENERATION);
+    }
+
+    static Instant sourceCommittedAt(Document source) {
+        return instant(source.get(SOURCE_DOC + CONFIRMED_AT));
+    }
+
+    /**
+     * Sortierschlüssel, dessen Byte-Reihenfolge der von {@link String#compareTo} entspricht: die UTF-16-Codeeinheiten
+     * als Big-Endian-Bytes. (UTF-8 sortiert Zeichen außerhalb der BMP anders.)
+     */
+    static BytesRef sortKey(String text) {
+        byte[] bytes = new byte[text.length() * 2];
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            bytes[2 * i] = (byte) (c >>> 8);
+            bytes[2 * i + 1] = (byte) c;
+        }
+        return new BytesRef(bytes);
+    }
+
+    /** Nanosekunden seit der Epoche, außerhalb von etwa 1677 bis 2262 auf den Rand begrenzt. */
+    static long nanos(Instant instant) {
+        try {
+            return Math.addExact(Math.multiplyExact(instant.getEpochSecond(), 1_000_000_000L), instant.getNano());
+        } catch (ArithmeticException e) {
+            return instant.getEpochSecond() < 0 ? Long.MIN_VALUE + 1 : Long.MAX_VALUE;
+        }
     }
 
     static String revisionOf(PageSnapshot snapshot) {
