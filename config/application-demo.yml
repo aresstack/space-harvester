@@ -1,0 +1,19 @@
+# Demo-Konfiguration für docs/E2E.md: eine Quelle gegen die Fake-Confluence aus ./gradlew demoConfluence
+# (http://127.0.0.1:8090, nur Testdaten) und ein technischer Client mit dem öffentlich dokumentierten Token
+# "demo-token-nur-lokal". Nie gegen eine echte Confluence oder mit echten Zugangsdaten verwenden.
+space-harvester:
+  sources:
+    - id: demo
+      type: confluence
+      title: Demo-Confluence
+      base-url: ${SPACE_HARVESTER_DEMO_CONFLUENCE:http://127.0.0.1:8090/wiki}
+      auth:
+        type: none
+  security:
+    clients:
+      - id: demo-client
+        token-sha256: sha256:ef61e92ef46c00b80f3861ff40c4ee290b50e74efac918b443375def9dba79c2
+        grants:
+          - source: demo
+            spaces: ["DEMO"]
+            access: [metadata, content, export]

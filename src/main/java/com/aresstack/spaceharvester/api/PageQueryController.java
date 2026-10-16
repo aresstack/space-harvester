@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -37,7 +39,12 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.ErrorResponseException;
 import org.springframework.web.context.request.WebRequest;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Cachegestützte Abfragen (#27): flache Seitenliste, ID-Baum und native Einzelseite. Liest nur aus dem Cache, nie
@@ -56,9 +63,11 @@ public class PageQueryController {
     static final String NATIVE_FORMAT = "X-Native-Format";
 
     private final PageQueries queries;
+    private final ObjectMapper json;
 
-    public PageQueryController(PageQueries queries) {
+    public PageQueryController(PageQueries queries, ObjectMapper json) {
         this.queries = queries;
+        this.json = json;
     }
 
     @GetMapping("/{sourceId}/spaces/{spaceKey}/pages")
@@ -146,13 +155,21 @@ public class PageQueryController {
     }
 
     @GetMapping("/{sourceId}/pages/{pageId}")
-    @Operation(summary = "Native Payload einer Seite aus dem Cache",
-            description = "Die Antwort der Quelle Byte für Byte, ohne Harvester-Metadaten im Body. Cache-Stand und "
-                    + "Revision stehen in Headern; ETag ist rawSha256 der Payload, If-None-Match ergibt 304. "
+    @Operation(summary = "Eine Seite aus dem Cache: native Payload oder erweiterter Container",
+            description = "view=native (Standard): die Antwort der Quelle Byte für Byte, ohne Harvester-Metadaten im "
+                    + "Body. Cache-Stand und Revision stehen in Headern; ETag ist rawSha256 der Payload, "
+                    + "If-None-Match ergibt 304. view=extended: JSON-Container mit data (die Payload als JSON, "
+                    + "semantisch gleich, aber nicht bytegenau), metadata (aktuelle Kopfdaten, Hashes, Herkunft der "
+                    + "Payload) und enrichments (folgt mit #29, bis dahin leer); Metadaten werden nie in data "
+                    + "geschrieben. Beide Ansichten verlangen die content-Freigabe. "
                     + "Kanonische Route ohne Space-Key: eine verschobene Seite behält ihre pageId. "
                     + "refresh=true verlangt eine Prüfung gegen die Quelle und liefert nie stattdessen den "
                     + "Cache-Stand; solange diese Prüfung nicht angebunden ist, antwortet die Route darauf mit 501.")
-    @ApiResponse(responseCode = "200", description = "Native Payload der Seite",
+    @ApiResponse(responseCode = "200", description = "view=native: native Payload der Seite (Medientyp der Quelle); "
+            + "view=extended: ExtendedPageResponse",
+            content = {@Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                    schema = @Schema(oneOf = {ExtendedPageResponse.class},
+                            description = "view=extended; bei view=native die unveränderte Payload"))},
             headers = {
                     @Header(name = "ETag", description = "\"sha256:<hex>\" über die Payload-Bytes"),
                     @Header(name = CACHE_GENERATION, description = "Cache-Generation des Space"),
@@ -163,8 +180,8 @@ public class PageQueryController {
                     @Header(name = PAGE_REVISION, description = "Revision der Payload, falls bekannt; aktuelle "
                             + "Kopfdaten können neuer sein"),
                     @Header(name = NATIVE_FORMAT, description = "Format und Abrufform der Payload")})
-    @ApiResponse(responseCode = "304", description = "Payload unverändert gegenüber If-None-Match")
-    @ApiResponse(responseCode = "400", description = "Nicht unterstützte view (invalid-request)",
+    @ApiResponse(responseCode = "304", description = "view=native: Payload unverändert gegenüber If-None-Match")
+    @ApiResponse(responseCode = "400", description = "Unbekannte view (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle oder keine Quelle mit dieser ID (access-denied)",
@@ -174,13 +191,17 @@ public class PageQueryController {
             + "Cache bzw. ihr Space ohne content-Freigabe, nicht unterscheidbar (cache-miss)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "422", description = "view=extended, aber die gespeicherte Payload ist kein JSON "
+            + "(payload-not-json); view=native bleibt möglich",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "501", description = "refresh=true, aber keine Prüfung gegen die Quelle angebunden "
             + "(refresh-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "503", description = "Cache nicht eingerichtet oder nicht lesbar (cache-unavailable)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    public ResponseEntity<byte[]> page(
+    public ResponseEntity<?> page(
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
@@ -188,14 +209,20 @@ public class PageQueryController {
             @PathVariable String pageId,
             @Parameter(description = "true: vor der Auslieferung gegen die Quelle prüfen; nie stiller Rückfall auf "
                     + "den Cache") @RequestParam(defaultValue = "false") boolean refresh,
-            @Parameter(description = "Ansicht; derzeit nur native. Der Container mit data, metadata und "
-                    + "enrichments folgt.", schema = @Schema(allowableValues = {"native"}))
+            @Parameter(description = "native: Payload Byte für Byte; extended: Container mit data, metadata und "
+                    + "enrichments", schema = @Schema(allowableValues = {"native", "extended"}))
             @RequestParam(defaultValue = "native") String view,
             WebRequest request) {
-        if (!"native".equals(view)) {
-            throw new InvalidQueryException("view=" + view + " wird noch nicht unterstützt");
+        if (!"native".equals(view) && !"extended".equals(view)) {
+            throw new InvalidQueryException("view kennt nur native und extended");
         }
         CachedPage page = queries.page(caller, sourceId, pageId, refresh);
+        if ("extended".equals(view)) {
+            return ResponseEntity.ok()
+                    .cacheControl(CacheControl.noCache().cachePrivate())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(ExtendedPageResponse.of(sourceId, page, data(page.snapshot().payload())));
+        }
         PageSnapshot snapshot = page.snapshot();
         NativePayload payload = snapshot.payload();
         String etag = "\"" + payload.rawSha256() + "\"";
@@ -220,6 +247,34 @@ public class PageQueryController {
             response.header(PAGE_REVISION, snapshot.revision());
         }
         return response.body(payload.bytes());
+    }
+
+    /**
+     * Die Payload als JSON-Baum. Dezimalzahlen bleiben {@link java.math.BigDecimal}, damit keine Stellen verloren
+     * gehen; bytegenau ist nur {@code view=native}.
+     */
+    private JsonNode data(NativePayload payload) {
+        if (isJson(payload.mediaType())) {
+            try {
+                return json.reader().with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).readTree(payload.bytes());
+            } catch (JacksonException e) {
+                // Die Ursache nennt Ausschnitte der Payload; sie gehört weder in die Antwort noch ins Log.
+            }
+        }
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT,
+                "Die gespeicherte Payload ist kein JSON; nur view=native ist möglich.");
+        problem.setType(URI.create("https://github.com/aresstack/space-harvester/problems/payload-not-json"));
+        problem.setTitle("Payload ist kein JSON");
+        throw new ErrorResponseException(HttpStatus.UNPROCESSABLE_CONTENT, problem, null);
+    }
+
+    private static boolean isJson(String mediaType) {
+        try {
+            MediaType type = MediaType.parseMediaType(mediaType);
+            return type.isCompatibleWith(MediaType.APPLICATION_JSON) || type.getSubtype().endsWith("+json");
+        } catch (InvalidMediaTypeException e) {
+            return false;
+        }
     }
 
     private static String state(CacheGeneration generation) {
@@ -295,6 +350,47 @@ public class PageQueryController {
             return new PageEntry(page.pageId(), page.resourceId(), page.title(), page.partitionKey(),
                     page.parentPageId(), page.version(), page.modifiedAt(), page.url(), page.attributes(),
                     listed.header().metadataHash(), listed.header().attributesHash(), listed.rawSha256());
+        }
+    }
+
+    /**
+     * Erweiterter Container einer Seite ({@code view=extended}). Native Daten und Harvester-Angaben bleiben getrennt.
+     *
+     * @param origin      {@code cache}: aus dem Cache des Harvesters, nicht live aus der Quelle
+     * @param data        die gespeicherte Payload als JSON, unverändert in der Struktur; bytegenau nur über
+     *                    {@code view=native}
+     * @param metadata    Kopfdaten und Herkunft der Payload
+     * @param enrichments Anreicherungen (#29); bis dahin immer leer
+     */
+    public record ExtendedPageResponse(String sourceId, String origin, CacheResponse cache,
+                                       @Schema(type = "object", description = "Native Antwort der Quelle als JSON")
+                                       JsonNode data,
+                                       ExtendedMetadata metadata, List<Object> enrichments) {
+
+        static ExtendedPageResponse of(String sourceId, CachedPage page, JsonNode data) {
+            return new ExtendedPageResponse(sourceId, "cache", CacheResponse.of(page.generation()), data,
+                    ExtendedMetadata.of(page), List.of());
+        }
+    }
+
+    /**
+     * Harvester-Angaben zu einer Seite im erweiterten Container.
+     *
+     * @param page               aktuelle Kopfdaten wie in der Seitenliste; können neuer sein als die Payload
+     * @param payloadRevision    Revision der Quelle, zu der {@code data} gehört, oder {@code null}, wenn unbekannt
+     * @param payloadRetrievedAt Zeitpunkt, zu dem die Quelle die Payload geliefert hat
+     * @param headerObservedAt   Zeitpunkt, zu dem die Quelle die aktuellen Kopfdaten geliefert hat
+     * @param nativeFormat       Format und Abrufform der Payload
+     */
+    public record ExtendedMetadata(String metadataHashSchema, String attributesHashSchema, PageEntry page,
+                                   @Schema(nullable = true) String payloadRevision, Instant payloadRetrievedAt,
+                                   Instant headerObservedAt, String nativeFormat) {
+
+        static ExtendedMetadata of(CachedPage page) {
+            PageSnapshot snapshot = page.snapshot();
+            return new ExtendedMetadata(MetadataHash.SCHEMA, AttributesHash.SCHEMA,
+                    PageEntry.of(ListedPage.of(page.header(), snapshot)), snapshot.revision(),
+                    snapshot.retrievedAt(), page.header().observedAt(), snapshot.payload().nativeFormat());
         }
     }
 

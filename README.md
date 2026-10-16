@@ -32,6 +32,9 @@ ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)
 ```bash
 SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
 ```
+Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
+geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -185,8 +188,9 @@ space-harvester:
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
-  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space der Synchronisierungsstand.
-  Feldschema und Version (`page-cache/v1`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
+  der Synchronisierung.
+  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
 - **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
   `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
@@ -214,7 +218,8 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
-| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
+| `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -270,12 +275,29 @@ zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `
 (Standard 50000) Seiten oder 200 Ebenen ergeben `tree-too-large` (422); sie liefert der Export. Die Einzelseite gibt die
 gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
 `X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
+`view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
+Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
+samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
+können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
-[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die native
-Einzelseite verlangt `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
+[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
+Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
+
+**Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
+Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
+vorkommen, ohne Beachtung der Groß-/Kleinschreibung; Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist;
+kein Präfix, keine Abfragesprache; höchstens 8 Wörter und 200 Zeichen), `spaceKey` (wiederholbar, höchstens 20),
+`pageId`, `parentPageId` (direkte Kinder), `version`, `modifiedFrom` (einschließlich) und `modifiedBefore`
+(ausschließlich). `sort` ist `title` (Standard), `-modifiedAt` oder `pageId`, jeweils danach `pageId`; `limit` 1 bis
+100. Treffer haben dieselben Felder wie die Seitenliste und den Cache-Stand ihres Space; `index.generation` nennt den
+Indexstand. Wie bei der Seitenliste kann ein Stapel kürzer als `limit` sein; `nextCursor` gilt nur für dieselbe Anfrage
+(sonst 400), ein neuer Indexstand ergibt `cache-generation-changed` (409). Rechte: mit `spaceKey` `metadata` für jeden
+genannten Space, sonst für die Quelle; Treffer ohne Freigabe fallen weg. Ohne Index antwortet die Suche mit
+`cache-miss` (404) bzw. ohne eingerichteten Index mit `cache-unavailable` (503).
 
 **Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
 `{"schema":…,"sourceId":…,"spaceKey":…,"pages":[{"pageId":…,"metadataHash":…,"attributesHash":…},…]}` mit den Seiten
@@ -285,9 +307,21 @@ Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresst
 abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
 wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
 
+**Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
+Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
+`running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
+kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile),
+`tree.json` (ID-Baum mit `roots`) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
+`…/{exportId}/artifact/{datei}`; die Rohdaten je Seite liegen unter `raw/` und werden Byte für Byte ausgeliefert.
+`artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
+Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
+alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu viele offene Aufträge ergeben
+`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
+leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
+jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
+
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
-([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
-([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
+([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)).
 
 ## Aufbau
 
