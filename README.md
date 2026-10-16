@@ -80,9 +80,29 @@ space-harvester:
   Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
-- **Keine Geheimnisse nach außen:** Passwort und Token erscheinen weder in API-Antworten noch in Logs.
-- **Noch nicht unterstützt:** Client-Zertifikate (mTLS), OAuth und ein Spring Cloud Config Server. Proxy und PAC:
-  siehe nächsten Abschnitt.
+- **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
+- **Client-Zertifikate (mTLS):** je Quelle unter `client-certificate`, zusätzlich zur Anmeldung (`auth` bleibt
+  unverändert). PKCS#12-Datei oder unter Windows der Zertifikatsspeicher `Windows-MY` des Dienstkontos; eigene
+  Server-/Proxy-CAs über `trust-bundle` (ein Spring-SSL-Bundle). Details, Windows-Dienst und Live-Test:
+  [docs/MTLS.md](docs/MTLS.md).
+
+  ```yaml
+  space-harvester:
+    sources:
+      - id: confluence
+        type: confluence
+        base-url: https://confluence.example.org
+        auth:
+          type: pat
+          token: ${CONFLUENCE_PAT}
+        client-certificate:
+          enabled: true
+          type: pkcs12                # pkcs12 | windows-my
+          path: ${CONFLUENCE_CLIENT_KEYSTORE}
+          alias: confluence-client
+          password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
+  ```
+- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server. Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
@@ -119,10 +139,10 @@ space-harvester:
   (fehlende `pac-url`, Windows-Modus auf Linux, nicht umgesetzte `windows-native-*`-Modi) verhindern den Start.
 - **Je Ziel-URL:** Das PAC-Skript bekommt bei HTTPS wie im Browser nur `https://host[:port]/`, bei HTTP die ganze
   URL ohne Benutzerinfo. Unter genau diesem Schlüssel wird die Route gemerkt. Protokoll, Diagnose und
-  Fehlermeldungen zeigen Ziel- und PAC-URLs nur ohne Query (`?…`), auch in Meldungen der Bibliothek. Die Auflösung läuft auf einem eigenen
-  Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage, nicht beim Start.
-- **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization` und Zugangsdaten gehen nur durch den Tunnel zum
-  Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.
+  Fehlermeldungen zeigen Ziel- und PAC-URLs nur ohne Query (`?…`), auch in Meldungen der Bibliothek. Die
+  Auflösung läuft auf einem eigenen Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage.
+- **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization`, Zugangsdaten und das Client-Zertifikat (mTLS)
+  gehen nur durch den Tunnel zum Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.
 - **Windows-Dienst:** `pac-url-powershell`, `pac-url-windows-settings`, `pac-url-wscript` und `windows-static-proxy`
   lesen `HKCU` des **ausführenden Dienstkontos**, nicht die Einstellungen des angemeldeten Benutzers. Hat das
   Dienstkonto keine `AutoConfigURL`, `pac-url-manual` mit der PAC-Adresse des Unternehmens verwenden.
