@@ -8,10 +8,17 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class InMemorySnapshotRepository implements SnapshotRepository {
 
     private final Map<PageKey, PageSnapshot> snapshots = new ConcurrentHashMap<>();
+    private final Map<PageKey, PageHeader> headers = new ConcurrentHashMap<>();
 
     @Override
-    public void save(PageSnapshot snapshot) {
+    public synchronized void save(PageSnapshot snapshot) {
         snapshots.put(snapshot.key(), snapshot);
+        headers.put(snapshot.key(), snapshot.header());
+    }
+
+    @Override
+    public void saveHeader(PageHeader header) {
+        headers.put(header.key(), header);
     }
 
     @Override
@@ -20,7 +27,14 @@ public final class InMemorySnapshotRepository implements SnapshotRepository {
     }
 
     @Override
-    public boolean remove(PageKey key) {
-        return snapshots.remove(key) != null;
+    public Optional<PageHeader> findHeader(PageKey key) {
+        return Optional.ofNullable(headers.get(key));
+    }
+
+    @Override
+    public synchronized boolean remove(PageKey key) {
+        boolean hadSnapshot = snapshots.remove(key) != null;
+        boolean hadHeader = headers.remove(key) != null;
+        return hadSnapshot || hadHeader;
     }
 }
