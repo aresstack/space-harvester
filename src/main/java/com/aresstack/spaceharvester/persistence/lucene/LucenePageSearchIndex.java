@@ -31,6 +31,7 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
@@ -89,6 +90,7 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         }
         Sort sort = sort(query.sort());
         Object[] after = afterPosition == null ? null : decode(afterPosition, query.sort());
+        long deadline = System.nanoTime() + timeout.toNanos();
         return guarded(() -> cache.read(committed -> {
             String current = source(committed, query.sourceId()).map(SearchIndexState::generation).orElse(null);
             if (!generation.equals(current)) {
@@ -117,6 +119,10 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
                 CacheGeneration space = generations.computeIfAbsent(spaceKey,
                         key -> spaceGeneration(committed, query.sourceId(), key));
                 hits.add(new SearchHit(page, space, encode(query.sort(), (FieldDoc) hit)));
+            }
+            // Die Zeitgrenze gilt für die ganze Suche, auch für das Laden der Treffer.
+            if (System.nanoTime() - deadline > 0) {
+                throw new CacheUnavailableException("Suche überschreitet die Zeitgrenze von " + timeout);
             }
             return hits;
         }));
@@ -171,8 +177,13 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         }
         if (query.modifiedFrom() != null || query.modifiedBefore() != null) {
             long from = query.modifiedFrom() == null ? Long.MIN_VALUE : PageCacheSchema.nanos(query.modifiedFrom());
-            long to = query.modifiedBefore() == null ? Long.MAX_VALUE
-                    : PageCacheSchema.nanos(query.modifiedBefore()) - 1;
+            long before = query.modifiedBefore() == null ? Long.MAX_VALUE
+                    : PageCacheSchema.nanos(query.modifiedBefore());
+            if (before == Long.MIN_VALUE) {
+                // Nichts liegt vor dem kleinsten Wert; ohne diese Prüfung liefe before - 1 über.
+                return new MatchNoDocsQuery();
+            }
+            long to = query.modifiedBefore() == null ? Long.MAX_VALUE : before - 1;
             filter.add(LongField.newRangeQuery(PageCacheSchema.MODIFIED_AT_NANOS, from, to),
                     BooleanClause.Occur.FILTER);
         }

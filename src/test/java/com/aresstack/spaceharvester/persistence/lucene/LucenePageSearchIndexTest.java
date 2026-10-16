@@ -123,6 +123,16 @@ class LucenePageSearchIndexTest {
     }
 
     @Test
+    void theSmallestRepresentableUpperTimeBoundMatchesNothing() {
+        corpus();
+        Instant smallest = Instant.ofEpochSecond(Math.floorDiv(Long.MIN_VALUE, 1_000_000_000L),
+                Math.floorMod(Long.MIN_VALUE, 1_000_000_000L));
+        PageSearchQuery query = query("wiki", List.of(), null, null, null, null, null, smallest, SearchSort.PAGE_ID);
+
+        assertThat(index.search(query, index.state("wiki").orElseThrow().generation(), null, 10)).isEmpty();
+    }
+
+    @Test
     void hitsCarryTheCurrentHeaderThePayloadHashAndTheGenerationOfTheirSpace() {
         corpus();
         PageSnapshot confirmed = page("wiki", "200", "DOC", null, "Bestätigt", T0, "1");
