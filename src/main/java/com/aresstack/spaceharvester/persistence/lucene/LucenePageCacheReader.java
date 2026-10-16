@@ -19,7 +19,8 @@ import java.util.function.Supplier;
  * Der lesende Port der Query-API (#27) über dem {@link LucenePageCache}.
  *
  * <p>Generation eines Space ist die zuletzt bestätigte der Synchronisierung ({@link LuceneSyncBaselineStore}, ID
- * {@code g<n>}): {@link CacheState#CONFIRMED}, wenn alle ihre Seiten abgeglichen wurden, sonst
+ * {@code g<n>}): {@link CacheState#CONFIRMED}, wenn alle ihre Seiten abgeglichen wurden;
+ * {@link CacheState#INCOMPLETE}, wenn gelisteten Seiten der Stand fehlt ({@code SyncBaseline#complete()}); sonst
  * {@link CacheState#STALE}, weil ein Teil aus einer älteren Generation übernommen ist. Liegen Seiten eines Space im
  * Cache, ohne dass je eine Generation bestätigt wurde, ist das die Generation {@code g0} im Zustand
  * {@link CacheState#INCOMPLETE}.
@@ -85,7 +86,9 @@ public final class LucenePageCacheReader implements PageCacheReader {
     /** Die Cache-Generation zu einer bestätigten Generation der Synchronisierung. */
     static CacheGeneration of(ConfirmedGeneration g) {
         return new CacheGeneration(id(g.generation()),
-                g.stalePageCount() == 0 ? CacheState.CONFIRMED : CacheState.STALE, g.confirmedAt(), g.confirmedAt());
+                g.missingPageCount() > 0 ? CacheState.INCOMPLETE
+                        : g.stalePageCount() == 0 ? CacheState.CONFIRMED : CacheState.STALE, g.confirmedAt(),
+                g.confirmedAt());
     }
 
     /** Seiten eines Space, für den noch keine Generation bestätigt ist. */

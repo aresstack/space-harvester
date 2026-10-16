@@ -177,7 +177,9 @@ public abstract class SyncBaselineStoreContract {
         Fixture fixture = empty();
         PageSnapshot root = snapshot("wiki", "1", "DOC", "3");
         BaselineEntry child = new BaselineEntry("2", "DOC", "1", null, "sha256:m", "sha256:a");
-        SyncBaseline first = baseline("wiki", "DOC", 1, Set.of("2"), entry(root), child);
+        SyncBaseline listed = baseline("wiki", "DOC", 1, Set.of("2"), entry(root), child);
+        SyncBaseline first = new SyncBaseline(listed.sourceId(), listed.spaceKey(), listed.generation(),
+                listed.confirmedAt(), listed.pages(), listed.stalePageIds(), new TreeSet<>(Set.of("3")));
         commit(fixture, first, root);
 
         Fixture reopened = reopen(fixture);
@@ -185,6 +187,8 @@ public abstract class SyncBaselineStoreContract {
         SyncBaseline read = reopened.store().confirmed("wiki", "DOC").orElseThrow();
         assertThat(read).isEqualTo(first);
         assertThat(read.spaceFingerprint()).isEqualTo(first.spaceFingerprint());
+        assertThat(read.missingPageIds()).containsExactly("3");
+        assertThat(read.complete()).isFalse();
         assertThat(reopened.snapshots().find(root.key())).contains(root);
     }
 
