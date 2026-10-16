@@ -178,13 +178,15 @@ Native Seiten-Snapshots und Kopfdaten liegen in einem eingebetteten Apache-Lucen
 ```yaml
 space-harvester:
   cache:
-    directory: /var/lib/space-harvester/cache   # Wurzel; der Seiten-Index liegt in pages/
+    directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
     max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
   Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space der Synchronisierungsstand.
   Feldschema und Version (`page-cache/v1`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+- **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
+  `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
   Verzeichnis gehört allein dem Dienstkonto (unter Linux z. B. `chmod 700`) und liegt auf einem verschlüsselten
   Datenträger, wenn die Seiten das verlangen.

@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.jobs.JobStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -7,9 +9,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Öffnet den Seiten-Cache unter {@code <directory>/}{@value #PAGES}, wenn {@code space-harvester.cache.directory} gesetzt ist. Ein gesperrter, beschädigter
- * oder in einem anderen Schema angelegter Index verhindert den Start. Beim Herunterfahren wird der Index geschlossen
- * und die Sperre freigegeben.
+ * Öffnet die eingebetteten Lucene-Indizes, wenn {@code space-harvester.cache.directory} gesetzt ist: den Seiten-Cache
+ * unter {@value #PAGES}/ und die Auftragsablage unter {@value #JOBS}/. Ein gesperrter, beschädigter oder in einem
+ * anderen Schema angelegter Index verhindert den Start. Beim Herunterfahren werden die Indizes geschlossen und die
+ * Sperren freigegeben.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "space-harvester.cache", name = "directory")
@@ -18,6 +21,8 @@ class CacheConfiguration {
 
     /** Unterverzeichnis des Seiten-Index; weitere Indizes (z. B. Aufträge) liegen daneben. */
     static final String PAGES = "pages";
+    /** Unterverzeichnis der Auftragsablage (#12). */
+    static final String JOBS = "jobs";
 
     @Bean(destroyMethod = "close")
     LucenePageCache pageCache(CacheProperties properties) {
@@ -27,5 +32,14 @@ class CacheConfiguration {
                     + Integer.MAX_VALUE + " Bytes liegen");
         }
         return LucenePageCache.open(properties.directory().resolve(PAGES), (int) bytes);
+    }
+
+    /**
+     * Dauerhafte Auftragsablage; ersetzt die flüchtige aus {@code JobsConfiguration}, die nur ohne andere
+     * {@link JobStore}-Bean entsteht. Eigener Bean-Name, damit keine Bean-Definition überschrieben wird.
+     */
+    @Bean(destroyMethod = "close")
+    LuceneJobStore luceneJobStore(CacheProperties properties) {
+        return LuceneJobStore.open(properties.directory().resolve(JOBS));
     }
 }
