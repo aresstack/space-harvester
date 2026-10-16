@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 import org.junit.jupiter.api.Test;
 
 /** Vertrag von {@link AttributesHash}: getrennt von {@link MetadataHash}, deterministisch nach Schlüsseln sortiert. */
@@ -51,6 +53,19 @@ class AttributesHashTest {
 
         assertThat(AttributesHash.of("wiki", renamed)).isEqualTo(AttributesHash.of("wiki", page));
         assertThat(MetadataHash.of("wiki", renamed)).isNotEqualTo(MetadataHash.of("wiki", page));
+    }
+
+    @Test
+    void comparatorOfTheSuppliedMapDoesNotChangeTheHash() {
+        TreeMap<String, String> reversed = new TreeMap<>(Comparator.reverseOrder());
+        reversed.put("confluence.labels", "api");
+        reversed.put("confluence.type", "page");
+        PageMetadata natural = page(Map.of("confluence.labels", "api", "confluence.type", "page"));
+        PageMetadata fromReversed = new PageMetadata("101", natural.resourceId(), natural.title(), "DEV", "100", "3",
+                natural.modifiedAt(), null, reversed);
+
+        assertThat(fromReversed.attributes().firstKey()).isEqualTo("confluence.labels");
+        assertThat(AttributesHash.of("wiki", fromReversed)).isEqualTo(AttributesHash.of("wiki", natural));
     }
 
     private static PageMetadata page(Map<String, String> attributes) {
