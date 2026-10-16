@@ -9,9 +9,11 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import org.junit.jupiter.api.Test;
 
 /** Einzelprüfung für {@code ?refresh=true}: Inhalt nur bei neuer Revision, nie stiller Rückfall auf den Cache. */
@@ -102,6 +104,24 @@ class PageFreshnessTest {
         assertThatThrownBy(() -> check(Optional.empty(), Optional.empty()))
                 .isInstanceOfSatisfying(SourceAccessException.class,
                         e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.INVALID_RESPONSE));
+    }
+
+    @Test
+    void aHangingSourceEndsAsUnavailableAfterTheDeadline() {
+        source.put("1", "DOC", null, "4", "api");
+        CountDownLatch never = new CountDownLatch(1);
+        PageFreshness hanging = new PageFreshness(source.queries(), (sourceId, pageId) -> {
+            try {
+                never.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new IllegalStateException("unterbrochen");
+        }, FakeSource.CLOCK, Duration.ofMillis(100));
+
+        assertThatThrownBy(() -> hanging.check("wiki", "1", Optional.empty(), Optional.empty()))
+                .isInstanceOfSatisfying(SourceAccessException.class,
+                        e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE));
     }
 
     @Test

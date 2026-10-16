@@ -7,9 +7,16 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Explizite Aktualitätsprüfung einer einzelnen Seite gegen die Quelle ({@code ?refresh=true}, #27). Liest die
@@ -18,7 +25,13 @@ import java.util.Optional;
  * <p>Schreibt nicht in den Cache: Änderungen am Cache werden nur mit einer bestätigten Generation sichtbar (#16).
  * Eine neuere Seite liefert die Prüfung deshalb live, und der Cache-Stand gilt bis zum nächsten Abgleich als veraltet.
  * Ein Fehler der Quelle wird als {@link SourceAccessException} weitergereicht, nie durch den Cache-Stand ersetzt;
- * Rechte prüft der Aufrufer.
+ * Rechte prüft der Aufrufer, vor dem Aufruf für die Quelle und danach am gelieferten {@link Refreshed#header()}
+ * (aktueller Space).
+ *
+ * <p>Auch ohne Cache-Eintrag aufrufbar (beide Optionals leer): Ergebnis ist dann {@link Outcome#CONTENT_CHANGED} mit
+ * der live geladenen Seite oder {@link Outcome#GONE}. Der Aufruf ist synchron; er dauert höchstens so lange wie die
+ * {@link #DEFAULT_TIMEOUT} (bzw. die übergebene Frist) für beide Abrufe zusammen; eine Überschreitung bricht ab und kommt
+ * als {@link SourceAccessException} mit {@code UNAVAILABLE}. Ausnahmen und Logs enthalten keine Seiteninhalte.
  */
 public class PageFreshness {
 
@@ -36,8 +49,11 @@ public class PageFreshness {
 
     /**
      * @param outcome   Ergebnis
-     * @param header    gültige Kopfdaten oder {@code null} bei {@link Outcome#GONE}
-     * @param snapshot  gültiger Snapshot (aus dem Cache oder live) oder {@code null} bei {@link Outcome#GONE}
+     * @param header    gültige Kopfdaten (bei {@link Outcome#CURRENT} die gecachten, sonst live); {@code null} nur bei
+     *                  {@link Outcome#GONE}
+     * @param snapshot  auszuliefernde Payload: bei {@link Outcome#CURRENT} und {@link Outcome#HEADER_CHANGED} die
+     *                  gecachte, bei {@link Outcome#CONTENT_CHANGED} die live geladene; {@code null} nur bei
+     *                  {@link Outcome#GONE}
      * @param checkedAt Zeitpunkt der Prüfung
      */
     public record Refreshed(Outcome outcome, PageHeader header, PageSnapshot snapshot, Instant checkedAt) {
@@ -56,15 +72,31 @@ public class PageFreshness {
         }
     }
 
+    /** Frist für eine Prüfung (Einzelmetadaten und gegebenenfalls Inhalt). */
+    public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
+
+    private static final ExecutorService CHECKS = Executors.newThreadPerTaskExecutor(
+            Thread.ofVirtual().name("page-freshness-", 0).factory());
+
     private final SourceQueries queries;
     private final PageContentFetcher fetcher;
     private final Clock clock;
+    private final Duration timeout;
 
     /** @param fetcher Inhaltsabruf oder {@code null}, solange keiner angebunden ist */
     public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock) {
+        this(queries, fetcher, clock, DEFAULT_TIMEOUT);
+    }
+
+    /** @param timeout Frist für eine ganze Prüfung */
+    public PageFreshness(SourceQueries queries, PageContentFetcher fetcher, Clock clock, Duration timeout) {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.fetcher = fetcher;
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.timeout = Objects.requireNonNull(timeout, "timeout");
+        if (timeout.isNegative() || timeout.isZero()) {
+            throw new IllegalArgumentException("timeout muss positiv sein");
+        }
     }
 
     /** Ob eine Prüfung möglich ist; sonst antwortet die API mit {@code refresh-unavailable}, nie mit dem Cache. */
@@ -84,6 +116,30 @@ public class PageFreshness {
         if (!available()) {
             throw new SyncUnavailableException("Kein Inhaltsabruf angebunden");
         }
+        // Eigener virtueller Thread, damit der Request-Thread nach der Frist zurückkehrt, auch wenn ein Abruf
+        // Unterbrechungen ignoriert; der abgebrochene Abruf endet dann mit den Zeitgrenzen der Quelle.
+        Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot));
+        try {
+            return check.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            check.cancel(true);
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                    "Prüfung gegen die Quelle hat die Frist überschritten", null);
+        } catch (InterruptedException e) {
+            check.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                    "Prüfung gegen die Quelle unterbrochen", null);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            throw new IllegalStateException("Prüfung gegen die Quelle fehlgeschlagen", e.getCause());
+        }
+    }
+
+    private Refreshed checkNow(String sourceId, String pageId, Optional<PageHeader> cachedHeader,
+                               Optional<PageSnapshot> cachedSnapshot) {
         PageKey key = new PageKey(sourceId, pageId);
         PageMetadataListing.Entry live;
         try {

@@ -85,7 +85,7 @@ public class SyncController {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         // Erst nach der Freigabe: sonst verriete die Antwort Unberechtigten, welche Spaces es gibt.
         spaces.requireExisting(sourceId, spaceKey);
-        JobStatus status = syncs.start(sourceId, spaceKey, caller.principal());
+        JobStatus status = syncs.start(sourceId, spaceKey, owner(caller));
         return ResponseEntity.accepted()
                 .location(URI.create(ApiPaths.V1 + "/syncs/" + status.id()))
                 .body(SyncResponse.of(new SpaceSyncJobs.SyncJob(status, null), false));
@@ -103,7 +103,7 @@ public class SyncController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     public SyncResponse status(@Parameter(hidden = true) AccessContext caller,
                                @Parameter(description = "ID aus der Location des Starts") @PathVariable String syncId) {
-        SpaceSyncJobs.SyncJob job = visible(caller, syncs.status(syncId, caller.principal()));
+        SpaceSyncJobs.SyncJob job = visible(caller, syncs.status(syncId, owner(caller)));
         return SyncResponse.of(job, pageIdsVisible(caller, job));
     }
 
@@ -117,9 +117,14 @@ public class SyncController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     public SyncResponse cancel(@Parameter(hidden = true) AccessContext caller,
                                @Parameter(description = "ID aus der Location des Starts") @PathVariable String syncId) {
-        visible(caller, syncs.status(syncId, caller.principal()));
-        SpaceSyncJobs.SyncJob job = syncs.cancel(syncId, caller.principal());
+        visible(caller, syncs.status(syncId, owner(caller)));
+        SpaceSyncJobs.SyncJob job = syncs.cancel(syncId, owner(caller));
         return SyncResponse.of(job, pageIdsVisible(caller, job));
+    }
+
+    /** Eigentümer eines Auftrags wie bei Exporten: {@code <kind>:<principal>}. */
+    static String owner(AccessContext caller) {
+        return caller.kind().name() + ":" + caller.principal();
     }
 
     /** Ein Abgleich, dessen Space nicht mehr freigegeben ist, gilt als unbekannt. */
