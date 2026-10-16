@@ -94,6 +94,7 @@ class HarvestTest {
         assertThat(done.progress()).isEqualTo(new JobProgress(pages, pages, pages, 0));
         SyncBaseline baseline = store.confirmed("wiki", "DOC").orElseThrow();
         assertThat(baseline.generation()).isEqualTo(1);
+        assertThat(baseline.complete()).isTrue();
         assertThat(baseline.pages()).hasSize(pages).doesNotContainKey("elsewhere");
         assertThat(fetched).hasSize(pages);
         for (String pageId : List.of("home", "d" + (DEPTH - 1), "wide", "w0", "w" + (WIDTH - 1), "lonely")) {
@@ -143,6 +144,12 @@ class HarvestTest {
         SyncSummary summary = harvests.status(done.id(), "TECHNICAL_CLIENT:etl").summary();
         assertThat(summary.failedPageIds()).containsExactly("d150");
         assertThat(store.repository.find(new PageKey("wiki", "d150"))).isEmpty();
+        // Der Rest ist sichtbar, aber die Ernte gilt nicht als vollständig.
+        assertThat(done.state()).isEqualTo(JobState.FAILED);
+        assertThat(done.error().code()).isEqualTo(SpaceSyncJobs.PARTIAL);
+        SyncBaseline baseline = store.confirmed("wiki", "DOC").orElseThrow();
+        assertThat(baseline.missingPageIds()).containsExactly("d150");
+        assertThat(baseline.complete()).isFalse();
     }
 
     @Test
