@@ -142,7 +142,10 @@ class SourcesApiTest {
         assertThat(denied.statusCode()).isEqualTo(502);
         assertThat(denied.body()).contains("problems/source-access-denied").doesNotContain(PASSWORD);
         assertThat(offline.statusCode()).isEqualTo(503);
-        assertThat(offline.body()).contains("problems/source-unavailable");
+        assertThat(offline.body()).contains("problems/source-unavailable",
+                "\"detail\":\"Die Quelle ist derzeit nicht erreichbar.\"");
+        // Transportmeldungen (Host, Port, Pfad) bleiben intern.
+        assertThat(denied.body() + offline.body()).doesNotContain("127.0.0.1", "/wiki", "Exception");
         assertThat(output.getAll()).doesNotContain(PASSWORD, TOKEN);
     }
 

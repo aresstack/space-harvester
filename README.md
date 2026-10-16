@@ -36,8 +36,10 @@ SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 ## Quellen konfigurieren
 
 Quellen stehen unter `space-harvester.sources` in der `application.yml` oder in einer zusätzlichen Datei, etwa
-`config/application-local.yml` (von Git ignoriert, wird mit `--spring.profiles.active=local` geladen). Zugangsdaten
-kommen über Platzhalter aus Umgebungsvariablen, nie aus Dateien im Repository:
+`config/application-local.yml` (von Git ignoriert, wird mit `--spring.profiles.active=local` geladen).
+Zugangsdaten stehen nie in Dateien im Repository: Dort verweisen Platzhalter wie `${CONFLUENCE_TOKEN}` auf
+Umgebungsvariablen. In der lokalen, nicht eingecheckten `application-local.yml` dürfen `auth.password` und
+`auth.token` bewusst auch direkt als Wert stehen.
 
 ```yaml
 space-harvester:
@@ -58,6 +60,19 @@ space-harvester:
         type: basic
         username: ${TEAM_WIKI_USER}
         password: ${TEAM_WIKI_PASSWORD}
+```
+
+In `config/application-local.yml` geht dasselbe auch ohne Umgebungsvariablen:
+
+```yaml
+space-harvester:
+  sources:
+    - id: confluence
+      type: confluence
+      base-url: https://confluence.example.org
+      auth:
+        type: pat
+        token: "mein-persönlicher-token"   # nur in der lokalen, von Git ignorierten Datei
 ```
 
 - **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
@@ -82,7 +97,13 @@ space-harvester:
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
 `type` die Fälle: `source-not-found` (404, unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
-abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502).
+abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
+Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
+
+> **Nur für den isolierten Entwicklungsbetrieb.** Die REST-API hat noch keine Authentifizierung (folgt mit
+> [#14](https://github.com/aresstack/space-harvester/issues/14)). Wer den Dienst erreicht, sieht über die
+> konfigurierten Zugangsdaten alle Spaces der Quellen, auch deren Namen, die nicht automatisch für jeden freigegeben
+> sind ([#24](https://github.com/aresstack/space-harvester/issues/24)). Den Dienst daher nicht offen im Netz betreiben.
 
 Geplante Endpunkte: Seitenmetadaten mit Hashwerten ([#5](https://github.com/aresstack/space-harvester/issues/5),
 [#6](https://github.com/aresstack/space-harvester/issues/6)), asynchrone Exporte

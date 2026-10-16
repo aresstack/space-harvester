@@ -12,7 +12,11 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
  * Übersetzt Quellenfehler in Problem Details (RFC 9457). Der {@code type} unterscheidet eine unbekannte Quellen-ID
- * von Berechtigungs- und Verbindungsfehlern der Quelle; Zugangsdaten tauchen nie in der Antwort auf.
+ * von Berechtigungs- und Verbindungsfehlern der Quelle.
+ *
+ * <p>Meldungen der Quelle oder des Transports (Hosts, Pfade, Antworttexte, im schlimmsten Fall Zugangsdaten) gehen
+ * nie an Clients: {@code detail} ist ein fester Text je Fehlerart. Das Log nennt Quelle, Fehlerart und Ausnahmetyp;
+ * die ursprüngliche Meldung steht nur auf DEBUG.
  */
 @RestControllerAdvice
 class SourceErrorHandler {
@@ -22,25 +26,30 @@ class SourceErrorHandler {
 
     @ExceptionHandler(UnknownSourceException.class)
     ProblemDetail unknownSource(UnknownSourceException e) {
-        ProblemDetail problem = problem(HttpStatus.NOT_FOUND, "source-not-found", "Unbekannte Quelle", e.getMessage());
+        ProblemDetail problem = problem(HttpStatus.NOT_FOUND, "source-not-found", "Unbekannte Quelle",
+                "Zu dieser ID ist keine Quelle konfiguriert.");
         problem.setProperty("sourceId", e.sourceId());
         return problem;
     }
 
     @ExceptionHandler(SourceAccessException.class)
     ProblemDetail sourceAccess(SourceAccessException e) {
-        LOG.warn("Quelle {}: {} ({})", e.sourceId(), e.getMessage(), e.reason());
+        Throwable cause = e.getCause() != null ? e.getCause() : e;
+        LOG.warn("Quelle {}: Zugriff fehlgeschlagen ({}, {})", e.sourceId(), e.reason(), cause.getClass().getName());
+        LOG.debug("Quelle {}: ursprüngliche Meldung", e.sourceId(), e);
         ProblemDetail problem = switch (e.reason()) {
             case ACCESS_DENIED -> problem(HttpStatus.BAD_GATEWAY, "source-access-denied",
-                    "Quelle verweigert den Zugriff", e.getMessage());
+                    "Quelle verweigert den Zugriff",
+                    "Die Quelle hat die Anmeldung oder den Zugriff abgelehnt.");
             case UNAVAILABLE -> problem(HttpStatus.SERVICE_UNAVAILABLE, "source-unavailable",
-                    "Quelle nicht erreichbar", e.getMessage());
+                    "Quelle nicht erreichbar", "Die Quelle ist derzeit nicht erreichbar.");
             case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "source-object-not-found",
-                    "In der Quelle nicht gefunden", e.getMessage());
+                    "In der Quelle nicht gefunden",
+                    "Das angefragte Objekt existiert in der Quelle nicht oder ist nicht sichtbar.");
             case INVALID_RESPONSE -> problem(HttpStatus.BAD_GATEWAY, "source-invalid-response",
-                    "Unerwartete Antwort der Quelle", e.getMessage());
+                    "Unerwartete Antwort der Quelle", "Die Antwort der Quelle war nicht auswertbar.");
             case UNSUPPORTED -> problem(HttpStatus.BAD_REQUEST, "source-unsupported",
-                    "Von der Quelle nicht unterstützt", e.getMessage());
+                    "Von der Quelle nicht unterstützt", "Die Quelle unterstützt diese Anfrage nicht.");
         };
         problem.setProperty("sourceId", e.sourceId());
         return problem;
