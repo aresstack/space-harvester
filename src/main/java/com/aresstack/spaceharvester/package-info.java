@@ -9,7 +9,10 @@
  *   <li>{@code config} – Spring-Konfiguration, die Anwendungsfälle, Quellen und Ausgaben verdrahtet.</li>
  *   <li>{@code source} – Quellenadapter (Confluence, später weitere) hinter einer quellenunabhängigen SPI.</li>
  *   <li>{@code output} – Exportformate und Artefakte (JSON/NDJSON, Manifest).</li>
+ *   <li>{@code security} – Zugriffsschutz der eigenen API (Anmeldung technischer Clients, Korpusfreigabe). Liefert
+ *       Controllern den {@code AccessContext}; geprüft wird über {@code application.access.AccessGuard}.</li>
  * </ul>
- * {@code source} und {@code output} kennen weder {@code api} noch einander. {@code LayeringTest} prüft diese Regeln.
+ * {@code source} und {@code output} kennen weder {@code api} noch einander; {@code api} und {@code application}
+ * kennen {@code security} nicht. {@code LayeringTest} prüft diese Regeln.
  */
 package com.aresstack.spaceharvester;

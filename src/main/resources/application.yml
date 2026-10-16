@@ -32,6 +32,10 @@ space-harvester:
   network:
     proxy:
       mode: disabled
+  # Zugriffsschutz der API: Standard mode=clients ohne Clients, also kein Datenzugriff. Siehe docs/SECURITY.md.
+  security:
+    mode: clients
+    clients: []
 
 springdoc:
   api-docs:
