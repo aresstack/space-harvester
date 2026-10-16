@@ -32,6 +32,9 @@ ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)
 ```bash
 SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
 ```
+Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
+geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -170,6 +173,38 @@ Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des üb
 Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
 [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 
+## Seiten-Cache (Lucene)
+
+Native Seiten-Snapshots und Kopfdaten liegen in einem eingebetteten Apache-Lucene-Index im lokalen Dateisystem
+(#26); es gibt keinen Datenbankserver. Ohne Verzeichnis läuft der Dienst ohne Cache.
+
+```yaml
+space-harvester:
+  cache:
+    directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
+    max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+```
+
+- **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
+  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
+  der Synchronisierung.
+  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+- **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
+  `job-store/v1`); ohne bleiben sie nur im Speicher.
+- **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
+  Verzeichnis gehört allein dem Dienstkonto (unter Linux z. B. `chmod 700`) und liegt auf einem verschlüsselten
+  Datenträger, wenn die Seiten das verlangen.
+- **Ein Prozess je Verzeichnis:** Lucene sperrt den Index (`write.lock`); ein zweiter Dienst auf demselben
+  Verzeichnis startet nicht.
+- **Konsistenz:** Änderungen werden erst mit einem Commit sichtbar und dauerhaft. Ein Synchronisierungslauf schreibt
+  in einem Schreiblauf und wird erst als vollständig bestätigt, wenn die Synchronisierung das meldet; ein Abbruch
+  oder Absturz vorher lässt den zuletzt bestätigten Stand stehen. Beim Lesen wird jede Payload gegen ihren
+  `rawSha256` geprüft.
+- **Sicherung:** Dienst anhalten und das Verzeichnis kopieren. Im laufenden Betrieb ist eine Kopie nur dann
+  konsistent, wenn währenddessen kein Commit geschieht.
+- **Löschen und Wiederaufbau:** Dienst anhalten, Verzeichnis löschen, neu starten und neu ernten. Ein beschädigter
+  Index oder einer mit anderem Schema verhindert den Start mit einer Meldung; er wird nie stillschweigend ersetzt.
+
 ## API-Übersicht
 
 | Pfad | Zweck |
@@ -181,9 +216,10 @@ Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI besch
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
-| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
+| `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -237,12 +273,29 @@ zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `
 (Standard 50000) Seiten oder 200 Ebenen ergeben `tree-too-large` (422); sie liefert der Export. Die Einzelseite gibt die
 gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
 `X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
+`view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
+Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
+samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
+können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
-[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die native
-Einzelseite verlangt `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
+[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
+Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
+
+**Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
+Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
+vorkommen, ohne Beachtung der Groß-/Kleinschreibung; Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist;
+kein Präfix, keine Abfragesprache; höchstens 8 Wörter und 200 Zeichen), `spaceKey` (wiederholbar, höchstens 20),
+`pageId`, `parentPageId` (direkte Kinder), `version`, `modifiedFrom` (einschließlich) und `modifiedBefore`
+(ausschließlich). `sort` ist `title` (Standard), `-modifiedAt` oder `pageId`, jeweils danach `pageId`; `limit` 1 bis
+100. Treffer haben dieselben Felder wie die Seitenliste und den Cache-Stand ihres Space; `index.generation` nennt den
+Indexstand. Wie bei der Seitenliste kann ein Stapel kürzer als `limit` sein; `nextCursor` gilt nur für dieselbe Anfrage
+(sonst 400), ein neuer Indexstand ergibt `cache-generation-changed` (409). Rechte: mit `spaceKey` `metadata` für jeden
+genannten Space, sonst für die Quelle; Treffer ohne Freigabe fallen weg. Ohne Index antwortet die Suche mit
+`cache-miss` (404) bzw. ohne eingerichteten Index mit `cache-unavailable` (503).
 
 **Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
 `{"schema":…,"sourceId":…,"spaceKey":…,"pages":[{"pageId":…,"metadataHash":…,"attributesHash":…},…]}` mit den Seiten
@@ -256,19 +309,32 @@ wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in eine
 antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
 ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
 der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
-`completed` nur mit neu bestätigter und vollständiger Generation; sonst `failed` mit `error.code` `SYNC_INCOMPLETE`
-(nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt, aber neue Seiten
-ohne Inhalt, `summary.complete: false`; sie gilt nie als vollständiger Abgleich, der nächste Lauf lädt sie erneut),
-oder `cancelled`. `summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`,
-`spaceFingerprint`, `notConfirmed`; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
+`completed` nur mit neu bestätigter Generation, in der jede Seite abgeglichen ist; sonst `failed` mit `error.code`
+`SYNC_INCOMPLETE` (nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt,
+aber Seiten nicht abgeglichen: neue ohne Inhalt, `summary.complete: false`, Cache-Stand `incomplete`; oder bekannte mit
+altem Stand, Cache-Stand `stale`; nie `confirmed`, der nächste Lauf gleicht sie erneut ab), oder `cancelled`.
+`summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`, `spaceFingerprint`,
+`notConfirmed` als fester Grund; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
 auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
 (#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
 `space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
 ein noch laufender Abgleich wird nicht doppelt gestartet.
 
+**Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
+Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
+`running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
+kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile),
+`tree.json` (ID-Baum mit `roots`) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
+`…/{exportId}/artifact/{datei}`; die Rohdaten je Seite liegen unter `raw/` und werden Byte für Byte ausgeliefert.
+`artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
+Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
+alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu viele offene Aufträge ergeben
+`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
+leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
+jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
+
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
-([#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
-([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
+([#27](https://github.com/aresstack/space-harvester/issues/27)).
 
 ## Aufbau
 
@@ -280,8 +346,10 @@ Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester
 - `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen,
   `source.network` bestimmt die Proxy-Route je Ziel-URL
 - `output` – Exportformate und Artefakte (folgt mit #11)
+- `persistence` – Speicher hinter den Ports aus `application`; `persistence.lucene` ist der Seiten-Cache
 
-`source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
+`source` und `output` kennen weder `api` noch einander, `persistence` nur `application`, Lucene steht nur in
+`persistence.lucene`; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
 wird nicht übernommen.
 
 Der Confluence-Code stammt unverändert aus dem Enterprise AI Client und liegt als Kopie im Gradle-Subprojekt

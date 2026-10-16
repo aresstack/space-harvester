@@ -53,6 +53,8 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     /** Erzwingt eine feste Antwort für alle Requests (Fehlerfälle). */
     ConfluenceHttpResponse forcedResponse;
     IOException forcedFailure;
+    /** Körper der letzten Antwort auf {@code /rest/api/content/<seiten-id>}, genau wie gesendet. */
+    byte[] lastPageBody;
     /** Liefert statt des echten Folgelinks einen Link außerhalb der REST-API. */
     String nextLinkOverride;
 
@@ -75,7 +77,6 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         return attachment;
     }
 
-    /** Startseite eines Bereichs ({@code /rest/api/space/<key>} liefert sie als {@code homepage}). */
     /** Verschiebt eine Seite als Wurzelseite in einen anderen Space; die Content-ID bleibt wie in Confluence. */
     public void move(String pageId, String newSpaceKey) {
         FakePage page = pages.get(pageId);
@@ -86,6 +87,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         page.spaceKey = newSpaceKey;
     }
 
+    /** Körper der letzten Antwort auf eine Seite, genau wie gesendet; {@code null} vor dem ersten Abruf. */
+    public byte[] lastPageBody() {
+        return lastPageBody == null ? null : lastPageBody.clone();
+    }
+
+    /** Startseite eines Bereichs ({@code /rest/api/space/<key>} liefert sie als {@code homepage}). */
     public void homepage(String spaceKey, String pageId) {
         spaceHomepages.put(spaceKey, pageId);
     }
@@ -243,7 +250,16 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
                 return forbidden();
             }
             if (pages.containsKey(id)) {
-                return json(pageJson(pages.get(id), query.get("expand")));
+                FakePage page = pages.get(id);
+                String expand = query.get("expand");
+                byte[] body = page.rawJson != null && expand != null && expand.contains("body.storage")
+                        ? page.rawJson.getBytes(StandardCharsets.UTF_8)
+                        : pageJson(page, expand).toString().getBytes(StandardCharsets.UTF_8);
+                if (body.length > maxBytes) {
+                    throw new ConfluenceResponseTooLargeException(maxBytes);
+                }
+                lastPageBody = body;
+                return new ConfluenceHttpResponse(200, "application/json;charset=UTF-8", body);
             }
             if (attachments.containsKey(id)) {
                 return json(attachmentJson(attachments.get(id)));
@@ -360,6 +376,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         boolean withView = expand != null && expand.contains("body.view");
         boolean withExport = expand != null && expand.contains("body.export_view");
         boolean withLabels = expand != null && expand.contains("metadata.labels");
+        boolean withStorage = expand != null && expand.contains("body.storage") && page.storage != null;
         JsonObject json = new JsonObject();
         json.addProperty("id", page.id);
         json.addProperty("type", "page");
@@ -395,8 +412,14 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             childTypes.add("page", childPage);
             json.add("childTypes", childTypes);
         }
-        if (withView || withExport) {
+        if (withView || withExport || withStorage) {
             JsonObject body = new JsonObject();
+            if (withStorage) {
+                JsonObject storage = new JsonObject();
+                storage.addProperty("value", page.storage);
+                storage.addProperty("representation", "storage");
+                body.add("storage", storage);
+            }
             if (withView) {
                 // Wie Confluence: body.view lässt asynchrone Makros (Jira) als Platzhalter stehen.
                 JsonObject view = new JsonObject();
@@ -519,12 +542,26 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         String when = "2026-10-01T08:15:00.000+02:00";
         String createdDate = "2026-09-01T09:00:00.000+02:00";
         String createdBy = "autorin";
+        /** {@code body.storage}; ohne Wert fehlt es in der Antwort wie bisher. */
+        String storage;
+        /** Feste Antwort für Abrufe mit {@code body.storage}, Byte für Byte (Leerraum, Escapes, Reihenfolge). */
+        String rawJson;
 
         FakePage(String id, String title, String spaceKey, String html) {
             this.id = id;
             this.title = title;
             this.spaceKey = spaceKey;
             this.html = html;
+        }
+
+        public FakePage storage(String value) {
+            this.storage = value;
+            return this;
+        }
+
+        public FakePage rawJson(String json) {
+            this.rawJson = json;
+            return this;
         }
 
         /** Setzt eine neue Version mit Änderungszeitpunkt. */

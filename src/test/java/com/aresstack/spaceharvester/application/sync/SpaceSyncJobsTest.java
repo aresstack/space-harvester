@@ -149,6 +149,39 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void aFailedRevisionUpdateKeepsTheOldStateAsStaleAndFailsTheJob() {
+        syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+        source.put("3", "DOC", null, "8", null);
+        beforeFetch = pageId -> {
+            throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
+                    null);
+        };
+
+        JobStatus second = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        SpaceSyncJobs.SyncJob done = syncs.status(second.id(), "client:a");
+        assertThat(done.status().state()).isEqualTo(JobState.FAILED);
+        assertThat(done.status().error().code()).isEqualTo(SpaceSyncJobs.PARTIAL);
+        assertThat(done.summary().failedPageIds()).containsExactly("3");
+        SyncBaseline confirmed = store.confirmed("wiki", "DOC").orElseThrow();
+        assertThat(confirmed.generation()).isEqualTo(2);
+        assertThat(confirmed.stalePageIds()).containsExactly("3");
+        assertThat(confirmed.pages().get("3").version()).isEqualTo("7");
+        assertThat(store.repository.find(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("7");
+
+        beforeFetch = pageId -> {
+        };
+        JobStatus third = syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+
+        assertThat(syncs.status(third.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+        assertThat(store.confirmed("wiki", "DOC").orElseThrow().stalePageIds()).isEmpty();
+        assertThat(store.repository.find(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("8");
+    }
+
+    @Test
     void aConflictingRunFailsAndWritesNothing() {
         store.failNextCommit = true;
 

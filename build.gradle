@@ -24,6 +24,8 @@ dependencies {
     implementation project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
     implementation libs.win.proxy.java
+    // Seiten-Cache und Index, nur im Paket persistence (#26)
+    implementation libs.lucene.core
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5
@@ -109,4 +111,14 @@ def bootJarPacCheck = tasks.register('bootJarPacCheck', BootJarPacCheck) {
 
 tasks.named('check') {
     dependsOn bootJarPacCheck
+}
+
+// Fake-Confluence mit den Demo-Daten für docs/E2E.md auf http://127.0.0.1:8090 (#15); nur Testdaten.
+tasks.register('demoConfluence', JavaExec) {
+    group = 'application'
+    description = 'Startet die Demo-Fake-Confluence für die dokumentierten Beispiele (docs/E2E.md).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.aresstack.spaceharvester.demo.DemoConfluence'
+    jvmArgs '-Dstdout.encoding=UTF-8'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 }

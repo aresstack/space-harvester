@@ -8,6 +8,8 @@ springdoc = "3.1.1"
 archunit = "1.4.1"
 # Proxy-Route je Ziel-URL (PAC/WPAD), dieselbe Version wie im Upstream; bringt GraalJS 21.2 mit (#34)
 winProxy = "0.2.0"
+# Eingebetteter Seiten-Cache und Index (#26)
+lucene = "10.5.2"
 # enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
 gson = "2.10.1"
 jsoup = "1.17.2"
@@ -21,6 +23,7 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 win-proxy-java = { module = "com.aresstack:win-proxy-java", version.ref = "winProxy" }
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

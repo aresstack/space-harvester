@@ -96,8 +96,9 @@ public class SyncController {
             description = "Zustand, Zähler und, sobald der Lauf fertig ist, sein Delta. completed nur mit neu "
                     + "bestätigter Generation; failed mit error.code SYNC_INCOMPLETE (Inventur unvollständig oder "
                     + "widersprüchlich, nichts übernommen), SYNC_CONFLICT (ein anderer Lauf hat inzwischen "
-                    + "bestätigt) oder SYNC_PARTIAL (Generation bestätigt, aber neue Seiten ohne Inhalt; "
-                    + "summary.complete=false, der nächste Lauf lädt sie erneut). Beendete Abgleiche verschwinden "
+                    + "bestätigt) oder SYNC_PARTIAL (Generation bestätigt, aber Seiten nicht abgeglichen: neue "
+                    + "ohne Inhalt, summary.complete=false, oder bekannte mit altem Stand; der nächste Lauf "
+                    + "gleicht sie erneut ab). Beendete Abgleiche verschwinden "
                     + "nach der Aufbewahrungsfrist.")
     @ApiResponse(responseCode = "200", description = "Der Abgleich")
     @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
@@ -190,13 +191,17 @@ public class SyncController {
      * @param generation        neu bestätigte Generation oder {@code null}
      * @param complete          ob die neue Generation jede gelistete Seite führt
      * @param spaceFingerprint  Fingerabdruck der neuen Generation ({@code space-inventory/v1}) oder {@code null}
-     * @param notConfirmed      warum keine Generation bestätigt wurde, sonst {@code null}
+     * @param notConfirmed      warum keine Generation bestätigt wurde ({@code inventory-incomplete},
+     *                          {@code inventory-inconsistent} oder {@code removal-unconfirmed}), sonst {@code null}
      */
     public record SummaryResponse(
             @Schema(allowableValues = {"complete", "incomplete", "inconsistent"}) String inventory, int listed,
             int added, int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
             int movedOut, int unverified, int failed, @Schema(nullable = true) List<String> failedPageIds,
-            int missing, @Schema(nullable = true) Long generation, boolean complete, @Schema(nullable = true) String spaceFingerprint, @Schema(nullable = true) String notConfirmed) {
+            int missing, @Schema(nullable = true) Long generation, boolean complete,
+            @Schema(nullable = true) String spaceFingerprint,
+            @Schema(nullable = true, allowableValues = {"inventory-incomplete", "inventory-inconsistent",
+                    "removal-unconfirmed"}) String notConfirmed) {
 
         static SummaryResponse of(SyncSummary summary, boolean pageIds) {
             return new SummaryResponse(summary.inventory().name().toLowerCase(Locale.ROOT), summary.listed(),
@@ -204,7 +209,19 @@ public class SyncController {
                     summary.unchanged(), summary.removed(), summary.movedOut(), summary.unverified(),
                     summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
                     summary.missingPageIds().size(), summary.generation(), summary.complete(),
-                    summary.spaceFingerprint(), summary.notConfirmed());
+                    summary.spaceFingerprint(), notConfirmed(summary));
+        }
+
+        /** Fester Grund statt des internen Textes, der Seiten-IDs oder Meldungen der Quelle enthalten kann. */
+        private static String notConfirmed(SyncSummary summary) {
+            if (summary.notConfirmed() == null) {
+                return null;
+            }
+            return switch (summary.inventory()) {
+                case INCOMPLETE -> "inventory-incomplete";
+                case INCONSISTENT -> "inventory-inconsistent";
+                case COMPLETE -> "removal-unconfirmed";
+            };
         }
     }
 }
