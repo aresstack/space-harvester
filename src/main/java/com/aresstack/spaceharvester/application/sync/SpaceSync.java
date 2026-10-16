@@ -58,4 +58,35 @@ public class SpaceSync {
         store.publish(next);
         return next;
     }
+
+    /**
+     * Ganzer Lauf: planen, mit {@code applier} anwenden und, wenn möglich, die nächste Generation bestätigen. Auch eine
+     * abgebrochene Inventur aktualisiert die gelesenen Seiten; sie bestätigt nur keine Generation und entfernt nichts.
+     *
+     * @throws SyncConflictException wenn inzwischen ein anderer Lauf eine Generation bestätigt hat
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier) {
+        SyncPlan plan = plan(sourceId, spaceKey);
+        Set<String> failed = applier.apply(plan);
+        try {
+            return new SyncRun(plan, failed, confirm(plan, failed), null);
+        } catch (UnconfirmableSyncException e) {
+            return new SyncRun(plan, failed, null, e.getMessage());
+        }
+    }
+
+    /**
+     * Ergebnis von {@link #run}.
+     *
+     * @param plan          der angewendete Plan
+     * @param failedPageIds Seiten, deren Abgleich fehlgeschlagen ist
+     * @param confirmed     die neu bestätigte Generation oder {@code null}
+     * @param notConfirmed  warum keine Generation bestätigt wurde, sonst {@code null}
+     */
+    public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
+
+        public SyncRun {
+            failedPageIds = Set.copyOf(failedPageIds);
+        }
+    }
 }
