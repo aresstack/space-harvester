@@ -32,6 +32,9 @@ ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)
 ```bash
 SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
 ```
+Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
+geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
