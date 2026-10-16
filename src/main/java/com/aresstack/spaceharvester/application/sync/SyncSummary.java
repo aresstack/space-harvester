@@ -19,21 +19,25 @@ import java.util.Objects;
  * @param removed           entfernte Seiten (gelöscht oder nicht mehr sichtbar)
  * @param movedOut          in einen anderen Space verschobene Seiten
  * @param unverified        fehlende Seiten, deren Fehlen nicht bestätigt werden konnte; bleiben als veraltet erhalten
- * @param failedPageIds     Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet erhalten
+ * @param failedPageIds     Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet erhalten oder fehlen
+ * @param missingPageIds    davon die neuen Seiten, für die der Cache gar keinen Stand führt
  * @param generation        neu bestätigte Generation oder {@code null}
+ * @param complete          ob die neue Generation für jede gelistete Seite einen Stand führt; {@code false} auch ohne
+ *                          Generation
  * @param spaceFingerprint  {@code spaceFingerprint} der neuen Generation oder {@code null}
  * @param notConfirmed      warum keine Generation bestätigt wurde, sonst {@code null}
  */
 public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inventory, int listed, int added,
                           int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
-                          int movedOut, int unverified, List<String> failedPageIds, Long generation,
-                          String spaceFingerprint, String notConfirmed) {
+                          int movedOut, int unverified, List<String> failedPageIds, List<String> missingPageIds,
+                          Long generation, boolean complete, String spaceFingerprint, String notConfirmed) {
 
     public SyncSummary {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");
         Objects.requireNonNull(inventory, "inventory");
         failedPageIds = List.copyOf(failedPageIds);
+        missingPageIds = List.copyOf(missingPageIds);
     }
 
     static SyncSummary of(SpaceSync.SyncRun run) {
@@ -58,7 +62,9 @@ public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inv
                 plan.changes(PageChange.Kind.METADATA_CHANGED).size(),
                 plan.changes(PageChange.Kind.ATTRIBUTES_CHANGED).size(),
                 plan.changes(PageChange.Kind.UNCHANGED).size(), removed, movedOut, unverified,
-                run.failedPageIds().stream().sorted().toList(), confirmed == null ? null : confirmed.generation(),
+                run.failedPageIds().stream().sorted().toList(),
+                confirmed == null ? List.of() : List.copyOf(confirmed.missingPageIds()),
+                confirmed == null ? null : confirmed.generation(), confirmed != null && confirmed.complete(),
                 confirmed == null ? null : confirmed.spaceFingerprint(), run.notConfirmed());
     }
 }

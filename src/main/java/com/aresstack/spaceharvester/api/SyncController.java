@@ -86,8 +86,10 @@ public class SyncController {
     @Operation(summary = "Status eines Abgleichs",
             description = "Zustand, Zähler und, sobald der Lauf fertig ist, sein Delta. completed nur mit neu "
                     + "bestätigter Generation; failed mit error.code SYNC_INCOMPLETE (Inventur unvollständig oder "
-                    + "widersprüchlich, nichts übernommen) oder SYNC_CONFLICT (ein anderer Lauf hat inzwischen "
-                    + "bestätigt). Beendete Abgleiche verschwinden nach der Aufbewahrungsfrist.")
+                    + "widersprüchlich, nichts übernommen), SYNC_CONFLICT (ein anderer Lauf hat inzwischen "
+                    + "bestätigt) oder SYNC_PARTIAL (Generation bestätigt, aber neue Seiten ohne Inhalt; "
+                    + "summary.complete=false, der nächste Lauf lädt sie erneut). Beendete Abgleiche verschwinden "
+                    + "nach der Aufbewahrungsfrist.")
     @ApiResponse(responseCode = "200", description = "Der Abgleich")
     @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -175,21 +177,25 @@ public class SyncController {
      * @param unverified        fehlende Seiten, deren Fehlen nicht bestätigt werden konnte; bleiben als veraltet
      * @param failed            Anzahl der Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet
      * @param failedPageIds     ihre IDs, nur mit {@code metadata}-Freigabe für den Space, sonst {@code null}
+     * @param missing           neue Seiten ohne Stand im Cache (Teil von {@code failed})
      * @param generation        neu bestätigte Generation oder {@code null}
+     * @param complete          ob die neue Generation jede gelistete Seite führt
      * @param spaceFingerprint  Fingerabdruck der neuen Generation ({@code space-inventory/v1}) oder {@code null}
      * @param notConfirmed      warum keine Generation bestätigt wurde, sonst {@code null}
      */
     public record SummaryResponse(
             @Schema(allowableValues = {"complete", "incomplete", "inconsistent"}) String inventory, int listed,
             int added, int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
-            int movedOut, int unverified, int failed, @Schema(nullable = true) List<String> failedPageIds, @Schema(nullable = true) Long generation,
-            @Schema(nullable = true) String spaceFingerprint, @Schema(nullable = true) String notConfirmed) {
+            int movedOut, int unverified, int failed, @Schema(nullable = true) List<String> failedPageIds,
+            int missing, @Schema(nullable = true) Long generation, boolean complete, @Schema(nullable = true) String spaceFingerprint, @Schema(nullable = true) String notConfirmed) {
 
         static SummaryResponse of(SyncSummary summary, boolean pageIds) {
             return new SummaryResponse(summary.inventory().name().toLowerCase(Locale.ROOT), summary.listed(),
                     summary.added(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(),
                     summary.unchanged(), summary.removed(), summary.movedOut(), summary.unverified(),
-                    summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null, summary.generation(), summary.spaceFingerprint(), summary.notConfirmed());
+                    summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
+                    summary.missingPageIds().size(), summary.generation(), summary.complete(),
+                    summary.spaceFingerprint(), summary.notConfirmed());
         }
     }
 }
