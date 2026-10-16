@@ -233,6 +233,9 @@ class PageQueryApiTest {
                 .header("If-None-Match", "\"" + rawSha256 + "\"").build(), HttpResponse.BodyHandlers.ofByteArray());
         assertThat(again.statusCode()).isEqualTo(304);
         assertThat(again.body()).isEmpty();
+        // Auch eine 304 sagt, woher die Antwort stammt (nach refresh=true zusätzlich X-Page-Refresh).
+        assertThat(again.headers().firstValue("X-Page-Origin")).contains("cache");
+        assertThat(again.headers().firstValue("X-Cache-Generation")).contains("g1");
     }
 
     @Test
@@ -336,6 +339,21 @@ class PageQueryApiTest {
                 "https://evil.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8)), 404,
                 "cache-miss");
         assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages?url=" + url), 403, "access-denied");
+    }
+
+    @Test
+    void urlsOfPagesWithoutKnownUrlAreNotResolved() throws Exception {
+        PageSnapshot stored = page("wiki", "DEV", "105", "100");
+        cache.publish("wiki", "DEV", confirmed("g2"), List.of(stored));
+        PageMetadata withoutUrl = new PageMetadata("105", stored.header().metadata().resourceId(), "Ohne URL", "DEV",
+                "100", "3", Instant.parse("2026-10-16T20:30:00Z"), null, PageMetadata.sorted(Map.of()));
+        cache.updateHeader("DEV", PageHeader.of("wiki", withoutUrl, Instant.parse("2026-10-16T20:40:00Z")));
+
+        // Ohne bekannte URL lässt sich der Server nicht prüfen: wie eine fremde URL, über die ID weiter erreichbar.
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://evil.example.org/pages/viewpage.action?pageId=105", StandardCharsets.UTF_8)), 404,
+                "cache-miss");
+        assertThat(get("/api/v1/sources/wiki/pages/105").statusCode()).isEqualTo(200);
     }
 
     @Test

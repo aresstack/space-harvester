@@ -219,6 +219,7 @@ public class PageQueries {
      *
      * @throws InvalidQueryException wenn die URL keine Seiten-ID enthält
      * @throws CacheMissException    wie bei {@link #page}, oder wenn die URL auf einen anderen Server zeigt
+     *                               oder die Seite keine bekannte URL hat
      */
     public DeliveredPage pageByUrl(AccessContext caller, String sourceId, String url, boolean refresh) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
@@ -226,7 +227,8 @@ public class PageQueries {
                 "url muss eine absolute Seiten-URL mit Seiten-ID sein (pageId=…, /spaces/KEY/pages/ID oder /x/…)"));
         DeliveredPage page = page(caller, sourceId, pageId, refresh);
         URI known = page.header().metadata().url();
-        if (known != null && !PageUrls.sameServer(url, known)) {
+        // Ohne bekannte URL lässt sich der Server nicht prüfen; fail closed wie bei einem fremden Server.
+        if (known == null || !PageUrls.sameServer(url, known)) {
             throw new CacheMissException(sourceId, "Seite nicht vorhanden");
         }
         return page;

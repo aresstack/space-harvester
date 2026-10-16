@@ -41,7 +41,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.ErrorResponseException;
-import org.springframework.web.context.request.WebRequest;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -231,10 +230,9 @@ public class PageQueryController {
                     + "den Cache") @RequestParam(defaultValue = "false") boolean refresh,
             @Parameter(description = "native: Payload Byte für Byte; extended: Container mit data, metadata und "
                     + "enrichments", schema = @Schema(allowableValues = {"native", "extended"}))
-            @RequestParam(defaultValue = "native") String view,
-            WebRequest request) {
+            @RequestParam(defaultValue = "native") String view) {
         requireView(view);
-        return render(sourceId, queries.page(caller, sourceId, pageId, refresh), view, request);
+        return render(sourceId, queries.page(caller, sourceId, pageId, refresh), view);
     }
 
     @GetMapping("/{sourceId}/pages")
@@ -263,10 +261,9 @@ public class PageQueryController {
             @Parameter(description = "true: vor der Auslieferung gegen die Quelle prüfen")
             @RequestParam(defaultValue = "false") boolean refresh,
             @Parameter(description = "native oder extended", schema = @Schema(allowableValues = {"native", "extended"}))
-            @RequestParam(defaultValue = "native") String view,
-            WebRequest request) {
+            @RequestParam(defaultValue = "native") String view) {
         requireView(view);
-        return render(sourceId, queries.pageByUrl(caller, sourceId, url, refresh), view, request);
+        return render(sourceId, queries.pageByUrl(caller, sourceId, url, refresh), view);
     }
 
     private static void requireView(String view) {
@@ -275,7 +272,7 @@ public class PageQueryController {
         }
     }
 
-    private ResponseEntity<?> render(String sourceId, DeliveredPage page, String view, WebRequest request) {
+    private ResponseEntity<?> render(String sourceId, DeliveredPage page, String view) {
         if ("extended".equals(view)) {
             return ResponseEntity.ok()
                     .cacheControl(CacheControl.noCache().cachePrivate())
@@ -285,9 +282,8 @@ public class PageQueryController {
         PageSnapshot snapshot = page.snapshot();
         NativePayload payload = snapshot.payload();
         String etag = "\"" + payload.rawSha256() + "\"";
-        if (request.checkNotModified(etag)) {
-            return null;
-        }
+        // Kein eigenes checkNotModified: Spring beantwortet If-None-Match anhand des ETag dieser Antwort mit 304 und
+        // behält dabei die übrigen Kopfzeilen, damit auch eine 304 nach refresh=true X-Page-Refresh trägt.
         ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .eTag(etag)
                 .cacheControl(CacheControl.noCache().cachePrivate())
