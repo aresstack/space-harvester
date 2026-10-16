@@ -35,6 +35,11 @@ SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew
 Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
 geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
 
+Unter `http://localhost:8080/ui/` liegt eine schlanke Weboberfläche: Quellen und Spaces ansehen, Abgleich und Export
+starten, Fortschritt, Warnungen und Fehler verfolgen, Export-Dateien herunterladen. Sie ruft nur die REST-API auf; das
+Bearer-Token gibt man im Browser ein, es bleibt im sessionStorage des Tabs. Abschalten mit
+`SPACE_HARVESTER_UI_ENABLED=false`.
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
