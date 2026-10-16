@@ -25,6 +25,8 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.ImageSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.PartitionListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
@@ -40,6 +42,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Deque;
@@ -51,6 +54,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -87,7 +91,7 @@ import java.util.regex.Pattern;
  * Ohne {@link ConfluenceConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
 public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
-        AddressableKnowledgeSource, PageNavigationSource {
+        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -96,6 +100,14 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
     static final int MAX_READER_ATTACHMENTS = 500;
     /** Größte Datei, die der Lesebereich lädt (100 MB). */
     static final int READER_MAX_BYTES = 100 * 1024 * 1024;
+    /**
+     * Höchstens so viele Seiten fordert ein Stapel von {@link #resources} an (Confluence kappt
+     * {@code /rest/api/content} ohnehin, je nach Version bei 100 bis 200). Begrenzt nur die HTTP-Antwort, nicht die
+     * Gesamtzahl.
+     */
+    static final int MAX_PARTITION_BATCH = 100;
+    private static final String PARTITION_CURSOR_PREFIX = "p1.";
+    private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Za-z0-9_-]{1,400})\\.([0-9]{1,9})");
 
     /** Key and start point prefix of a space ({@link ConfluenceIds#startPoint}). */
     static final String SPACE_PREFIX = "space:";
@@ -525,6 +537,69 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
             nodes.add(treeNode(child));
         }
         return new NavigationChildren(nodes, batch.next);
+    }
+
+    /**
+     * Alle Seiten eines Space ohne Inhalt und ohne Anhänge, flach in Confluence-Reihenfolge
+     * ({@code /rest/api/content?type=page&spaceKey=...}), auch Seiten außerhalb des Baums der Startseite. Ein weiterer
+     * Stapel folgt genau dann, wenn Confluence einen {@code next}-Link liefert; es gibt keine Obergrenze für die
+     * Gesamtzahl. Der Cursor ist undurchsichtig und an den Space gebunden ({@link #partitionCursor}); ein Stapel umfasst
+     * höchstens {@link #MAX_PARTITION_BATCH} Seiten, auch wenn {@code limit} größer ist.
+     */
+    @Override
+    public PartitionResources resources(final String partitionKey, String cursor, final int limit)
+            throws KnowledgeSourceException {
+        if (!ConfluenceIds.isSpaceKey(partitionKey)) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Kein Space dieser Quelle: " + partitionKey);
+        }
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be at least 1");
+        }
+        final boolean first = cursor == null || cursor.isEmpty();
+        final int start = first ? 0 : partitionCursorStart(partitionKey, cursor);
+        final int batchSize = Math.min(limit, MAX_PARTITION_BATCH);
+        ConfluenceRestClient.PageBatch batch = withSession(new Operation<ConfluenceRestClient.PageBatch>() {
+            @Override
+            public ConfluenceRestClient.PageBatch run(Session session) throws KnowledgeSourceException {
+                // Ein unbekannter Space liefert eine leere Liste; nur am Anfang eigens nachfragen.
+                if (first && client.space(session, partitionKey) == null) {
+                    throw new KnowledgeSourceException(Kind.NOT_FOUND, "Space nicht gefunden: " + partitionKey);
+                }
+                return client.spacePageBatch(session, partitionKey, start, batchSize);
+            }
+        });
+        List<KnowledgeResource> resources = new ArrayList<KnowledgeResource>();
+        for (Page page : batch.pages) {
+            resources.add(pageResource(page, page.parentId));
+        }
+        return new PartitionResources(resources,
+                batch.nextStart < 0 ? "" : partitionCursor(partitionKey, batch.nextStart));
+    }
+
+    /**
+     * Cursor für die Position {@code start} in einem Space: {@code p1.<Space-Key Base64url>.<start>}. Das Präfix
+     * versioniert das Format, der eingebettete Space-Key bindet den Cursor an seine Partition.
+     */
+    static String partitionCursor(String spaceKey, int start) {
+        return PARTITION_CURSOR_PREFIX + Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(spaceKey.getBytes(StandardCharsets.UTF_8)) + "." + start;
+    }
+
+    /** Position aus einem Cursor von {@link #partitionCursor}; {@code UNSUPPORTED}, wenn er nicht zu diesem Space gehört. */
+    private static int partitionCursorStart(String spaceKey, String cursor) throws KnowledgeSourceException {
+        Matcher matcher = PARTITION_CURSOR.matcher(cursor);
+        if (matcher.matches()) {
+            String key;
+            try {
+                key = new String(Base64.getUrlDecoder().decode(matcher.group(1)), StandardCharsets.UTF_8);
+            } catch (IllegalArgumentException e) {
+                key = null;
+            }
+            if (spaceKey.equals(key)) {
+                return Integer.parseInt(matcher.group(2));
+            }
+        }
+        throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cursor gehört nicht zu Space " + spaceKey);
     }
 
     /** Outgoing page links of the rendered body; Confluence has no reliable list of incoming links. */
