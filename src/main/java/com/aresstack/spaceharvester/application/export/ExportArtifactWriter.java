@@ -1,0 +1,38 @@
+package com.aresstack.spaceharvester.application.export;
+
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.tree.PageTree;
+import java.util.Optional;
+
+/**
+ * Ablage für Exportartefakte (#11). Ein Artefakt entsteht unsichtbar und wird erst mit
+ * {@link Session#publish(PageTree, ExportSummary)} als Ganzes sichtbar; ein abgebrochener oder gescheiterter Export
+ * hinterlässt nichts. Ein veröffentlichtes Artefakt wird nie überschrieben.
+ */
+public interface ExportArtifactWriter {
+
+    /** Beginnt ein neues, noch unsichtbares Artefakt. */
+    Session begin(String exportId, ExportScope scope);
+
+    /** Das veröffentlichte Artefakt oder leer, wenn es (noch) keines gibt. */
+    Optional<ExportArtifact> find(String exportId);
+
+    /** Ein Artefakt im Entstehen. {@link #close()} ohne vorheriges {@link #publish} verwirft es. */
+    interface Session extends AutoCloseable {
+
+        /**
+         * Hängt eine Seite an das flache Seiten-Array an und legt ihre Payload unverändert ab.
+         *
+         * @param header   aktuelle Kopfdaten der Seite
+         * @param snapshot nativer Snapshot mit der Payload; seine Kopfdaten gehören zur Payload
+         */
+        void page(PageHeader header, PageSnapshot snapshot);
+
+        /** Schreibt Baum und Manifest und macht das Artefakt sichtbar. */
+        ExportArtifact publish(PageTree tree, ExportSummary summary);
+
+        @Override
+        void close();
+    }
+}
