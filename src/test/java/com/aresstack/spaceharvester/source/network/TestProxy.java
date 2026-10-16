@@ -14,8 +14,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Minimaler HTTP-Forward-Proxy für Tests: leitet Anfragen in Absolute-Form ({@code GET http://host:port/...}) an
- * das Ziel weiter und merkt sich Anfragezeile und Kopfzeilen. {@code CONNECT} wird nur protokolliert und mit 502
- * beantwortet (der Test prüft, dass der Tunnel angefragt wurde, nicht TLS dahinter).
+ * das Ziel weiter und merkt sich Anfragezeile und Kopfzeilen. {@code CONNECT host:port} öffnet einen Tunnel zum Ziel
+ * und leitet die Bytes (TLS) unverändert in beide Richtungen; ist das Ziel nicht erreichbar, antwortet er mit 502.
  */
 final class TestProxy implements AutoCloseable {
 
@@ -70,8 +70,7 @@ final class TestProxy implements AutoCloseable {
                 headerBlocks.add(head);
                 String[] parts = requestLine.split(" ");
                 if (parts[0].equals("CONNECT")) {
-                    out.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .getBytes(StandardCharsets.US_ASCII));
+                    tunnel(parts[1], in, out);
                     return;
                 }
                 java.net.URI target = java.net.URI.create(parts[1]);
@@ -88,6 +87,35 @@ final class TestProxy implements AutoCloseable {
             }
         } catch (IOException ignored) {
             // Testproxy: abgebrochene Verbindungen sind hier kein Fehler.
+        }
+    }
+
+    private static void tunnel(String authority, InputStream in, OutputStream out) throws IOException {
+        int colon = authority.lastIndexOf(':');
+        Socket upstream;
+        try {
+            upstream = new Socket(authority.substring(0, colon), Integer.parseInt(authority.substring(colon + 1)));
+        } catch (IOException e) {
+            out.write("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            return;
+        }
+        try (upstream) {
+            out.write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            Thread back = new Thread(() -> {
+                try {
+                    upstream.getInputStream().transferTo(out);
+                } catch (IOException ignored) {
+                    // Tunnel geschlossen.
+                }
+            }, "test-proxy-tunnel");
+            back.setDaemon(true);
+            back.start();
+            in.transferTo(upstream.getOutputStream());
+            back.join(5_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
