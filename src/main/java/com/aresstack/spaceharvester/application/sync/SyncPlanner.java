@@ -1,0 +1,77 @@
+package com.aresstack.spaceharvester.application.sync;
+
+import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Vergleicht eine Inventur mit der zuletzt bestätigten Generation. Rein funktional, ohne Quelle und ohne Speicher.
+ *
+ * <p>Regeln: Eine andere Version verlangt den Inhalt neu. Ist die Version auf einer Seite unbekannt, entscheidet der
+ * {@code metadataHash}, und jede Abweichung verlangt den Inhalt (lieber einmal zu viel laden als einen veralteten
+ * Inhalt als aktuell führen). Bei gleicher Version genügt bei abweichendem {@code metadataHash} ein Metadaten-, bei
+ * abweichendem {@code attributesHash} ein Attributabgleich. Fehlende Seiten werden nur in einer bestätigten Inventur
+ * zu {@link PageChange.Kind#MISSING}.
+ */
+public final class SyncPlanner {
+
+    private SyncPlanner() {
+    }
+
+    /**
+     * @param baseline zuletzt bestätigte Generation desselben Space oder {@code null} beim ersten Lauf
+     * @throws IllegalArgumentException wenn die Generation zu einer anderen Quelle oder einem anderen Space gehört
+     */
+    public static SyncPlan plan(SyncBaseline baseline, Inventory inventory) {
+        if (baseline != null && !(baseline.sourceId().equals(inventory.sourceId())
+                && baseline.spaceKey().equals(inventory.spaceKey()))) {
+            throw new IllegalArgumentException("Generation und Inventur gehören zu verschiedenen Spaces");
+        }
+        Map<String, BaselineEntry> previous = baseline == null ? Map.of() : baseline.pages();
+        Map<String, PageMetadataListing.Entry> current = inventory.byPageId();
+        List<PageChange> changes = new ArrayList<>();
+        current.forEach((pageId, entry) -> changes.add(classify(previous.get(pageId), entry)));
+        PageChange.Kind absent = inventory.confirmed() ? PageChange.Kind.MISSING : PageChange.Kind.NOT_SEEN;
+        previous.forEach((pageId, entry) -> {
+            if (!current.containsKey(pageId)) {
+                changes.add(new PageChange(pageId, absent, entry, null));
+            }
+        });
+        changes.sort(Comparator.comparing(PageChange::pageId));
+        return new SyncPlan(inventory, baseline, changes, Map.of());
+    }
+
+    /**
+     * Einordnung einer einzelnen Seite, auch für eine explizite Aktualitätsprüfung ({@code ?refresh=true}) mit frisch
+     * gelesenen Einzelmetadaten.
+     *
+     * @param previous Stand in der bestätigten Generation oder {@code null}
+     */
+    public static PageChange classify(BaselineEntry previous, PageMetadataListing.Entry current) {
+        Objects.requireNonNull(current, "current");
+        String pageId = current.page().pageId();
+        if (previous == null) {
+            return new PageChange(pageId, PageChange.Kind.NEW, null, current);
+        }
+        if (!previous.pageId().equals(pageId)) {
+            throw new IllegalArgumentException("Stand und Inventur betreffen verschiedene Seiten");
+        }
+        boolean metadataChanged = !previous.metadataHash().equals(current.metadataHash());
+        String version = current.page().version();
+        boolean versionKnown = previous.version() != null && version != null;
+        PageChange.Kind kind;
+        if (versionKnown ? !previous.version().equals(version) : metadataChanged) {
+            kind = PageChange.Kind.CONTENT_CHANGED;
+        } else if (metadataChanged) {
+            kind = PageChange.Kind.METADATA_CHANGED;
+        } else if (!previous.attributesHash().equals(current.attributesHash())) {
+            kind = PageChange.Kind.ATTRIBUTES_CHANGED;
+        } else {
+            kind = PageChange.Kind.UNCHANGED;
+        }
+        return new PageChange(pageId, kind, previous, current);
+    }
+}
