@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.MetadataHash;
@@ -32,21 +36,30 @@ import org.springframework.web.bind.annotation.RestController;
 public class SourcesController {
 
     private final SourceQueries queries;
+    private final AccessGuard access;
 
-    public SourcesController(SourceQueries queries) {
+    public SourcesController(SourceQueries queries, AccessGuard access) {
         this.queries = queries;
+        this.access = access;
     }
 
     @GetMapping
-    @Operation(summary = "Konfigurierte Quellen (ohne Verbindungs- und Zugangsdaten)")
-    public List<SourceResponse> sources() {
-        return queries.sources().stream().map(SourceResponse::of).toList();
+    @Operation(summary = "Konfigurierte Quellen (ohne Verbindungs- und Zugangsdaten)",
+            description = "Nur Quellen, für die der Client eine Metadaten-Freigabe hat.")
+    public List<SourceResponse> sources(@Parameter(hidden = true) AccessContext caller) {
+        return access.filter(caller, queries.sources(), AccessKind.METADATA,
+                source -> ResourceScope.source(source.id())).stream().map(SourceResponse::of).toList();
     }
 
     @GetMapping("/{sourceId}/spaces")
     @Operation(summary = "Alle Spaces einer Quelle, die mit den konfigurierten Zugangsdaten sichtbar sind",
-            description = "Vollständige, ungekürzte Liste in der Reihenfolge der Quelle.")
+            description = "Vollständige Liste in der Reihenfolge der Quelle, beschränkt auf die für den Client "
+                    + "freigegebenen Spaces.")
     @ApiResponse(responseCode = "200", description = "Spaces der Quelle")
+    @ApiResponse(responseCode = "403", description = "Keine Freigabe für diese Quelle oder keine Quelle mit dieser ID "
+            + "(access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Keine Quelle mit dieser ID konfiguriert (source-not-found)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
@@ -57,9 +70,12 @@ public class SourcesController {
     @ApiResponse(responseCode = "503", description = "Quelle nicht erreichbar (source-unavailable)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    public SpacesResponse spaces(@Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+    public SpacesResponse spaces(@Parameter(hidden = true) AccessContext caller,
+                                 @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
                                  @PathVariable String sourceId) {
-        return new SpacesResponse(sourceId, queries.partitions(sourceId).stream().map(SpaceResponse::of).toList());
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        return new SpacesResponse(sourceId, access.filter(caller, queries.partitions(sourceId), AccessKind.METADATA,
+                partition -> ResourceScope.space(sourceId, partition.key())).stream().map(SpaceResponse::of).toList());
     }
 
     @GetMapping("/{sourceId}/spaces/{spaceKey}/pages/metadata")
@@ -71,6 +87,9 @@ public class SourcesController {
                     + "attributesHash einer der weiteren Attribute (z. B. Labels) nach attributesHashSchema; "
                     + "beide sind keine Inhalts-Hashes.")
     @ApiResponse(responseCode = "200", description = "Ein Stapel Seitenmetadaten")
+    @ApiResponse(responseCode = "403", description = "Keine Freigabe für diesen Space (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "400", description = "Ungültiges limit (invalid-request) oder ein Cursor, der "
             + "nicht zu diesem Space gehört (source-unsupported)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -86,6 +105,7 @@ public class SourcesController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public PageMetadataResponse pageMetadata(
+            @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
@@ -94,6 +114,7 @@ public class SourcesController {
             @Parameter(description = "Größe des Stapels, 1 bis " + SourceQueries.MAX_PAGE_METADATA_LIMIT
                     + "; die Quelle darf weniger liefern, auch wenn noch Seiten folgen")
             @RequestParam(defaultValue = "" + SourceQueries.MAX_PAGE_METADATA_LIMIT) int limit) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
         return PageMetadataResponse.of(queries.pageMetadata(sourceId, spaceKey, cursor, limit));
     }
 
@@ -101,8 +122,12 @@ public class SourcesController {
     @Operation(summary = "Metadaten einer einzelnen Seite, ohne Inhalt",
             description = "Live aus der Quelle gelesen (origin=live), kein Cache. Kanonische Route ohne Space-Key: "
                     + "eine in einen anderen Space verschobene Seite behält ihre pageId, spaceKey zeigt den aktuellen "
-                    + "Space. Felder und Hashes wie in der Metadatenliste eines Space.")
+                    + "Space. Felder und Hashes wie in der Metadatenliste eines Space. Liegt die Seite in einem Space "
+                    + "ohne Freigabe für den Client, ist die Antwort dieselbe wie für eine unbekannte Seite.")
     @ApiResponse(responseCode = "200", description = "Metadaten der Seite")
+    @ApiResponse(responseCode = "403", description = "Keine Freigabe für diese Quelle (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "400", description = "pageId hat keine Form, die die Quelle kennt "
             + "(source-unsupported)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -118,11 +143,21 @@ public class SourcesController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public SinglePageMetadataResponse singlePageMetadata(
+            @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "ID der Seite in der Quelle (Confluence-Content-ID)", example = "123456")
             @PathVariable String pageId) {
-        return SinglePageMetadataResponse.of(queries.pageMetadata(sourceId, pageId));
+        // Der Space der Seite steht erst nach dem Lesen fest. Ohne Freigabe für alle Spaces der Quelle wird danach
+        // geprüft und eine Verweigerung wie eine unbekannte Seite beantwortet, damit sie keine Existenz verrät.
+        if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), AccessKind.METADATA)) {
+            return SinglePageMetadataResponse.of(queries.pageMetadata(sourceId, pageId));
+        }
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        SinglePageMetadata metadata = queries.pageMetadata(sourceId, pageId);
+        access.requireConcealed(caller, ResourceScope.page(sourceId, metadata.entry().page().partitionKey(), pageId),
+                AccessKind.METADATA);
+        return SinglePageMetadataResponse.of(metadata);
     }
 
     /** Eine konfigurierte Quelle. */

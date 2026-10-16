@@ -28,6 +28,10 @@ management:
 # Wissensquellen. Ohne Eintrag startet der Dienst ohne Quellen. Beispiel und Anmeldearten: README.md.
 space-harvester:
   sources: []
+  # Zugriffsschutz der API: Standard mode=clients ohne Clients, also kein Datenzugriff. Siehe docs/SECURITY.md.
+  security:
+    mode: clients
+    clients: []
 
 springdoc:
   api-docs:
