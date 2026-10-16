@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.TestClient;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -65,6 +66,7 @@ class SourcesApiTest {
 
     @DynamicPropertySource
     static void sources(DynamicPropertyRegistry registry) {
+        TestClient.register(registry, "basic-wiki", "pat-wiki", "denying-wiki", "offline-wiki");
         source(registry, 0, "basic-wiki", SERVER.baseUrl().toString(),
                 Map.of("type", "basic", "username", "harvester", "password", PASSWORD));
         source(registry, 1, "pat-wiki", SERVER.baseUrl().toString(), Map.of("type", "pat", "token", TOKEN));
@@ -127,11 +129,11 @@ class SourcesApiTest {
     }
 
     @Test
-    void unknownSourceIsNotFound() throws Exception {
+    void unknownSourceIsDeniedLikeASourceWithoutGrant() throws Exception {
         HttpResponse<String> response = get("/api/v1/sources/nope/spaces");
 
-        assertThat(response.statusCode()).isEqualTo(404);
-        assertThat(response.body()).contains("problems/source-not-found", "\"sourceId\":\"nope\"");
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(response.body()).contains("problems/access-denied").doesNotContain("\"sourceId\"");
     }
 
     @Test
@@ -158,7 +160,8 @@ class SourcesApiTest {
 
     private HttpResponse<String> get(String path) throws Exception {
         String port = environment.getRequiredProperty("local.server.port");
-        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
+        return http.send(TestClient.authenticated(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)))
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.TestClient;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -47,6 +48,7 @@ class SinglePageMetadataApiTest {
 
     @DynamicPropertySource
     static void sources(DynamicPropertyRegistry registry) {
+        TestClient.register(registry, "wiki");
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
         registry.add("space-harvester.sources[0].base-url", () -> SERVER.baseUrl().toString());
@@ -126,11 +128,11 @@ class SinglePageMetadataApiTest {
     }
 
     @Test
-    void unknownSourceIsNotFound() throws Exception {
+    void unknownSourceIsDeniedLikeASourceWithoutGrant() throws Exception {
         HttpResponse<String> response = get("/api/v1/sources/nope/pages/101/metadata");
 
-        assertThat(response.statusCode()).isEqualTo(404);
-        assertThat(response.body()).contains("problems/source-not-found");
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(response.body()).contains("problems/access-denied").doesNotContain("\"sourceId\"");
     }
 
     private JsonNode listed(String spaceKey, String pageId) throws Exception {
@@ -145,7 +147,8 @@ class SinglePageMetadataApiTest {
 
     private HttpResponse<String> get(String path) throws Exception {
         String port = environment.getRequiredProperty("local.server.port");
-        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
+        return http.send(TestClient.authenticated(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)))
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 }

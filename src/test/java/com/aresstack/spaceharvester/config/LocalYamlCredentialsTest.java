@@ -68,7 +68,8 @@ class LocalYamlCredentialsTest {
             try (ConfigurableApplicationContext context = new SpringApplicationBuilder(SpaceHarvesterApplication.class)
                     .run("--server.port=0", "--spring.profiles.active=local",
                             "--spring.config.additional-location=file:" + config.toAbsolutePath() + "/",
-                            "--LOCAL_TEST_TOKEN=token-aus-umgebung")) {
+                            "--LOCAL_TEST_TOKEN=token-aus-umgebung",
+                            "--space-harvester.security.mode=development")) {
                 String port = context.getEnvironment().getRequiredProperty("local.server.port");
 
                 assertThat(spacesStatus(port, "literal-basic")).isEqualTo(200);
