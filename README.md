@@ -113,6 +113,9 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -152,6 +155,21 @@ die Liste (unter `page`, dazu `origin`, `retrievedAt` und die beiden Schemata), 
 ohne Space-Key aus: eine in einen anderen Space verschobene Seite behält ihre `pageId`, `spaceKey` zeigt den
 aktuellen Space. Eine unbekannte oder nicht sichtbare Seite ist `source-object-not-found` (404), eine ID in fremder
 Form `source-unsupported` (400).
+
+**Seiten aus dem Cache (#27):** Seitenliste, Baum und native Einzelseite lesen nur aus dem Cache des Harvesters
+(`origin: cache`), nie live. Jede Antwort nennt den Cache-Stand: `cache.generation`, `cache.state` (`confirmed` aus
+einem vollständigen Abgleich, `incomplete`, `stale`), `syncedAt` und `lastCheckedAt`; ein Treffer im Cache gilt nie
+als frisch. Liste und Baum derselben Generation enthalten dieselben Seiten. Die Liste ist aufsteigend nach `pageId`
+sortiert; ein Stapel kann kürzer als `limit` oder leer sein, solange `nextCursor` nicht `null` ist. Ersetzt ein neuer
+Abgleich die Generation, endet die Abfrage mit `cache-generation-changed` (409) und beginnt ohne `cursor` neu. Im Baum
+erscheint jede Seite genau einmal; Seiten, deren Elternseite fehlt oder nicht sichtbar ist, und Elternzyklen werden
+zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `space-harvester.query.max-tree-nodes`
+(Standard 50000) Seiten oder 200 Ebenen ergeben `tree-too-large` (422); sie liefert der Export. Die Einzelseite gibt die
+gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
+`X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
+`refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
+antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt oder nicht sichtbar ist, ist `cache-miss`
+(404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503).
 
 Geplante Endpunkte: Space-Fingerprint aus bestätigt vollständigen Läufen
 ([#16](https://github.com/aresstack/space-harvester/issues/16)), asynchrone Exporte
