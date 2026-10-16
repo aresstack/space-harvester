@@ -46,6 +46,11 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
     }
 
     @Override
+    public Optional<java.io.InputStream> open(String exportId, String name) {
+        return Optional.empty();
+    }
+
+    @Override
     public Optional<ExportArtifact> find(String exportId) {
         Published p = published.get(exportId);
         return p == null ? Optional.empty()
