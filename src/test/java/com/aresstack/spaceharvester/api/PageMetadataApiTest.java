@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.TestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import java.net.URI;
@@ -67,6 +68,7 @@ class PageMetadataApiTest {
 
     @DynamicPropertySource
     static void sources(DynamicPropertyRegistry registry) {
+        TestClient.register(registry, "wiki", "flaky-wiki");
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
         registry.add("space-harvester.sources[0].base-url", () -> SERVER.baseUrl().toString());
@@ -187,7 +189,8 @@ class PageMetadataApiTest {
 
     private HttpResponse<String> get(String path) throws Exception {
         String port = environment.getRequiredProperty("local.server.port");
-        return http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
+        return http.send(TestClient.authenticated(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)))
+                        .GET().build(),
                 HttpResponse.BodyHandlers.ofString());
     }
 }

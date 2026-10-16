@@ -38,6 +38,11 @@ public final class InMemoryPageCache implements PageCacheReader {
         spaces.put(sourceId + "\n" + spaceKey, space);
     }
 
+    /** Leert den Cache, etwa zwischen Tests mit gemeinsamem Spring-Kontext. */
+    public void clear() {
+        spaces.clear();
+    }
+
     /** Neue Kopfdaten ohne neue Payload, wie sie die Synchronisierung schreibt; auch für Seiten ohne Payload. */
     public void updateHeader(String spaceKey, PageHeader header) {
         requireSpace(header.key().sourceId(), spaceKey, header);

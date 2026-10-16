@@ -6,6 +6,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -25,7 +31,7 @@ import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
-/** {@link PageQueries} gegen den {@link InMemoryPageCache}: Paging, Baum, Sichtbarkeit, Generationen, Refresh. */
+/** {@link PageQueries} gegen den {@link InMemoryPageCache}: Paging, Baum, Rechte, Generationen, Refresh. */
 class PageQueriesTest {
 
     private static final SourceCatalog CATALOG = new SourceCatalog() {
@@ -39,6 +45,9 @@ class PageQueriesTest {
             return "wiki".equals(sourceId) ? Optional.of(mock(HarvestSource.class)) : Optional.empty();
         }
     };
+
+    private static final AccessContext CALLER = AccessContext.technicalClient("etl");
+    private static final AccessPolicy ALLOW_ALL = (context, scope, kind) -> AccessDecision.ALLOW;
 
     private final InMemoryPageCache cache = new InMemoryPageCache();
 
@@ -54,19 +63,19 @@ class PageQueriesTest {
         return pages;
     }
 
-    private PageQueries queries(PageVisibility visibility) {
-        return new PageQueries(CATALOG, cache, visibility, 1000);
+    private PageQueries queries(AccessPolicy policy) {
+        return new PageQueries(CATALOG, cache, new AccessGuard(policy), 1000);
     }
 
     @Test
     void pagingReturnsEveryPageExactlyOnceAndTheSamePagesAsTheTree() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
-        PageQueries queries = queries(PageVisibility.unrestricted());
+        PageQueries queries = queries(ALLOW_ALL);
 
         List<String> listed = readAll(queries, 7);
 
         assertThat(listed).hasSize(25).doesNotHaveDuplicates().isSorted();
-        SpaceTree tree = queries.tree("wiki", "DEV");
+        SpaceTree tree = queries.tree(CALLER, "wiki", "DEV");
         assertThat(treeIds(tree.tree())).isEqualTo(new HashSet<>(listed));
         assertThat(tree.tree().roots()).extracting(PageTree.Node::pageId).containsExactly("p00", "p01", "p24");
         assertThat(tree.tree().anomalies()).containsExactly(
@@ -78,7 +87,7 @@ class PageQueriesTest {
     void lastBatchIsCompleteWithoutCursor() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        PageListing listing = queries(PageVisibility.unrestricted()).pages("wiki", "DEV", null, 100);
+        PageListing listing = queries(ALLOW_ALL).pages(CALLER, "wiki", "DEV", null, 100);
 
         assertThat(listing.pages()).hasSize(25);
         assertThat(listing.complete()).isTrue();
@@ -89,14 +98,16 @@ class PageQueriesTest {
     void hiddenPagesAppearNowhereAndTheCursorNeverNamesThem() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
         Set<String> hidden = Set.of("p00", "p12", "p14", "p16", "p18", "p20", "p22");
-        PageVisibility visibility = page -> !hidden.contains(page.key().pageId());
-        PageQueries queries = queries(visibility);
+        // Space DEV ist freigegeben, einzelne Seiten darin nicht (wie später bei delegierter Prüfung je Seite, #24).
+        PageQueries queries = queries((context, scope, kind) -> kind == AccessKind.METADATA
+                && (scope.pageId() == null || !hidden.contains(scope.pageId()))
+                ? AccessDecision.ALLOW : AccessDecision.DENY);
 
         List<String> cursors = new ArrayList<>();
         List<String> listed = new ArrayList<>();
         String cursor = null;
         do {
-            PageListing listing = queries.pages("wiki", "DEV", cursor, 3);
+            PageListing listing = queries.pages(CALLER, "wiki", "DEV", cursor, 3);
             listing.pages().forEach(page -> listed.add(page.pageId()));
             cursor = listing.nextCursor();
             if (cursor != null) {
@@ -109,7 +120,7 @@ class PageQueriesTest {
             String decoded = new String(Base64.getUrlDecoder().decode(c.substring(3)), StandardCharsets.UTF_8);
             assertThat(listed).contains(decoded.substring(decoded.lastIndexOf('\n') + 1));
         }
-        SpaceTree tree = queries.tree("wiki", "DEV");
+        SpaceTree tree = queries.tree(CALLER, "wiki", "DEV");
         assertThat(treeIds(tree.tree())).isEqualTo(new HashSet<>(listed));
         assertThat(tree.pages()).doesNotContainKey("p00");
         // Kinder der unsichtbaren Wurzel p00 werden abgelöste Wurzeln, ohne p00 zu nennen.
@@ -122,9 +133,10 @@ class PageQueriesTest {
     void hiddenSinglePageIsACacheMiss() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        assertThatThrownBy(() -> queries(page -> !page.key().pageId().equals("p03")).page("wiki", "p03", false))
+        assertThatThrownBy(() -> queries((context, scope, kind) -> "p03".equals(scope.pageId())
+                ? AccessDecision.DENY : AccessDecision.ALLOW).page(CALLER, "wiki", "p03", false))
                 .isInstanceOf(CacheMissException.class);
-        assertThat(queries(PageVisibility.unrestricted()).page("wiki", "p03", false).snapshot().key().pageId())
+        assertThat(queries(ALLOW_ALL).page(CALLER, "wiki", "p03", false).snapshot().key().pageId())
                 .isEqualTo("p03");
     }
 
@@ -137,33 +149,69 @@ class PageQueriesTest {
         cache.updateHeader("DEV", PageHeader.of("wiki", renamed, Instant.parse("2026-10-16T21:00:00Z")));
         cache.updateHeader("DEV", PageHeader.of("wiki", new PageMetadata("p99", "r", "Ohne Body", "DEV", "p00", "1",
                 null, null, PageMetadata.sorted(Map.of())), Instant.parse("2026-10-16T21:00:00Z")));
-        PageQueries queries = queries(PageVisibility.unrestricted());
+        PageQueries queries = queries(ALLOW_ALL);
 
-        ListedPage listed = queries.pages("wiki", "DEV", null, 100).pages().stream()
+        ListedPage listed = queries.pages(CALLER, "wiki", "DEV", null, 100).pages().stream()
                 .filter(page -> page.pageId().equals("p03")).findFirst().orElseThrow();
         assertThat(listed.header().metadata().title()).isEqualTo("Umbenannt");
         assertThat(listed.header().metadata().parentPageId()).isEqualTo("p00");
         assertThat(listed.rawSha256()).isEqualTo(stored.payload().rawSha256());
-        SpaceTree tree = queries.tree("wiki", "DEV");
+        SpaceTree tree = queries.tree(CALLER, "wiki", "DEV");
         assertThat(tree.pages().get("p03").header().metadata().title()).isEqualTo("Umbenannt");
         assertThat(tree.tree().roots().get(0).children()).extracting(PageTree.Node::pageId).contains("p03", "p99");
         assertThat(tree.pages().get("p99").rawSha256()).isNull();
 
-        CachedPage page = queries.page("wiki", "p03", false);
+        CachedPage page = queries.page(CALLER, "wiki", "p03", false);
         assertThat(page.header().metadata().title()).isEqualTo("Umbenannt");
         assertThat(page.snapshot().metadata().title()).isEqualTo("Seite p03");
-        assertThatThrownBy(() -> queries.page("wiki", "p99", false)).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p99", false)).isInstanceOf(CacheMissException.class);
+    }
+
+    @Test
+    void metadataGrantGivesListAndTreeButNoPayload() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageQueries queries = queries((context, scope, kind) -> kind == AccessKind.METADATA
+                ? AccessDecision.ALLOW : AccessDecision.DENY);
+
+        assertThat(queries.pages(CALLER, "wiki", "DEV", null, 100).pages()).hasSize(25);
+        assertThat(queries.tree(CALLER, "wiki", "DEV").tree().nodeCount()).isEqualTo(25);
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p03", false))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void contentGrantForAnotherSpaceDoesNotRevealThePage() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageQueries queries = queries((context, scope, kind) -> scope.spaceKey() == null
+                || scope.spaceKey().equals("OPS") ? AccessDecision.ALLOW : AccessDecision.DENY);
+
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p03", false)).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", null, 10))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> queries.tree(CALLER, "wiki", "DEV")).isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void missingCallerIsDenied() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageQueries queries = queries(ALLOW_ALL);
+
+        assertThatThrownBy(() -> queries.pages(null, "wiki", "DEV", null, 10))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> queries.tree(null, "wiki", "DEV")).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> queries.page(null, "wiki", "p03", false))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     @Test
     void cursorOfAReplacedGenerationIsRejected() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
-        PageQueries queries = queries(PageVisibility.unrestricted());
-        String cursor = queries.pages("wiki", "DEV", null, 5).nextCursor();
+        PageQueries queries = queries(ALLOW_ALL);
+        String cursor = queries.pages(CALLER, "wiki", "DEV", null, 5).nextCursor();
 
         cache.publish("wiki", "DEV", confirmed("g2"), devPages());
 
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", cursor, 5))
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", cursor, 5))
                 .isInstanceOf(CacheGenerationChangedException.class);
     }
 
@@ -171,41 +219,41 @@ class PageQueriesTest {
     void cursorIsBoundToSourceAndSpace() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
         cache.publish("wiki", "OPS", confirmed("g1"), List.of(page("wiki", "OPS", "o1", null)));
-        PageQueries queries = queries(PageVisibility.unrestricted());
-        String cursor = queries.pages("wiki", "DEV", null, 5).nextCursor();
+        PageQueries queries = queries(ALLOW_ALL);
+        String cursor = queries.pages(CALLER, "wiki", "DEV", null, 5).nextCursor();
 
-        assertThatThrownBy(() -> queries.pages("wiki", "OPS", cursor, 5)).isInstanceOf(InvalidQueryException.class);
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", "kaputt", 5))
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "OPS", cursor, 5)).isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", "kaputt", 5))
                 .isInstanceOf(InvalidQueryException.class);
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", "c1.!!", 5)).isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", "c1.!!", 5)).isInstanceOf(InvalidQueryException.class);
     }
 
     @Test
     void limitIsChecked() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
-        PageQueries queries = queries(PageVisibility.unrestricted());
+        PageQueries queries = queries(ALLOW_ALL);
 
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", null, 0)).isInstanceOf(InvalidQueryException.class);
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", null, 101)).isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", null, 0)).isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", null, 101)).isInstanceOf(InvalidQueryException.class);
     }
 
     @Test
     void unknownSourceAndUncachedSpaceAreDistinguished() {
-        PageQueries queries = queries(PageVisibility.unrestricted());
+        PageQueries queries = queries(ALLOW_ALL);
 
-        assertThatThrownBy(() -> queries.pages("nope", "DEV", null, 5)).isInstanceOf(UnknownSourceException.class);
-        assertThatThrownBy(() -> queries.tree("nope", "DEV")).isInstanceOf(UnknownSourceException.class);
-        assertThatThrownBy(() -> queries.page("nope", "1", false)).isInstanceOf(UnknownSourceException.class);
-        assertThatThrownBy(() -> queries.pages("wiki", "DEV", null, 5)).isInstanceOf(CacheMissException.class);
-        assertThatThrownBy(() -> queries.tree("wiki", "DEV")).isInstanceOf(CacheMissException.class);
-        assertThatThrownBy(() -> queries.page("wiki", "1", false)).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "nope", "DEV", null, 5)).isInstanceOf(UnknownSourceException.class);
+        assertThatThrownBy(() -> queries.tree(CALLER, "nope", "DEV")).isInstanceOf(UnknownSourceException.class);
+        assertThatThrownBy(() -> queries.page(CALLER, "nope", "1", false)).isInstanceOf(UnknownSourceException.class);
+        assertThatThrownBy(() -> queries.pages(CALLER, "wiki", "DEV", null, 5)).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.tree(CALLER, "wiki", "DEV")).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "1", false)).isInstanceOf(CacheMissException.class);
     }
 
     @Test
     void movedPageIsFoundByPageIdAlone() {
         cache.publish("wiki", "OPS", confirmed("g7"), List.of(page("wiki", "OPS", "101", null)));
 
-        CachedPage page = queries(PageVisibility.unrestricted()).page("wiki", "101", false);
+        CachedPage page = queries(ALLOW_ALL).page(CALLER, "wiki", "101", false);
 
         assertThat(page.snapshot().spaceKey()).isEqualTo("OPS");
         assertThat(page.generation().id()).isEqualTo("g7");
@@ -215,7 +263,7 @@ class PageQueriesTest {
     void refreshNeverFallsBackToTheCache() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        assertThatThrownBy(() -> queries(PageVisibility.unrestricted()).page("wiki", "p03", true))
+        assertThatThrownBy(() -> queries(ALLOW_ALL).page(CALLER, "wiki", "p03", true))
                 .isInstanceOf(RefreshUnavailableException.class);
     }
 
@@ -223,9 +271,9 @@ class PageQueriesTest {
     void treeLargerThanTheLimitIsRefused() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        assertThatThrownBy(() -> new PageQueries(CATALOG, cache, PageVisibility.unrestricted(), 24)
-                .tree("wiki", "DEV")).isInstanceOf(TreeTooLargeException.class);
-        assertThat(new PageQueries(CATALOG, cache, PageVisibility.unrestricted(), 25).tree("wiki", "DEV")
+        assertThatThrownBy(() -> new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 24)
+                .tree(CALLER, "wiki", "DEV")).isInstanceOf(TreeTooLargeException.class);
+        assertThat(new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 25).tree(CALLER, "wiki", "DEV")
                 .tree().nodeCount()).isEqualTo(25);
     }
 
@@ -237,7 +285,7 @@ class PageQueriesTest {
         }
         cache.publish("wiki", "DEV", confirmed("g1"), chain);
 
-        assertThatThrownBy(() -> queries(PageVisibility.unrestricted()).tree("wiki", "DEV"))
+        assertThatThrownBy(() -> queries(ALLOW_ALL).tree(CALLER, "wiki", "DEV"))
                 .isInstanceOf(TreeTooLargeException.class);
     }
 
@@ -250,7 +298,7 @@ class PageQueriesTest {
         }
         cache.publish("wiki", "BIG", confirmed("g1"), pages);
 
-        SpaceTree tree = new PageQueries(CATALOG, cache, PageVisibility.unrestricted(), 5000).tree("wiki", "BIG");
+        SpaceTree tree = new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 5000).tree(CALLER, "wiki", "BIG");
 
         assertThat(tree.tree().nodeCount()).isEqualTo(2501);
         assertThat(tree.tree().roots()).singleElement().satisfies(root ->
@@ -261,7 +309,7 @@ class PageQueriesTest {
         List<String> ids = new ArrayList<>();
         String cursor = null;
         do {
-            PageListing listing = queries.pages("wiki", "DEV", cursor, limit);
+            PageListing listing = queries.pages(CALLER, "wiki", "DEV", cursor, limit);
             listing.pages().forEach(page -> ids.add(page.pageId()));
             cursor = listing.nextCursor();
             assertThat(listing.complete()).isEqualTo(cursor == null);

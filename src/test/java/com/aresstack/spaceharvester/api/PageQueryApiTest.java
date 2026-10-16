@@ -4,6 +4,7 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.c
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.TestClient;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
@@ -15,8 +16,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +29,8 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -34,15 +38,26 @@ import tools.jackson.databind.ObjectMapper;
  * Cachegestützte Seitenliste, Baum und native Einzelseite über echtes HTTP, gegen den {@link InMemoryPageCache}.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
-@TestPropertySource(properties = {
-        "space-harvester.sources[0].id=wiki",
-        "space-harvester.sources[0].type=confluence",
-        "space-harvester.sources[0].base-url=http://127.0.0.1:9",
-        "space-harvester.query.max-tree-nodes=1000"})
 class PageQueryApiTest {
 
     /** Kein gültiges UTF-8: die Payload darf nirgends als Text behandelt werden. */
     private static final byte[] NOT_UTF8 = {'{', 0x00, (byte) 0xC3, (byte) 0x28, (byte) 0xFF, '}'};
+    private static final String METADATA_TOKEN = "metadata-only-token-7d41";
+
+    @DynamicPropertySource
+    static void properties(DynamicPropertyRegistry registry) {
+        registry.add("space-harvester.sources[0].id", () -> "wiki");
+        registry.add("space-harvester.sources[0].type", () -> "confluence");
+        registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
+        registry.add("space-harvester.query.max-tree-nodes", () -> "1000");
+        TestClient.register(registry, "wiki");
+        // Zweiter Client nur mit metadata auf DEV.
+        registry.add("space-harvester.security.clients[1].id", () -> "metadata-only");
+        registry.add("space-harvester.security.clients[1].token-sha256", () -> "sha256:" + sha256(METADATA_TOKEN));
+        registry.add("space-harvester.security.clients[1].grants[0].source", () -> "wiki");
+        registry.add("space-harvester.security.clients[1].grants[0].spaces[0]", () -> "DEV");
+        registry.add("space-harvester.security.clients[1].grants[0].access", () -> "metadata");
+    }
 
     @TestConfiguration
     static class Cache {
@@ -64,6 +79,7 @@ class PageQueryApiTest {
 
     @BeforeEach
     void fillCache() {
+        cache.clear();
         cache.publish("wiki", "DEV", confirmed("g1"), List.of(
                 page("wiki", "DEV", "100", null),
                 page("wiki", "DEV", "101", "100", NOT_UTF8),
@@ -245,8 +261,31 @@ class PageQueryApiTest {
         assertProblem(get("/api/v1/sources/wiki/pages/4711"), 404, "cache-miss");
         assertProblem(get("/api/v1/sources/wiki/spaces/OPS/pages"), 404, "cache-miss");
         assertProblem(get("/api/v1/sources/wiki/spaces/OPS/tree"), 404, "cache-miss");
-        assertProblem(get("/api/v1/sources/nope/pages/101"), 404, "source-not-found");
-        assertProblem(get("/api/v1/sources/nope/spaces/DEV/tree"), 404, "source-not-found");
+        // Eine nicht konfigurierte Quelle ist für den Client nicht freigegeben, wie jede andere fremde Quelle.
+        assertProblem(get("/api/v1/sources/nope/pages/101"), 403, "access-denied");
+        assertProblem(get("/api/v1/sources/nope/spaces/DEV/tree"), 403, "access-denied");
+    }
+
+    @Test
+    void withoutTokenNothingIsDelivered() throws Exception {
+        for (String path : new String[]{"/api/v1/sources/wiki/spaces/DEV/pages", "/api/v1/sources/wiki/spaces/DEV/tree",
+                "/api/v1/sources/wiki/pages/101"}) {
+            HttpResponse<String> response = http.send(HttpRequest.newBuilder(uri(path)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(response.statusCode()).as(path).isEqualTo(401);
+            assertThat(response.body()).doesNotContain("101").doesNotContain("Seite");
+        }
+    }
+
+    @Test
+    void metadataGrantGivesTreeButNeitherPayloadNorOtherSpaces() throws Exception {
+        cache.publish("wiki", "OPS", confirmed("g1"), List.of(page("wiki", "OPS", "900", null)));
+
+        assertThat(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/spaces/DEV/tree").statusCode()).isEqualTo(200);
+        assertThat(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/spaces/DEV/pages").statusCode()).isEqualTo(200);
+        assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages/101"), 403, "access-denied");
+        assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/spaces/OPS/tree"), 403, "access-denied");
+        assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/spaces/OPS/pages"), 403, "access-denied");
     }
 
     @Test
@@ -274,8 +313,26 @@ class PageQueryApiTest {
         return http.send(request(path).build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    private HttpResponse<String> getAs(String token, String path) throws Exception {
+        return http.send(HttpRequest.newBuilder(uri(path)).header("Authorization", "Bearer " + token).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Als Test-Client mit voller Freigabe auf {@code wiki}. */
     private HttpRequest.Builder request(String path) {
-        return HttpRequest.newBuilder(
-                URI.create("http://localhost:" + environment.getProperty("local.server.port") + path));
+        return TestClient.authenticated(HttpRequest.newBuilder(uri(path)));
+    }
+
+    private URI uri(String path) {
+        return URI.create("http://localhost:" + environment.getProperty("local.server.port") + path);
+    }
+
+    private static String sha256(String value) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }
