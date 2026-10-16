@@ -16,7 +16,7 @@ import java.util.Objects;
 /**
  * Anwendungsfälle der cachegestützten Query-API (#27): flache Seitenliste, ID-Baum und native Einzelseite.
  *
- * <p>Liste und Baum lesen dieselben Einträge über {@link PageCacheReader#headers}, daher enthalten sie für dieselbe
+ * <p>Liste und Baum lesen dieselben Einträge über {@link PageCacheReader#pages}, daher enthalten sie für dieselbe
  * Generation dieselben Seiten. Jede Seite passiert {@link PageVisibility}, bevor sie in irgendeiner Form ausgegeben
  * wird.
  */
@@ -76,17 +76,17 @@ public class PageQueries {
 
         // So lange lesen, bis das Limit mit sichtbaren Seiten gefüllt oder das Ende erreicht ist. Der nächste Cursor
         // zeigt hinter die letzte ausgelieferte Seite, damit er keine unsichtbare pageId preisgibt.
-        List<PageHeader> visible = new ArrayList<>();
+        List<ListedPage> visible = new ArrayList<>();
         String after = position == null ? null : position.afterPageId();
         boolean exhausted = false;
         while (visible.size() < limit && !exhausted) {
-            List<PageHeader> batch = cache.headers(sourceId, spaceKey, generation.id(), after, limit);
+            List<ListedPage> batch = cache.pages(sourceId, spaceKey, generation.id(), after, limit);
             int consumed = 0;
-            for (PageHeader header : batch) {
+            for (ListedPage page : batch) {
                 consumed++;
-                after = header.pageId();
-                if (visibility.canRead(header)) {
-                    visible.add(header);
+                after = page.pageId();
+                if (visibility.canRead(page.header())) {
+                    visible.add(page);
                     if (visible.size() == limit) {
                         break;
                     }
@@ -111,20 +111,20 @@ public class PageQueries {
     public SpaceTree tree(String sourceId, String spaceKey) {
         requireSource(sourceId);
         CacheGeneration generation = generation(sourceId, spaceKey);
-        Map<String, PageHeader> headers = new HashMap<>();
+        Map<String, ListedPage> pages = new HashMap<>();
         List<TreeEntry> entries = new ArrayList<>();
         String after = null;
-        List<PageHeader> batch;
+        List<ListedPage> batch;
         do {
-            batch = cache.headers(sourceId, spaceKey, generation.id(), after, TREE_BATCH);
-            for (PageHeader header : batch) {
-                after = header.pageId();
-                if (visibility.canRead(header)) {
+            batch = cache.pages(sourceId, spaceKey, generation.id(), after, TREE_BATCH);
+            for (ListedPage page : batch) {
+                after = page.pageId();
+                if (visibility.canRead(page.header())) {
                     if (entries.size() == maxTreeNodes) {
                         throw new TreeTooLargeException("Der Baum hat mehr als " + maxTreeNodes + " Seiten");
                     }
-                    headers.put(header.pageId(), header);
-                    entries.add(new TreeEntry(header.pageId(), header.parentPageId()));
+                    pages.put(page.pageId(), page);
+                    entries.add(new TreeEntry(page.pageId(), page.parentPageId()));
                 }
             }
         } while (batch.size() == TREE_BATCH);
@@ -132,7 +132,7 @@ public class PageQueries {
         if (tree.depth() > MAX_TREE_DEPTH) {
             throw new TreeTooLargeException("Der Baum ist tiefer als " + MAX_TREE_DEPTH + " Ebenen");
         }
-        return new SpaceTree(sourceId, spaceKey, generation, tree, headers);
+        return new SpaceTree(sourceId, spaceKey, generation, tree, pages);
     }
 
     /**
@@ -151,7 +151,7 @@ public class PageQueries {
             throw new RefreshUnavailableException("Die Prüfung gegen die Quelle ist noch nicht angebunden");
         }
         return cache.page(new PageKey(sourceId, pageId))
-                .filter(page -> visibility.canRead(PageHeader.of(page.snapshot())))
+                .filter(page -> visibility.canRead(page.header()))
                 .orElseThrow(() -> new CacheMissException(sourceId, "Seite nicht im Cache"));
     }
 

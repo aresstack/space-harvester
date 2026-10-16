@@ -23,19 +23,20 @@ public interface PageCacheReader {
     Optional<CacheGeneration> currentGeneration(String sourceId, String spaceKey);
 
     /**
-     * Seiten eines Space aus genau einer Generation, aufsteigend nach {@code pageId} ({@link String#compareTo}).
+     * Seiten eines Space aus genau einer Generation, aufsteigend nach {@code pageId} ({@link String#compareTo}), mit
+     * ihren aktuellen Kopfdaten ({@link SnapshotRepository#findHeader}), nicht denen des Snapshots.
      *
      * @param afterPageId nur Seiten mit größerer {@code pageId}; {@code null} ab der ersten
      * @param limit       höchstens so viele; weniger nur, wenn keine weiteren folgen
      * @throws CacheGenerationChangedException wenn die Generation nicht mehr lesbar ist
      */
-    List<PageHeader> headers(String sourceId, String spaceKey, String generationId, String afterPageId,
-                                   int limit);
+    List<ListedPage> pages(String sourceId, String spaceKey, String generationId, String afterPageId, int limit);
 
     /**
-     * Eine Seite mit nativer Payload, unabhängig vom Space (eine verschobene Seite behält ihre {@code pageId}).
+     * Eine Seite mit aktuellen Kopfdaten und nativer Payload, unabhängig vom Space (eine verschobene Seite behält
+     * ihre {@code pageId}).
      *
-     * @return leer, wenn die Seite nicht im Cache liegt
+     * @return leer, wenn die Seite nicht im Cache liegt oder noch keine Payload hat
      */
     Optional<CachedPage> page(PageKey key);
 
@@ -48,8 +49,8 @@ public interface PageCacheReader {
             }
 
             @Override
-            public List<PageHeader> headers(String sourceId, String spaceKey, String generationId,
-                                                  String afterPageId, int limit) {
+            public List<ListedPage> pages(String sourceId, String spaceKey, String generationId,
+                                             String afterPageId, int limit) {
                 throw new CacheUnavailableException("Kein Seitencache eingerichtet");
             }
 

@@ -7,12 +7,12 @@ import java.util.Map;
  * Der Baum eines Space aus genau einer Cache-Generation, nur aus sichtbaren Seiten.
  *
  * @param tree    ID-Baum
- * @param headers Metadaten je {@code pageId} aller Knoten, für {@code include=metadata}
+ * @param pages   Kopfdaten je {@code pageId} aller Knoten, für {@code include=metadata}
  */
 public record SpaceTree(String sourceId, String spaceKey, CacheGeneration generation, PageTree tree,
-                        Map<String, PageHeader> headers) {
+                        Map<String, ListedPage> pages) {
 
     public SpaceTree {
-        headers = Map.copyOf(headers);
+        pages = Map.copyOf(pages);
     }
 }

@@ -6,9 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -16,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -85,7 +89,7 @@ class PageQueriesTest {
     void hiddenPagesAppearNowhereAndTheCursorNeverNamesThem() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
         Set<String> hidden = Set.of("p00", "p12", "p14", "p16", "p18", "p20", "p22");
-        PageVisibility visibility = page -> !hidden.contains(page.pageId());
+        PageVisibility visibility = page -> !hidden.contains(page.key().pageId());
         PageQueries queries = queries(visibility);
 
         List<String> cursors = new ArrayList<>();
@@ -107,7 +111,7 @@ class PageQueriesTest {
         }
         SpaceTree tree = queries.tree("wiki", "DEV");
         assertThat(treeIds(tree.tree())).isEqualTo(new HashSet<>(listed));
-        assertThat(tree.headers()).doesNotContainKey("p00");
+        assertThat(tree.pages()).doesNotContainKey("p00");
         // Kinder der unsichtbaren Wurzel p00 werden abgelöste Wurzeln, ohne p00 zu nennen.
         assertThat(tree.tree().anomalies()).extracting(PageTree.Anomaly::pageId).contains("p02", "p04");
         assertThat(tree.tree().anomalies()).extracting(PageTree.Anomaly::kind)
@@ -118,10 +122,37 @@ class PageQueriesTest {
     void hiddenSinglePageIsACacheMiss() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        assertThatThrownBy(() -> queries(page -> !page.pageId().equals("p03")).page("wiki", "p03", false))
+        assertThatThrownBy(() -> queries(page -> !page.key().pageId().equals("p03")).page("wiki", "p03", false))
                 .isInstanceOf(CacheMissException.class);
         assertThat(queries(PageVisibility.unrestricted()).page("wiki", "p03", false).snapshot().key().pageId())
                 .isEqualTo("p03");
+    }
+
+    @Test
+    void listAndTreeShowTheCurrentHeaderEvenWhenItIsNewerThanThePayload() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot stored = devPages().get(3);
+        PageMetadata renamed = new PageMetadata("p03", stored.metadata().resourceId(), "Umbenannt", "DEV", "p00",
+                "3", stored.metadata().modifiedAt(), null, PageMetadata.sorted(Map.of("confluence.labels", "neu")));
+        cache.updateHeader("DEV", PageHeader.of("wiki", renamed, Instant.parse("2026-10-16T21:00:00Z")));
+        cache.updateHeader("DEV", PageHeader.of("wiki", new PageMetadata("p99", "r", "Ohne Body", "DEV", "p00", "1",
+                null, null, PageMetadata.sorted(Map.of())), Instant.parse("2026-10-16T21:00:00Z")));
+        PageQueries queries = queries(PageVisibility.unrestricted());
+
+        ListedPage listed = queries.pages("wiki", "DEV", null, 100).pages().stream()
+                .filter(page -> page.pageId().equals("p03")).findFirst().orElseThrow();
+        assertThat(listed.header().metadata().title()).isEqualTo("Umbenannt");
+        assertThat(listed.header().metadata().parentPageId()).isEqualTo("p00");
+        assertThat(listed.rawSha256()).isEqualTo(stored.payload().rawSha256());
+        SpaceTree tree = queries.tree("wiki", "DEV");
+        assertThat(tree.pages().get("p03").header().metadata().title()).isEqualTo("Umbenannt");
+        assertThat(tree.tree().roots().get(0).children()).extracting(PageTree.Node::pageId).contains("p03", "p99");
+        assertThat(tree.pages().get("p99").rawSha256()).isNull();
+
+        CachedPage page = queries.page("wiki", "p03", false);
+        assertThat(page.header().metadata().title()).isEqualTo("Umbenannt");
+        assertThat(page.snapshot().metadata().title()).isEqualTo("Seite p03");
+        assertThatThrownBy(() -> queries.page("wiki", "p99", false)).isInstanceOf(CacheMissException.class);
     }
 
     @Test

@@ -2,7 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CachedPage;
-import com.aresstack.spaceharvester.application.query.PageHeader;
+import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
@@ -151,7 +151,8 @@ public class PageQueryController {
                     @Header(name = CACHE_SYNCED_AT, description = "Ende des Abgleichs, falls bekannt"),
                     @Header(name = CACHE_LAST_CHECKED_AT, description = "Letzte Prüfung gegen die Quelle, falls "
                             + "bekannt"),
-                    @Header(name = PAGE_REVISION, description = "Revision der Quelle, falls bekannt"),
+                    @Header(name = PAGE_REVISION, description = "Revision der Payload, falls bekannt; aktuelle "
+                            + "Kopfdaten können neuer sein"),
                     @Header(name = NATIVE_FORMAT, description = "Format und Abrufform der Payload")})
     @ApiResponse(responseCode = "304", description = "Payload unverändert gegenüber If-None-Match")
     @ApiResponse(responseCode = "400", description = "Nicht unterstützte view (invalid-request)",
@@ -251,7 +252,8 @@ public class PageQueryController {
     }
 
     /**
-     * Eine Seite der Liste, ohne Inhalt. Felder wie in der Live-Metadatenliste, dazu {@code rawSha256}.
+     * Eine Seite der Liste, ohne Inhalt, mit ihren aktuellen Kopfdaten. Felder wie in der Live-Metadatenliste, dazu
+     * {@code rawSha256}.
      *
      * @param pageId         ID der Seite in der Quelle
      * @param resourceId     quellübergreifende Ressourcen-ID
@@ -263,20 +265,23 @@ public class PageQueryController {
      * @param attributes     weitere Metadaten der Quelle, z. B. {@code confluence.labels}
      * @param metadataHash   {@code sha256:<hex>} nach {@code metadataHashSchema}
      * @param attributesHash {@code sha256:<hex>} nach {@code attributesHashSchema}
-     * @param rawSha256      {@code sha256:<hex>} über die gespeicherte native Payload; zugleich ihr ETag
+     * @param rawSha256      {@code sha256:<hex>} über die gespeicherte native Payload, zugleich ihr ETag, oder
+     *                       {@code null}, wenn noch keine Payload gespeichert ist; die Kopfdaten können neuer sein als
+     *                       die Payload
      */
     public record PageEntry(String pageId, String resourceId, String title, String spaceKey,
                             @Schema(nullable = true) String parentPageId,
                             @Schema(nullable = true) String version,
                             @Schema(nullable = true) Instant modifiedAt,
                             @Schema(nullable = true) URI url, Map<String, String> attributes,
-                            String metadataHash, String attributesHash, String rawSha256) {
+                            String metadataHash, String attributesHash,
+                            @Schema(nullable = true) String rawSha256) {
 
-        static PageEntry of(PageHeader header) {
-            PageMetadata page = header.metadata();
+        static PageEntry of(ListedPage listed) {
+            PageMetadata page = listed.header().metadata();
             return new PageEntry(page.pageId(), page.resourceId(), page.title(), page.partitionKey(),
                     page.parentPageId(), page.version(), page.modifiedAt(), page.url(), page.attributes(),
-                    header.metadataHash(), header.attributesHash(), header.rawSha256());
+                    listed.header().metadataHash(), listed.header().attributesHash(), listed.rawSha256());
         }
     }
 
@@ -293,10 +298,10 @@ public class PageQueryController {
                                int depth, List<TreeNode> roots, List<TreeAnomaly> anomalies) {
 
         static TreeResponse of(SpaceTree tree, boolean metadata) {
-            Map<String, PageHeader> headers = metadata ? tree.headers() : Map.of();
+            Map<String, ListedPage> pages = metadata ? tree.pages() : Map.of();
             return new TreeResponse(tree.sourceId(), tree.spaceKey(), "cache", CacheResponse.of(tree.generation()),
                     tree.tree().nodeCount(), tree.tree().depth(),
-                    tree.tree().roots().stream().map(root -> TreeNode.of(root, headers)).toList(),
+                    tree.tree().roots().stream().map(root -> TreeNode.of(root, pages)).toList(),
                     tree.tree().anomalies().stream().map(TreeAnomaly::of).toList());
         }
     }
@@ -310,13 +315,13 @@ public class PageQueryController {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record TreeNode(String id, String title, String version, Instant modifiedAt, List<TreeNode> children) {
 
-        static TreeNode of(PageTree.Node node, Map<String, PageHeader> headers) {
-            PageHeader header = headers.get(node.pageId());
-            List<TreeNode> children = node.children().stream().map(child -> of(child, headers)).toList();
-            if (header == null) {
+        static TreeNode of(PageTree.Node node, Map<String, ListedPage> pages) {
+            ListedPage listed = pages.get(node.pageId());
+            List<TreeNode> children = node.children().stream().map(child -> of(child, pages)).toList();
+            if (listed == null) {
                 return new TreeNode(node.pageId(), null, null, null, children);
             }
-            PageMetadata page = header.metadata();
+            PageMetadata page = listed.header().metadata();
             return new TreeNode(node.pageId(), page.title(), page.version(), page.modifiedAt(), children);
         }
     }
