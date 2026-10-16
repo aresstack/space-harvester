@@ -24,4 +24,9 @@ public class InMemoryJobStore implements JobStore {
     public List<JobStatus> all() {
         return List.copyOf(jobs.values());
     }
+
+    @Override
+    public void delete(String jobId) {
+        jobs.remove(jobId);
+    }
 }
