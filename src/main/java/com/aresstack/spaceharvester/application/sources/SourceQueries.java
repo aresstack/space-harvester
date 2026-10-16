@@ -57,6 +57,20 @@ public class SourceQueries {
         return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant());
     }
 
+    /**
+     * Metadaten einer einzelnen Seite mit {@code metadataHash} und {@code attributesHash}, live aus der Quelle; dieselben
+     * Werte wie in {@link #pageMetadata(String, String, String, int)}.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SourceAccessException  wenn die Quelle nicht antworten kann oder die Seite nicht kennt
+     */
+    public SinglePageMetadata pageMetadata(String sourceId, String pageId) {
+        HarvestSource source = source(sourceId);
+        PageMetadata page = source.pageMetadata(pageId);
+        return new SinglePageMetadata(source.id(), new PageMetadataListing.Entry(page,
+                MetadataHash.of(source.id(), page), AttributesHash.of(source.id(), page)), clock.instant());
+    }
+
     private HarvestSource source(String sourceId) {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
     }

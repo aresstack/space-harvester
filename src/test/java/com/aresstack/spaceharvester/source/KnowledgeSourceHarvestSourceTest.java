@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
@@ -15,6 +16,7 @@ import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +34,15 @@ class KnowledgeSourceHarvestSourceTest {
         assertThat(AttributesHash.of("wiki", sourceOrder)).isEqualTo(AttributesHash.of("wiki", otherOrder));
         assertThat(sourceOrder.pageId()).isEqualTo("101");
         assertThat(sourceOrder.parentPageId()).isEqualTo("100");
+    }
+
+    @Test
+    void sourceWithoutSinglePageMetadataIsUnsupportedNotEmpty() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                new Listing("api"));
+
+        assertThatThrownBy(() -> source.pageMetadata("101")).isInstanceOfSatisfying(SourceAccessException.class,
+                e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNSUPPORTED));
     }
 
     private static PageMetadata only(Listing port) {

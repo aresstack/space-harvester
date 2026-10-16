@@ -37,4 +37,15 @@ public interface HarvestSource {
      *                               {@link #partitions()}
      */
     PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit);
+
+    /**
+     * Metadaten einer einzelnen Seite ohne Inhalt über ihre ID in der Quelle, unabhängig vom Space (eine verschobene
+     * Seite behält ihre ID).
+     *
+     * @param pageId ID der Seite in der Quelle (bei Confluence die Content-ID)
+     * @throws SourceAccessException {@code NOT_FOUND} für eine unbekannte oder nicht sichtbare Seite,
+     *                               {@code UNSUPPORTED} für eine ID, die die Quelle nicht kennt, oder eine Quelle ohne
+     *                               diese Fähigkeit, sonst wie {@link #partitions()}
+     */
+    PageMetadata pageMetadata(String pageId);
 }
