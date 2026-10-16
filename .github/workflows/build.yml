@@ -39,4 +39,5 @@ jobs:
             build/reports/tests/
             build/test-results/
             enterprise-ai-sources/build/reports/tests/
+            enterprise-ai-sources/build/test-results/
           if-no-files-found: ignore
