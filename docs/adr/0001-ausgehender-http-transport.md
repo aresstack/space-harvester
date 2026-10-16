@@ -104,9 +104,12 @@ Meldungen. Die Abbildung der Antworten (401, 403, 404) macht der Zugriffsschutz 
   (`ConfiguredClientCertificates`) bauen (`AsyncSnapshotTransports`, schließt alle Transporte und den
   Abbildungs-Executor beim Herunterfahren). `HarvestSource.storedPageAsync` liefert dann die Seite nicht blockierend,
   mit denselben `SourceAccessException`-Gründen wie `storedPage`.
-- **Rückfallpfad:** Standard ist `disabled`: alles läuft wie bisher über den synchronen Transport, und
-  `storedPageAsync` endet sofort mit `UNSUPPORTED`. Nichts schaltet still um; Listen, Metadaten und alle übrigen
-  Abrufe bleiben synchron, bis ihre Fachlogik upstream ebenfalls eine asynchrone Fähigkeit hat.
+- **Standard und Rückfallpfad:** Weil Angelo den asynchronen Client als Pflicht festgelegt hat, ist `web-client` der
+  Standard des Dienstes; `SourceSnapshots` (Sync, `?refresh=true`) lädt Snapshots darüber, `fetchAsync` ohne
+  wartenden Thread. `disabled` ist der dokumentierte Rückfall, falls der Live-Test im Unternehmensnetz scheitert:
+  dann läuft alles über den synchronen Transport, und `storedPageAsync` endet sofort mit `UNSUPPORTED`. Listen,
+  Metadaten und alle übrigen Abrufe bleiben synchron, bis ihre Fachlogik upstream ebenfalls eine asynchrone
+  Fähigkeit hat. `ConfiguredSourceCatalog.of` ohne Angabe (Tests, Einbettung als Bibliothek) bleibt synchron.
 - **Nachweis:** `AsyncSnapshotsTest` (PAC wählt den Proxy, `CONNECT`, PAT und PKCS12, Antwort byte-gleich mit dem
   synchronen Abruf, Abbildung nicht auf dem Aufrufer-Thread, Fehlerabbildung, Rückfall), upstream
   `ConfluenceAsyncStoredContentTest`.

@@ -32,8 +32,8 @@ space-harvester:
   network:
     proxy:
       mode: disabled
-    # disabled = alles synchron; web-client = Seiten-Snapshots zusätzlich nicht blockierend (#47, ADR 0001).
-    async-transport: disabled
+    # web-client = Seiten-Snapshots nicht blockierend (#47, ADR 0001); disabled = Rückfall auf den synchronen Transport.
+    async-transport: web-client
   # Zugriffsschutz der API: Standard mode=clients ohne Clients, also kein Datenzugriff. Siehe docs/SECURITY.md.
   security:
     mode: clients
