@@ -27,6 +27,7 @@ import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
+import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
@@ -91,7 +92,7 @@ import java.util.regex.Pattern;
  * Ohne {@link ConfluenceConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
 public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
-        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource {
+        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -602,6 +603,31 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cursor gehört nicht zu Space " + spaceKey);
     }
 
+    /** Die Content-ID einer Seite dieser Quelle; {@code null} für Anhänge und fremde IDs. */
+    @Override
+    public String localId(KnowledgeResourceId resourceId) {
+        ConfluenceIds.Parsed parsed = resourceId == null ? null : ConfluenceIds.parse(locator, resourceId);
+        return parsed == null || parsed.attachment ? null : parsed.contentId;
+    }
+
+    /**
+     * Metadaten einer Seite ohne Inhalt ({@code /rest/api/content/<id>?expand=version,space,metadata.labels,
+     * ancestors,history}), dieselben Felder wie in {@link #resources}; unabhängig vom Space, in dem die Seite liegt.
+     */
+    @Override
+    public KnowledgeResource resourceMetadata(final String localId) throws KnowledgeSourceException {
+        if (!ConfluenceIds.isContentId(localId)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
+        }
+        Page page = withSession(new Operation<Page>() {
+            @Override
+            public Page run(Session session) throws KnowledgeSourceException {
+                return client.page(session, localId, false);
+            }
+        });
+        return pageResource(page, page.parentId);
+    }
+
     /** Outgoing page links of the rendered body; Confluence has no reliable list of incoming links. */
     @Override
     public CrossReferences crossReferences(KnowledgeResourceId page) throws KnowledgeSourceException {
@@ -855,6 +881,12 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         }
         if (!page.labels.isEmpty()) {
             metadata.put("confluence.labels", join(page.labels));
+        }
+        if (page.createdAt != null) {
+            metadata.put("confluence.createdAt", page.createdAt.toString());
+        }
+        if (page.createdBy != null) {
+            metadata.put("confluence.createdBy", page.createdBy);
         }
         return KnowledgeResource.builder(ConfluenceIds.page(locator, page.id), sourceId)
                 .title(page.title)
