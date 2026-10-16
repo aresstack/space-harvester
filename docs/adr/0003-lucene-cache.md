@@ -28,7 +28,7 @@ beschädigter Index verhindert den Start und wird nie stillschweigend ersetzt.
 | `page` | `sourceId` + `pageId` | Aktuelle Kopfdaten exakt indexiert (`spaceKey`, `parentId`, `version`, `modifiedAt`, `metadataHash`, `attributesHash`, `rawSha256`), Titelwörter und Sortierschlüssel für #28, der letzte Snapshot mit den Originalbytes als binäres `StoredField` |
 | `revision` | `sourceId` + `pageId` + Revision | Verlauf je Revision ohne Payload |
 | `space` | `sourceId` + `spaceKey` | Kopf der zuletzt bestätigten Generation (Nummer, Zeitpunkt, veraltete und fehlende Seiten) |
-| `baseline` | Generation je Space | Stand je Seite der bestätigten Generation |
+| `baseline` | `sourceId` + `spaceKey` (`baselineOf`), je Seite ein Dokument mit der `pageId` | Stand je Seite der bestätigten Generation; die Generationsnummer steht nur im `space`-Dokument, eine neue Bestätigung ersetzt alle Einträge des Space |
 | `source` | `sourceId` | Suchgeneration `s<n>` der Quelle |
 
 Hierarchie entsteht aus `parentId`; es gibt kein verschachteltes Seitendokument. Gleiche Feldnamen haben im ganzen
