@@ -151,11 +151,15 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
         }
         problems.addAll(checkAuth(config.auth()));
         problems.addAll(checkCertificate(config.clientCertificate()));
-        problems.addAll(checkResolved(Map.of(
+        Map<String, String> credentials = new TreeMap<>(Map.of(
                 "auth.username", nullToEmpty(config.auth().username()),
                 "auth.password", nullToEmpty(config.auth().password()),
-                "auth.token", nullToEmpty(config.auth().token()),
-                "client-certificate.password", nullToEmpty(config.clientCertificate().password()))));
+                "auth.token", nullToEmpty(config.auth().token())));
+        if (config.clientCertificate().enabled()) {
+            // Ein abgeschaltetes Zertifikat darf seine Einstellungen samt Platzhalter behalten; es wird nicht benutzt.
+            credentials.put("client-certificate.password", nullToEmpty(config.clientCertificate().password()));
+        }
+        problems.addAll(checkResolved(credentials));
         for (String key : config.options().keySet()) {
             if (RESERVED_OPTIONS.contains(key)) {
                 problems.add("options." + key + " ist nicht erlaubt; dafür gibt es eigene Felder");
