@@ -5,13 +5,17 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sync.BaselineEntry;
+import com.aresstack.spaceharvester.application.sync.SyncBaseline;
 import java.net.URI;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.KeywordField;
@@ -40,7 +44,10 @@ import org.apache.lucene.util.BytesRef;
  *     </ul>
  *   </li>
  *   <li>{@code revision} – je Seite und Revision ein Verlaufseintrag ohne Payload.</li>
- *   <li>{@code space} – je {@code sourceId + spaceKey} der Synchronisierungsstand ({@link SpaceSyncState}).</li>
+ *   <li>{@code space} – je {@code sourceId + spaceKey} die bestätigte Generation ({@code SyncBaseline} ohne Seiten):
+ *       Nummer, Zeitpunkt, veraltete Seiten.</li>
+ *   <li>{@code baseline} – je Seite einer bestätigten Generation ihr {@code BaselineEntry}, nur gespeichert und über
+ *       {@value #BASELINE_OF} dem Space zugeordnet. Wird mit jeder Generation vollständig ersetzt.</li>
  * </ul>
  *
  * <p>Die Schemaversion steht in den Commit-Daten des Index. Ein Index mit anderem oder fehlendem Schema wird nicht
@@ -52,11 +59,12 @@ public final class PageCacheSchema {
     /** Schlüssel der Schemaversion in den Commit-Daten. */
     public static final String SCHEMA_KEY = "space-harvester.schema";
     /** Aktuelle Schemaversion. */
-    public static final String VERSION = "page-cache/v1";
+    public static final String VERSION = "page-cache/v2";
 
     static final String TYPE = "type";
     static final String ID = "id";
     static final String PAGE_OF_REVISION = "revisionOf";
+    static final String BASELINE_OF = "baselineOf";
 
     // Aktuelle Kopfdaten (Abfragefelder)
     static final String SOURCE_ID = "sourceId";
@@ -83,6 +91,7 @@ public final class PageCacheSchema {
      */
     static final String REV = "revision.";
     static final String SPACE_DOC = "space.";
+    static final String BASELINE_DOC = "baseline.";
     static final String RAW_SHA256 = "rawSha256";
     static final String RAW_JSON = "rawJson";
     static final String PAYLOAD_BYTES = "payloadBytes";
@@ -90,17 +99,15 @@ public final class PageCacheSchema {
     static final String NATIVE_FORMAT = "nativeFormat";
     static final String RETRIEVED_AT = "retrievedAt";
 
-    // Space-Stand
+    // Bestätigte Generation
     static final String GENERATION = "generation";
-    static final String LAST_RUN_COMPLETE = "lastRunComplete";
-    static final String LAST_RUN_AT = "lastRunAt";
-    static final String CONFIRMED_GENERATION = "confirmedGeneration";
     static final String CONFIRMED_AT = "confirmedAt";
-    static final String CONFIRMED_PAGE_COUNT = "confirmedPageCount";
+    static final String STALE_PAGE_ID = "stalePageId";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
     static final String SPACE = "space";
+    static final String BASELINE = "baseline";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
     static final Set<String> HEADER_FIELDS = Set.of(SOURCE_ID, PAGE_ID, SPACE_KEY, PARENT_ID, RESOURCE_ID, TITLE,
@@ -128,6 +135,11 @@ public final class PageCacheSchema {
 
     static Term spaceTerm(String sourceId, String spaceKey) {
         return new Term(ID, id(SPACE, sourceId, spaceKey));
+    }
+
+    /** Alle Seiteneinträge der bestätigten Generation eines Space. */
+    static Term baselineOf(String sourceId, String spaceKey) {
+        return new Term(BASELINE_OF, id(SPACE, sourceId, spaceKey));
     }
 
     /**
@@ -216,20 +228,35 @@ public final class PageCacheSchema {
         return doc;
     }
 
-    static Document space(SpaceSyncState state) {
+    /** Kopf der bestätigten Generation eines Space; die Seiteneinträge liefert {@link #baselineEntry}. */
+    static Document space(SyncBaseline baseline) {
         Document doc = new Document();
         doc.add(new StringField(TYPE, SPACE, Field.Store.NO));
-        doc.add(new StringField(ID, spaceTerm(state.sourceId(), state.spaceKey()).text(), Field.Store.NO));
-        doc.add(new StoredField(SPACE_DOC + SOURCE_ID, state.sourceId()));
-        doc.add(new StoredField(SPACE_DOC + SPACE_KEY, state.spaceKey()));
-        doc.add(new StoredField(GENERATION, state.generation()));
-        doc.add(new StoredField(LAST_RUN_COMPLETE, state.lastRunComplete() ? 1 : 0));
-        doc.add(new StoredField(LAST_RUN_AT, state.lastRunAt().toString()));
-        doc.add(new StoredField(CONFIRMED_GENERATION, state.confirmedGeneration()));
-        if (state.confirmedAt() != null) {
-            doc.add(new StoredField(CONFIRMED_AT, state.confirmedAt().toString()));
+        doc.add(new StringField(ID, spaceTerm(baseline.sourceId(), baseline.spaceKey()).text(), Field.Store.NO));
+        doc.add(new StoredField(SPACE_DOC + SOURCE_ID, baseline.sourceId()));
+        doc.add(new StoredField(SPACE_DOC + SPACE_KEY, baseline.spaceKey()));
+        doc.add(new StoredField(GENERATION, baseline.generation()));
+        doc.add(new StoredField(CONFIRMED_AT, baseline.confirmedAt().toString()));
+        for (String pageId : baseline.stalePageIds()) {
+            doc.add(new StoredField(STALE_PAGE_ID, pageId));
         }
-        doc.add(new StoredField(CONFIRMED_PAGE_COUNT, state.confirmedPageCount()));
+        return doc;
+    }
+
+    static Document baselineEntry(String sourceId, String spaceKey, BaselineEntry entry) {
+        Document doc = new Document();
+        doc.add(new StringField(TYPE, BASELINE, Field.Store.NO));
+        doc.add(new StringField(BASELINE_OF, baselineOf(sourceId, spaceKey).text(), Field.Store.NO));
+        doc.add(new StoredField(BASELINE_DOC + PAGE_ID, entry.pageId()));
+        doc.add(new StoredField(BASELINE_DOC + SPACE_KEY, entry.spaceKey()));
+        if (entry.parentPageId() != null) {
+            doc.add(new StoredField(BASELINE_DOC + PARENT_ID, entry.parentPageId()));
+        }
+        if (entry.version() != null) {
+            doc.add(new StoredField(BASELINE_DOC + VERSION_FIELD, entry.version()));
+        }
+        doc.add(new StoredField(BASELINE_DOC + METADATA_HASH, entry.metadataHash()));
+        doc.add(new StoredField(BASELINE_DOC + ATTRIBUTES_HASH, entry.attributesHash()));
         return doc;
     }
 
@@ -291,12 +318,26 @@ public final class PageCacheSchema {
                 doc.get(REV + METADATA_HASH), doc.get(REV + ATTRIBUTES_HASH), instant(doc.get(REV + RETRIEVED_AT)));
     }
 
-    static SpaceSyncState spaceState(Document doc) {
-        return new SpaceSyncState(doc.get(SPACE_DOC + SOURCE_ID), doc.get(SPACE_DOC + SPACE_KEY),
-                number(doc, GENERATION),
-                number(doc, LAST_RUN_COMPLETE) == 1, instant(doc.get(LAST_RUN_AT)),
-                number(doc, CONFIRMED_GENERATION), instant(doc.get(CONFIRMED_AT)),
-                number(doc, CONFIRMED_PAGE_COUNT));
+    static long generation(Document space) {
+        return number(space, GENERATION);
+    }
+
+    static ConfirmedGeneration confirmedGeneration(Document space) {
+        return new ConfirmedGeneration(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY),
+                generation(space), instant(space.get(CONFIRMED_AT)), space.getValues(STALE_PAGE_ID).length);
+    }
+
+    /** Die bestätigte Generation aus dem Space-Dokument und den Dokumenten ihrer Seiten. */
+    static SyncBaseline baseline(Document space, List<Document> entries) {
+        SortedMap<String, BaselineEntry> pages = new TreeMap<>();
+        for (Document doc : entries) {
+            BaselineEntry entry = new BaselineEntry(doc.get(BASELINE_DOC + PAGE_ID), doc.get(BASELINE_DOC + SPACE_KEY),
+                    doc.get(BASELINE_DOC + PARENT_ID), doc.get(BASELINE_DOC + VERSION_FIELD),
+                    doc.get(BASELINE_DOC + METADATA_HASH), doc.get(BASELINE_DOC + ATTRIBUTES_HASH));
+            pages.put(entry.pageId(), entry);
+        }
+        return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
+                instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))));
     }
 
     private static long number(Document doc, String field) {
