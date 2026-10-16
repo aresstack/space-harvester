@@ -23,8 +23,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * (Inventur abgebrochen oder widersprüchlich), endet er als {@link JobState#FAILED} mit Code {@code SYNC_INCOMPLETE};
  * hat ein anderer Lauf zwischenzeitlich bestätigt, mit {@code SYNC_CONFLICT} und ohne Delta, weil sein Plan auf einer
  * überholten Generation beruht. Fehlt einer neuen Seite der Inhalt, weil ihr erster Abruf scheiterte, ist die
- * Generation bestätigt, aber unvollständig ({@link SyncBaseline#complete()}); der Auftrag endet dann als
- * {@link JobState#FAILED} mit {@code SYNC_PARTIAL}, nie als erfolgreiche Ernte. Das Delta ({@link SyncSummary}) steht sonst nach dem Lauf bereit. Ein Abbruch verwirft
+ * Generation bestätigt, aber unvollständig ({@link SyncBaseline#complete()}); scheitert der Abgleich einer bekannten
+ * Seite, bleibt ihr alter Stand als veraltet. In beiden Fällen endet der Auftrag als {@link JobState#FAILED} mit
+ * {@code SYNC_PARTIAL}, nie als erfolgreicher Abgleich. Das Delta ({@link SyncSummary}) steht sonst nach dem Lauf bereit. Ein Abbruch verwirft
  * alles Vorgemerkte.
  *
  * <p>Fehlen Cache-Speicher oder Inhaltsabruf (noch nicht angebunden), lehnt {@link #start} mit
@@ -35,6 +36,8 @@ public class SpaceSyncJobs {
     static final String INCOMPLETE = "SYNC_INCOMPLETE";
     static final String CONFLICT = "SYNC_CONFLICT";
     static final String PARTIAL = "SYNC_PARTIAL";
+
+    private static final System.Logger LOG = System.getLogger(SpaceSyncJobs.class.getName());
 
     private final Jobs jobs;
     private final SourceQueries queries;
@@ -128,14 +131,20 @@ public class SpaceSyncJobs {
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
         }
+        // Auch geplante Läufe, deren Status nie gelesen wird, sollen keine Deltas abgelaufener Aufträge halten.
+        summaries.keySet().removeIf(this::expired);
         summaries.put(context.jobId(), run.summary());
         if (run.confirmed() == null) {
-            throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt: " + run.notConfirmed());
+            // Der Grund kann Seiten-IDs oder Meldungen der Quelle enthalten: nur ins Log, nicht in den Auftrag.
+            LOG.log(System.Logger.Level.INFO, "Abgleich {0}/{1}: keine Generation bestätigt ({2})", sourceId,
+                    spaceKey, run.notConfirmed());
+            throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
         }
-        if (!run.confirmed().complete()) {
+        if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
             throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
-                    + " bestätigt, aber " + run.confirmed().missingPageIds().size()
-                    + " Seiten fehlen im Cache; der nächste Lauf lädt sie erneut");
+                    + " bestätigt, aber " + run.failedPageIds().size() + " Seiten konnten nicht abgeglichen werden "
+                    + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
+                    + "Lauf gleicht sie erneut ab");
         }
     }
 

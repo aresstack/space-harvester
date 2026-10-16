@@ -112,3 +112,13 @@ def bootJarPacCheck = tasks.register('bootJarPacCheck', BootJarPacCheck) {
 tasks.named('check') {
     dependsOn bootJarPacCheck
 }
+
+// Fake-Confluence mit den Demo-Daten für docs/E2E.md auf http://127.0.0.1:8090 (#15); nur Testdaten.
+tasks.register('demoConfluence', JavaExec) {
+    group = 'application'
+    description = 'Startet die Demo-Fake-Confluence für die dokumentierten Beispiele (docs/E2E.md).'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.aresstack.spaceharvester.demo.DemoConfluence'
+    jvmArgs '-Dstdout.encoding=UTF-8'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+}

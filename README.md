@@ -32,6 +32,9 @@ ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)
 ```bash
 SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
 ```
+Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
+geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -212,11 +215,12 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
-| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
-| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
-| `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments`; `refresh=true` prüft gegen die Quelle |
+| `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre URL (`?pageId=…`, `/spaces/KEY/pages/ID`, Kurzlink `/x/…`) |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
+| `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -283,7 +287,9 @@ Abweichungen vom Cache tragen `X-Page-Origin: live` (bzw. `origin: live`) und de
 selbst ändert sich erst mit dem nächsten Abgleich. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
 `source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
-antwortet `refresh=true` mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
+antwortet `refresh=true` mit `refresh-unavailable` (501). Seiten lassen sich auch über ihre URL abrufen
+(`…/pages?url=…`), sofern sie die Seiten-ID enthält; Formen ohne ID (`/display/KEY/Titel`) ergeben 400, eine URL eines
+anderen Servers als der bekannten Seiten-URL `cache-miss`. Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
@@ -309,6 +315,21 @@ Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresst
 abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
 wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
 
+**Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
+antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
+`completed` nur mit neu bestätigter Generation, in der jede Seite abgeglichen ist; sonst `failed` mit `error.code`
+`SYNC_INCOMPLETE` (nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt,
+aber Seiten nicht abgeglichen: neue ohne Inhalt, `summary.complete: false`, Cache-Stand `incomplete`; oder bekannte mit
+altem Stand, Cache-Stand `stale`; nie `confirmed`, der nächste Lauf gleicht sie erneut ab), oder `cancelled`.
+`summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`, `spaceFingerprint`,
+`notConfirmed` als fester Grund; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
+auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
+(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
+`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
+ein noch laufender Abgleich wird nicht doppelt gestartet.
+
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
 Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
 `running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
@@ -318,25 +339,12 @@ kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flach
 `artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
 alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu viele offene Aufträge ergeben
-`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`).
-
-
-**Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
-antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
-ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
-der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
-`completed` nur mit neu bestätigter und vollständiger Generation; sonst `failed` mit `error.code` `SYNC_INCOMPLETE`
-(nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt, aber neue Seiten
-ohne Inhalt, `summary.complete: false`; sie gilt nie als vollständiger Abgleich, der nächste Lauf lädt sie erneut),
-oder `cancelled`. `summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`,
-`spaceFingerprint`, `notConfirmed`; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
-auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
-(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
-`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
-ein noch laufender Abgleich wird nicht doppelt gestartet.
+`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
+leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
+jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
-([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)).
+([#27](https://github.com/aresstack/space-harvester/issues/27)).
 
 ## Aufbau
 

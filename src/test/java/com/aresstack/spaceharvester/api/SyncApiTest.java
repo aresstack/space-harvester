@@ -93,7 +93,8 @@ class SyncApiTest {
         JsonNode summary = done.get("summary");
         assertThat(summary.get("inventory").asString()).isEqualTo("incomplete");
         assertThat(summary.get("generation").isNull()).isTrue();
-        assertThat(summary.get("notConfirmed").asString()).isNotBlank();
+        assertThat(summary.get("notConfirmed").asString()).isEqualTo("inventory-incomplete");
+        assertThat(done.get("error").get("message").asString()).doesNotContain("127.0.0.1");
         assertThat(summary.get("failed").asInt()).isZero();
         assertThat(summary.get("failedPageIds").isArray()).isTrue();
 

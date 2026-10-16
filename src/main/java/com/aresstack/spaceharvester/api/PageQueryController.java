@@ -237,7 +237,7 @@ public class PageQueryController {
         return render(sourceId, queries.page(caller, sourceId, pageId, refresh), view, request);
     }
 
-    @GetMapping(path = "/{sourceId}/pages", params = "url")
+    @GetMapping("/{sourceId}/pages")
     @Operation(summary = "Eine Seite über ihre URL: wie GET …/pages/{pageId}",
             description = "Die URL muss die Seiten-ID enthalten: …?pageId=123 (viewpage.action), "
                     + "…/spaces/KEY/pages/123[/Titel] oder ein Kurzlink …/x/AgAB. Formen ohne ID (/display/KEY/Titel) "
@@ -258,8 +258,8 @@ public class PageQueryController {
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "URL der Seite mit Seiten-ID",
-                    example = "https://wiki.example.org/pages/viewpage.action?pageId=123456")
-            @RequestParam String url,
+                    example = "https://wiki.example.org/pages/viewpage.action?pageId=123456", required = true)
+            @RequestParam(required = false) String url,
             @Parameter(description = "true: vor der Auslieferung gegen die Quelle prüfen")
             @RequestParam(defaultValue = "false") boolean refresh,
             @Parameter(description = "native oder extended", schema = @Schema(allowableValues = {"native", "extended"}))
