@@ -1,0 +1,11 @@
+.gradle/
+build/
+out/
+bin/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+*.log
+# Lokale, nicht eingecheckte Konfiguration (Zugangsdaten gehören nie ins Repository)
+config/application-local.yml
