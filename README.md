@@ -33,20 +33,58 @@ Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 ```
 
+## Quellen konfigurieren
+
+Quellen stehen unter `space-harvester.sources` in der `application.yml` oder in einer zusätzlichen Datei, etwa
+`config/application-local.yml` (von Git ignoriert, wird mit `--spring.profiles.active=local` geladen). Zugangsdaten
+kommen über Platzhalter aus Umgebungsvariablen, nie aus Dateien im Repository:
+
+```yaml
+space-harvester:
+  sources:
+    - id: confluence                  # Quellen-ID in der API, getrennt von den Space-Keys
+      type: confluence
+      title: Confluence
+      base-url: https://confluence.example.org   # ohne /rest
+      auth:
+        type: pat                     # none | basic | pat
+        token: ${CONFLUENCE_TOKEN}
+      options:                        # weitere Einstellungen des Confluence-Adapters
+        pageSize: 100
+    - id: team-wiki
+      type: confluence
+      base-url: https://wiki.example.org
+      auth:
+        type: basic
+        username: ${TEAM_WIKI_USER}
+        password: ${TEAM_WIKI_PASSWORD}
+```
+
+- **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
+  (Personal Access Token als `Authorization: Bearer`). Die Zugangsdaten gehen über einen `SecretProvider` an den
+  Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
+- **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
+  Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
+- **Keine Geheimnisse nach außen:** Passwort und Token erscheinen weder in API-Antworten noch in Logs.
+- **Noch nicht unterstützt:** Client-Zertifikate (mTLS), OAuth und ein Spring Cloud Config Server.
+
 ## API-Übersicht
 
 | Pfad | Zweck |
 |---|---|
 | `GET /api/v1/info` | Name, Version und API-Version des Dienstes |
+| `GET /api/v1/sources` | Konfigurierte Quellen (ID, Typ, Titel; ohne Verbindungsdaten) |
+| `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
-Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet.
+Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
+`type` die Fälle: `source-not-found` (404, unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
+abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502).
 
-Geplante Endpunkte: Spaces auflisten ([#4](https://github.com/aresstack/space-harvester/issues/4)),
-Seitenmetadaten mit Hashwerten ([#5](https://github.com/aresstack/space-harvester/issues/5),
+Geplante Endpunkte: Seitenmetadaten mit Hashwerten ([#5](https://github.com/aresstack/space-harvester/issues/5),
 [#6](https://github.com/aresstack/space-harvester/issues/6)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
