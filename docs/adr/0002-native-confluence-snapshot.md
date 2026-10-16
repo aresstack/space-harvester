@@ -1,4 +1,4 @@
-# ADR 0001: Native Confluence-Payload für Snapshots
+# ADR 0002: Native Confluence-Payload für Snapshots
 
 - Status: **Entwurf**. Die Vorschläge stützen sich auf die Confluence-Data-Center-REST-API und den vorhandenen
   Upstream-Client; die mit „prüfen“ markierten Punkte sind erst nach der Probe
@@ -91,6 +91,23 @@ liefert für eine lokale ID die Antwort-Bytes, Revision (`version.number` aus de
 `nativeFormat` (inklusive `expand`-Liste) und `sha256`. Sie nutzt den vorhandenen Transport (`maxResponseBytes`,
 Anmeldung, mTLS/Proxy aus #33/#34) und **keinen zweiten REST-Client**. Auth-Header, Cookies und Secrets stehen nie in
 der Payload; die Payload ist der Antwortkörper allein.
+
+### 6. Quellenneutraler Vertrag im Harvester (Vertragsfenster 1)
+
+Paket `application.snapshot`, frei von Lucene-, Spring- und Confluence-Typen, damit Persistenz (#26), Synchronisierung
+(#16) und Abfragen (#27) parallel dagegen bauen:
+
+- `PageKey(sourceId, pageId)`: Identität ohne Space, weil die Seiten-ID ein Verschieben überdauert.
+- `NativePayload`: Bytes (immer als Kopie), `mediaType`, `nativeFormat`, `rawSha256` = `sha256:<hex>` über die Bytes.
+- `PageSnapshot(key, metadata, metadataHash, attributesHash, payload, retrievedAt)`: Kopfdaten (`PageMetadata`) und
+  Payload aus derselben Antwort, Hashes nach `page-metadata/v1` und `page-attributes/v1` wie in der Metadatenliste.
+- `SnapshotRepository`: `save` (Upsert, letzter Stand gilt), `find`, `remove` (nur aus bestätigt vollständigem
+  Abgleich). Abfrage-Ports für Seitenlisten, Baum und Suche kommen mit #27/#28 dazu.
+- Vertragstest `SnapshotRepositoryContract` (Testquellen): jede Umsetzung erbt ihn; er prüft Bytegleichheit auch für
+  Bytes, die kein UTF-8 sind, Upsert, Trennung je Quelle, Entfernen und Neustart. `InMemorySnapshotRepository` dient
+  anderen Strängen als Fake.
+
+Die Anbindung an `StoredContentSource` (nach Sync der Upstream-Kopie) und an die Quellen-SPI folgt in #8.
 
 ## Bestandsaufnahme Makros und Referenzen
 
