@@ -21,6 +21,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -58,7 +59,9 @@ class SyncApiTest {
             return new InMemorySyncStore();
         }
 
+        /** Ersetzt den echten Abruf aus der Quelle ({@code SourceSnapshots}). */
         @Bean
+        @Primary
         PageContentFetcher contentFetcher() {
             return (sourceId, pageId) -> {
                 throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "nicht erreichbar",
