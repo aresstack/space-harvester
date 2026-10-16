@@ -21,6 +21,7 @@ import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Locale;
+import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.X509TrustManager;
 
@@ -49,6 +50,14 @@ final class ConfiguredClientCertificates implements ConfluenceSourceProvider.Cli
 
     @Override
     public SSLSocketFactory socketFactory(String alias, Path keyStoreFile, SecretRef passwordRef) {
+        return sslContext(alias, keyStoreFile, passwordRef).getSocketFactory();
+    }
+
+    /**
+     * Derselbe TLS-Kontext mit denselben Prüfungen als {@link SSLContext}, für den asynchronen Transport
+     * ({@link WebClientConfluenceTransport}), der eine {@code SSLEngine} statt einer Socket-Fabrik braucht.
+     */
+    SSLContext sslContext(String alias, Path keyStoreFile, SecretRef passwordRef) {
         char[] password = null;
         try {
             KeyStore store;
@@ -60,7 +69,7 @@ final class ConfiguredClientCertificates implements ConfluenceSourceProvider.Cli
             }
             String where = keyStoreFile == null ? "Windows-MY" : keyStoreFile.toString();
             check(store, alias, where);
-            return ClientCertificates.fromKeyStore(store, password, alias, trust);
+            return ClientCertificates.contextFromKeyStore(store, password, alias, trust);
         } catch (GeneralSecurityException e) {
             throw new ClientCertificateException("Client-Zertifikat '" + alias + "' nicht verwendbar: "
                     + e.getMessage(), e);

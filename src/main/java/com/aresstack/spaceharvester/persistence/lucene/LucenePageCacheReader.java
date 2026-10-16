@@ -67,7 +67,7 @@ public final class LucenePageCacheReader implements PageCacheReader {
             PageHeader header = stored.get().header();
             PageSnapshot snapshot = stored.get().snapshot();
             CacheGeneration generation = generation(key.sourceId(), header.metadata().partitionKey())
-                    .orElseGet(() -> new CacheGeneration(id(0), CacheState.INCOMPLETE, null, null));
+                    .orElseGet(LucenePageCacheReader::initial);
             return Optional.of(new CachedPage(header, snapshot, generation));
         });
     }
@@ -75,16 +75,25 @@ public final class LucenePageCacheReader implements PageCacheReader {
     private Optional<CacheGeneration> generation(String sourceId, String spaceKey) {
         Optional<ConfirmedGeneration> confirmed = cache.confirmedGeneration(sourceId, spaceKey);
         if (confirmed.isPresent()) {
-            ConfirmedGeneration g = confirmed.get();
-            return Optional.of(new CacheGeneration(id(g.generation()),
-                    g.missingPageCount() > 0 ? CacheState.INCOMPLETE
-                            : g.stalePageCount() == 0 ? CacheState.CONFIRMED : CacheState.STALE, g.confirmedAt(),
-                    g.confirmedAt()));
+            return Optional.of(of(confirmed.get()));
         }
         if (cache.countSpacePages(sourceId, spaceKey) > 0) {
-            return Optional.of(new CacheGeneration(id(0), CacheState.INCOMPLETE, null, null));
+            return Optional.of(initial());
         }
         return Optional.empty();
+    }
+
+    /** Die Cache-Generation zu einer bestätigten Generation der Synchronisierung. */
+    static CacheGeneration of(ConfirmedGeneration g) {
+        return new CacheGeneration(id(g.generation()),
+                g.missingPageCount() > 0 ? CacheState.INCOMPLETE
+                        : g.stalePageCount() == 0 ? CacheState.CONFIRMED : CacheState.STALE, g.confirmedAt(),
+                g.confirmedAt());
+    }
+
+    /** Seiten eines Space, für den noch keine Generation bestätigt ist. */
+    static CacheGeneration initial() {
+        return new CacheGeneration(id(0), CacheState.INCOMPLETE, null, null);
     }
 
     private void requireGeneration(String sourceId, String spaceKey, String generationId) {

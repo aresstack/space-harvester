@@ -3,8 +3,10 @@ package com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509ExtendedKeyManager;
 import javax.net.ssl.X509KeyManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
@@ -69,6 +71,29 @@ public final class ClientCertificates {
      */
     public static SSLSocketFactory fromKeyStore(KeyStore store, char[] keyPassword, String alias,
                                                 X509TrustManager trust) throws GeneralSecurityException {
+        return contextFromKeyStore(store, keyPassword, alias, trust).getSocketFactory();
+    }
+
+    /**
+     * Wie {@link #windowsMy(String, X509TrustManager)}, aber als {@link SSLContext} für Transporte, die eine
+     * {@code SSLEngine} brauchen (asynchrone Clients wie Netty oder JDK {@code HttpClient}).
+     */
+    public static SSLContext windowsMyContext(String alias, X509TrustManager trust) throws GeneralSecurityException {
+        KeyStore store = KeyStore.getInstance("Windows-MY");
+        try {
+            store.load(null, null);
+        } catch (IOException e) {
+            throw new GeneralSecurityException("Windows-Zertifikatsspeicher nicht lesbar", e);
+        }
+        return contextFromKeyStore(store, null, alias, trust);
+    }
+
+    /**
+     * Wie {@link #fromKeyStore(KeyStore, char[], String, X509TrustManager)}, aber als {@link SSLContext} mit
+     * demselben erzwungenen Alias, für Transporte, die eine {@code SSLEngine} brauchen.
+     */
+    public static SSLContext contextFromKeyStore(KeyStore store, char[] keyPassword, String alias,
+                                                 X509TrustManager trust) throws GeneralSecurityException {
         if (alias == null || alias.trim().isEmpty()) {
             throw new IllegalArgumentException("Zertifikat-Alias fehlt");
         }
@@ -77,7 +102,7 @@ public final class ClientCertificates {
         X509KeyManager forced = forceAlias(findX509(factory.getKeyManagers()), alias.trim());
         SSLContext context = SSLContext.getInstance("TLS");
         context.init(new KeyManager[] {forced}, trust == null ? null : new TrustManager[] {trust}, null);
-        return context.getSocketFactory();
+        return context;
     }
 
     static X509KeyManager forceAlias(X509KeyManager delegate, String alias) throws GeneralSecurityException {
@@ -105,8 +130,12 @@ public final class ClientCertificates {
         throw new GeneralSecurityException("kein X509KeyManager verfügbar");
     }
 
-    /** Bietet für Client-Authentifizierung ausschließlich den konfigurierten Alias an. */
-    static final class AliasForcingKeyManager implements X509KeyManager {
+    /**
+     * Bietet für Client-Authentifizierung ausschließlich den konfigurierten Alias an, auch über eine
+     * {@link javax.net.ssl.SSLEngine}: Ein reiner {@link X509KeyManager} wählt dort keinen Alias (JSSE fragt
+     * {@code chooseEngineClientAlias}), der Server sähe dann kein Zertifikat.
+     */
+    static final class AliasForcingKeyManager extends X509ExtendedKeyManager {
 
         private final X509KeyManager delegate;
         private final String alias;
@@ -123,6 +152,11 @@ public final class ClientCertificates {
 
         @Override
         public String chooseClientAlias(String[] keyType, Principal[] issuers, Socket socket) {
+            return alias;
+        }
+
+        @Override
+        public String chooseEngineClientAlias(String[] keyType, Principal[] issuers, SSLEngine engine) {
             return alias;
         }
 

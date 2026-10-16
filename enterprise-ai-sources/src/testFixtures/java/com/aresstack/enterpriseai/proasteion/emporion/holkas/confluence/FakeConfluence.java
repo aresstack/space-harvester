@@ -8,8 +8,10 @@ import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -57,6 +59,8 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     byte[] lastPageBody;
     /** Liefert statt des echten Folgelinks einen Link außerhalb der REST-API. */
     String nextLinkOverride;
+    /** Fehler für die nächsten Anfragen, in Reihenfolge: HTTP-Status ({@link Integer}) oder {@link IOException}. */
+    final Deque<Object> scriptedFailures = new ArrayDeque<Object>();
 
     public FakePage page(String id, String title, String spaceKey, String html) {
         FakePage page = new FakePage(id, title, spaceKey, html);
@@ -118,6 +122,22 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         wrappedSearchResults.put(id, excerpt);
     }
 
+    /** Die nächsten {@code times} Anfragen beantworten mit {@code status} (z. B. 429, 503) statt mit Daten. */
+    public FakeConfluence failNext(int status, int times) {
+        for (int i = 0; i < times; i++) {
+            scriptedFailures.add(Integer.valueOf(status));
+        }
+        return this;
+    }
+
+    /** Die nächsten {@code times} Anfragen scheitern mit einem Netzfehler (Zeitüberschreitung). */
+    public FakeConfluence failNextWithTimeout(int times) {
+        for (int i = 0; i < times; i++) {
+            scriptedFailures.add(new java.net.SocketTimeoutException("Read timed out"));
+        }
+        return this;
+    }
+
     /** Kopie aller bisher gesehenen Anfrage-URIs. */
     public List<URI> requests() {
         return new ArrayList<URI>(requests);
@@ -142,6 +162,14 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public ConfluenceHttpResponse get(URI uri, Map<String, String> headers, int maxBytes) throws IOException {
         requests.add(uri);
         requestHeaders.add(headers);
+        Object scripted = scriptedFailures.poll();
+        if (scripted instanceof IOException) {
+            throw (IOException) scripted;
+        }
+        if (scripted != null) {
+            return new ConfluenceHttpResponse((Integer) scripted, "application/json",
+                    ("{\"statusCode\":" + scripted + "}").getBytes(StandardCharsets.UTF_8));
+        }
         if (forcedFailure != null) {
             throw forcedFailure;
         }
@@ -195,7 +223,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         if (path.equals("/rest/api/content") && query.containsKey("spaceKey")) {
             List<FakePage> inSpace = new ArrayList<FakePage>();
             for (FakePage page : pages.values()) {
-                if (page.spaceKey.equals(query.get("spaceKey"))
+                if (page.spaceKey.equals(query.get("spaceKey")) && !restricted.contains(page.id)
                         && (!query.containsKey("title") || page.title.equals(query.get("title")))) {
                     inSpace.add(page);
                 }
@@ -444,6 +472,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             }
             JsonObject labelPage = new JsonObject();
             labelPage.add("results", labels);
+            labelPage.addProperty("size", page.labels.size());
+            if (page.moreLabels) {
+                JsonObject labelLinks = new JsonObject();
+                labelLinks.addProperty("next", "/rest/api/content/" + page.id + "/label?start=" + page.labels.size());
+                labelPage.add("_links", labelLinks);
+            }
             JsonObject metadata = new JsonObject();
             metadata.add("labels", labelPage);
             json.add("metadata", metadata);
@@ -537,6 +571,8 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         final List<String> children = new ArrayList<String>();
         final List<String> attachments = new ArrayList<String>();
         final List<String> labels = new ArrayList<String>();
+        /** Confluence hat weitere Labels, die nicht in der Antwort stehen ({@code _links.next}). */
+        boolean moreLabels;
         String parentId;
         int version = 3;
         String when = "2026-10-01T08:15:00.000+02:00";
@@ -580,6 +616,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         /** Fügt Labels hinzu. */
         public FakePage labels(String... names) {
             Collections.addAll(labels, names);
+            return this;
+        }
+
+        /** Die Labels in der Antwort sind nur die erste Seite; Confluence verweist mit {@code _links.next} weiter. */
+        public FakePage moreLabels() {
+            this.moreLabels = true;
             return this;
         }
     }
