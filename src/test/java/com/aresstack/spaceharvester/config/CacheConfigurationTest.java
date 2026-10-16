@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
+import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,6 +39,17 @@ class CacheConfigurationTest {
 
         // Nach dem Schließen des Kontexts ist der Index wieder frei.
         LucenePageCache.open(directory.resolve(CacheConfiguration.PAGES)).close();
+    }
+
+    @Test
+    void withDirectoryTheQueryApiAndTheSyncReadAndWriteTheSameIndex() {
+        runner.withPropertyValues("space-harvester.cache.directory=" + directory).run(context -> {
+            assertThat(context).hasSingleBean(PageCacheReader.class).hasSingleBean(SyncBaselineStore.class);
+            assertThat(context.getBean(PageCacheReader.class)).isInstanceOf(LucenePageCacheReader.class);
+            assertThat(context.getBean(SyncBaselineStore.class)).isInstanceOf(LuceneSyncBaselineStore.class);
+        });
+        runner.run(context -> assertThat(context).doesNotHaveBean(PageCacheReader.class)
+                .doesNotHaveBean(SyncBaselineStore.class));
     }
 
     @Test
