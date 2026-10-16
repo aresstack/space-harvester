@@ -9,6 +9,9 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStore
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
 import com.aresstack.spaceharvester.source.confluence.ClientCertificateException;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceSources;
+import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -17,6 +20,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.net.ssl.X509TrustManager;
 
 /**
@@ -28,6 +33,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
 
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
+
+    private static final Logger LOG = LoggerFactory.getLogger(ConfiguredSourceCatalog.class);
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
 
@@ -42,21 +49,34 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
         this.sources = sources;
     }
 
-    /**
-     * @param userAgent User-Agent für HTTP-Aufrufe der Adapter
-     * @throws InvalidSourceConfigurationException mit allen gefundenen Problemen
-     */
+    /** Ohne eigene Vertrauensquellen und ohne Proxy. */
     public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent) {
-        return of(configs, userAgent, TrustBundles.NONE);
+        return of(configs, userAgent, TrustBundles.NONE, ProxySettings.disabled());
+    }
+
+    /** Ohne Proxy. */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             TrustBundles trustBundles) {
+        return of(configs, userAgent, trustBundles, ProxySettings.disabled());
+    }
+
+    /** Ohne eigene Vertrauensquellen. */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             ProxySettings proxy) {
+        return of(configs, userAgent, TrustBundles.NONE, proxy);
     }
 
     /**
-     * @param userAgent   User-Agent für HTTP-Aufrufe der Adapter
+     * @param userAgent    User-Agent für HTTP-Aufrufe der Adapter
      * @param trustBundles Vertrauensquellen für {@code trust-bundle}
-     * @throws InvalidSourceConfigurationException mit allen gefundenen Problemen
+     * @param proxy        Proxy-Einstellungen für alle Quellen
+     * @throws InvalidNetworkConfigurationException bei fehlerhaften Proxy-Einstellungen
+     * @throws InvalidSourceConfigurationException mit allen gefundenen Problemen der Quellen
      */
     public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
-                                             TrustBundles trustBundles) {
+                                             TrustBundles trustBundles, ProxySettings proxy) {
+        ProxyRoutes routes = ProxyRoutes.from(proxy);
+        LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
@@ -88,7 +108,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                 problems.add(label + ": trust-bundle: " + e.getMessage());
                 continue;
             }
-            KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, userAgent, trust,
+            KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, routes, userAgent, trust,
                     certificate.enabled() ? certificate.thumbprint() : null);
             SourceSettings settings = settings(config);
             List<String> invalid = provider.validate(settings);

@@ -1,0 +1,7 @@
+# Nur für Tests (jdk.net.hosts.file, siehe build.gradle): Testnamen zeigen auf Loopback, damit eine Direktverbindung
+# zu ihnen gelingen würde. So beweist ein Fehlschlag, dass eine nicht bestimmbare Route nicht still DIRECT wird.
+127.0.0.1 confluence.proxied.test
+127.0.0.1 confluence.direct.test
+127.0.0.1 confluence.sentinel.test
+127.0.0.1 secure.proxied.test
+127.0.0.1 localhost

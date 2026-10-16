@@ -28,6 +28,10 @@ management:
 # Wissensquellen. Ohne Eintrag startet der Dienst ohne Quellen. Beispiel und Anmeldearten: README.md.
 space-harvester:
   sources: []
+  # Proxy-Route je Ziel-URL für alle Quellen (#34). disabled = direkt; PAC/WPAD und weitere Modi: README.md.
+  network:
+    proxy:
+      mode: disabled
   # Zugriffsschutz der API: Standard mode=clients ohne Clients, also kein Datenzugriff. Siehe docs/SECURITY.md.
   security:
     mode: clients

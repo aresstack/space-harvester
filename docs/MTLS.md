@@ -105,4 +105,32 @@ steht im DEBUG-Log des Pakets `com.aresstack.spaceharvester`.
 4. `GET /api/v1/sources/confluence/spaces/{spaceKey}/pages/metadata?limit=1` muss Metadaten einer berechtigten Seite
    **ohne Body** liefern.
 
+## Live-Test im Unternehmensnetz: PAT + mTLS + PAC (#33/#34)
+
+Das gemeinsame Gate aus dem Umsetzungsplan: dieselbe Metadatenabfrage über die vom Unternehmens-PAC gewählte Route
+(meist HTTPS `CONNECT`) mit Client-Zertifikat und PAT, im **Dienstkonto**. Automatisiert ist das nur gegen lokale
+Testserver geprüft (`ProxiedMutualTlsTest`); die Windows-Modi brauchen diesen manuellen Lauf.
+
+1. Unter dem Dienstkonto die PAC-Route prüfen, ohne den Dienst zu starten. Der Lauf zeigt PAC-Adresse,
+   PAC-Download und `FindProxyForURL`-Ergebnis; Exit-Code 2 heißt: Route nicht bestimmbar.
+
+   ```powershell
+   java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsMain `
+        -cp space-harvester.jar org.springframework.boot.loader.launch.PropertiesLauncher `
+        --mode=pac-url-powershell https://confluence.example.org/
+   ```
+
+   Findet `pac-url-powershell` unter dem Dienstkonto keine `AutoConfigURL`, dieselbe Prüfung mit
+   `--mode=pac-url-manual --pac-url=<PAC-Adresse des Unternehmens>` wiederholen und diesen Modus konfigurieren.
+2. Dienst mit Quelle (PAT, `client-certificate`) und `space-harvester.network.proxy.mode` aus Schritt 1 starten.
+   Im Log steht beim ersten Abruf `Proxy-Route für https://confluence.example.org/ (…): PROXY …` bzw. `DIRECT`.
+3. Schritte 3 und 4 aus dem Abschnitt oben ausführen (Spaces, Metadaten **ohne Body**).
+4. Gegenprobe Fail-Closed: mit absichtlich falscher `pac-url` starten; der Abruf muss mit
+   `UNAVAILABLE (pac-download-failed)` scheitern und darf nicht direkt verbinden.
+
+Bekannte Grenze von `win-proxy-java` 0.2.0 ([win-proxy-java#4](https://github.com/aresstack/win-proxy-java/issues/4)):
+`dnsResolve()` löst Hostnamen nicht auf, und `myIpAddress()` kann auf `127.0.0.1` zurückfallen. Nutzt das
+Unternehmens-PAC `isInNet(dnsResolve(host), …)` oder `myIpAddress()`, das Ergebnis aus Schritt 1 mit der Route im
+Browser des Dienstkontos vergleichen.
+
 Nicht im Umfang: eingehendes mTLS für Aufrufer der Harvester-API und die Beantragung von Zertifikaten.
