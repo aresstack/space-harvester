@@ -1,4 +1,4 @@
-# upstream https://github.com/aresstack/enterprise-ai-client.git 17823542ce2564b59fa702e341349676379195dc
+# upstream https://github.com/aresstack/enterprise-ai-client.git d32813af2b2cc9388ea12abb11bde0fd10d67a6e
 51b332c97f18977459a53e680970e822e6ea8cfbb12b5fd63ea88ad65eb9c2d4  LICENSE
 09426dae09fca081ecbd3ce1d43ae3f1697bdffd6b615599c3e294aebac58b94  src/main/java/com/aresstack/enterpriseai/adyton/SecretEntry.java
 56bd1f03e6f1c152ec55b70cac06a5cf77164dd32772445fcc938a00692bb865  src/main/java/com/aresstack/enterpriseai/adyton/SecretFunction.java
