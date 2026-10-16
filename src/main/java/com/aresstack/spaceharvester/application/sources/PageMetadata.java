@@ -37,6 +37,18 @@ public record PageMetadata(String pageId, String resourceId, String title, Strin
         return natural(attributes);
     }
 
+    /**
+     * {@code false}, wenn die Quelle ein Attribut nur unvollständig geliefert hat. Adapter melden das mit einem
+     * Attribut {@code <name>.complete=false} (bei Confluence {@code confluence.labels.complete}, wenn
+     * {@code metadata.labels} gekürzt war). Vollständige Attribute tragen keinen solchen Eintrag, deshalb bleibt
+     * {@code attributesHash} ({@code page-attributes/v1}) für sie unverändert. Bei unvollständigen Attributen ist der
+     * Hash kein verlässlicher Änderungsnachweis.
+     */
+    public boolean attributesComplete() {
+        return attributes.entrySet().stream()
+                .noneMatch(entry -> entry.getKey().endsWith(".complete") && "false".equals(entry.getValue()));
+    }
+
     /** Kopie mit natürlicher Schlüsselordnung, unabhängig vom Comparator der übergebenen Map. */
     private static SortedMap<String, String> natural(Map<String, String> attributes) {
         SortedMap<String, String> copy = new TreeMap<>();

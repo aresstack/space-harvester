@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
+import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.StoredContent;
@@ -156,6 +157,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     private SourceAccessException accessFailure(KnowledgeSourceException e) {
+        if (e instanceof RateLimitedException) {
+            return new SourceAccessException(id, SourceAccessException.Reason.RATE_LIMITED, e.getMessage(), e);
+        }
         SourceAccessException.Reason reason = switch (e.kind()) {
             case NOT_FOUND -> SourceAccessException.Reason.NOT_FOUND;
             case UNAVAILABLE -> SourceAccessException.Reason.UNAVAILABLE;

@@ -31,6 +31,9 @@ import javax.net.ssl.X509TrustManager;
  */
 public final class ConfiguredSourceCatalog implements SourceCatalog {
 
+    /** Standard für {@code options.maxRetries}, wenn die Quelle nichts angibt. */
+    static final String DEFAULT_MAX_RETRIES = "2";
+
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
 
@@ -230,6 +233,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
 
     private static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
+        // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
+        values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());

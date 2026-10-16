@@ -58,6 +58,8 @@ space-harvester:
         token: ${CONFLUENCE_TOKEN}
       options:                        # weitere Einstellungen des Confluence-Adapters
         pageSize: 100
+        maxRetries: 2                 # Standard 2: Netzfehler, 5xx und 429 wiederholen, 401/403/404 nie
+        retryBackoffMillis: 1000      # erste Wartezeit, verdoppelt je Versuch, gestreut, höchstens maxRetryBackoffMillis
     - id: team-wiki
       type: confluence
       base-url: https://wiki.example.org
@@ -220,7 +222,9 @@ space-harvester:
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
-abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
+abgelehnt), `source-unavailable` (503, nicht erreichbar), `source-rate-limited` (429, die Quelle drosselt auch nach den
+Wiederholungen), `source-object-not-found` (404, auch für Seiten, die das Konto nicht sehen darf) und
+`source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
 
 **Zugriffsschutz:** Alle Pfade unter `/api/**` verlangen `Authorization: Bearer <token>` eines konfigurierten

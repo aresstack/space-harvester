@@ -50,6 +50,8 @@ class SourceErrorHandler {
                     "Die Quelle hat die Anmeldung oder den Zugriff abgelehnt.");
             case UNAVAILABLE -> problem(HttpStatus.SERVICE_UNAVAILABLE, "source-unavailable",
                     "Quelle nicht erreichbar", "Die Quelle ist derzeit nicht erreichbar.");
+            case RATE_LIMITED -> problem(HttpStatus.TOO_MANY_REQUESTS, "source-rate-limited",
+                    "Quelle drosselt Anfragen", "Die Quelle hat zu viele Anfragen gemeldet. Bitte später erneut versuchen.");
             case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "source-object-not-found",
                     "In der Quelle nicht gefunden",
                     "Das angefragte Objekt existiert in der Quelle nicht oder ist nicht sichtbar.");
