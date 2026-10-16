@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStore
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
 import com.aresstack.spaceharvester.source.confluence.ClientCertificateException;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceSources;
+import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -29,7 +30,7 @@ import javax.net.ssl.X509TrustManager;
  * und gemeinsam gemeldet, damit ein Start nicht an einer Quelle nach der anderen scheitert. Verbindungen werden erst
  * bei der ersten Anfrage aufgebaut; der Dienst startet also auch, wenn eine Quelle gerade nicht erreichbar ist.
  */
-public final class ConfiguredSourceCatalog implements SourceCatalog {
+public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
@@ -44,9 +45,12 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
             "clientCertificate.keyStorePasswordRef");
 
     private final Map<String, HarvestSource> sources;
+    private final Map<String, DelegatedConfluenceHttp> delegated;
 
-    private ConfiguredSourceCatalog(Map<String, HarvestSource> sources) {
+    private ConfiguredSourceCatalog(Map<String, HarvestSource> sources,
+                                    Map<String, DelegatedConfluenceHttp> delegated) {
         this.sources = sources;
+        this.delegated = delegated;
     }
 
     /** Ohne eigene Vertrauensquellen und ohne Proxy. */
@@ -80,6 +84,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
+        Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
             SourceSettingsConfig config = configs.get(i);
@@ -122,14 +127,22 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                 // stillschweigend ohne Client-Zertifikat zu betreiben.
                 sources.put(config.id(), new KnowledgeSourceHarvestSource(config.id(), config.type(), title,
                         provider.open(SourceAddress.of(config.id()), settings)));
+                delegated.put(config.id(), ConfluenceSources.delegatedHttp(config.baseUrl(), secrets, routes,
+                        userAgent, trust, certificate.enabled() ? certificate.thumbprint() : null,
+                        certificate.enabled() ? certificate.alias().trim() : null,
+                        certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12
+                                ? certificate.path() : null,
+                        certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12
+                                ? ConfiguredSecrets.certificateRefFor(config.id()) : null));
             } catch (ClientCertificateException e) {
                 problems.add(label + ": client-certificate: " + e.getMessage());
             }
         }
         if (!problems.isEmpty()) {
+            delegated.values().forEach(DelegatedConfluenceHttp::close);
             throw new InvalidSourceConfigurationException(problems);
         }
-        return new ConfiguredSourceCatalog(sources);
+        return new ConfiguredSourceCatalog(sources, delegated);
     }
 
     private static List<String> check(SourceSettingsConfig config, Set<String> knownIds) {
@@ -259,5 +272,19 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return Optional.ofNullable(sources.get(sourceId));
+    }
+
+    /**
+     * Delegierte Aufrufe an die Confluence der Quelle mit dem Token des Nutzers (#24), über dieselbe Route und
+     * dasselbe Client-Zertifikat wie das Ernten; leer für unbekannte Quellen.
+     */
+    public Optional<DelegatedConfluenceHttp> delegatedHttp(String sourceId) {
+        return Optional.ofNullable(delegated.get(sourceId));
+    }
+
+    /** Gibt die Verbindungspools der delegierten Aufrufe frei (Spring ruft das beim Herunterfahren). */
+    @Override
+    public void close() {
+        delegated.values().forEach(DelegatedConfluenceHttp::close);
     }
 }

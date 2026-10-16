@@ -124,6 +124,25 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .toFuture();
     }
 
+    /**
+     * Ein einzelner GET mit Client-Zertifikat, ohne Weiterleitungen zu verfolgen (3xx kommt als Antwort) und ohne
+     * Cookies weiterzutragen, mit einer Zeitgrenze für alles einschließlich Routenauswahl. Bei Ablauf wird die
+     * Anfrage abgebrochen und endet mit {@link SocketTimeoutException}. Für Aufrufe mit anfragebezogener
+     * Anmeldung ({@link DelegatedConfluenceHttp}); die Header bestimmt allein der Aufrufer.
+     */
+    CompletionStage<ConfluenceHttpResponse> getOnceAsync(URI uri, Map<String, String> headers, int maxBytes,
+                                                         Duration timeout) {
+        return Mono.defer(() -> closed.get()
+                        ? Mono.<ConfluenceHttpResponse>error(new IOException("Transport ist geschlossen"))
+                        : once(uri, headers, maxBytes, Identity.CLIENT))
+                .map(response -> new ConfluenceHttpResponse(response.status(), response.contentType(),
+                        response.body(), response.location(), response.cookies(), uri, List.of()))
+                .timeout(timeout, Mono.defer(() -> Mono.error(new SocketTimeoutException(
+                        "Zeitgrenze von " + timeout.toMillis() + " ms überschritten"))))
+                .onErrorMap(error -> !(error instanceof IOException), WebClientConfluenceTransport::ioFailure)
+                .toFuture();
+    }
+
     /** Ein Request mit Weiterleitungen auf demselben Host, wie {@code UrlConnectionConfluenceTransport}. */
     private Mono<ConfluenceHttpResponse> exchange(URI current, Map<String, String> headers, int maxBytes,
                                                   Identity identity, Map<String, String> cookies,

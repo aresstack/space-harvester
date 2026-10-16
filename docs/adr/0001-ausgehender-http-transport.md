@@ -80,6 +80,16 @@ bleibt Spring MVC auf Tomcat). Rückgabe per `Mono#toFuture()`, ohne `block()`/`
   PAT + PKCS12 direkt und durch den Tunnel; Abbruch schließt die Verbindung; Lese-Timeout; Backpressure;
   `bootJarPacCheck` ruft aus dem ausführbaren JAR asynchron ab (`ProxyDiagnosticsMain --fetch=async`).
 
+### Delegierte Aufrufe mit Nutzertoken (#24)
+
+`DelegatedConfluenceHttp` (je Quelle über `ConfiguredSourceCatalog#delegatedHttp`) schickt einen GET mit dem Token
+des Nutzers statt der Quell-Zugangsdaten, über dieselbe Route, dasselbe Server-Vertrauen und dasselbe
+Client-Zertifikat wie das Ernten. Nur Pfade unter der Basis-URL der Quelle (sonst `IllegalArgumentException`, das
+Token geht nie an einen anderen Host); gesendet werden nur `Authorization: Bearer …` und `Accept`; keine Cookies,
+keine Weiterleitungen (3xx ist eine Antwort); 10 s Zeitgrenze einschließlich Routenauswahl, dann Abbruch und
+`SocketTimeoutException`; 1 MiB Körpergrenze. Das Token ist kein Pool-Schlüssel und steht nie in Logs oder
+Meldungen. Die Abbildung der Antworten (401, 403, 404) macht der Zugriffsschutz (Strang F).
+
 ### Noch offen
 
 - **Verdrahtung in den Adapter:** Die Fachlogik (`ConfluenceRestClient`) ruft heute nur den synchronen Transport.

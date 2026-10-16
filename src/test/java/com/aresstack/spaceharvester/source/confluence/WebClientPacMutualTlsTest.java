@@ -151,6 +151,25 @@ class WebClientPacMutualTlsTest {
     }
 
     @Test
+    void delegatedCallsUseTheUserTokenWithTheSameCertificateThroughTheTunnel() throws Exception {
+        URI base = on(mtlsServer.baseUrl(), "secure.proxied.test", "");
+        ProxySettings settings = new ProxySettings(ProxySettings.Mode.PAC_URL_MANUAL, pac.url(), null, null, null,
+                Duration.ofSeconds(5), null, null);
+        try (DelegatedConfluenceHttp delegated = ConfluenceSources.delegatedHttp(base,
+                ref -> new SecretMaterial(ref, null, CLIENT_PASSWORD.toCharArray()), ProxyRoutes.from(settings),
+                "test", certificates.harvesterTrustManager(), null, CLIENT_ALIAS, certificates.client,
+                SecretRef.of("test:p12"))) {
+
+            ConfluenceHttpResponse response = value(delegated.get("/rest/api/space", "nutzer-token"));
+
+            assertThat(response.status()).isEqualTo(200);
+            assertThat(proxy.requestLines()).isNotEmpty()
+                    .allSatisfy(line -> assertThat(line).startsWith("CONNECT secure.proxied.test:"));
+            assertThat(proxy.headerBlocks()).noneSatisfy(head -> assertThat(head).contains("nutzer-token"));
+        }
+    }
+
+    @Test
     void theClientCertificateWorksOnADirectRouteToo() throws Exception {
         URI target = URI.create(mtlsServer.baseUrl() + "/rest/api/space");
 
