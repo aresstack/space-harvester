@@ -10,7 +10,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Baut die Quellen aus {@code space-harvester.sources}. Eine fehlerhafte Quellenkonfiguration verhindert den Start mit
+ * Baut die Quellen aus {@code space-harvester.sources} mit der Proxy-Route aus {@code space-harvester.network.proxy}.
+ * Eine fehlerhafte Quellen- oder Proxykonfiguration verhindert den Start mit
  * einer Liste aller Probleme; eine nicht erreichbare Quelle nicht (Verbindungen entstehen erst bei Anfragen).
  */
 @Configuration(proxyBeanMethods = false)
@@ -22,7 +23,8 @@ class SourceConfiguration {
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
         return ConfiguredSourceCatalog.of(
-                properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent);
+                properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
+                properties.network().proxy().toSettings());
     }
 
     @Bean

@@ -1,20 +1,54 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Konfiguration unter {@code space-harvester}: die benannten Quellen. Zugangsdaten gehören nicht in Dateien im
+ * Konfiguration unter {@code space-harvester}: die benannten Quellen und das ausgehende Netzwerk. Zugangsdaten gehören nicht in Dateien im
  * Repository, sondern kommen über Platzhalter aus Umgebungsvariablen (siehe README).
  */
 @ConfigurationProperties("space-harvester")
-public record SpaceHarvesterProperties(List<Source> sources) {
+public record SpaceHarvesterProperties(List<Source> sources, Network network) {
 
     public SpaceHarvesterProperties {
         sources = sources == null ? List.of() : List.copyOf(sources);
+        network = network == null ? new Network(null) : network;
+    }
+
+    /** Ausgehende Verbindungen aller Quellen. */
+    public record Network(Proxy proxy) {
+
+        public Network {
+            proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null) : proxy;
+        }
+    }
+
+    /**
+     * Proxy-Route je Ziel-URL (#34); ohne Angabe gehen alle Verbindungen direkt.
+     *
+     * @param mode           {@code disabled} (Standard), {@code manual-proxy}, {@code pac-url-manual},
+     *                       {@code pac-url-powershell}, {@code pac-url-windows-settings}, {@code pac-url-wscript} oder
+     *                       {@code windows-static-proxy}
+     * @param pacUrl         nur bei {@code pac-url-manual}
+     * @param proxyHost      nur bei {@code manual-proxy}
+     * @param proxyPort      nur bei {@code manual-proxy}
+     * @param nonProxyHosts  immer direkt: exakte Hostnamen oder {@code *.suffix}
+     * @param resolveTimeout Frist je Auflösung (Standard 20 s)
+     * @param cacheTtl       Gültigkeit einer gefundenen Route (Standard 10 min)
+     * @param failureTtl     Gültigkeit einer gescheiterten Auflösung (Standard 1 min)
+     */
+    public record Proxy(ProxySettings.Mode mode, URI pacUrl, String proxyHost, Integer proxyPort,
+                        List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+
+        ProxySettings toSettings() {
+            return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
+                    failureTtl);
+        }
     }
 
     /**

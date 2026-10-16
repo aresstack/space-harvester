@@ -81,7 +81,68 @@ space-harvester:
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
 - **Keine Geheimnisse nach außen:** Passwort und Token erscheinen weder in API-Antworten noch in Logs.
-- **Noch nicht unterstützt:** Client-Zertifikate (mTLS), OAuth und ein Spring Cloud Config Server.
+- **Noch nicht unterstützt:** Client-Zertifikate (mTLS), OAuth und ein Spring Cloud Config Server. Proxy und PAC:
+  siehe nächsten Abschnitt.
+
+## Proxy und PAC/WPAD
+
+Ausgehende Verbindungen aller Quellen nehmen die Route, die `space-harvester.network.proxy` für die jeweilige
+Ziel-URL bestimmt ([#34](https://github.com/aresstack/space-harvester/issues/34)). Die Auflösung übernimmt die
+Bibliothek [`win-proxy-java`](https://github.com/aresstack/win-proxy-java) (PAC-Adresse finden, PAC laden,
+`FindProxyForURL` mit GraalJS auswerten); der Confluence-Adapter wendet die Route je Verbindung an. Es gibt keine
+globalen `https.proxyHost`-Einstellungen und keinen prozessweiten `ProxySelector`.
+
+```yaml
+space-harvester:
+  network:
+    proxy:
+      mode: pac-url-powershell      # Windows: PAC-Adresse aus AutoConfigURL (HKCU) per Inline-PowerShell
+      non-proxy-hosts:              # optional, immer direkt: exakter Name oder *.suffix
+        - intranet.example.org
+      resolve-timeout: 20s          # Frist je Auflösung (PowerShell, PAC-Download, Auswertung)
+```
+
+| `mode` | Bedeutung | Plattform |
+| --- | --- | --- |
+| `disabled` | Standard: alle Verbindungen direkt | alle |
+| `manual-proxy` | fester Proxy aus `proxy-host` und `proxy-port` | alle |
+| `pac-url-manual` | PAC-Skript von `pac-url` (`http`, `https` oder `file`) | alle, z. B. Container |
+| `pac-url-powershell` | PAC-Adresse aus `AutoConfigURL` per PowerShell `-Command` (kein Skript auf der Platte) | Windows |
+| `pac-url-windows-settings` | PAC-Adresse aus den Interneteinstellungen per `reg.exe` | Windows |
+| `pac-url-wscript` | PAC-Adresse per VBScript (`cscript`) | Windows |
+| `windows-static-proxy` | fester Proxy aus den Interneteinstellungen (`ProxyServer`, `ProxyOverride`) | Windows |
+
+- **Fail-Closed:** Lässt sich eine Route nicht bestimmen (keine PAC-Adresse, PAC nicht ladbar, Skriptfehler,
+  Zeitüberschreitung), scheitert die Anfrage mit dem Grund. Der Dienst verbindet dann **nie** stillschweigend direkt.
+  Gescheiterte Auflösungen werden 1 Minute gemerkt (`failure-ttl`), gefundene Routen 10 Minuten (`cache-ttl`).
+- **Ohne Konfiguration** bleibt alles direkt wie bisher. Loopback-Ziele gehen immer direkt. Falsche Einstellungen
+  (fehlende `pac-url`, Windows-Modus auf Linux, nicht umgesetzte `windows-native-*`-Modi) verhindern den Start.
+- **Je Ziel-URL:** Das PAC-Skript bekommt bei HTTPS wie im Browser nur `https://host[:port]/`, bei HTTP die ganze
+  URL ohne Benutzerinfo. Unter genau diesem Schlüssel wird die Route gemerkt. Die Auflösung läuft auf einem eigenen
+  Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage, nicht beim Start.
+- **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization` und Zugangsdaten gehen nur durch den Tunnel zum
+  Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.
+- **Windows-Dienst:** `pac-url-powershell`, `pac-url-windows-settings`, `pac-url-wscript` und `windows-static-proxy`
+  lesen `HKCU` des **ausführenden Dienstkontos**, nicht die Einstellungen des angemeldeten Benutzers. Hat das
+  Dienstkonto keine `AutoConfigURL`, `pac-url-manual` mit der PAC-Adresse des Unternehmens verwenden.
+- **Linux/Container:** `pac-url-manual` oder `manual-proxy`.
+- **GraalJS:** `win-proxy-java` 0.2.0 bringt GraalJS 21.2 (`js` und `regex`) mit; JDK 21 hat keinen eingebauten
+  JavaScript-Interpreter. GraalJS läuft im Interpretermodus, die erste Auswertung dauert etwa 1 s. Das Skript läuft
+  ohne Zugriff auf Java-Klassen, Dateien oder Prozesse. `./gradlew check` prüft mit `bootJarPacCheck` die
+  Auswertung im ausführbaren JAR (verschachtelte JARs, keine zusammengeführten `META-INF/services`).
+
+Diagnose ohne Start des Dienstes, mit denselben Optionen und allen Schritten der Bibliothek (Exit-Code 2, wenn eine
+Route nicht bestimmbar ist):
+
+```bash
+java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsMain \
+     -cp build/libs/space-harvester-0.1.0-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher \
+     --mode=pac-url-powershell https://confluence.example.org/
+```
+
+Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
+Ob und wie ein Spring-`WebClient` mit echter asynchroner I/O folgt, klärt
+[ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 
 ## API-Übersicht
 
@@ -130,7 +191,8 @@ Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester
 - `api` – REST-Controller, Antwortmodelle, OpenAPI-Konfiguration
 - `application` – Anwendungsfälle, frameworkneutral (kein Spring)
 - `config` – Spring-Konfiguration, die Anwendungsfälle verdrahtet
-- `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen
+- `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen,
+  `source.network` bestimmt die Proxy-Route je Ziel-URL
 - `output` – Exportformate und Artefakte (folgt mit #11)
 
 `source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client

@@ -6,6 +6,9 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceSources;
+import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -14,6 +17,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Baut aus der Konfiguration die Quellen und prüft sie dabei vollständig: Fehler aller Quellen werden gesammelt
@@ -24,6 +29,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
 
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
+
+    private static final Logger LOG = LoggerFactory.getLogger(ConfiguredSourceCatalog.class);
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
 
@@ -37,11 +44,21 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
         this.sources = sources;
     }
 
+    /** Wie {@link #of(List, String, ProxySettings)} ohne Proxy. */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent) {
+        return of(configs, userAgent, ProxySettings.disabled());
+    }
+
     /**
      * @param userAgent User-Agent für HTTP-Aufrufe der Adapter
-     * @throws InvalidSourceConfigurationException mit allen gefundenen Problemen
+     * @param proxy     Proxy-Einstellungen für alle Quellen
+     * @throws InvalidNetworkConfigurationException bei fehlerhaften Proxy-Einstellungen
+     * @throws InvalidSourceConfigurationException mit allen gefundenen Problemen der Quellen
      */
-    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent) {
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             ProxySettings proxy) {
+        ProxyRoutes routes = ProxyRoutes.from(proxy);
+        LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
@@ -62,7 +79,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                 case PAT -> secrets.put(config.id(), null, config.auth().token());
                 case NONE -> { }
             }
-            KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, userAgent);
+            KnowledgeSourceProvider provider = ConfluenceSources.provider(secrets, routes, userAgent);
             SourceSettings settings = settings(config);
             List<String> invalid = provider.validate(settings);
             if (!invalid.isEmpty()) {
