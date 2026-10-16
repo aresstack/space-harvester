@@ -91,6 +91,7 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         Set<String> failed = new HashSet<>(failedPageIds);
         SortedMap<String, BaselineEntry> pages = new TreeMap<>();
         SortedSet<String> stale = new TreeSet<>();
+        SortedSet<String> missing = new TreeSet<>();
         for (PageChange change : changes) {
             boolean keepPrevious;
             if (change.current() != null) {
@@ -105,12 +106,15 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
             if (keepPrevious && change.previous() != null) {
                 pages.put(change.pageId(), change.previous());
                 stale.add(change.pageId());
+            } else if (keepPrevious && change.current() != null) {
+                missing.add(change.pageId());
             }
         }
         if (!failed.isEmpty()) {
             throw new IllegalArgumentException("Seiten nicht im Plan: " + new TreeSet<>(failed));
         }
         long generation = baseline == null ? 1 : baseline.generation() + 1;
-        return new SyncBaseline(inventory.sourceId(), inventory.spaceKey(), generation, confirmedAt, pages, stale);
+        return new SyncBaseline(inventory.sourceId(), inventory.spaceKey(), generation, confirmedAt, pages, stale,
+                missing);
     }
 }

@@ -103,6 +103,7 @@ public final class PageCacheSchema {
     static final String GENERATION = "generation";
     static final String CONFIRMED_AT = "confirmedAt";
     static final String STALE_PAGE_ID = "stalePageId";
+    static final String MISSING_PAGE_ID = "missingPageId";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
@@ -240,6 +241,9 @@ public final class PageCacheSchema {
         for (String pageId : baseline.stalePageIds()) {
             doc.add(new StoredField(STALE_PAGE_ID, pageId));
         }
+        for (String pageId : baseline.missingPageIds()) {
+            doc.add(new StoredField(MISSING_PAGE_ID, pageId));
+        }
         return doc;
     }
 
@@ -324,7 +328,8 @@ public final class PageCacheSchema {
 
     static ConfirmedGeneration confirmedGeneration(Document space) {
         return new ConfirmedGeneration(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY),
-                generation(space), instant(space.get(CONFIRMED_AT)), space.getValues(STALE_PAGE_ID).length);
+                generation(space), instant(space.get(CONFIRMED_AT)), space.getValues(STALE_PAGE_ID).length,
+                space.getValues(MISSING_PAGE_ID).length);
     }
 
     /** Die bestätigte Generation aus dem Space-Dokument und den Dokumenten ihrer Seiten. */
@@ -337,7 +342,8 @@ public final class PageCacheSchema {
             pages.put(entry.pageId(), entry);
         }
         return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
-                instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))));
+                instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))),
+                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))));
     }
 
     private static long number(Document doc, String field) {

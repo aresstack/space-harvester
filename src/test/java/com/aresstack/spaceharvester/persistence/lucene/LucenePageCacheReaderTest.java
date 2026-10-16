@@ -81,6 +81,20 @@ class LucenePageCacheReaderTest {
     }
 
     @Test
+    void aGenerationWithMissingPagesIsIncompleteEvenWithStalePages() {
+        run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
+        SortedMap<String, BaselineEntry> entries = new LuceneSyncBaselineStore(cache).confirmed("wiki", "DEV")
+                .orElseThrow().pages();
+        try (StagedGeneration staged = new LuceneSyncBaselineStore(cache).begin("wiki", "DEV")) {
+            staged.commit(new SyncBaseline("wiki", "DEV", 2, SECOND_RUN, entries, new TreeSet<>(Set.of("101")),
+                    new TreeSet<>(Set.of("102"))));
+        }
+
+        assertThat(reader.currentGeneration("wiki", "DEV"))
+                .contains(new CacheGeneration("g2", CacheState.INCOMPLETE, SECOND_RUN, SECOND_RUN));
+    }
+
+    @Test
     void anUncommittedRunDoesNotChangeTheGeneration() {
         run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
 

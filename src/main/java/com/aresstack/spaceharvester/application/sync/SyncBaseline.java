@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeMap;
@@ -21,9 +22,19 @@ import java.util.TreeSet;
  * @param stalePageIds  Seiten, deren Stand aus einer älteren Generation übernommen wurde, weil ihr Abgleich
  *                      fehlschlug oder ihr Fehlen nicht bestätigt werden konnte; sie gelten als veraltet und werden
  *                      im nächsten Lauf erneut abgeglichen
+ * @param missingPageIds Seiten, die die Inventur gelistet hat, für die der Cache aber keinen Stand führt, weil ihr
+ *                       erster Abruf fehlschlug; nicht in {@code pages}. Der nächste Lauf sieht sie wieder als neu.
+ *                       Eine Generation mit solchen Seiten ist bestätigt, aber nicht vollständig ({@link #complete()})
  */
 public record SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
-                           SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds) {
+                           SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
+                           SortedSet<String> missingPageIds) {
+
+    /** Eine Generation ohne fehlende Seiten. */
+    public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
+                        SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds) {
+        this(sourceId, spaceKey, generation, confirmedAt, pages, stalePageIds, new TreeSet<>());
+    }
 
     public SyncBaseline {
         Objects.requireNonNull(sourceId, "sourceId");
@@ -42,6 +53,26 @@ public record SyncBaseline(String sourceId, String spaceKey, long generation, In
         if (!pages.keySet().containsAll(stalePageIds)) {
             throw new IllegalArgumentException("Veraltete Seiten müssen zur Generation gehören");
         }
+        missingPageIds = natural(missingPageIds == null ? Set.of() : missingPageIds);
+        for (String missing : missingPageIds) {
+            if (pages.containsKey(missing)) {
+                throw new IllegalArgumentException("Fehlende Seite " + missing + " darf keinen Stand haben");
+            }
+        }
+    }
+
+    @Override
+    public SortedSet<String> missingPageIds() {
+        return natural(missingPageIds);
+    }
+
+    /**
+     * Ob der Cache für jede gelistete Seite einen Stand führt. Leser zeigen eine Generation mit fehlenden Seiten als
+     * unvollständig an, nie als vollständigen Abgleich; veraltete Seiten ({@link #stalePageIds()}) zählen nicht dazu,
+     * sie haben einen älteren Stand.
+     */
+    public boolean complete() {
+        return missingPageIds.isEmpty();
     }
 
     @Override

@@ -215,6 +215,8 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status) |
+| `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -310,6 +312,21 @@ kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flach
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
 alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu viele offene Aufträge ergeben
 `too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`).
+
+
+**Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
+antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
+`completed` nur mit neu bestätigter und vollständiger Generation; sonst `failed` mit `error.code` `SYNC_INCOMPLETE`
+(nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt, aber neue Seiten
+ohne Inhalt, `summary.complete: false`; sie gilt nie als vollständiger Abgleich, der nächste Lauf lädt sie erneut),
+oder `cancelled`. `summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`,
+`spaceFingerprint`, `notConfirmed`; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
+auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
+(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
+`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
+ein noch laufender Abgleich wird nicht doppelt gestartet.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)).
