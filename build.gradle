@@ -22,6 +22,8 @@ dependencies {
     implementation libs.springdoc.openapi.webmvc.ui
     // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
     implementation project(':enterprise-ai-sources')
+    // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
+    implementation libs.win.proxy.java
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5
@@ -49,9 +51,62 @@ tasks.withType(AbstractArchiveTask).configureEach {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
+    systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
 }
 
 // Das einfache (nicht ausführbare) Jar wird nicht gebraucht; bootJar ist das Artefakt.
 tasks.named('jar') {
     enabled = false
+}
+
+// Wertet ein PAC-Skript im ausführbaren Spring-Boot-JAR aus (#34): GraalJS (js und regex) muss in den
+// verschachtelten JARs tatsächlich laufen, nicht nur im Test-Klassenpfad.
+abstract class BootJarPacCheck extends DefaultTask {
+    @InputFile
+    abstract RegularFileProperty getJar()
+
+    @InputFile
+    abstract RegularFileProperty getPac()
+
+    @Nested
+    abstract Property<JavaLauncher> getLauncher()
+
+    @Inject
+    abstract ExecOperations getExecOperations()
+
+    @TaskAction
+    void check() {
+        def output = new ByteArrayOutputStream()
+        def result = execOperations.exec {
+            commandLine launcher.get().executablePath.asFile.absolutePath,
+                    '-Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsMain',
+                    '-cp', jar.get().asFile.absolutePath,
+                    'org.springframework.boot.loader.launch.PropertiesLauncher',
+                    '--mode=pac-url-manual', "--pac-url=${pac.get().asFile.toURI()}",
+                    'https://confluence.sentinel.test/rest/api/space', 'https://other.example/'
+            standardOutput = output
+            errorOutput = output
+            ignoreExitValue = true
+        }
+        def text = output.toString('UTF-8')
+        if (result.exitValue != 0 || !text.contains('Result: PROXY 192.0.2.123:18080')
+                || !text.contains('Result: DIRECT')) {
+            throw new GradleException("PAC-Auswertung im ausführbaren JAR fehlgeschlagen (Exit ${result.exitValue}):\n${text}")
+        }
+        logger.lifecycle(text.readLines().findAll { it.startsWith('Result:') }.join('\n'))
+    }
+}
+
+def bootJarPacCheck = tasks.register('bootJarPacCheck', BootJarPacCheck) {
+    group = 'verification'
+    description = 'Wertet ein PAC-Skript mit GraalJS im ausführbaren JAR aus.'
+    jar = tasks.named('bootJar').flatMap { it.archiveFile }
+    pac = layout.projectDirectory.file('src/test/resources/sentinel.pac')
+    launcher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    outputs.upToDateWhen { false }
+}
+
+tasks.named('check') {
+    dependsOn bootJarPacCheck
 }

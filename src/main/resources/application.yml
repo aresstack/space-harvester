@@ -32,6 +32,10 @@ space-harvester:
   security:
     mode: clients
     clients: []
+  # Proxy-Route je Ziel-URL für alle Quellen (#34). disabled = direkt; PAC/WPAD und weitere Modi: README.md.
+  network:
+    proxy:
+      mode: disabled
 
 springdoc:
   api-docs:

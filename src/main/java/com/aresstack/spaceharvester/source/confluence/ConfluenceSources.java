@@ -13,33 +13,37 @@ import javax.net.ssl.X509TrustManager;
 
 /**
  * Baut den Confluence-Adapter aus {@code enterprise-ai-sources} für den headless Betrieb im Space Harvester:
- * direkte HTTP-Route und je Quelle eigenes TLS. Server-Vertrauen (JVM oder ein übergebener Trust-Manager) und
- * Client-Zertifikat (mTLS) sind getrennt: Das Zertifikat bekommt nur der Confluence-Host der Quelle, fremde Hosts
- * sieht der Adapter nur mit dem Vertrauen ohne Zertifikat. Zugangsdaten liefert ein {@link SecretProvider}; ohne
- * Secrets arbeitet der Adapter anonym.
+ * Proxy-Route je Ziel aus dem übergebenen {@link HttpRoutePort} (#34) und je Quelle eigenes TLS. Server-Vertrauen
+ * (JVM oder ein übergebener Trust-Manager) und Client-Zertifikat (mTLS) sind getrennt: Das Zertifikat bekommt nur der
+ * Confluence-Host der Quelle, fremde Hosts sieht der Adapter nur mit dem Vertrauen ohne Zertifikat. Zugangsdaten
+ * liefert ein {@link SecretProvider}; ohne Secrets arbeitet der Adapter anonym.
  */
 public final class ConfluenceSources {
 
     private ConfluenceSources() {
     }
 
-    /** Confluence-Provider ohne Secrets: Quellen ohne {@code credentialRef} werden anonym gelesen. */
+    /** Confluence-Provider ohne Secrets und ohne Proxy: Quellen ohne {@code credentialRef} werden anonym gelesen. */
     public static KnowledgeSourceProvider anonymousProvider(String userAgent) {
-        return provider(noSecrets(), userAgent);
+        return provider(noSecrets(), HttpRoutePort.direct(), userAgent);
     }
 
     /** Confluence-Provider mit dem TLS-Vertrauen der JVM. */
-    public static KnowledgeSourceProvider provider(SecretProvider secrets, String userAgent) {
-        return provider(secrets, userAgent, null, null);
+    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent) {
+        return provider(secrets, routes, userAgent, null, null);
     }
 
     /**
+     * @param routes     Proxy-Route je Ziel-URL; eine UNAVAILABLE-Route lässt die Anfrage scheitern, nie still direkt
      * @param trust      Server-/Proxy-CAs der Quelle; {@code null} = Vertrauen der JVM
      * @param thumbprint erwarteter Fingerabdruck des Client-Zertifikats oder {@code null}
      */
-    public static KnowledgeSourceProvider provider(SecretProvider secrets, String userAgent, X509TrustManager trust,
-                                                   String thumbprint) {
-        return new ConfluenceSourceProvider(secrets, HttpRoutePort.direct(), trustOnly(trust), userAgent,
+    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                                   X509TrustManager trust, String thumbprint) {
+        if (routes == null) {
+            throw new IllegalArgumentException("routes must not be null");
+        }
+        return new ConfluenceSourceProvider(secrets, routes, trustOnly(trust), userAgent,
                 new ConfiguredClientCertificates(secrets, trust, thumbprint));
     }
 
