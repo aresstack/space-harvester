@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
+import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.withUrl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.TestClient;
@@ -84,8 +85,8 @@ class PageQueryApiTest {
     void fillCache() {
         cache.clear();
         cache.publish("wiki", "DEV", confirmed("g1"), List.of(
-                page("wiki", "DEV", "100", null),
-                page("wiki", "DEV", "101", "100", NOT_UTF8),
+                withUrl(page("wiki", "DEV", "100", null)),
+                withUrl(page("wiki", "DEV", "101", "100", NOT_UTF8)),
                 page("wiki", "DEV", "102", "100"),
                 page("wiki", "DEV", "103", "101"),
                 page("wiki", "DEV", "200", null),
