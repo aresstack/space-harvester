@@ -96,9 +96,9 @@ bzw. `DENY`, und der `AccessGuard` verweigert. Controller und Anwendungsfälle �
 | Nicht freigegebene Quellen/Spaces nicht ausgeliefert | `CorpusReleasePolicy`, `AccessGuard` fail closed | `ApiAccessTest`, `PageQueryApiTest`, `ApiRouteCoverageTest` |
 | Rohinhalt nur mit ausdrücklicher Freigabe | Art `content` getrennt von `metadata`; Einzelseite und Export verlangen `content` | `PageQueryApiTest` (Metadaten-Client erhält 403), `ExportsApiTest` |
 | Baum, Metadaten, Enrichments, Converter gleich geschützt | Baum und Listen filtern je Seite; Enrichments/Converter zählen zu `content` | `PageQueryApiTest`, `ApiRouteCoverageTest` |
-| Starten/Abbrechen von Jobs, Downloads geschützt; nur eigene Jobs | `export` + `content` je Space, Eigentümer `kind:principal`, fremder Export 404 | `ExportsApiTest` (#49) |
-| Sichere Artefaktpfade | Whitelist der Dateinamen, Normalisierung und Präfixprüfung im Dateischreiber | `FileSystemExportArtifactWriterTest` (#43) |
-| Sync-Aufträge nur mit Freigabe, nur eigene | `sync` je Space, Seiten-IDs im Delta nur zusätzlich mit `metadata`, fremder Sync 404 | Sync-API-Tests (#54), `ApiRouteCoverageTest` |
+| Starten/Abbrechen von Jobs, Downloads geschützt; nur eigene Jobs | `export` + `content` je Space, Eigentümer `kind:principal`, fremder Export 404 | `ExportsApiTest` (kommt mit #49) |
+| Sichere Artefaktpfade | Whitelist der Dateinamen, Normalisierung und Präfixprüfung im Dateischreiber | `FileSystemExportArtifactWriterTest` (kommt mit #43) |
+| Sync-Aufträge nur mit Freigabe, nur eigene | `sync` je Space, Seiten-IDs im Delta nur zusätzlich mit `metadata`, fremder Sync 404 | Sync-API-Tests (kommt mit #54), `ApiRouteCoverageTest` |
 | Grenzen für gleichzeitige Jobs | `JobLimits` (gleichzeitig, wartend, Laufzeit, Aufbewahrung); darüber 429 | Job-Tests (#39/#45) |
 | Keine frei wählbaren Basis-URLs (SSRF) | Quellen nur über konfigurierte `sourceId`; keine Route nimmt URLs an | Routenliste, `ApiRouteCoverageTest` |
 | Keine Secrets in Antworten/Logs, bereinigte Fehler | Problem Details mit festen Texten; Token nur als Hash; Log ohne Token | `ApiAccessTest`, `SourcesApiTest` |
