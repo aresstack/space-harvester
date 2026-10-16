@@ -43,6 +43,25 @@ public final class ConfluenceSources {
      */
     public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
                                                    X509TrustManager trust, String thumbprint) {
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+    }
+
+    /**
+     * Wie {@link #provider(SecretProvider, HttpRoutePort, String, X509TrustManager, String)}, dazu native
+     * Seiten-Snapshots asynchron ({@code AsyncStoredContentSource}, #47) über einen Transport aus {@code async}.
+     *
+     * @param async Besitzer der asynchronen Transporte oder {@code null}: dann nur synchron
+     */
+    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                                   X509TrustManager trust, String thumbprint,
+                                                   AsyncSnapshotTransports async) {
+        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+        return async == null ? provider : async.attach(provider, trust, thumbprint);
+    }
+
+    private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                               String userAgent, X509TrustManager trust,
+                                                               String thumbprint) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
@@ -89,7 +108,7 @@ public final class ConfluenceSources {
     }
 
     /** Nur die Vertrauensquellen der Quelle, ohne Client-Zertifikat; {@code null} = JVM-Standard. */
-    private static SSLContext trustOnlyContext(X509TrustManager trust) {
+    static SSLContext trustOnlyContext(X509TrustManager trust) {
         if (trust == null) {
             return null;
         }

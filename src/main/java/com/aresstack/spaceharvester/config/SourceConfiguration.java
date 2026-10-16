@@ -31,7 +31,8 @@ class SourceConfiguration {
         SslBundles bundles = sslBundles.getIfAvailable();
         return ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
-                bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings());
+                bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings(),
+                properties.network().asyncTransport());
     }
 
     /**

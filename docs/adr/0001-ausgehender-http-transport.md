@@ -1,7 +1,7 @@
 # ADR 0001 – Ausgehender HTTP-Transport (Proxy/PAC, mTLS, asynchrone I/O)
 
-- **Status:** Teil 1 umgesetzt (#36); Teil 2 (asynchroner Transport, #47) als Transport umgesetzt, Verdrahtung in
-  den Adapter offen
+- **Status:** Teil 1 umgesetzt (#36); Teil 2 (asynchroner Transport, #47) umgesetzt, einschließlich asynchroner
+  Seiten-Snapshots im Adapter und Konfiguration `space-harvester.network.async-transport`
 - **Tickets:** [#34](https://github.com/aresstack/space-harvester/issues/34), [#33](https://github.com/aresstack/space-harvester/issues/33), [#47](https://github.com/aresstack/space-harvester/issues/47), [#2](https://github.com/aresstack/space-harvester/issues/2)
 
 ## Kontext
@@ -90,12 +90,29 @@ keine Weiterleitungen (3xx ist eine Antwort); 10 s Zeitgrenze einschließlich Ro
 `SocketTimeoutException`; 1 MiB Körpergrenze. Das Token ist kein Pool-Schlüssel und steht nie in Logs oder
 Meldungen. Die Abbildung der Antworten (401, 403, 404) macht der Zugriffsschutz (Strang F).
 
+### Verdrahtung in den Adapter
+
+- **Upstream (enterprise-ai-client#173):** `AsyncStoredContentSource` (source-api, optional) liefert den nativen
+  Seiten-Snapshot als `CompletionStage<StoredContent>`. Der Confluence-Adapter nutzt dafür seine bestehende
+  Fachlogik: dieselbe Anfrage (`SNAPSHOT_EXPAND`), dieselbe Anmeldung, dieselben Wiederholungen (Wartezeit per
+  Zeitgeber), dieselbe Status-, Fehler- und JSON-Abbildung; kein zweiter REST-Client und kein synchroner Aufruf auf
+  einem Executor. Die JSON-Abbildung läuft auf einem eigenen Executor, nie auf einem Netty-Event-Loop; ein Abbruch
+  der Stufe bricht die Anfrage oder die Wartezeit ab. `ConfluenceSourceProvider.withAsyncTransports` baut solche
+  Quellen; Quellen mit Zertifikat aus `MM_CertAlias` (KeePass) bleiben synchron.
+- **Harvester:** `space-harvester.network.async-transport: web-client` lässt `ConfiguredSourceCatalog` je Quelle
+  einen `WebClientConfluenceTransport` mit derselben Route, demselben Vertrauen und demselben Zertifikat
+  (`ConfiguredClientCertificates`) bauen (`AsyncSnapshotTransports`, schließt alle Transporte und den
+  Abbildungs-Executor beim Herunterfahren). `HarvestSource.storedPageAsync` liefert dann die Seite nicht blockierend,
+  mit denselben `SourceAccessException`-Gründen wie `storedPage`.
+- **Rückfallpfad:** Standard ist `disabled`: alles läuft wie bisher über den synchronen Transport, und
+  `storedPageAsync` endet sofort mit `UNSUPPORTED`. Nichts schaltet still um; Listen, Metadaten und alle übrigen
+  Abrufe bleiben synchron, bis ihre Fachlogik upstream ebenfalls eine asynchrone Fähigkeit hat.
+- **Nachweis:** `AsyncSnapshotsTest` (PAC wählt den Proxy, `CONNECT`, PAT und PKCS12, Antwort byte-gleich mit dem
+  synchronen Abruf, Abbildung nicht auf dem Aufrufer-Thread, Fehlerabbildung, Rückfall), upstream
+  `ConfluenceAsyncStoredContentTest`.
+
 ### Noch offen
 
-- **Verdrahtung in den Adapter:** Die Fachlogik (`ConfluenceRestClient`) ruft heute nur den synchronen Transport.
-  Schmale asynchrone Fähigkeit upstream als nächster Schritt, zuerst für den nativen Seitenabruf
-  (`StoredContentSource`, enterprise-ai-client#172), danach Konfiguration im Harvester. Bis dahin bleibt der
-  synchrone Transport der produktive Weg; nichts schaltet still um.
 - Windows-MY unter dem Dienstkonto und der Live-Test gegen die produktive Instanz bleiben das gemeinsame Gate von
   #33/#34 (siehe `docs/MTLS.md`).
 

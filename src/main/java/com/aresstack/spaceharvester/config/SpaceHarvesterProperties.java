@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
 import java.nio.file.Path;
@@ -18,14 +19,22 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
 
     public SpaceHarvesterProperties {
         sources = sources == null ? List.of() : List.copyOf(sources);
-        network = network == null ? new Network(null) : network;
+        network = network == null ? new Network(null, null) : network;
     }
 
-    /** Ausgehende Verbindungen aller Quellen. */
-    public record Network(Proxy proxy) {
+    /**
+     * Ausgehende Verbindungen aller Quellen.
+     *
+     * @param proxy          Proxy-Route je Ziel-URL
+     * @param asyncTransport {@code disabled} (Standard): alles über den synchronen Transport; {@code web-client}:
+     *                       native Seiten-Snapshots zusätzlich nicht blockierend über Spring WebClient (#47), mit
+     *                       derselben Route, demselben Vertrauen und demselben Client-Zertifikat
+     */
+    public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport) {
 
         public Network {
             proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null) : proxy;
+            asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.DISABLED : asyncTransport;
         }
     }
 
