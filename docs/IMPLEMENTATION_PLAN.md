@@ -72,6 +72,7 @@ Schematisch, **kein bereits implementierter Vertrag**:
 | Komponente | Aufgabe | Darf nicht |
 | --- | --- | --- |
 | Upstream-Quellenadapter (`enterprise-ai-client`) | Confluence-Transport, Basic/PAT, optionale `PartitionListingSource` und künftige `StoredContentSource` | Einen zweiten Confluence-REST-Client im Harvester erzwingen |
+| Ausgehender Quelltransport (#33/#34) | Quellenbezogenes mTLS (Windows-MY/PKCS12) und konfigurierbare Proxy-/PAC-Route über bestehende Upstream-Ports, getrennt von HTTP-Authentifizierung | Zertifikate/Token an fremde Ziele weitergeben; PAC-Ausfall stillschweigend mit DIRECT umgehen; Upstream-Fachlogik duplizieren |
 | Konfiguration / Quellenkatalog | YAML, Quell-ID, Authentifizierungsstrategie, optionale Secrets | Azure/Config Server/OAuth im Basisbetrieb erzwingen |
 | Harvester-Anwendungsfälle | Inventory, Seitenabruf, Sync, Cache-Freshness, Jobsteuerung | An Spring, Confluence-DTO oder Lucene-API fest gekoppelt sein |
 | **Lucene-Cache** (#26) | Unveränderte Payloadbytes in binären StoredFields, Verwaltungsindex, Parent-Beziehungen, Cache-Generation, Enrichment-Verweise | Als SQL-Datenbank/ACID-Mehrtabellentransaktion ausgegeben werden; sensible Daten ungefiltert ausliefern |
@@ -125,7 +126,9 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 - Raw-Payloads, Seitenüberschriften im Baum, Referenzen, Akronyme, Snippets, Bildbeschreibungen und konvertierte Artefakte sind potenziell sensibel.
 - **MVP-Betriebsmodus:** Nur autorisierte technische Clients erhalten Rohdaten; ggf. ausdrücklich für die gesamte Nutzergruppe freigegebene Teilkorpora. Fehlende Freigabe → **fail closed** (#14).
 - **Delegierter Zielmodus (#24):** Aktuelles Nutzerleserecht über Confluence mit dem diesem Benutzer zugeordneten delegierten Token prüfen; 401/403/404, Login-Redirect, Timeout und unklare Antwort verweigern Ausgabe. Kein Vertrauen in frei gesetzte Usernamen oder ins Service-PAT für diese Prüfung. Durchsetzung auch im konsumierenden Knowledge-/MCP-Dienst erforderlich.
-- Konfiguration: lokale, **nicht eingecheckte** YAML darf Passwort oder PAT direkt enthalten; Umgebungsvariablen, Spring Cloud Config und Azure Key Vault sind **optionale** Quellen (#3/#22). Fehlende Secrets nicht stillschweigend als anonyme Anmeldung auslegen. mTLS/Route bleibt unabhängig von Basic/PAT/OAuth.
+- Konfiguration: lokale, **nicht eingecheckte** YAML darf Passwort oder PAT direkt enthalten; Umgebungsvariablen, Spring Cloud Config und Azure Key Vault sind **optionale** Quellen (#3/#22). Fehlende Secrets nicht stillschweigend als anonyme Anmeldung auslegen.
+- **Produktive Confluence-Data-Center-Anbindung:** Laut dokumentiertem Live-Test ist ein **ausgehendes TLS-Clientzertifikat zusätzlich zu PAT/Basic** erforderlich (#33). mTLS, die Server-CA/Trust-Policy, die Proxy-Route (#34) und die HTTP-Benutzeridentität sind getrennte Konfigurations-/Sicherheitsaspekte. Windows-MY im tatsächlich ausführenden Dienstkonto und PKCS12-Dateien für portable Deployments unterstützen; weder private Schlüssel einchecken noch bei aktivem mTLS ohne Zertifikat fortfahren.
+- **Proxy/Transport:** #34 soll bestehendes `win-proxy-java`, `HttpRoutePort` und Confluence-Transportschnittstellen wiederverwenden. Ein möglicher Spring-WebClient-/asynchroner HTTP-Transport wird als **eigener ADR-/Test-Schritt** entschieden und darf nicht stillschweigend die Confluence-Fachlogik oder das Raw-First-Modell ersetzen. mTLS (#33) muss unabhängig vom vollständigen PAC-Ausbau direkt testbar bleiben.
 - Log/API/Index/Artefakte dürfen keine Passwörter, PATs, OAuth-Tokens, Auth-Header oder Cookies enthalten. Rohdaten-Endpunkte nicht schon wegen „interner Netzbetrieb“ ungeschützt lassen.
 
 ## 7. Umsetzung in kleinen PRs
@@ -135,6 +138,12 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 - [x] Headless-Vendoring von Confluence/source-api/adyton/network: PR #23.
 - [x] Upstream-Pagination: [enterprise-ai-client PR #167](https://github.com/aresstack/enterprise-ai-client/pull/167) gemergt, über PR #32 in `enterprise-ai-sources` synchronisiert (#2/#5).
 - [x] YAML-Quellen, Basic/PAT, Spaces: [space-harvester PR #25](https://github.com/aresstack/space-harvester/pull/25) gemergt (#3/#4/#24 Teil A). **Laufende Folge-PRs nicht wegen der Cache-Architektur erweitern.**
+
+**M0b – Reale Quellverbindung absichern (eigene PRs, parallel zu M1/M2; vor Live-Tests)**
+- [ ] **#33 – ausgehendes mTLS je Confluence-Quelle:** Windows-MY mit Dienstkonto-Zertifikat und PKCS12, explizite Alias-/Schlüsselwahl, vorhandene Upstream-`ClientCertificates`/`ClientCertificateSockets` anbinden, Basic/PAT unabhängig erhalten. Integrationstest mit HTTPS-Server, der Clientzertifikat verlangt. **Ohne #33 kein belastbarer Live-Durchstich zur aktuellen produktiven Confluence-Instanz**; Fake-Confluence-/Unit-Tests dürfen unabhängig fortgesetzt werden.
+- [ ] **#34 – Proxy-/WPAD-/PAC-Routing:** bestehenden `win-proxy-java`-/`HttpRoutePort`-Pfad über Spring konfigurieren und echte pro-Ziel-Routen anwenden; PAC-/Windows-Dienstkontext, Fehlermeldungen und HTTPS CONNECT prüfen. WebClient/echte asynchrone HTTP-I/O **in separatem ADR mit Regressionstests** gegen bisherigen Confluence-Transport evaluieren, keinen zweiten Confluence-Fachclient bauen.
+- [ ] Gemeinsamer Integrationstest **mTLS + HTTPS CONNECT** bei benötigter Proxyroute, ohne die isolierte Fertigstellung von #33 vom vollständigen Umfang von #34 abhängig zu machen.
+- **Abnahme:** Mindestens direkte mTLS-zu-Confluence-Metadatenabfrage (PAT plus Zertifikat) in dokumentierter Serviceidentität erfolgreich; im PAC-Unternehmensnetz zusätzlich durch korrekte Proxyroute. Keine Secrets/Schlüssel/Access-Token in Logs/HTTP-Responses.
 
 **M1 – Vollständige Metadaten (#5/#6)**
 - [x] Paginierter **Live**-Space-Inventar-Endpunkt ohne Content, Cursor/Limit 1–100, keine Trunkierung: [PR #32](https://github.com/aresstack/space-harvester/pull/32) gemergt (#5).
@@ -185,7 +194,7 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 
 ## 8. Teststrategie / Definition of Done
 
-**Tests pro Ausbaustufe**: Unit-Tests für reine Ports/DTOs/Hashes/Tree-Bildung; HTTP-Integrationstests mit Fake-Confluence (Basic/PAT und Fehler); Lucene-Dateisystemtests auf temporären Verzeichnissen; Neustart-/Recovery-/Sync-Generationen; ArchUnit für Schichtgrenzen; OpenAPI/Problem-Details-Tests. Später Live-Testplan für Confluence Data Center, TLS/mTLS, OAuth-Application-Link und tatsächliche Berechtigungswechsel.
+**Tests pro Ausbaustufe**: Unit-Tests für reine Ports/DTOs/Hashes/Tree-Bildung; HTTP-Integrationstests mit Fake-Confluence (Basic/PAT und Fehler), bei #33 mit erzwungenem Clientzertifikat und bei #34 mit PAC-/Proxy-Route inklusive `CONNECT` und Java-21-/Executable-JAR-Prüfung; Lucene-Dateisystemtests auf temporären Verzeichnissen; Neustart-/Recovery-/Sync-Generationen; ArchUnit für Schichtgrenzen; OpenAPI/Problem-Details-Tests. Später Live-Testplan für Confluence Data Center, TLS/mTLS, OAuth-Application-Link und tatsächliche Berechtigungswechsel.
 
 **MVP-Definition:** Mehrere Quellen ohne externe Datenbank konfigurierbar; Confluence-Spaces und deren **vollständige** Seitenmetadaten abrufbar; Snapshot-Body nativ und ohne Content-Transformation erhalten; Lucene speichert Bytes, Revision, Parent, Hash und Freshness; Sync lädt nur neue/geänderte Seiten; Seiten flach, Baum separat, begrenzte Suche/Metadatencontainer; Plain JSON/NDJSON+Manifest; keine Bilderbytes; abgesicherte technische API und korrekte Fehl-/Unvollständigkeitszustände. Weder PostgreSQL/H2 noch Markdown/PDF/Word-Converter, LLM-Textextraktion oder vollständige Confluence-API-Kompatibilität erforderlich.
 
@@ -198,6 +207,7 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 3. #16/#27: Cache-TTL, Refresh-Policy, Stale-Antwortverhalten und Cursor-Semantik über Index-Generationen.
 4. #28: Analyzer-Sprache und Schutz der statischen Volltextprojektion; **Metadatensuche zuerst**.
 5. #14/#24: technischer Client-Zugang, identitätsgebundene delegierte Nutzerprüfung und Freigabemodell.
+6. #33/#34: Quellzertifikat aus Windows-MY/PKCS12, effektives Dienstkonto und Trust-Policy, PAC-Fail-Closed, asynchroner HTTP-Transport und Test-/ADR-Ergebnis. Produktive Erreichbarkeit vor realen Confluence-Live-Tests absichern.
 6. #11/#30: Grenze zwischen synchronen paginierten APIs und großen asynchronen Streaming-/Download-Artefakten.
 
 Diese Punkte **nicht** stillschweigend als bereits implementiert oder endgültig entschieden darstellen.
