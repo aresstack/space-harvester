@@ -1,0 +1,229 @@
+package com.aresstack.spaceharvester.api;
+
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
+import java.io.InputStream;
+import java.net.URI;
+import java.time.Instant;
+import java.util.List;
+import java.util.Locale;
+import java.util.stream.Stream;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * Asynchrone Space-Exporte (#11, #12). Start, Status, Abbruch und Download verlangen die Freigaben {@code export} und
+ * {@code content} für den Space; ein Export ist nur für den Client sichtbar, der ihn gestartet hat. Ein fremder oder
+ * unbekannter Export antwortet gleich ({@code job-not-found}).
+ */
+@RestController
+@Tag(name = "Exporte", description = "Asynchrone Exporte eines Space aus dem Cache: Seiten-Array, Rohdaten, ID-Baum "
+        + "und Manifest")
+public class ExportsController {
+
+    static final String EXPORTS = ApiPaths.V1 + "/exports";
+
+    private final Exports exports;
+    private final Jobs jobs;
+    private final AccessGuard access;
+
+    public ExportsController(Exports exports, Jobs jobs, AccessGuard access) {
+        this.exports = exports;
+        this.jobs = jobs;
+        this.access = access;
+    }
+
+    /** Eigentümer eines Auftrags: Art und Kennung des Aufrufers, damit Clients und Endnutzer nie zusammenfallen. */
+    static String owner(AccessContext caller) {
+        return caller.kind().name() + ":" + caller.principal();
+    }
+
+    @PostMapping(path = ApiPaths.V1 + "/sources/{sourceId}/spaces/{spaceKey}/exports",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Export eines Space aus dem Cache starten",
+            description = "Antwortet sofort mit 202 und dem Auftrag; Fortschritt unter Location. Das Artefakt ist "
+                    + "nur vollständig (complete=true), wenn die Cache-Generation bestätigt ist und keine Seite fehlt.")
+    @ApiResponse(responseCode = "202", description = "Export angenommen")
+    @ApiResponse(responseCode = "403", description = "Keine Freigabe export und content für diesen Space "
+            + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+            schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "429", description = "Zu viele offene Aufträge (too-many-jobs)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<ExportResponse> start(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey) {
+        requireExport(caller, sourceId, spaceKey);
+        JobStatus job = exports.start(sourceId, spaceKey, owner(caller));
+        return ResponseEntity.accepted().location(URI.create(EXPORTS + "/" + job.id()))
+                .body(ExportResponse.of(job, null));
+    }
+
+    @GetMapping(path = EXPORTS + "/{exportId}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Zustand, Fortschritt und Fehler eines Exports; nach Abschluss die Artefaktdateien")
+    @ApiResponse(responseCode = "200", description = "Zustand des Exports")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ExportResponse status(@Parameter(hidden = true) AccessContext caller,
+                                 @Parameter(description = "Export-ID aus der Antwort des Starts")
+                                 @PathVariable String exportId) {
+        JobStatus job = ownExport(caller, exportId);
+        ExportArtifact artifact = job.state() == JobState.COMPLETED
+                ? exports.artifact(exportId, owner(caller)).orElse(null) : null;
+        return ExportResponse.of(job, artifact);
+    }
+
+    @PostMapping(path = EXPORTS + "/{exportId}/cancel", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Export abbrechen",
+            description = "Kooperativ: ein wartender Export endet sofort, ein laufender beim nächsten Prüfpunkt "
+                    + "(cancelRequested=true bis dahin). Ein abgebrochener Export veröffentlicht nichts.")
+    @ApiResponse(responseCode = "202", description = "Abbruch angenommen; Zustand danach")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<ExportResponse> cancel(@Parameter(hidden = true) AccessContext caller,
+                                                 @PathVariable String exportId) {
+        ownExport(caller, exportId);
+        return ResponseEntity.accepted().body(ExportResponse.of(jobs.cancel(exportId, owner(caller)), null));
+    }
+
+    @GetMapping(path = EXPORTS + "/{exportId}/artifact/**")
+    @Operation(summary = "Eine Datei des fertigen Artefakts herunterladen",
+            description = "Dateinamen aus files im Zustand (pages.ndjson, tree.json, manifest.json) oder raw/<Datei> "
+                    + "aus dem Seiten-Array; Rohdaten Byte für Byte.")
+    @ApiResponse(responseCode = "200", description = "Dateiinhalt")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export, noch kein Artefakt oder keine solche "
+            + "Datei (job-not-found, artifact-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<InputStreamResource> download(@Parameter(hidden = true) AccessContext caller,
+                                                        @PathVariable String exportId, HttpServletRequest request) {
+        ownExport(caller, exportId);
+        String prefix = EXPORTS + "/" + exportId + "/artifact/";
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        String name = path.startsWith(prefix) ? path.substring(prefix.length()) : "";
+        InputStream content = exports.artifactFile(exportId, owner(caller), name)
+                .orElseThrow(() -> new ArtifactNotFoundException(exportId));
+        MediaType type = name.endsWith(".ndjson") ? MediaType.parseMediaType("application/x-ndjson")
+                : name.endsWith(".json") ? MediaType.APPLICATION_JSON : MediaType.APPLICATION_OCTET_STREAM;
+        String fileName = name.substring(name.lastIndexOf('/') + 1);
+        return ResponseEntity.ok().contentType(type)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .body(new InputStreamResource(content));
+    }
+
+    /** Eigener Export, für dessen Space der Aufrufer noch export und content hat. */
+    private JobStatus ownExport(AccessContext caller, String exportId) {
+        // Erst die Freigabe des Aufrufers überhaupt, dann der Auftrag: ohne Kontext nie eine Job-Abfrage.
+        if (caller == null) {
+            throw new UnknownJobException(exportId);
+        }
+        JobStatus job = jobs.status(exportId, owner(caller));
+        if (job.type() != JobType.EXPORT) {
+            throw new UnknownJobException(exportId);
+        }
+        requireExport(caller, job.sourceId(), job.partitionKey());
+        return job;
+    }
+
+    private void requireExport(AccessContext caller, String sourceId, String spaceKey) {
+        ResourceScope space = ResourceScope.space(sourceId, spaceKey);
+        access.require(caller, space, AccessKind.EXPORT);
+        // Das Artefakt enthält die nativen Seiteninhalte.
+        access.require(caller, space, AccessKind.CONTENT);
+    }
+
+    /** Für diesen Export gibt es (noch) kein Artefakt oder keine Datei dieses Namens. */
+    static class ArtifactNotFoundException extends RuntimeException {
+
+        ArtifactNotFoundException(String exportId) {
+            super("Kein Artefakt für Export " + exportId);
+        }
+    }
+
+    /**
+     * Zustand eines Exports.
+     *
+     * @param id              Export-ID
+     * @param state           {@code queued}, {@code running}, {@code completed}, {@code failed}, {@code cancelled};
+     *                        {@code completed} heißt nur „durchgelaufen“, Vollständigkeit steht in
+     *                        {@code artifact.complete}
+     * @param cancelRequested Abbruch angefordert, aber noch nicht wirksam
+     * @param error           nur bei {@code failed}
+     * @param artifact        nur bei {@code completed}
+     */
+    public record ExportResponse(String id, String sourceId, String spaceKey, String state, JobProgress progress,
+                                 boolean cancelRequested, ErrorResponse error, Instant createdAt, Instant startedAt,
+                                 Instant finishedAt, ArtifactResponse artifact) {
+
+        static ExportResponse of(JobStatus job, ExportArtifact artifact) {
+            return new ExportResponse(job.id(), job.sourceId(), job.partitionKey(),
+                    job.state().name().toLowerCase(Locale.ROOT), job.progress(), job.cancelRequested(),
+                    ErrorResponse.of(job.error()), job.createdAt(), job.startedAt(), job.finishedAt(),
+                    ArtifactResponse.of(job.id(), artifact));
+        }
+    }
+
+    public record ErrorResponse(String code, String message) {
+
+        static ErrorResponse of(JobError error) {
+            return error == null ? null : new ErrorResponse(error.code(), error.message());
+        }
+    }
+
+    /**
+     * @param complete aus bestätigter Cache-Generation ohne fehlende Seiten
+     * @param files    Dateien mit Download-Adresse; die Rohdaten je Seite nennt {@code pages.ndjson}
+     */
+    public record ArtifactResponse(boolean complete, List<FileResponse> files) {
+
+        static ArtifactResponse of(String exportId, ExportArtifact artifact) {
+            if (artifact == null) {
+                return null;
+            }
+            return new ArtifactResponse(artifact.complete(), Stream.concat(
+                            artifact.files().stream()
+                                    .map(file -> new FileResponse(file.name(), file.bytes(), file.sha256(),
+                                            href(exportId, file.name()))),
+                            Stream.of(new FileResponse("manifest.json", null, null,
+                                    href(exportId, "manifest.json"))))
+                    .toList());
+        }
+
+        private static String href(String exportId, String name) {
+            return EXPORTS + "/" + exportId + "/artifact/" + name;
+        }
+    }
+
+    /** @param bytes und sha256 fehlen beim Manifest, das sie für die übrigen Dateien enthält */
+    public record FileResponse(String name, Long bytes, String sha256, String href) {
+    }
+}

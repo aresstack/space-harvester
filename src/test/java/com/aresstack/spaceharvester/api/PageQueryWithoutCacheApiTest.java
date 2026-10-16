@@ -16,7 +16,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.ObjectMapper;
 
-/** Ohne eingerichteten Seitencache startet der Dienst, und die Query-Routen antworten mit 503 statt leer. */
+/** Ohne eingerichteten Seitencache und Suchindex startet der Dienst, und Query- und Suchrouten antworten mit 503 statt leer. */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class PageQueryWithoutCacheApiTest {
 
@@ -36,7 +36,7 @@ class PageQueryWithoutCacheApiTest {
     @Test
     void queryRoutesSayTheCacheIsUnavailable() throws Exception {
         for (String path : new String[]{"/api/v1/sources/wiki/spaces/DEV/pages", "/api/v1/sources/wiki/spaces/DEV/tree",
-                "/api/v1/sources/wiki/pages/101"}) {
+                "/api/v1/sources/wiki/pages/101", "/api/v1/search?sourceId=wiki"}) {
             HttpResponse<String> response = http.send(TestClient.authenticated(HttpRequest.newBuilder(
                     URI.create("http://localhost:" + environment.getProperty("local.server.port") + path))).build(),
                     HttpResponse.BodyHandlers.ofString());

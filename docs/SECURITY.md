@@ -90,8 +90,29 @@ Nur bestätigter Erfolg gibt frei; 401/403/404, Login-Redirect, Timeout und unkl
 bzw. `DENY`, und der `AccessGuard` verweigert. Controller und Anwendungsfälle ändern sich dafür nicht. Die heutige
 `CorpusReleasePolicy` verweigert `END_USER` grundsätzlich.
 
+## Abdeckung von #14
+
+| Anforderung aus #14 | Umsetzung | Nachweis |
+| --- | --- | --- |
+| Unauthentifizierte/unberechtigte Zugriffe gesperrt | `mode=clients` Standard, jede `/api`-Route verlangt Bearer-Token | `ApiAccessTest`, `ApiRouteCoverageTest` (alle registrierten Routen, auch künftige) |
+| Nicht freigegebene Quellen/Spaces nicht ausgeliefert | `CorpusReleasePolicy`, `AccessGuard` fail closed | `ApiAccessTest`, `PageQueryApiTest`, `ApiRouteCoverageTest` |
+| Rohinhalt nur mit ausdrücklicher Freigabe | Art `content` getrennt von `metadata`; Einzelseite verlangt `content`, der Export künftig zusätzlich | `PageQueryApiTest` (Metadaten-Client erhält 403); Export: `ExportsApiTest` (kommt mit #49) |
+| Baum, Metadaten, Enrichments, Converter gleich geschützt | Baum und Listen filtern je Seite; Enrichments/Converter zählen zu `content` | `PageQueryApiTest`, `ApiRouteCoverageTest` |
+| Starten/Abbrechen von Jobs, Downloads geschützt; nur eigene Jobs | `export` + `content` je Space, Eigentümer `kind:principal`, fremder Export 404 | `ExportsApiTest` (kommt mit #49) |
+| Sichere Artefaktpfade | Whitelist der Dateinamen, Normalisierung und Präfixprüfung im Dateischreiber | `FileSystemExportArtifactWriterTest` (kommt mit #43) |
+| Sync-Aufträge nur mit Freigabe, nur eigene | `sync` je Space, Seiten-IDs im Delta nur zusätzlich mit `metadata`, fremder Sync 404 | Sync-API-Tests (kommt mit #54), `ApiRouteCoverageTest` |
+| Grenzen für gleichzeitige Jobs | `JobLimits` (gleichzeitig, wartend, Laufzeit, Aufbewahrung); darüber 429 | Job-Tests (#39/#45) |
+| Keine frei wählbaren Basis-URLs (SSRF) | Quellen nur über konfigurierte `sourceId`; keine Route nimmt URLs an | Routenliste, `ApiRouteCoverageTest` |
+| Keine Secrets in Antworten/Logs, bereinigte Fehler | Problem Details mit festen Texten; Token nur als Hash; Log ohne Token | `ApiAccessTest`, `SourcesApiTest` |
+| Lokaler Modus getrennt, produktiv nicht offen | `mode=development` nur mit Profil `local` | `SecurityStartupTest` |
+
+`ApiRouteCoverageTest` ruft jede Route mit Platzhalter-IDs auf. Er beweist also nur, dass ohne Token und ohne Freigabe
+nichts herauskommt; dass ein fremder, aber existierender Auftrag verborgen bleibt, prüfen die Tests der jeweiligen
+Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API-Tests).
+
 ## Noch offen
 
+- Schutz der Export- und Sync-Endpunkte samt Eigentümerprüfung: kommt mit #43/#49 (Strang E) und #54 (Strang D).
+
 - OAuth-2.0-Delegation und Benutzeranmeldung (#24, Teil C), optional Azure Key Vault (#22).
-- Rechteprüfung in den neuen Cache-, Baum-, Such- und Exportendpunkten beim Anbinden von E und G.
-- Grenzen für gleichzeitige Jobs und Downloads, sichere Artefaktpfade (mit #11/#12).
+- Artefakte bleiben nach Ablauf der Auftragsaufbewahrung auf der Platte, sind dann aber über die API nicht mehr erreichbar; Aufräumen gehört zu #11/#12.
