@@ -170,6 +170,38 @@ Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des üb
 Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
 [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 
+## Seiten-Cache (Lucene)
+
+Native Seiten-Snapshots und Kopfdaten liegen in einem eingebetteten Apache-Lucene-Index im lokalen Dateisystem
+(#26); es gibt keinen Datenbankserver. Ohne Verzeichnis läuft der Dienst ohne Cache.
+
+```yaml
+space-harvester:
+  cache:
+    directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
+    max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+```
+
+- **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
+  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
+  der Synchronisierung.
+  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+- **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
+  `job-store/v1`); ohne bleiben sie nur im Speicher.
+- **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
+  Verzeichnis gehört allein dem Dienstkonto (unter Linux z. B. `chmod 700`) und liegt auf einem verschlüsselten
+  Datenträger, wenn die Seiten das verlangen.
+- **Ein Prozess je Verzeichnis:** Lucene sperrt den Index (`write.lock`); ein zweiter Dienst auf demselben
+  Verzeichnis startet nicht.
+- **Konsistenz:** Änderungen werden erst mit einem Commit sichtbar und dauerhaft. Ein Synchronisierungslauf schreibt
+  in einem Schreiblauf und wird erst als vollständig bestätigt, wenn die Synchronisierung das meldet; ein Abbruch
+  oder Absturz vorher lässt den zuletzt bestätigten Stand stehen. Beim Lesen wird jede Payload gegen ihren
+  `rawSha256` geprüft.
+- **Sicherung:** Dienst anhalten und das Verzeichnis kopieren. Im laufenden Betrieb ist eine Kopie nur dann
+  konsistent, wenn währenddessen kein Commit geschieht.
+- **Löschen und Wiederaufbau:** Dienst anhalten, Verzeichnis löschen, neu starten und neu ernten. Ein beschädigter
+  Index oder einer mit anderem Schema verhindert den Start mit einer Meldung; er wird nie stillschweigend ersetzt.
+
 ## API-Übersicht
 
 | Pfad | Zweck |
@@ -181,7 +213,7 @@ Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI besch
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
-| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -235,11 +267,16 @@ zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `
 (Standard 50000) Seiten oder 200 Ebenen ergeben `tree-too-large` (422); sie liefert der Export. Die Einzelseite gibt die
 gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
 `X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
+`view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
+Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
+samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
+können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
-[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die native
-Einzelseite verlangt `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
+[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
+Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
 
 **Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
@@ -276,8 +313,10 @@ Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester
 - `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen,
   `source.network` bestimmt die Proxy-Route je Ziel-URL
 - `output` – Exportformate und Artefakte (folgt mit #11)
+- `persistence` – Speicher hinter den Ports aus `application`; `persistence.lucene` ist der Seiten-Cache
 
-`source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
+`source` und `output` kennen weder `api` noch einander, `persistence` nur `application`, Lucene steht nur in
+`persistence.lucene`; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
 wird nicht übernommen.
 
 Der Confluence-Code stammt unverändert aus dem Enterprise AI Client und liegt als Kopie im Gradle-Subprojekt

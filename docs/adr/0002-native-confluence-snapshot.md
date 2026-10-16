@@ -1,8 +1,9 @@
 # ADR 0002: Native Confluence-Payload für Snapshots
 
-- Status: **Entwurf**. Die Vorschläge stützen sich auf die Confluence-Data-Center-REST-API und den vorhandenen
-  Upstream-Client; die mit „prüfen“ markierten Punkte sind erst nach der Probe
-  ([tools/confluence-probe](../../tools/confluence-probe/README.md)) gegen echte Seiten entschieden.
+- Status: **Teilweise entschieden** (Angelo, 16.10.2026, siehe „Entscheidungen“ am Ende): Größengrenze und
+  Anhangsliste stehen fest. Die mit „prüfen“ markierten Punkte, darunter `metadata.properties`, entscheidet erst der
+  Probe-Bericht ([tools/confluence-probe](../../tools/confluence-probe/README.md)) für 5–10 echte Seiten. #7 bleibt
+  bis dahin offen; der native Seitenabruf (#46) ersetzt diese Prüfung nicht.
 - Issue: [#7](https://github.com/aresstack/space-harvester/issues/7); Folgearbeit: Upstream-`StoredContentSource`,
   [#8](https://github.com/aresstack/space-harvester/issues/8), [#9](https://github.com/aresstack/space-harvester/issues/9),
   [#26](https://github.com/aresstack/space-harvester/issues/26).
@@ -41,8 +42,9 @@ Bewusst **nicht** im Snapshot:
 - `restrictions.*`: Rechte gehören zur Zugriffskontrolle (#14/#24) und werden getrennt von der Version geprüft
   (Plan, Abschnitt 5).
 - `children`, `descendants`, `container`: Baum und Space kommen aus dem Listing bzw. aus `space`.
-- `metadata.properties` (Content-Properties, oft Plugin-Daten): **prüfen**. Wenn die Probe zeigt, dass sie bei
-  euch vorkommen und klein sind, gehören sie in den Abruf; sonst als eigener Zusatzabruf später.
+- `metadata.properties` (Content-Properties, oft Plugin-Daten): **nach der Probe entscheiden**, nicht blind in den
+  Abruf aufnehmen. Sind sie für unsere Seiten relevant, werden sie möglichst nativ erhalten, bei Bedarf als
+  getrennte Ressource (Abschnitt 2).
 
 Die verwendete `expand`-Liste wird mit dem Snapshot gespeichert (z. B. als Teil von `nativeFormat`), sodass eine
 spätere Änderung der Liste als anderes Snapshot-Schema erkennbar ist und alte Payloads nicht stillschweigend als
@@ -55,7 +57,7 @@ nie in die Seiten-Payload hineingemischt.
 
 | Lücke | Abruf | V1 |
 |---|---|---|
-| Anhänge, die nicht im Storage referenziert sind | `/rest/api/content/{id}/child/attachment?expand=version,container,metadata.mediaType` (paginiert) | Metadaten ja, Bytes nein (#9; Download später #19). |
+| Anhänge, auch die nicht im Storage referenzierten | `/rest/api/content/{id}/child/attachment?expand=version,container,metadata.mediaType` (paginiert) | **Ja, entschieden:** vollständige Anhangsliste als eigene native Metadatenressource je Seite über #9; keine Binärdateien (Download später #19). |
 | Kommentare, auch Inline-Kommentare (`ac:inline-comment-marker` verweist nur darauf) | `/rest/api/content/{id}/child/comment?expand=body.storage,version&depth=all` | nein; als bekannte Lücke dokumentieren. |
 | Mehr Labels als das eingebettete `limit` | `/rest/api/content/{id}/label` (paginiert) | Kürzung erkennen (`_links.next` in `metadata.labels`) und nachladen oder den Snapshot als unvollständig kennzeichnen, nie stillschweigend. |
 | Ältere Versionen einer Seite | `/rest/api/content/{id}/history`, `?status=historical&version=n` | nein. |
@@ -79,10 +81,11 @@ Folge: `rawSha256` (#8) beweist, dass ein gespeicherter Snapshot unverändert is
 
 ### 4. Größengrenze
 
-Der Upstream-Transport liest höchstens `maxResponseBytes` (Standard **20 MiB**, je Quelle konfigurierbar) und bricht
-größere Antworten mit `ConfluenceResponseTooLargeException` ab. Vorschlag: diese Grenze für Snapshots übernehmen und
-je Quelle einstellbar machen. Eine zu große Seite wird **nie gekürzt** gespeichert, sondern als eigener Fehlerfall
-im Lauf geführt; der Lauf gilt dann nicht als vollständig (#16). Die tatsächliche Größenverteilung liefert die Probe.
+**Entschieden:** 20 MiB als konfigurierbarer Standard je Quelle (`options.maxResponseBytes`). Der Upstream-Transport
+liest höchstens so viel und meldet größere Antworten als `ResponseTooLargeException` (`INVALID_RESPONSE`, im
+Harvester `SourceAccessException` mit demselben Grund). Eine zu große Seite wird **nie gekürzt** gespeichert, sondern
+als fehlgeschlagen geführt; der Lauf gilt dann nicht als vollständig (#16). Die tatsächliche Größenverteilung zeigt
+die Probe.
 
 ### 5. Umsetzung upstream
 
@@ -128,8 +131,14 @@ Die native Payload enthält Makroparameter, eingebettete Inhalte und Benutzerken
 nicht sichtbar sind. Snapshots sind daher schutzbedürftig wie die Seite selbst (#14, #24) und erscheinen weder in
 Logs noch in Fehlermeldungen.
 
-## Offene Punkte für die Entscheidung
+## Entscheidungen (Angelo, 16.10.2026)
 
-1. Größengrenze: 20 MiB je Quelle konfigurierbar übernehmen?
-2. `metadata.properties` in den Abruf aufnehmen (nach Probe)?
-3. Anhangsliste in V1 als eigene Ressource mitnehmen oder erst mit #9?
+| Frage | Entscheidung |
+|---|---|
+| 20-MiB-Grenze | Ja, als konfigurierbarer Standard je Quelle. Größere Antworten nie abschneiden, sondern als unvollständig bzw. fehlgeschlagen behandeln (Abschnitt 4). |
+| `metadata.properties` | Nach der echten Probe entscheiden, nicht blind in `expand` aufnehmen. Wenn relevant, möglichst nativ erhalten, bei Bedarf als getrennte Ressource. |
+| Anhangsliste | Ja, in V1 als separate Metadatenressource über #9, auch nicht eingebettete Anhänge, ohne Binärdateien. |
+
+Offen bis zum Probe-Bericht (5–10 echte Seiten): Bestandsaufnahme der Makros und Referenzen, gekürzte Labels,
+fehlende REST-Daten, Reproduzierbarkeit (Abschnitt 3) und `metadata.properties`. Danach wird dieser ADR auf
+„Entschieden“ gesetzt und #7 geschlossen.
