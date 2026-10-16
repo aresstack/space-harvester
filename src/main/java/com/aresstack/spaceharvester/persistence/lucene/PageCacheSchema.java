@@ -77,6 +77,12 @@ public final class PageCacheSchema {
 
     // Snapshot: Kopfdaten seiner Payload und die Payload
     static final String SNAPSHOT = "snapshot.";
+    /**
+     * Präfixe der Verlaufs- und Space-Dokumente: Lucene verlangt je Feldname dieselbe Feldart im ganzen Index, die
+     * gleichnamigen Seitenfelder sind aber indexiert.
+     */
+    static final String REV = "revision.";
+    static final String SPACE_DOC = "space.";
     static final String RAW_SHA256 = "rawSha256";
     static final String RAW_JSON = "rawJson";
     static final String PAYLOAD_BYTES = "payloadBytes";
@@ -202,11 +208,11 @@ public final class PageCacheSchema {
         doc.add(new StringField(TYPE, REVISION, Field.Store.NO));
         doc.add(new StringField(ID, revisionTerm(key, revision).text(), Field.Store.NO));
         doc.add(new StringField(PAGE_OF_REVISION, revisionsOfPage(key).text(), Field.Store.NO));
-        doc.add(new StoredField(VERSION_FIELD, revision));
-        doc.add(new StoredField(RAW_SHA256, snapshot.payload().rawSha256()));
-        doc.add(new StoredField(METADATA_HASH, snapshot.metadataHash()));
-        doc.add(new StoredField(ATTRIBUTES_HASH, snapshot.attributesHash()));
-        doc.add(new StoredField(RETRIEVED_AT, snapshot.retrievedAt().toString()));
+        doc.add(new StoredField(REV + VERSION_FIELD, revision));
+        doc.add(new StoredField(REV + RAW_SHA256, snapshot.payload().rawSha256()));
+        doc.add(new StoredField(REV + METADATA_HASH, snapshot.metadataHash()));
+        doc.add(new StoredField(REV + ATTRIBUTES_HASH, snapshot.attributesHash()));
+        doc.add(new StoredField(REV + RETRIEVED_AT, snapshot.retrievedAt().toString()));
         return doc;
     }
 
@@ -214,8 +220,8 @@ public final class PageCacheSchema {
         Document doc = new Document();
         doc.add(new StringField(TYPE, SPACE, Field.Store.NO));
         doc.add(new StringField(ID, spaceTerm(state.sourceId(), state.spaceKey()).text(), Field.Store.NO));
-        doc.add(new StoredField(SOURCE_ID, state.sourceId()));
-        doc.add(new StoredField(SPACE_KEY, state.spaceKey()));
+        doc.add(new StoredField(SPACE_DOC + SOURCE_ID, state.sourceId()));
+        doc.add(new StoredField(SPACE_DOC + SPACE_KEY, state.spaceKey()));
         doc.add(new StoredField(GENERATION, state.generation()));
         doc.add(new StoredField(LAST_RUN_COMPLETE, state.lastRunComplete() ? 1 : 0));
         doc.add(new StoredField(LAST_RUN_AT, state.lastRunAt().toString()));
@@ -281,12 +287,13 @@ public final class PageCacheSchema {
     }
 
     static CachedRevision cachedRevision(Document doc) {
-        return new CachedRevision(doc.get(VERSION_FIELD), doc.get(RAW_SHA256), doc.get(METADATA_HASH),
-                doc.get(ATTRIBUTES_HASH), instant(doc.get(RETRIEVED_AT)));
+        return new CachedRevision(doc.get(REV + VERSION_FIELD), doc.get(REV + RAW_SHA256),
+                doc.get(REV + METADATA_HASH), doc.get(REV + ATTRIBUTES_HASH), instant(doc.get(REV + RETRIEVED_AT)));
     }
 
     static SpaceSyncState spaceState(Document doc) {
-        return new SpaceSyncState(doc.get(SOURCE_ID), doc.get(SPACE_KEY), number(doc, GENERATION),
+        return new SpaceSyncState(doc.get(SPACE_DOC + SOURCE_ID), doc.get(SPACE_DOC + SPACE_KEY),
+                number(doc, GENERATION),
                 number(doc, LAST_RUN_COMPLETE) == 1, instant(doc.get(LAST_RUN_AT)),
                 number(doc, CONFIRMED_GENERATION), instant(doc.get(CONFIRMED_AT)),
                 number(doc, CONFIRMED_PAGE_COUNT));
