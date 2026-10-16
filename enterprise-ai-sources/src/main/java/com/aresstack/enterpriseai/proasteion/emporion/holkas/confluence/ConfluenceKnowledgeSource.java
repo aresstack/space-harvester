@@ -116,6 +116,12 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
      * {@link StoredContent#nativeFormat()} der Seiten-Snapshots: REST-Content-JSON mit der sortierten
      * {@code expand}-Liste; eine andere Liste ergibt ein anderes, nicht vergleichbares Format.
      */
+    /**
+     * Metadatum {@code confluence.labels.complete=false}: {@code metadata.labels} war in der Antwort gekürzt, die
+     * Labels sind unvollständig. Fehlt es, gelten die gelieferten Labels als vollständig.
+     */
+    public static final String LABELS_COMPLETE = "confluence.labels.complete";
+
     static final String SNAPSHOT_FORMAT = "confluence-rest-content+json;expand="
             + sortedExpand(ConfluenceRestClient.SNAPSHOT_EXPAND);
     private static final String PARTITION_CURSOR_PREFIX = "p1.";
@@ -624,36 +630,54 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
     /**
      * Metadaten einer Seite ohne Inhalt ({@code /rest/api/content/<id>?expand=version,space,metadata.labels,
      * ancestors,history}), dieselben Felder wie in {@link #resources}; unabhängig vom Space, in dem die Seite liegt.
+     * Eine für das Konto gesperrte Seite (HTTP 403) ist {@code NOT_FOUND} wie eine unbekannte: sie fehlt auch in den
+     * Listen, und ihr Dasein soll nicht durchscheinen.
      */
     @Override
     public KnowledgeResource resourceMetadata(final String localId) throws KnowledgeSourceException {
         if (!ConfluenceIds.isContentId(localId)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
         }
-        Page page = withSession(new Operation<Page>() {
-            @Override
-            public Page run(Session session) throws KnowledgeSourceException {
-                return client.page(session, localId, false);
-            }
-        });
+        Page page;
+        try {
+            page = withSession(new Operation<Page>() {
+                @Override
+                public Page run(Session session) throws KnowledgeSourceException {
+                    return client.page(session, localId, false);
+                }
+            });
+        } catch (ConfluenceRestClient.Forbidden e) {
+            throw notVisible(localId, e);
+        }
         return pageResource(page, page.parentId);
+    }
+
+    private static KnowledgeSourceException notVisible(String localId, ConfluenceRestClient.Forbidden e) {
+        return new KnowledgeSourceException(Kind.NOT_FOUND, "Seite " + localId
+                + ": nicht gefunden oder für dieses Konto nicht sichtbar", e);
     }
 
     /**
      * Die unveränderte JSON-Antwort einer Seite ({@code /rest/api/content/<id>?expand=}{@value
-     * ConfluenceRestClient#SNAPSHOT_EXPAND}) mit den Metadaten aus derselben Antwort, wie {@link #resourceMetadata}.
+     * ConfluenceRestClient#SNAPSHOT_EXPAND}) mit den Metadaten aus derselben Antwort, wie {@link #resourceMetadata};
+     * eine gesperrte Seite ist auch hier {@code NOT_FOUND}.
      */
     @Override
     public StoredContent storedContent(final String localId) throws KnowledgeSourceException {
         if (!ConfluenceIds.isContentId(localId)) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
         }
-        ConfluenceRestClient.StoredPage stored = withSession(new Operation<ConfluenceRestClient.StoredPage>() {
-            @Override
-            public ConfluenceRestClient.StoredPage run(Session session) throws KnowledgeSourceException {
-                return client.storedPage(session, localId);
-            }
-        });
+        ConfluenceRestClient.StoredPage stored;
+        try {
+            stored = withSession(new Operation<ConfluenceRestClient.StoredPage>() {
+                @Override
+                public ConfluenceRestClient.StoredPage run(Session session) throws KnowledgeSourceException {
+                    return client.storedPage(session, localId);
+                }
+            });
+        } catch (ConfluenceRestClient.Forbidden e) {
+            throw notVisible(localId, e);
+        }
         return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
                 mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
     }
@@ -924,6 +948,10 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         }
         if (!page.labels.isEmpty()) {
             metadata.put("confluence.labels", join(page.labels));
+        }
+        if (page.labelsIncomplete) {
+            // Nur ein Teil der Labels kam mit; Aufrufer dürfen confluence.labels nicht als vollständig vergleichen.
+            metadata.put(LABELS_COMPLETE, "false");
         }
         if (page.createdAt != null) {
             metadata.put("confluence.createdAt", page.createdAt.toString());

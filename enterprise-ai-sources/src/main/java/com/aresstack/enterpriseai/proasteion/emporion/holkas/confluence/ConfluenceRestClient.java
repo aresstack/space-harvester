@@ -3,6 +3,7 @@ package com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.DownloadAccess;
+import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -34,8 +35,10 @@ import java.util.logging.Logger;
  * {@code ConfluenceRestClient} übernommen; JSON über Gson statt Jackson.
  *
  * <p>HTTP-Status werden auf {@link Kind} abgebildet: 401/403 und Weiterleitungen (Login-Seite) →
- * {@code ACCESS_DENIED}, 404 → {@code NOT_FOUND}, 429/5xx und Netzfehler → {@code UNAVAILABLE}, alles andere →
- * {@code INVALID_RESPONSE}. Meldungen nennen Vorgang und Status, nie Antwortkörper oder Header.
+ * {@code ACCESS_DENIED}, 404 → {@code NOT_FOUND}, 429/5xx und Netzfehler → {@code UNAVAILABLE} (429 als
+ * {@link RateLimitedException}), alles andere → {@code INVALID_RESPONSE}. Meldungen nennen Vorgang und Status, nie
+ * Antwortkörper oder Header. REST-Aufrufe über {@code send} werden bei Netzfehler, 429 und 5xx bis zu
+ * {@link ConfluenceConfig#maxRetries()} Mal mit wachsender Wartezeit wiederholt.
  */
 final class ConfluenceRestClient {
 
@@ -654,6 +657,19 @@ final class ConfluenceRestClient {
     }
 
     /** Die Einmalcode-Seite eines Zwei-Faktor-Plugins statt der Datei; trägt die unveränderte Seite für das Formular. */
+    /**
+     * HTTP 403: angemeldet, aber für dieses Objekt nicht berechtigt (Art {@code ACCESS_DENIED}). Für eine einzelne Seite
+     * heißt das „für dieses Konto nicht sichtbar“, siehe {@code ConfluenceKnowledgeSource#resourceMetadata}.
+     */
+    static final class Forbidden extends KnowledgeSourceException {
+
+        private static final long serialVersionUID = 1L;
+
+        Forbidden(String message) {
+            super(Kind.ACCESS_DENIED, message);
+        }
+    }
+
     static final class TwoFactorRequired extends KnowledgeSourceException {
 
         private static final long serialVersionUID = 1L;
@@ -1433,25 +1449,75 @@ final class ConfluenceRestClient {
         } catch (IllegalArgumentException e) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": ungültiger Pfad");
         }
-        ConfluenceHttpResponse response;
+        for (int attempt = 0; ; attempt++) {
+            KnowledgeSourceException failure;
+            try {
+                ConfluenceHttpResponse response = transport.get(uri, session.headers, maxBytes);
+                if (response.isSuccess()) {
+                    return response;
+                }
+                failure = statusFailure(what, response.status());
+                if (!retryable(response.status())) {
+                    throw failure;
+                }
+            } catch (ConfluenceResponseTooLargeException e) {
+                throw new ResponseTooLargeException(what + ": Antwort größer als " + maxBytes + " Bytes", maxBytes);
+            } catch (IOException e) {
+                failure = new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence nicht erreichbar ("
+                        + cause(e) + ")", e);
+            }
+            if (attempt >= config.maxRetries()) {
+                throw attempt == 0 ? failure : exhausted(failure, attempt);
+            }
+            long delay = backoffMillis(attempt, config.retryBackoffMillis(), config.maxRetryBackoffMillis());
+            LOG.warning("[Confluence] " + failure.getMessage() + "; Wiederholung " + (attempt + 1) + " von "
+                    + config.maxRetries() + " in " + delay + " ms");
+            pause(delay, failure);
+        }
+    }
+
+    /** Netzfehler, Ratenbegrenzung und Serverfehler können vorübergehend sein; alles andere nicht. */
+    private static boolean retryable(int status) {
+        return status == 429 || status >= 500;
+    }
+
+    /** Fehler nach der letzten Wiederholung; eine Ratenbegrenzung bleibt als {@link RateLimitedException} erkennbar. */
+    private static KnowledgeSourceException exhausted(KnowledgeSourceException failure, int retries) {
+        String message = failure.getMessage() + " (nach " + retries + " Wiederholungen)";
+        if (failure instanceof RateLimitedException) {
+            return new RateLimitedException(message);
+        }
+        return new KnowledgeSourceException(failure.kind(), message, failure.getCause());
+    }
+
+    /**
+     * Wartezeit vor Wiederholung {@code attempt + 1}: {@code base * 2^attempt}, höchstens {@code max}, davon zufällig
+     * 50–100 %, damit parallele Abrufe nicht im Gleichschritt wiederholen.
+     */
+    static long backoffMillis(int attempt, int base, int max) {
+        long delay = Math.min((long) max, (long) base << Math.min(attempt, 20));
+        return delay / 2 + (long) (Math.random() * (delay - delay / 2 + 1));
+    }
+
+    private static void pause(long millis, KnowledgeSourceException failure) throws KnowledgeSourceException {
+        if (millis <= 0) {
+            return;
+        }
         try {
-            response = transport.get(uri, session.headers, maxBytes);
-        } catch (ConfluenceResponseTooLargeException e) {
-            throw new ResponseTooLargeException(what + ": Antwort größer als " + maxBytes + " Bytes", maxBytes);
-        } catch (IOException e) {
-            throw new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence nicht erreichbar ("
-                    + cause(e) + ")", e);
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw failure;
         }
-        if (response.isSuccess()) {
-            return response;
-        }
-        throw statusFailure(what, response.status());
     }
 
     /** Bildet einen Fehlerstatus auf {@link Kind} ab (siehe Klassenkommentar). */
     private static KnowledgeSourceException statusFailure(String what, int status) {
-        if (status == 401 || status == 403) {
-            return new KnowledgeSourceException(Kind.ACCESS_DENIED, what + ": Zugriff verweigert (HTTP " + status + ")");
+        if (status == 403) {
+            return new Forbidden(what + ": Zugriff verweigert (HTTP 403)");
+        }
+        if (status == 401) {
+            return new KnowledgeSourceException(Kind.ACCESS_DENIED, what + ": Zugriff verweigert (HTTP 401)");
         }
         if (status >= 300 && status < 400) {
             return new KnowledgeSourceException(Kind.ACCESS_DENIED,
@@ -1460,7 +1526,10 @@ final class ConfluenceRestClient {
         if (status == 404) {
             return new KnowledgeSourceException(Kind.NOT_FOUND, what + ": nicht gefunden (HTTP 404)");
         }
-        if (status == 429 || status >= 500) {
+        if (status == 429) {
+            return new RateLimitedException(what + ": Confluence begrenzt die Anfragen (HTTP 429)");
+        }
+        if (status >= 500) {
             return new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence antwortet mit HTTP " + status);
         }
         return new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": unerwartete Antwort HTTP " + status);
@@ -1524,7 +1593,10 @@ final class ConfluenceRestClient {
                 body == null ? null : string(body, "value"),
                 links == null ? null : string(links, "webui"), labels)
                 .withServerBase(links == null ? null : string(links, "base"))
-                .withCreated(history == null ? null : instant(string(history, "createdDate")), createdBy);
+                .withCreated(history == null ? null : instant(string(history, "createdDate")), createdBy)
+                .withLabelsIncomplete(labelPage != null
+                        && (labelArray == null || object(labelPage, "_links") != null
+                        && string(object(labelPage, "_links"), "next") != null));
     }
 
     private static Attachment toAttachment(JsonObject json, String containerId) throws KnowledgeSourceException {
@@ -1720,15 +1792,22 @@ final class ConfluenceRestClient {
         final Instant createdAt;
         /** Benutzername (sonst User-Key) aus {@code history.createdBy}, nur mit {@code expand=history}. */
         final String createdBy;
+        /**
+         * {@code true}, wenn {@code metadata.labels} geliefert, aber nicht vollständig ist (weitere Seite per
+         * {@code _links.next} oder ohne {@code results}); {@code labels} enthält dann nur einen Teil.
+         */
+        final boolean labelsIncomplete;
 
         Page(String id, String title, String spaceKey, String version, Instant modifiedAt,
              String parentId, String html, String webUi, List<String> labels) {
-            this(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, "", null, null, null, null);
+            this(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, "", null, null, null, null,
+                    false);
         }
 
         private Page(String id, String title, String spaceKey, String version, Instant modifiedAt,
                      String parentId, String html, String webUi, List<String> labels, String excerpt,
-                     String serverBase, String storage, Instant createdAt, String createdBy) {
+                     String serverBase, String storage, Instant createdAt, String createdBy,
+                     boolean labelsIncomplete) {
             this.id = id;
             this.title = title;
             this.spaceKey = spaceKey;
@@ -1743,16 +1822,17 @@ final class ConfluenceRestClient {
             this.storage = storage;
             this.createdAt = createdAt;
             this.createdBy = createdBy;
+            this.labelsIncomplete = labelsIncomplete;
         }
 
         Page withExcerpt(String excerpt) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storage, createdAt, createdBy);
+                    serverBase, storage, createdAt, createdBy, labelsIncomplete);
         }
 
         Page withTitle(String newTitle) {
             return new Page(id, newTitle, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storage, createdAt, createdBy);
+                    serverBase, storage, createdAt, createdBy, labelsIncomplete);
         }
 
         /** Fill web address and modification time from the search wrapper where the content lacks them. */
@@ -1760,22 +1840,27 @@ final class ConfluenceRestClient {
             String address = webUi == null || webUi.trim().isEmpty() ? url : webUi;
             Instant when = modifiedAt == null ? lastModified : modifiedAt;
             return new Page(id, title, spaceKey, version, when, parentId, html, address, labels, excerpt,
-                    serverBase, storage, createdAt, createdBy);
+                    serverBase, storage, createdAt, createdBy, labelsIncomplete);
         }
 
         Page withServerBase(String base) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt, base,
-                    storage, createdAt, createdBy);
+                    storage, createdAt, createdBy, labelsIncomplete);
         }
 
         Page withStorage(String storageValue) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storageValue, createdAt, createdBy);
+                    serverBase, storageValue, createdAt, createdBy, labelsIncomplete);
+        }
+
+        Page withLabelsIncomplete(boolean incomplete) {
+            return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
+                    serverBase, storage, createdAt, createdBy, incomplete);
         }
 
         Page withCreated(Instant created, String creator) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storage, created, creator);
+                    serverBase, storage, created, creator, labelsIncomplete);
         }
     }
 
