@@ -112,5 +112,5 @@ Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API
 
 - Schutz der Export- und Sync-Endpunkte samt Eigentümerprüfung: kommt mit #43/#49 (Strang E) und #54 (Strang D).
 
-- OAuth-2.0-Delegation und Benutzeranmeldung (#24, Teil C), optional Azure Key Vault (#22).
+- OAuth-2.0-Delegation (#24, Teil C).
 - Artefakte bleiben nach Ablauf der Auftragsaufbewahrung auf der Platte, sind dann aber über die API nicht mehr erreichbar; Aufräumen gehört zu #11/#12.
