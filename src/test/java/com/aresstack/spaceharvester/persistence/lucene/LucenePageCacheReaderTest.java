@@ -13,8 +13,15 @@ import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sync.BaselineEntry;
+import com.aresstack.spaceharvester.application.sync.StagedGeneration;
+import com.aresstack.spaceharvester.application.sync.SyncBaseline;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,27 +64,39 @@ class LucenePageCacheReaderTest {
     }
 
     @Test
-    void aCompleteRunIsAConfirmedGeneration() {
-        run(true, FIRST_RUN, page("wiki", "101", "DEV", null, "1", json("{}")));
+    void aConfirmedGenerationIsConfirmed() {
+        run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
 
         assertThat(reader.currentGeneration("wiki", "DEV"))
                 .contains(new CacheGeneration("g1", CacheState.CONFIRMED, FIRST_RUN, FIRST_RUN));
     }
 
     @Test
-    void anIncompleteRunAfterAConfirmedOneKeepsTheLastConfirmationTime() {
-        run(true, FIRST_RUN, page("wiki", "101", "DEV", null, "1", json("{}")));
-        run(false, SECOND_RUN, page("wiki", "102", "DEV", "101", "1", json("{}")));
+    void aGenerationWithStalePagesIsStale() {
+        run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
+        run(2, SECOND_RUN, Set.of("101"), page("wiki", "101", "DEV", null, "1", json("{}")));
 
         assertThat(reader.currentGeneration("wiki", "DEV"))
-                .contains(new CacheGeneration("g2", CacheState.INCOMPLETE, FIRST_RUN, SECOND_RUN));
+                .contains(new CacheGeneration("g2", CacheState.STALE, SECOND_RUN, SECOND_RUN));
+    }
+
+    @Test
+    void anUncommittedRunDoesNotChangeTheGeneration() {
+        run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
+
+        try (StagedGeneration staged = new LuceneSyncBaselineStore(cache).begin("wiki", "DEV")) {
+            staged.save(page("wiki", "102", "DEV", null, "1", json("{}")));
+            assertThat(reader.currentGeneration("wiki", "DEV").orElseThrow().id()).isEqualTo("g1");
+            assertThat(reader.pages("wiki", "DEV", "g1", null, 10)).extracting(ListedPage::pageId)
+                    .containsExactly("101");
+        }
     }
 
     @Test
     void pagesAreListedByPageIdWithTheirPayloadHash() {
         PageSnapshot root = page("wiki", "101", "DEV", null, "1", json("{\"id\":\"101\"}"));
         PageSnapshot child = page("wiki", "102", "DEV", "101", "1", json("{\"id\":\"102\"}"));
-        run(true, FIRST_RUN, child, root, page("wiki", "201", "OPS", null, "1", json("{}")));
+        run(1, FIRST_RUN, Set.of(), child, root, page("wiki", "201", "OPS", null, "1", json("{}")));
         cache.saveHeader(page("wiki", "103", "DEV", "101", "1", json("{}")).header());
 
         assertThat(reader.pages("wiki", "DEV", "g1", null, 10)).extracting(ListedPage::pageId, ListedPage::rawSha256)
@@ -91,8 +110,8 @@ class LucenePageCacheReaderTest {
 
     @Test
     void aListingForAnOlderGenerationIsRefused() {
-        run(true, FIRST_RUN, page("wiki", "101", "DEV", null, "1", json("{}")));
-        run(true, SECOND_RUN, page("wiki", "101", "DEV", null, "2", json("{}")));
+        run(1, FIRST_RUN, Set.of(), page("wiki", "101", "DEV", null, "1", json("{}")));
+        run(2, SECOND_RUN, Set.of(), page("wiki", "101", "DEV", null, "2", json("{}")));
 
         assertThatThrownBy(() -> reader.pages("wiki", "DEV", "g1", null, 10))
                 .isInstanceOf(CacheGenerationChangedException.class);
@@ -103,7 +122,7 @@ class LucenePageCacheReaderTest {
     @Test
     void aStoredPageComesWithItsBytesAndTheGenerationOfItsSpace() {
         PageSnapshot snapshot = page("wiki", "101", "DEV", null, "1", new byte[] {'{', 0x00, (byte) 0xFF, '}'});
-        run(true, FIRST_RUN, snapshot);
+        run(1, FIRST_RUN, Set.of(), snapshot);
 
         assertThat(reader.page(snapshot.key())).hasValueSatisfying(page -> {
             assertThat(page.snapshot()).isEqualTo(snapshot);
@@ -133,13 +152,19 @@ class LucenePageCacheReaderTest {
                 .isInstanceOf(CacheUnavailableException.class);
     }
 
-    private void run(boolean complete, Instant finishedAt, PageSnapshot... snapshots) {
-        try (LucenePageCache.Batch batch = cache.begin()) {
+    /** Ein bestätigter Lauf über {@code wiki/DEV}; Seiten anderer Spaces werden nur mitgespeichert. */
+    private void run(long generation, Instant confirmedAt, Set<String> stale, PageSnapshot... snapshots) {
+        SortedMap<String, BaselineEntry> entries = new TreeMap<>();
+        try (StagedGeneration staged = new LuceneSyncBaselineStore(cache).begin("wiki", "DEV")) {
             for (PageSnapshot snapshot : snapshots) {
-                batch.save(snapshot);
+                staged.save(snapshot);
+                if (snapshot.spaceKey().equals("DEV")) {
+                    entries.put(snapshot.key().pageId(), new BaselineEntry(snapshot.key().pageId(), "DEV",
+                            snapshot.parentPageId(), snapshot.revision(), snapshot.metadataHash(),
+                            snapshot.attributesHash()));
+                }
             }
-            batch.recordSpaceRun("wiki", "DEV", complete, finishedAt, snapshots.length);
-            batch.commit();
+            staged.commit(new SyncBaseline("wiki", "DEV", generation, confirmedAt, entries, new TreeSet<>(stale)));
         }
     }
 }

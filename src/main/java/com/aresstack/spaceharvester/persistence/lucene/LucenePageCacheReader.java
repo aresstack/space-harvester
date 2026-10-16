@@ -18,11 +18,11 @@ import java.util.function.Supplier;
 /**
  * Der lesende Port der Query-API (#27) über dem {@link LucenePageCache}.
  *
- * <p>Generation eines Space ist der zuletzt aufgezeichnete Lauf ({@link SpaceSyncState#generation()}, ID
- * {@code g<n>}): {@link CacheState#CONFIRMED}, wenn er vollständig war, sonst {@link CacheState#INCOMPLETE}. Liegen
- * Seiten eines Space im Cache, ohne dass je ein Lauf aufgezeichnet wurde, ist das die Generation {@code g0} im Zustand
- * {@link CacheState#INCOMPLETE}. {@link CacheState#STALE} legt die Synchronisierung (#16) fest und wird hier nicht
- * abgeleitet.
+ * <p>Generation eines Space ist die zuletzt bestätigte der Synchronisierung ({@link LuceneSyncBaselineStore}, ID
+ * {@code g<n>}): {@link CacheState#CONFIRMED}, wenn alle ihre Seiten abgeglichen wurden, sonst
+ * {@link CacheState#STALE}, weil ein Teil aus einer älteren Generation übernommen ist. Liegen Seiten eines Space im
+ * Cache, ohne dass je eine Generation bestätigt wurde, ist das die Generation {@code g0} im Zustand
+ * {@link CacheState#INCOMPLETE}.
  *
  * <p>Ein Lauf wird mit einem Lucene-Commit sichtbar; Seitenliste und Generation stammen daher aus demselben Stand,
  * solange zwischen Prüfung und Lesen kein Commit liegt. Wechselt die Generation dabei, gilt die Liste nicht
@@ -72,12 +72,12 @@ public final class LucenePageCacheReader implements PageCacheReader {
     }
 
     private Optional<CacheGeneration> generation(String sourceId, String spaceKey) {
-        Optional<SpaceSyncState> state = cache.spaceState(sourceId, spaceKey);
-        if (state.isPresent()) {
-            SpaceSyncState s = state.get();
-            return Optional.of(new CacheGeneration(id(s.generation()),
-                    s.lastRunComplete() ? CacheState.CONFIRMED : CacheState.INCOMPLETE, s.confirmedAt(),
-                    s.lastRunAt()));
+        Optional<ConfirmedGeneration> confirmed = cache.confirmedGeneration(sourceId, spaceKey);
+        if (confirmed.isPresent()) {
+            ConfirmedGeneration g = confirmed.get();
+            return Optional.of(new CacheGeneration(id(g.generation()),
+                    g.stalePageCount() == 0 ? CacheState.CONFIRMED : CacheState.STALE, g.confirmedAt(),
+                    g.confirmedAt()));
         }
         if (cache.countSpacePages(sourceId, spaceKey) > 0) {
             return Optional.of(new CacheGeneration(id(0), CacheState.INCOMPLETE, null, null));

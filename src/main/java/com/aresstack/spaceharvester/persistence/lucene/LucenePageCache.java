@@ -6,12 +6,14 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.application.sync.BaselineEntry;
+import com.aresstack.spaceharvester.application.sync.SyncBaseline;
+import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -256,10 +258,31 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         return revisions;
     }
 
-    /** Gespeicherter Synchronisierungsstand eines Space, leer wenn noch kein Lauf aufgezeichnet wurde. */
-    public Optional<SpaceSyncState> spaceState(String sourceId, String spaceKey) {
+    /** Kopf der bestätigten Generation eines Space ohne ihre Seiten; leer, solange keine bestätigt ist. */
+    public Optional<ConfirmedGeneration> confirmedGeneration(String sourceId, String spaceKey) {
         return first(new TermQuery(PageCacheSchema.spaceTerm(sourceId, spaceKey)), null,
-                PageCacheSchema::spaceState);
+                doc -> PageCacheSchema.confirmedGeneration(doc));
+    }
+
+    /** Die bestätigte Generation eines Space samt Stand je Seite; leer, solange keine bestätigt ist. */
+    public Optional<SyncBaseline> confirmed(String sourceId, String spaceKey) {
+        return read(searcher -> {
+            TopDocs top = searcher.search(new TermQuery(PageCacheSchema.spaceTerm(sourceId, spaceKey)), 1);
+            if (top.scoreDocs.length == 0) {
+                return Optional.<SyncBaseline>empty();
+            }
+            StoredFields stored = searcher.storedFields();
+            Document space = stored.document(top.scoreDocs[0].doc);
+            Query entries = new TermQuery(PageCacheSchema.baselineOf(sourceId, spaceKey));
+            int count = searcher.count(entries);
+            List<Document> docs = new ArrayList<>(count);
+            if (count > 0) {
+                for (ScoreDoc hit : searcher.search(entries, count).scoreDocs) {
+                    docs.add(stored.document(hit.doc));
+                }
+            }
+            return Optional.of(PageCacheSchema.baseline(space, docs));
+        });
     }
 
     /** Anzahl aller Dokumente im Index (Seiten, Revisionen, Spaces), für Betrieb und Tests. */
@@ -286,7 +309,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     /** Ein atomarer Schreiblauf, siehe {@link #begin()}. Nur im Thread benutzen, der ihn begonnen hat. */
     public final class Batch implements AutoCloseable {
 
-        private final Map<String, SpaceSyncState> spaces = new HashMap<>();
+        private final Set<String> confirmedSpaces = new HashSet<>();
         private DirectoryReader uncommitted;
         private boolean done;
         private boolean dirty;
@@ -344,30 +367,38 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         }
 
         /**
-         * Zeichnet das Ende eines Synchronisierungslaufs für einen Space auf; wird mit dem Commit sichtbar.
+         * Merkt {@code next} als neue bestätigte Generation ihres Space vor; sie ersetzt die bisherige samt aller
+         * Seiteneinträge und wird mit {@link #commit()} zusammen mit den übrigen Änderungen sichtbar.
          *
-         * @param complete  ob die Synchronisierung den Lauf als vollständig bestätigt; nur dann wird er die neue
-         *                  bestätigte Generation
-         * @param pageCount Seitenzahl des Space nach diesem Lauf
-         * @return der neue Stand
+         * @throws SyncConflictException wenn {@code next} nicht genau auf die bestätigte Generation folgt; der Lauf ist
+         *                               dann zu verwerfen ({@link #close()})
          */
-        public SpaceSyncState recordSpaceRun(String sourceId, String spaceKey, boolean complete, Instant finishedAt,
-                                             long pageCount) {
-            Objects.requireNonNull(sourceId, "sourceId");
-            Objects.requireNonNull(spaceKey, "spaceKey");
-            Objects.requireNonNull(finishedAt, "finishedAt");
+        public void confirm(SyncBaseline next) {
+            Objects.requireNonNull(next, "next");
             requireActive();
-            String id = PageCacheSchema.spaceTerm(sourceId, spaceKey).text();
-            SpaceSyncState current = spaces.get(id);
-            if (current == null) {
-                current = spaceState(sourceId, spaceKey).orElse(SpaceSyncState.none(sourceId, spaceKey));
+            Term space = PageCacheSchema.spaceTerm(next.sourceId(), next.spaceKey());
+            if (!confirmedSpaces.add(space.text())) {
+                throw new SyncConflictException("Generation von " + next.sourceId() + "/" + next.spaceKey()
+                        + " ist in diesem Lauf bereits vorgemerkt");
             }
-            SpaceSyncState next = current.next(complete, finishedAt, pageCount);
+            // Leser sehen nur Commits, und Commits gibt es nur unter der Schreibsperre dieses Laufs: der gelesene
+            // Stand ist der zuletzt bestätigte.
+            long current = confirmedGeneration(next.sourceId(), next.spaceKey())
+                    .map(ConfirmedGeneration::generation).orElse(0L);
+            if (next.generation() != current + 1) {
+                throw new SyncConflictException("Generation " + next.generation() + " von " + next.sourceId() + "/"
+                        + next.spaceKey() + " folgt nicht auf die bestätigte " + current);
+            }
             dirty = true;
-            write(() -> writer.updateDocument(PageCacheSchema.spaceTerm(sourceId, spaceKey),
-                    PageCacheSchema.space(next)));
-            spaces.put(id, next);
-            return next;
+            write(() -> {
+                writer.deleteDocuments(PageCacheSchema.baselineOf(next.sourceId(), next.spaceKey()));
+                List<Document> entries = new ArrayList<>(next.pages().size());
+                for (BaselineEntry entry : next.pages().values()) {
+                    entries.add(PageCacheSchema.baselineEntry(next.sourceId(), next.spaceKey(), entry));
+                }
+                writer.addDocuments(entries);
+                writer.updateDocument(space, PageCacheSchema.space(next));
+            });
         }
 
         /** Macht alle Änderungen dieses Laufs in einem Lucene-Commit dauerhaft und sichtbar. */
