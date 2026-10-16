@@ -9,6 +9,11 @@ space-harvester:
       base-url: ${SPACE_HARVESTER_DEMO_CONFLUENCE:http://127.0.0.1:8090/wiki}
       auth:
         type: none
+  # Eingebetteter Lucene-Cache und Exportartefakte der Demo; mit rm -rf build/demo zurücksetzen.
+  cache:
+    directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/cache
+  export:
+    directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/exports
   security:
     clients:
       - id: demo-client
@@ -16,4 +21,4 @@ space-harvester:
         grants:
           - source: demo
             spaces: ["DEMO"]
-            access: [metadata, content, export]
+            access: [metadata, content, export, sync]
