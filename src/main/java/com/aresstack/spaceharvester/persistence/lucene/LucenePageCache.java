@@ -183,6 +183,21 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         }
     }
 
+    /**
+     * Aktuelle Kopfdaten und gespeicherter Snapshot einer Seite aus demselben Stand.
+     *
+     * @param snapshot {@code null}, solange nur Kopfdaten bekannt sind
+     */
+    public record StoredPage(PageHeader header, PageSnapshot snapshot) {
+    }
+
+    /** Kopfdaten und Snapshot einer Seite in einem Lesezugriff, damit beide zum selben Commit gehören. */
+    public Optional<StoredPage> stored(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        return first(new TermQuery(PageCacheSchema.pageTerm(key)), null, doc -> new StoredPage(
+                PageCacheSchema.header(doc), PageCacheSchema.hasSnapshot(doc) ? PageCacheSchema.snapshot(doc) : null));
+    }
+
     // --- Abfragen ohne Payload ------------------------------------------------------------------------------------
 
     /**
