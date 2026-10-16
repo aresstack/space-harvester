@@ -183,12 +183,13 @@ space-harvester:
   cache:
     directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
     max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+    search-timeout: 5s                          # Standard; längere Suchen (#28) brechen mit 503 ab
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
   Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
   der Synchronisierung.
-  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+  Feldschema und Version (`page-cache/v3`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
 - **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
   `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
