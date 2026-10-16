@@ -19,6 +19,8 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build --console=plain
+      # Kopie in enterprise-ai-sources gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
+      - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
