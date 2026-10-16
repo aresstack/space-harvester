@@ -334,6 +334,15 @@ alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu vie
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
+**Ausgabeformate (#30):** `?format=json` (wiederholbar) erzeugt am Ende des Exports zusätzlich abgeleitete Dateien aus
+denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
+`rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum. Converter lesen nur die exportierten
+Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
+`conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
+ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
+`space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
+`CONVERSION_TOO_LARGE`, statt abzuschneiden.
+
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#27](https://github.com/aresstack/space-harvester/issues/27)).
 
