@@ -38,16 +38,18 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Ende-zu-Ende über die öffentliche API gegen die Demo-Fake-Confluence, mit eingebettetem Lucene-Cache und
- * Exportverzeichnis in temporären Verzeichnissen (#15): Spaces listen → Metadaten sammeln → Space ernten → Liste, Baum
- * und native Seite aus dem Cache → erneut ernten (nur Änderungen) → Export starten, Auftrag abfragen, Artefakt prüfen →
- * ein Lauf mit nicht ladbarer Seite ergibt einen als unvollständig gekennzeichneten Export.
+ * Walking Skeleton über die öffentliche API (#15), nach dem Vorbild von Corenths {@code WalkingSkeletonIntegrationTest}:
+ * Demo-Fake-Confluence → Spaces und Live-Metadaten → Ernte als Auftrag ({@code POST …/syncs}) → eingebetteter
+ * Lucene-Cache → flache Seitenliste, ID-Baum und native Seite im Storage-Format (Byte-Vergleich mit dem HTTP-Body der
+ * Quelle) → zweiter Lauf lädt nur Änderungen → Export als Auftrag → Artefakt mit geprüften Hashes → eine nicht ladbare
+ * Seite macht Generation und Export erkennbar unvollständig.
  *
- * <p>Die Schritte bauen aufeinander auf und laufen deshalb in fester Reihenfolge gegen dieselbe Anwendung.
+ * <p>Cache und Exporte liegen in einem temporären Verzeichnis. Die Schritte bauen aufeinander auf und laufen deshalb in
+ * fester Reihenfolge gegen dieselbe Anwendung.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class HarvestEndToEndTest {
+class HarvestWalkingSkeletonIntegrationTest {
 
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final FakeConfluence CONFLUENCE = DemoConfluence.fixture();

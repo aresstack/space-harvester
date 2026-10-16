@@ -373,5 +373,5 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/exports/
 }
 ```
 
-Geänderte, neue, verschobene und nicht ladbare Seiten sowie unvollständige Exporte prüft `HarvestEndToEndTest`. Die
+Geänderte, neue, verschobene und nicht ladbare Seiten sowie unvollständige Exporte prüft `HarvestWalkingSkeletonIntegrationTest`. Die
 Demo setzt man mit `rm -rf build/demo` zurück.
