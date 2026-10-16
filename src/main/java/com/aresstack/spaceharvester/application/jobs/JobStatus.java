@@ -10,6 +10,8 @@ import java.util.Objects;
  * @param type            Art des Auftrags
  * @param sourceId        Quelle, auf die sich der Auftrag bezieht
  * @param partitionKey    Partition (Space) oder {@code null}, wenn der Auftrag die ganze Quelle betrifft
+ * @param owner           auslösender Client ({@code principal} des Zugriffs, #14) oder {@code null} für interne
+ *                        Aufträge wie die geplante Synchronisierung; nur er sieht den Auftrag über die API
  * @param state           aktueller Zustand
  * @param progress        Zähler
  * @param error           nur bei {@link JobState#FAILED}, sonst {@code null}
@@ -18,7 +20,7 @@ import java.util.Objects;
  * @param startedAt       Beginn der Ausführung oder {@code null}
  * @param finishedAt      Erreichen eines Endzustands oder {@code null}
  */
-public record JobStatus(String id, JobType type, String sourceId, String partitionKey, JobState state,
+public record JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
                         Instant startedAt, Instant finishedAt) {
 

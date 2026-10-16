@@ -32,7 +32,7 @@ class JobsTest {
         FakePageReader reader = new FakePageReader(3);
         List<String> seen = new ArrayList<>();
 
-        JobStatus submitted = jobs.submit(JobType.EXPORT, "confluence", "DEV", reader.exportTask(seen::add));
+        JobStatus submitted = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", reader.exportTask(seen::add));
 
         // Gestartet, aber noch nichts ausgeführt: der Aufrufer wartet nicht auf die Arbeit.
         assertThat(seen).isEmpty();
@@ -57,9 +57,9 @@ class JobsTest {
     @Test
     void submittedStatusIsQueued() {
         Jobs jobs = jobs(1, 5);
-        jobs.submit(JobType.SYNC, "confluence", "DEV", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));
 
-        JobStatus second = jobs.submit(JobType.HARVEST, "confluence", null, JobTask.blocking(context -> { }));
+        JobStatus second = jobs.submit(JobType.HARVEST, "confluence", null, "client-a", JobTask.blocking(context -> { }));
 
         assertThat(second.state()).isEqualTo(JobState.QUEUED);
         assertThat(second.startedAt()).isNull();
@@ -69,8 +69,8 @@ class JobsTest {
     @Test
     void runsAtMostMaxConcurrentJobsAndStartsNextWhenOneEnds() {
         Jobs jobs = jobs(1, 5);
-        JobStatus first = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> { }));
-        JobStatus second = jobs.submit(JobType.EXPORT, "confluence", "B", JobTask.blocking(context -> { }));
+        JobStatus first = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus second = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
         assertThat(executor.pending()).isEqualTo(1);
         assertThat(jobs.status(second.id()).state()).isEqualTo(JobState.QUEUED);
@@ -87,8 +87,8 @@ class JobsTest {
     void asynchronousTaskHoldsItsSlotUntilItsStageCompletes() {
         Jobs jobs = jobs(1, 5);
         CompletableFuture<Void> transport = new CompletableFuture<>();
-        JobStatus async = jobs.submit(JobType.HARVEST, "confluence", "A", context -> transport);
-        JobStatus next = jobs.submit(JobType.HARVEST, "confluence", "B", JobTask.blocking(context -> { }));
+        JobStatus async = jobs.submit(JobType.HARVEST, "confluence", "A", "client-a", context -> transport);
+        JobStatus next = jobs.submit(JobType.HARVEST, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
         executor.runNext();
 
@@ -105,10 +105,10 @@ class JobsTest {
     @Test
     void rejectsJobsBeyondCapacity() {
         Jobs jobs = jobs(1, 1);
-        jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> { }));
-        jobs.submit(JobType.EXPORT, "confluence", "B", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
-        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "C", JobTask.blocking(context -> { })))
+        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "C", "client-a", JobTask.blocking(context -> { })))
                 .isInstanceOf(JobCapacityExceededException.class)
                 .hasMessageContaining("höchstens 2");
     }
@@ -116,9 +116,9 @@ class JobsTest {
     @Test
     void cancellingAQueuedJobEndsItWithoutRunningIt() {
         Jobs jobs = jobs(1, 5);
-        jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
         AtomicBoolean ran = new AtomicBoolean();
-        JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "B", JobTask.blocking(context -> ran.set(true)));
+        JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> ran.set(true)));
 
         JobStatus cancelled = jobs.cancel(queued.id());
 
@@ -138,7 +138,7 @@ class JobsTest {
         AtomicReference<String> id = new AtomicReference<>();
         AtomicReference<JobStatus> whileRunning = new AtomicReference<>();
         List<String> seen = new ArrayList<>();
-        id.set(jobs.submit(JobType.EXPORT, "confluence", "DEV", reader.exportTask(pageId -> {
+        id.set(jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", reader.exportTask(pageId -> {
             seen.add(pageId);
             if (pageId.equals("p3")) {
                 // Abbruch kommt während der Verarbeitung von p3, wie von einer zweiten Anfrage.
@@ -161,7 +161,7 @@ class JobsTest {
     @Test
     void cancellingAFinishedJobChangesNothing() {
         Jobs jobs = jobs(1, 5);
-        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> { }));
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
         executor.runNext();
 
         assertThat(jobs.cancel(job.id()).state()).isEqualTo(JobState.COMPLETED);
@@ -170,7 +170,7 @@ class JobsTest {
     @Test
     void namedFailureIsReportedWithCodeAndMessage() {
         Jobs jobs = jobs(1, 5);
-        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> {
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {
             context.failed(1);
             throw new JobFailedException("ARTIFACT_INCOMPLETE", "Seite 7 fehlt, Artefakt nicht veröffentlicht");
         }));
@@ -187,7 +187,7 @@ class JobsTest {
     @Test
     void sourceFailureKeepsItsReason() {
         Jobs jobs = jobs(1, 5);
-        JobStatus job = jobs.submit(JobType.HARVEST, "confluence", "A", JobTask.blocking(context -> {
+        JobStatus job = jobs.submit(JobType.HARVEST, "confluence", "A", "client-a", JobTask.blocking(context -> {
             throw new SourceAccessException("confluence", SourceAccessException.Reason.UNAVAILABLE,
                     "Quelle confluence nicht erreichbar", null);
         }));
@@ -201,7 +201,7 @@ class JobsTest {
     @Test
     void unexpectedFailureNeverExposesItsMessage() {
         Jobs jobs = jobs(1, 5);
-        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> {
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {
             throw new IllegalStateException("GET https://wiki.example/rest?token=secret-pat failed");
         }));
 
@@ -216,7 +216,7 @@ class JobsTest {
     @Test
     void failedAsynchronousStageIsUnwrapped() {
         Jobs jobs = jobs(1, 5);
-        JobStatus job = jobs.submit(JobType.HARVEST, "confluence", "A", context -> CompletableFuture
+        JobStatus job = jobs.submit(JobType.HARVEST, "confluence", "A", "client-a", context -> CompletableFuture
                 .runAsync(() -> { }, Runnable::run)
                 .thenRun(() -> {
                     throw new JobFailedException("REMOTE", "Fehler im Transport");
@@ -230,7 +230,7 @@ class JobsTest {
     @Test
     void exceedingTheRunTimeFailsWithTimeoutAtTheNextCheckpoint() {
         Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofMinutes(10)), clock);
-        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> {
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {
             context.checkpoint();
             clock.advance(Duration.ofMinutes(11));
             context.checkpoint();
@@ -247,9 +247,9 @@ class JobsTest {
     @Test
     void jobsLeftOpenByAPreviousRunAreMarkedInterruptedOnStart() {
         Jobs before = jobs(1, 5);
-        JobStatus running = before.submit(JobType.SYNC, "confluence", "A", JobTask.blocking(context -> { }));
-        JobStatus queued = before.submit(JobType.SYNC, "confluence", "B", JobTask.blocking(context -> { }));
-        JobStatus finished = new JobStatus("done", JobType.EXPORT, "confluence", "C", JobState.COMPLETED,
+        JobStatus running = before.submit(JobType.SYNC, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus queued = before.submit(JobType.SYNC, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
+        JobStatus finished = new JobStatus("done", JobType.EXPORT, "confluence", "C", null, JobState.COMPLETED,
                 JobProgress.NONE, null, false, clock.instant(), clock.instant(), clock.instant());
         store.save(finished);
 
@@ -269,18 +269,33 @@ class JobsTest {
     void closeCancelsQueuedJobsRequestsCancelOfRunningOnesAndRejectsNewOnes() {
         Jobs jobs = jobs(1, 5);
         FakePageReader reader = new FakePageReader(2);
-        JobStatus running = jobs.submit(JobType.EXPORT, "confluence", "A", reader.exportTask(pageId -> { }));
-        JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "B", JobTask.blocking(context -> { }));
+        JobStatus running = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", reader.exportTask(pageId -> { }));
+        JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
 
         jobs.close();
 
         assertThat(jobs.status(queued.id()).state()).isEqualTo(JobState.CANCELLED);
         assertThat(jobs.status(running.id()).cancelRequested()).isTrue();
-        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "C", JobTask.blocking(context -> { })))
+        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "C", "client-a", JobTask.blocking(context -> { })))
                 .isInstanceOf(IllegalStateException.class);
         executor.runNext();
         assertThat(jobs.status(running.id()).state()).isEqualTo(JobState.CANCELLED);
         assertThat(jobs.status(running.id()).progress().processed()).isZero();
+    }
+
+    @Test
+    void onlyTheOwnerSeesAndCancelsItsJob() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+
+        assertThat(jobs.status(job.id(), "client-a").owner()).isEqualTo("client-a");
+        // Ein fremder Auftrag verhält sich wie ein unbekannter.
+        assertThatThrownBy(() -> jobs.status(job.id(), "client-b")).isInstanceOf(UnknownJobException.class);
+        assertThatThrownBy(() -> jobs.cancel(job.id(), "client-b")).isInstanceOf(UnknownJobException.class);
+        assertThatThrownBy(() -> jobs.status(job.id(), null)).isInstanceOf(UnknownJobException.class);
+        assertThat(jobs.status(job.id()).cancelRequested()).isFalse();
+
+        assertThat(jobs.cancel(job.id(), "client-a").cancelRequested()).isTrue();
     }
 
     @Test
@@ -298,12 +313,12 @@ class JobsTest {
             Jobs jobs = new Jobs(store, threads, new JobLimits(2, 5, Duration.ofHours(1)), clock);
             CountDownLatch release = new CountDownLatch(1);
             CountDownLatch done = new CountDownLatch(1);
-            JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", JobTask.blocking(context -> {
+            JobStatus job = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> {
                 context.discovered(1);
                 release.await();
                 context.processed(1);
             }));
-            JobStatus other = jobs.submit(JobType.EXPORT, "confluence", "B", context -> {
+            JobStatus other = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", context -> {
                 done.countDown();
                 return CompletableFuture.completedFuture(null);
             });

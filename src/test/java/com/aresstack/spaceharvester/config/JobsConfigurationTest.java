@@ -38,12 +38,12 @@ class JobsConfigurationTest {
         JobStatus[] waiting = new JobStatus[1];
         context.withPropertyValues("space-harvester.jobs.max-concurrent=1").run(app -> {
             jobs[0] = app.getBean(Jobs.class);
-            jobs[0].submit(JobType.EXPORT, "confluence", "A", context -> new CompletableFuture<>());
-            waiting[0] = jobs[0].submit(JobType.EXPORT, "confluence", "B", JobTask.blocking(context -> { }));
+            jobs[0].submit(JobType.EXPORT, "confluence", "A", "client-a", context -> new CompletableFuture<>());
+            waiting[0] = jobs[0].submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
         });
 
         assertThat(jobs[0].status(waiting[0].id()).state()).isEqualTo(JobState.CANCELLED);
-        assertThatThrownBy(() -> jobs[0].submit(JobType.EXPORT, "confluence", "C", JobTask.blocking(context -> { })))
+        assertThatThrownBy(() -> jobs[0].submit(JobType.EXPORT, "confluence", "C", "client-a", JobTask.blocking(context -> { })))
                 .isInstanceOf(IllegalStateException.class);
     }
 }
