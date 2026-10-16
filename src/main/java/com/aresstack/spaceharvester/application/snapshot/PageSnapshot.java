@@ -39,6 +39,11 @@ public record PageSnapshot(PageKey key, PageMetadata metadata, String metadataHa
                 MetadataHash.of(sourceId, metadata), AttributesHash.of(sourceId, metadata), payload, retrievedAt);
     }
 
+    /** Die Kopfdaten dieses Snapshots (aus seiner Payload) als {@link PageHeader}. */
+    public PageHeader header() {
+        return new PageHeader(key, metadata, metadataHash, attributesHash, retrievedAt);
+    }
+
     /** Revision der Quelle oder {@code null}, wenn unbekannt. */
     public String revision() {
         return metadata.version();
