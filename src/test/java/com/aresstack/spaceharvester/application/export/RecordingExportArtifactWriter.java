@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.export;
 
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -12,7 +15,7 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
     final Map<String, Published> published = new HashMap<>();
     final List<String> discarded = new ArrayList<>();
 
-    record Published(List<String> pageIds, ExportTree tree, ExportSummary summary) {
+    record Published(List<String> pageIds, PageTree tree, ExportSummary summary) {
     }
 
     @Override
@@ -22,12 +25,12 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
             private boolean done;
 
             @Override
-            public void page(ExportPage page) {
-                pageIds.add(page.pageId());
+            public void page(PageHeader header, PageSnapshot snapshot) {
+                pageIds.add(header.key().pageId());
             }
 
             @Override
-            public ExportArtifact publish(ExportTree tree, ExportSummary summary) {
+            public ExportArtifact publish(PageTree tree, ExportSummary summary) {
                 done = true;
                 published.put(exportId, new Published(pageIds, tree, summary));
                 return new ExportArtifact(exportId, summary.complete(), List.of());

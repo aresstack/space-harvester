@@ -1,22 +1,23 @@
 package com.aresstack.spaceharvester.output.export;
 
-import static com.aresstack.spaceharvester.application.export.FakeExportPageReader.exportPage;
+import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.aresstack.spaceharvester.application.export.CacheState;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportScope;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
-import com.aresstack.spaceharvester.application.export.ExportTree;
 import com.aresstack.spaceharvester.application.export.Exports;
-import com.aresstack.spaceharvester.application.export.FakeExportPageReader;
 import com.aresstack.spaceharvester.application.export.PageFailure;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.BufferedReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,6 +31,7 @@ import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -39,7 +41,7 @@ import tools.jackson.databind.json.JsonMapper;
 class FileSystemExportArtifactWriterTest {
 
     private static final Instant NOW = Instant.parse("2026-10-16T12:00:00Z");
-    private static final ExportScope SCOPE = new ExportScope("confluence", "DEV", "g1", CacheState.CONFIRMED);
+    private static final ExportScope SCOPE = new ExportScope("confluence", "DEV", confirmed("g1"));
     // Pretty-printed, mit Zeilenumbrüchen, Unicode und einer Dezimalzahl: Rohdatei muss Byte für Byte gleich bleiben.
     private static final byte[] PRETTY = ("{\n  \"id\" : \"100\",\n  \"title\" : \"Grüße\",\n  \"weight\" : 1.10,\n"
             + "  \"body\" : {\"storage\" : {\"value\" : \"<p>a</p>\\n<p>b</p>\"}}\n}\n").getBytes(StandardCharsets.UTF_8);
@@ -48,6 +50,18 @@ class FileSystemExportArtifactWriterTest {
     Path root;
 
     private final JsonMapper json = JsonMapper.builder().build();
+
+    private static PageSnapshot snapshot(String pageId, String parentPageId, byte[] payload) {
+        return InMemoryPageCache.page("confluence", "DEV", pageId, parentPageId, payload);
+    }
+
+    private static void write(ExportArtifactWriter.Session session, PageSnapshot snapshot) {
+        session.page(snapshot.header(), snapshot);
+    }
+
+    private static PageTree tree(PageTree.Node... roots) {
+        return new PageTree(List.of(roots), List.of(), 0, 0);
+    }
 
     private ExportSummary summary(String exportId, long pages, List<PageFailure> failures, boolean complete) {
         return new ExportSummary(exportId, SCOPE, NOW, NOW.plusSeconds(5), pages, failures, List.of(), complete);
@@ -58,10 +72,10 @@ class FileSystemExportArtifactWriterTest {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         ExportArtifact artifact;
         try (ExportArtifactWriter.Session session = writer.begin("job-1", SCOPE)) {
-            session.page(exportPage("100", null, PRETTY));
-            session.page(exportPage("101", "100", "{\"id\":\"101\"}".getBytes(StandardCharsets.UTF_8)));
-            artifact = session.publish(new ExportTree(List.of(new ExportTree.Node("100",
-                    List.of(new ExportTree.Node("101", List.of())))), List.of()), summary("job-1", 2, List.of(), true));
+            write(session, snapshot("100", null, PRETTY));
+            write(session, snapshot("101", "100", "{\"id\":\"101\"}".getBytes(StandardCharsets.UTF_8)));
+            artifact = session.publish(tree(new PageTree.Node("100", List.of(new PageTree.Node("101", List.of())))),
+                    summary("job-1", 2, List.of(), true));
         }
 
         Path dir = root.resolve("job-1");
@@ -72,8 +86,9 @@ class FileSystemExportArtifactWriterTest {
         JsonNode first = json.readTree(lines.getFirst());
         assertThat(first.path("header").path("pageId").asString()).isEqualTo("100");
         assertThat(first.path("header").path("parentPageId").isNull()).isTrue();
-        assertThat(first.path("header").path("metadataHash").asString()).isEqualTo("sha256:meta-100");
-        assertThat(first.path("header").path("attributes").path("labels").asString()).isEqualTo("a,b");
+        assertThat(first.path("header").path("metadataHash").asString()).startsWith("sha256:");
+        assertThat(first.path("raw").path("revision").asString()).isEqualTo("3");
+        assertThat(first.path("header").path("attributes").path("confluence.labels").asString()).isEqualTo("api");
         assertThat(first.path("raw").path("file").asString()).isEqualTo("raw/100.json");
         assertThat(first.path("raw").path("sha256").asString()).isEqualTo(sha256(PRETTY));
         assertThat(first.path("raw").path("bytes").asLong()).isEqualTo(PRETTY.length);
@@ -103,10 +118,29 @@ class FileSystemExportArtifactWriterTest {
     }
 
     @Test
+    void headerIsTheCurrentOneWhileRawKeepsThePayloadsRevision() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        PageSnapshot stored = snapshot("1", null, "{}".getBytes(StandardCharsets.UTF_8));
+        // Die Synchronisierung hat nur den Titel aktualisiert, ohne die Payload neu zu laden.
+        PageHeader current = PageHeader.of("confluence", new com.aresstack.spaceharvester.application.sources
+                .PageMetadata("1", stored.metadata().resourceId(), "Neuer Titel", "DEV", null, "3",
+                stored.metadata().modifiedAt(), null, stored.metadata().attributes()), NOW);
+        try (ExportArtifactWriter.Session session = writer.begin("job-6", SCOPE)) {
+            session.page(current, stored);
+            session.publish(tree(new PageTree.Node("1", List.of())), summary("job-6", 1, List.of(), true));
+        }
+
+        JsonNode line = json.readTree(Files.readAllLines(root.resolve("job-6/pages.ndjson")).getFirst());
+        assertThat(line.path("header").path("title").asString()).isEqualTo("Neuer Titel");
+        assertThat(line.path("header").path("metadataHash").asString()).isEqualTo(current.metadataHash());
+        assertThat(line.path("raw").path("retrievedAt").asString()).isEqualTo(stored.retrievedAt().toString());
+    }
+
+    @Test
     void artifactIsInvisibleUntilPublishedAndDiscardedOnClose() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         try (ExportArtifactWriter.Session session = writer.begin("job-2", SCOPE)) {
-            session.page(exportPage("1", null, "{}".getBytes(StandardCharsets.UTF_8)));
+            write(session, snapshot("1", null, "{}".getBytes(StandardCharsets.UTF_8)));
             assertThat(writer.find("job-2")).isEmpty();
             assertThat(root.resolve("job-2")).doesNotExist();
         }
@@ -119,7 +153,7 @@ class FileSystemExportArtifactWriterTest {
     void publishedArtifactIsNeverOverwritten() {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         try (ExportArtifactWriter.Session session = writer.begin("job-3", SCOPE)) {
-            session.publish(new ExportTree(List.of(), List.of()), summary("job-3", 0, List.of(), true));
+            session.publish(tree(), summary("job-3", 0, List.of(), true));
         }
 
         assertThatThrownBy(() -> writer.begin("job-3", SCOPE)).isInstanceOf(IllegalStateException.class);
@@ -130,7 +164,7 @@ class FileSystemExportArtifactWriterTest {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         PageFailure missing = new PageFailure("7", "PAYLOAD_MISSING", "Payload von Seite 7 fehlt");
         try (ExportArtifactWriter.Session session = writer.begin("job-4", SCOPE)) {
-            session.publish(new ExportTree(List.of(), List.of()), summary("job-4", 0, List.of(missing), false));
+            session.publish(tree(), summary("job-4", 0, List.of(missing), false));
         }
 
         JsonNode manifest = json.readTree(root.resolve("job-4/manifest.json").toFile());
@@ -145,9 +179,8 @@ class FileSystemExportArtifactWriterTest {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
         byte[] broken = {'{', '"', 'a', (byte) 0xff, '"'};
         try (ExportArtifactWriter.Session session = writer.begin("job-5", SCOPE)) {
-            session.page(exportPage("1", null, broken));
-            session.publish(new ExportTree(List.of(new ExportTree.Node("1", List.of())), List.of()),
-                    summary("job-5", 1, List.of(), true));
+            write(session, snapshot("1", null, broken));
+            session.publish(tree(new PageTree.Node("1", List.of())), summary("job-5", 1, List.of(), true));
         }
 
         assertThat(Files.readAllBytes(root.resolve("job-5/raw/1.json"))).isEqualTo(broken);
@@ -182,12 +215,17 @@ class FileSystemExportArtifactWriterTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 1, Duration.ofHours(1)), clock);
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
-        Exports exports = new Exports(jobs, FakeExportPageReader.generated(pages), writer, clock);
+        InMemoryPageCache cache = new InMemoryPageCache();
+        cache.publish("confluence", "DEV", confirmed("g1"), IntStream.range(0, pages)
+                .mapToObj(i -> InMemoryPageCache.page("confluence", "DEV", String.valueOf(i),
+                        i == 0 ? null : String.valueOf(i / 10)))
+                .toList());
+        Exports exports = new Exports(jobs, cache, writer, clock);
 
-        String id = exports.start("confluence", "DEV").id();
+        String id = exports.start("confluence", "DEV", "client-a").id();
 
         assertThat(jobs.status(id).state()).isEqualTo(JobState.COMPLETED);
-        assertThat(exports.artifact(id)).get().extracting(ExportArtifact::complete).isEqualTo(true);
+        assertThat(exports.artifact(id, "client-a")).get().extracting(ExportArtifact::complete).isEqualTo(true);
         Path dir = root.resolve(id);
         Set<String> pageIds = new HashSet<>();
         try (BufferedReader reader = Files.newBufferedReader(dir.resolve("pages.ndjson"))) {

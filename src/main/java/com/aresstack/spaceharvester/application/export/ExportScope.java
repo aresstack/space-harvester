@@ -1,22 +1,21 @@
 package com.aresstack.spaceharvester.application.export;
 
+import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import java.util.Objects;
 
 /**
- * Was ein Export liest: eine Partition in einer bestimmten Cache-Generation. Der Leser liefert alle Seiten eines
- * Exports aus dieser einen Generation, damit kein Gemisch zweier Abgleiche als ein Stand erscheint.
+ * Was ein Export liest: ein Space in genau einer Cache-Generation, damit kein Gemisch zweier Abgleiche als ein Stand
+ * erscheint.
  *
- * @param sourceId     Quelle
- * @param partitionKey Partition (Space)
- * @param generation   Kennung der Cache-Generation, vom Leser vergeben
- * @param state        Stand dieser Generation
+ * @param sourceId   Quelle
+ * @param spaceKey   Space
+ * @param generation Generation, wie sie der Cache zu Beginn des Exports ausweist
  */
-public record ExportScope(String sourceId, String partitionKey, String generation, CacheState state) {
+public record ExportScope(String sourceId, String spaceKey, CacheGeneration generation) {
 
     public ExportScope {
         Objects.requireNonNull(sourceId, "sourceId");
-        Objects.requireNonNull(partitionKey, "partitionKey");
+        Objects.requireNonNull(spaceKey, "spaceKey");
         Objects.requireNonNull(generation, "generation");
-        Objects.requireNonNull(state, "state");
     }
 }

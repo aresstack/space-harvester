@@ -2,12 +2,14 @@ package com.aresstack.spaceharvester.output.export;
 
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
-import com.aresstack.spaceharvester.application.export.ExportPage;
 import com.aresstack.spaceharvester.application.export.ExportScope;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
-import com.aresstack.spaceharvester.application.export.ExportTree;
 import com.aresstack.spaceharvester.application.export.PageFailure;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -44,8 +46,9 @@ import tools.jackson.databind.json.JsonMapper;
  * Legt Exportartefakte im lokalen Dateisystem ab, je Export ein Verzeichnis {@code <root>/<exportId>/}:
  *
  * <ul>
- *   <li>{@code pages.ndjson}: flaches Seiten-Array, eine Zeile je Seite mit {@code header}, {@code raw} (Datei, Größe,
- *       {@code sha256}) und {@code content} (die native JSON-Antwort inhaltlich gleich, nicht bytegleich)</li>
+ *   <li>{@code pages.ndjson}: flaches Seiten-Array, eine Zeile je Seite mit {@code header} (aktuelle Kopfdaten),
+ *       {@code raw} (Datei, Größe, {@code sha256}, Revision und Abrufzeit der Payload) und {@code content} (die native
+ *       JSON-Antwort inhaltlich gleich, nicht bytegleich)</li>
  *   <li>{@code raw/}: die Payload jeder Seite Byte für Byte, Dateiname aus der Seiten-ID</li>
  *   <li>{@code tree.json}: Hierarchie nur aus IDs ({@code roots})</li>
  *   <li>{@code manifest.json}: Vollständigkeit, Generation, Zähler, Fehler, Warnungen, Dateien mit {@code sha256}</li>
@@ -140,32 +143,38 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
 
         @Override
-        public void page(ExportPage page) {
-            byte[] payload = page.payload();
-            String rawName = RAW + "/" + rawFileName(page.pageId(), page.mediaType());
+        public void page(PageHeader header, PageSnapshot snapshot) {
+            if (!header.key().equals(snapshot.key())) {
+                throw new IllegalArgumentException("Kopfdaten und Snapshot gehören zu verschiedenen Seiten");
+            }
+            String pageId = header.key().pageId();
+            NativePayload payload = snapshot.payload();
+            byte[] bytes = payload.bytes();
+            String rawName = RAW + "/" + rawFileName(pageId, payload.mediaType());
             try {
-                Path raw = work.resolve(rawName);
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
-                Files.write(raw, payload, StandardOpenOption.CREATE_NEW);
-                boolean parseable = isJson(page.mediaType(), payload);
+                Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
+                boolean parseable = isJson(payload.mediaType(), bytes);
                 if (!parseable) {
-                    warnings.add("Payload von Seite " + page.pageId() + " ist kein lesbares JSON; nur unter "
-                            + rawName + " abgelegt");
+                    warnings.add("Payload von Seite " + pageId + " ist kein lesbares JSON; nur unter " + rawName
+                            + " abgelegt");
                 }
                 try (JsonGenerator line = json.createGenerator(new NonClosingOutputStream(pages))) {
                     line.writeStartObject();
-                    writeHeader(line, page);
+                    writeHeader(line, header);
                     line.writeName("raw");
                     line.writeStartObject();
                     line.writeStringProperty("file", rawName);
-                    line.writeStringProperty("mediaType", page.mediaType());
-                    line.writeStringProperty("nativeFormat", page.nativeFormat());
-                    line.writeNumberProperty("bytes", payload.length);
-                    line.writeStringProperty("sha256", "sha256:" + sha256Hex(payload));
+                    line.writeStringProperty("mediaType", payload.mediaType());
+                    line.writeStringProperty("nativeFormat", payload.nativeFormat());
+                    line.writeNumberProperty("bytes", bytes.length);
+                    line.writeStringProperty("sha256", payload.rawSha256());
+                    line.writeStringProperty("revision", snapshot.revision());
+                    line.writeStringProperty("retrievedAt", text(snapshot.retrievedAt()));
                     line.writeEndObject();
                     line.writeName("content");
                     if (parseable) {
-                        try (JsonParser parser = json.createParser(payload)) {
+                        try (JsonParser parser = json.createParser(bytes)) {
                             parser.nextToken();
                             line.copyCurrentStructureExact(parser);
                         }
@@ -176,12 +185,12 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 }
                 pages.write('\n');
             } catch (IOException e) {
-                throw new UncheckedIOException("Seite " + page.pageId() + " nicht schreibbar", e);
+                throw new UncheckedIOException("Seite " + pageId + " nicht schreibbar", e);
             }
         }
 
         @Override
-        public ExportArtifact publish(ExportTree tree, ExportSummary summary) {
+        public ExportArtifact publish(PageTree tree, ExportSummary summary) {
             if (!summary.exportId().equals(exportId) || !summary.scope().equals(scope)) {
                 throw new IllegalArgumentException("Zusammenfassung gehört nicht zu diesem Export");
             }
@@ -230,12 +239,12 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
     }
 
-    private static void writeHeader(JsonGenerator line, ExportPage page) {
-        PageMetadata metadata = page.metadata();
+    private static void writeHeader(JsonGenerator line, PageHeader header) {
+        PageMetadata metadata = header.metadata();
         line.writeName("header");
         line.writeStartObject();
-        line.writeStringProperty("sourceId", page.sourceId());
-        line.writeStringProperty("pageId", metadata.pageId());
+        line.writeStringProperty("sourceId", header.key().sourceId());
+        line.writeStringProperty("pageId", header.key().pageId());
         line.writeStringProperty("spaceKey", metadata.partitionKey());
         line.writeStringProperty("title", metadata.title());
         line.writeStringProperty("parentPageId", metadata.parentPageId());
@@ -247,22 +256,22 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             line.writeStringProperty(attribute.getKey(), attribute.getValue());
         }
         line.writeEndObject();
-        line.writeStringProperty("metadataHash", page.metadataHash());
-        line.writeStringProperty("attributesHash", page.attributesHash());
-        line.writeStringProperty("retrievedAt", text(page.retrievedAt()));
+        line.writeStringProperty("metadataHash", header.metadataHash());
+        line.writeStringProperty("attributesHash", header.attributesHash());
+        line.writeStringProperty("observedAt", text(header.observedAt()));
         line.writeEndObject();
     }
 
-    private static void writeTree(JsonGenerator generator, ExportTree tree) {
+    private static void writeTree(JsonGenerator generator, PageTree tree) {
         generator.writeStartObject();
         generator.writeName("roots");
         writeNodes(generator, tree.roots());
         generator.writeEndObject();
     }
 
-    private static void writeNodes(JsonGenerator generator, List<ExportTree.Node> nodes) {
+    private static void writeNodes(JsonGenerator generator, List<PageTree.Node> nodes) {
         generator.writeStartArray();
-        for (ExportTree.Node node : nodes) {
+        for (PageTree.Node node : nodes) {
             generator.writeStartObject();
             generator.writeStringProperty("id", node.pageId());
             generator.writeName("children");
@@ -279,12 +288,14 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         generator.writeStringProperty("schemaVersion", ExportSummary.SCHEMA_VERSION);
         generator.writeStringProperty("exportId", summary.exportId());
         generator.writeStringProperty("sourceId", scope.sourceId());
-        generator.writeStringProperty("spaceKey", scope.partitionKey());
+        generator.writeStringProperty("spaceKey", scope.spaceKey());
         generator.writeBooleanProperty("complete", summary.complete());
         generator.writeName("cache");
         generator.writeStartObject();
-        generator.writeStringProperty("generation", scope.generation());
-        generator.writeStringProperty("state", scope.state().name());
+        generator.writeStringProperty("generation", scope.generation().id());
+        generator.writeStringProperty("state", scope.generation().state().name());
+        generator.writeStringProperty("syncedAt", text(scope.generation().syncedAt()));
+        generator.writeStringProperty("lastCheckedAt", text(scope.generation().lastCheckedAt()));
         generator.writeEndObject();
         generator.writeStringProperty("startedAt", text(summary.startedAt()));
         generator.writeStringProperty("finishedAt", text(summary.finishedAt()));
