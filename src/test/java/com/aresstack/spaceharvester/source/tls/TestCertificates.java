@@ -24,7 +24,7 @@ public final class TestCertificates {
     public static final String CLIENT_PASSWORD = "client-geheim";
     public static final String CLIENT_ALIAS = "confluence-client";
 
-    /** Serverschlüssel für 127.0.0.1. */
+    /** Serverschlüssel für 127.0.0.1 und {@code secure.proxied.test} (Proxy-Tests, siehe test-hosts). */
     public final Path server;
     /** Vom Server akzeptiertes Client-Zertifikat. */
     public final Path client;
@@ -49,7 +49,7 @@ public final class TestCertificates {
         harvesterTrust = dir.resolve("harvester-trust.p12");
 
         keytool("-genkeypair", "-alias", "server", "-keyalg", "EC", "-groupname", "secp256r1",
-                "-dname", "CN=127.0.0.1", "-ext", "SAN=ip:127.0.0.1", "-validity", "2",
+                "-dname", "CN=127.0.0.1", "-ext", "SAN=ip:127.0.0.1,dns:secure.proxied.test", "-validity", "2",
                 "-storetype", "PKCS12", "-keystore", server.toString(), "-storepass", STORE_PASSWORD);
         keyPair(client, "CN=space-harvester", "-validity", "2");
         keyPair(stranger, "CN=stranger", "-validity", "2");
