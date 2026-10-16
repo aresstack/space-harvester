@@ -16,5 +16,7 @@ public enum AccessKind {
      */
     CONTENT,
     /** Exportjobs starten, abbrechen, ihren Status lesen und ihre Artefakte herunterladen. */
-    EXPORT
+    EXPORT,
+    /** Abgleich eines Space mit der Quelle anstoßen, abbrechen und seinen Status lesen (#16). */
+    SYNC
 }
