@@ -111,6 +111,7 @@ class PageMetadataApiTest {
         assertThat(pages.keySet()).containsExactlyInAnyOrder("100", "101", "102", "103", "200", "201");
         assertThat(body.get("origin").asString()).isEqualTo("live");
         assertThat(body.get("metadataHashSchema").asString()).isEqualTo("page-metadata/v1");
+        assertThat(body.get("attributesHashSchema").asString()).isEqualTo("page-attributes/v1");
 
         JsonNode schnittstellen = pages.get("102");
         assertThat(schnittstellen.get("title").asString()).isEqualTo("Schnittstellen");
@@ -119,6 +120,8 @@ class PageMetadataApiTest {
         assertThat(schnittstellen.get("version").asString()).isNotEmpty();
         assertThat(schnittstellen.get("modifiedAt").isNull()).isFalse();
         assertThat(schnittstellen.get("metadataHash").asString()).matches("sha256:[0-9a-f]{64}");
+        assertThat(schnittstellen.get("attributesHash").asString()).matches("sha256:[0-9a-f]{64}")
+                .isNotEqualTo(schnittstellen.get("metadataHash").asString());
         assertThat(pages.get("200").get("parentPageId").isNull()).isTrue();
         assertThat(pages.get("201").get("parentPageId").asString()).isEqualTo("200");
         for (URI request : CONFLUENCE.requests()) {
@@ -177,7 +180,8 @@ class PageMetadataApiTest {
     private List<String> hashes() throws Exception {
         List<String> hashes = new ArrayList<>();
         json.readTree(get("/api/v1/sources/wiki/spaces/DEV/pages/metadata").body()).get("pages")
-                .forEach(page -> hashes.add(page.get("pageId").asString() + "=" + page.get("metadataHash").asString()));
+                .forEach(page -> hashes.add(page.get("pageId").asString() + "=" + page.get("metadataHash").asString()
+                        + "/" + page.get("attributesHash").asString()));
         return hashes;
     }
 

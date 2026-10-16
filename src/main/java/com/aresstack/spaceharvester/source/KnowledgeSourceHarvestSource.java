@@ -6,13 +6,19 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
+import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /** {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}. */
 final class KnowledgeSourceHarvestSource implements HarvestSource {
@@ -69,6 +75,25 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
     }
 
+    @Override
+    public PageMetadata pageMetadata(String pageId) {
+        if (!(port instanceof ResourceMetadataSource single)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle kann Metadaten einzelner Seiten nicht liefern", null);
+        }
+        KnowledgeResource resource;
+        try {
+            resource = single.resourceMetadata(pageId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        if (resource.scope() == null || resource.scope().isEmpty()) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Seite ohne Space in der Antwort der Quelle", null);
+        }
+        return pageMetadata(resource, resource.scope());
+    }
+
     private static PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
         String version = resource.revision().version();
         return new PageMetadata(
@@ -80,7 +105,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 version == null || version.isEmpty() ? null : version,
                 resource.revision().modifiedAt().orElse(null),
                 resource.location().orElse(null),
-                PageMetadata.sorted(resource.metadata().asMap()));
+                attributes(resource.metadata().asMap()));
+    }
+
+    /**
+     * Quellattribute mit stabil sortierten Listen: Labels liefert der Adapter kommagetrennt in der Reihenfolge der
+     * Quelle; für {@code attributesHash} werden sie sortiert und entdoppelt (Confluence-Labels enthalten keine Kommas).
+     */
+    private static SortedMap<String, String> attributes(Map<String, String> source) {
+        SortedMap<String, String> attributes = new TreeMap<>(source);
+        attributes.replaceAll((key, value) -> key.endsWith(".labels") && value != null
+                ? String.join(",", new TreeSet<>(Arrays.stream(value.split(",")).map(String::trim)
+                        .filter(label -> !label.isEmpty()).toList()))
+                : value);
+        return attributes;
     }
 
     /** Die ID der Quelle: letztes Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}). */
