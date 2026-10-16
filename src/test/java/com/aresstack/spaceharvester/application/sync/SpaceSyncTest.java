@@ -5,10 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +16,7 @@ class SpaceSyncTest {
             .put("1", "DOC", null, "3", "api")
             .put("2", "DOC", "1", "1", null)
             .put("3", "DOC", null, "7", null);
-    private final InMemoryStore store = new InMemoryStore();
+    private final InMemorySyncStore store = new InMemorySyncStore();
     private final SpaceSync sync = new SpaceSync(source.queries(), store, FakeSource.CLOCK);
 
     private SyncBaseline firstRun() {
@@ -213,25 +210,5 @@ class SpaceSyncTest {
                 .filter(change -> change.kind() != PageChange.Kind.UNCHANGED).toList();
         assertThat(changed).extracting(PageChange::pageId).containsExactly(pageId);
         return changed.get(0);
-    }
-
-    /** Fake für den Port; die Lucene-Umsetzung (#26) muss dieselben Regeln erfüllen. */
-    static final class InMemoryStore implements SyncBaselineStore {
-
-        private final Map<String, SyncBaseline> baselines = new HashMap<>();
-
-        @Override
-        public Optional<SyncBaseline> confirmed(String sourceId, String spaceKey) {
-            return Optional.ofNullable(baselines.get(sourceId + "/" + spaceKey));
-        }
-
-        @Override
-        public synchronized void publish(SyncBaseline next) {
-            long current = confirmed(next.sourceId(), next.spaceKey()).map(SyncBaseline::generation).orElse(0L);
-            if (next.generation() != current + 1) {
-                throw new SyncConflictException("Generation " + next.generation() + " folgt nicht auf " + current);
-            }
-            baselines.put(next.sourceId() + "/" + next.spaceKey(), next);
-        }
     }
 }
