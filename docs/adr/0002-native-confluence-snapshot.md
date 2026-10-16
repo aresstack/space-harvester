@@ -101,10 +101,15 @@ Paket `application.snapshot`, frei von Lucene-, Spring- und Confluence-Typen, da
 - `NativePayload`: Bytes (immer als Kopie), `mediaType`, `nativeFormat`, `rawSha256` = `sha256:<hex>` über die Bytes.
 - `PageSnapshot(key, metadata, metadataHash, attributesHash, payload, retrievedAt)`: Kopfdaten (`PageMetadata`) und
   Payload aus derselben Antwort, Hashes nach `page-metadata/v1` und `page-attributes/v1` wie in der Metadatenliste.
-- `SnapshotRepository`: `save` (Upsert, letzter Stand gilt), `find`, `remove` (nur aus bestätigt vollständigem
-  Abgleich). Abfrage-Ports für Seitenlisten, Baum und Suche kommen mit #27/#28 dazu.
+- `PageHeader`: die aktuellen Kopfdaten getrennt von der Payload. Die Synchronisierung aktualisiert sie ohne
+  Body-Abruf, wenn sich nur Labels/Attribute oder Titel, Space und Elternseite bei gleicher Revision ändern; die
+  Kopfdaten des Snapshots bleiben dabei die seiner Payload.
+- `SnapshotRepository`: `save` (Snapshot und Kopfdaten), `saveHeader` (nur Kopfdaten), `find`, `findHeader`,
+  `remove`. `remove` nur, wenn ein bestätigt vollständiger Abgleich die Seite vermisst und eine Einzelabfrage sie als
+  nicht vorhanden oder nicht sichtbar bestätigt; ein Umzug in einen anderen Space ist kein Entfernen. Abfrage-Ports für
+  Seitenlisten, Baum und Suche kommen mit #27/#28 dazu.
 - Vertragstest `SnapshotRepositoryContract` (Testquellen): jede Umsetzung erbt ihn; er prüft Bytegleichheit auch für
-  Bytes, die kein UTF-8 sind, Upsert, Trennung je Quelle, Entfernen und Neustart. `InMemorySnapshotRepository` dient
+  Bytes, die kein UTF-8 sind, Upsert, getrennte Kopfdaten, Trennung je Quelle, Entfernen und Neustart. `InMemorySnapshotRepository` dient
   anderen Strängen als Fake.
 
 Die Anbindung an `StoredContentSource` (nach Sync der Upstream-Kopie) und an die Quellen-SPI folgt in #8.

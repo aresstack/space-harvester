@@ -1,7 +1,8 @@
 /**
  * Quellenneutraler Vertrag für native Seiten-Snapshots (Raw-First, Strang B, Vertragsfenster 1 in
  * {@code docs/PARALLEL_WORKSTREAMS.md}): {@link com.aresstack.spaceharvester.application.snapshot.PageSnapshot} mit
- * unveränderter {@link com.aresstack.spaceharvester.application.snapshot.NativePayload} und Kopfdaten, sowie der
+ * unveränderter {@link com.aresstack.spaceharvester.application.snapshot.NativePayload} und Kopfdaten, die davon
+ * getrennten aktuellen Kopfdaten {@link com.aresstack.spaceharvester.application.snapshot.PageHeader} sowie der
  * Speicher-Port {@link com.aresstack.spaceharvester.application.snapshot.SnapshotRepository}.
  *
  * <p>Frei von Lucene-, Spring- und Confluence-Typen. Persistenz (Lucene, #26), Synchronisierung (#16) und Abfragen
