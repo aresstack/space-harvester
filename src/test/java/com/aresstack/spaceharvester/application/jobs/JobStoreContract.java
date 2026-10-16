@@ -76,6 +76,19 @@ public abstract class JobStoreContract {
     }
 
     @Test
+    void deleteRemovesOnlyThatJob() {
+        JobStore store = newStore();
+        store.save(queued("a"));
+        store.save(failed("b"));
+
+        store.delete("b");
+        store.delete("unknown");
+
+        assertThat(store.find("b")).isEmpty();
+        assertThat(store.all()).containsExactly(queued("a"));
+    }
+
+    @Test
     void savedJobsSurviveARestart() {
         JobStore store = newStore();
         store.save(queued("a"));
