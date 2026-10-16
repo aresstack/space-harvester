@@ -232,8 +232,16 @@ gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt oder nicht sichtbar ist, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503).
 
-Geplante Endpunkte: Space-Fingerprint aus bestätigt vollständigen Läufen
-([#16](https://github.com/aresstack/space-harvester/issues/16)), asynchrone Exporte
+**Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
+`{"schema":…,"sourceId":…,"spaceKey":…,"pages":[{"pageId":…,"metadataHash":…,"attributesHash":…},…]}` mit den Seiten
+nach `pageId` sortiert (Zeichenkettenordnung), Escaping und UTF-8 wie oben. Er entsteht nur aus einer vollständig und
+widerspruchsfrei gelisteten Inventur und spart den Seitenabgleich, nicht das Listen bei der Quelle. Die
+Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresstack/space-harvester/issues/16)):
+abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
+wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
+
+Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
+([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
 ## Aufbau
