@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Ein Auftrag ist sofort nach {@link #submit} als {@link JobState#QUEUED} abrufbar; der Aufrufer wartet nie auf die
  * Arbeit. Abbruch ist kooperativ: ein wartender Auftrag endet sofort, ein laufender beim nächsten
  * {@link JobContext#checkpoint()}. Nach einem Neustart gelten Aufträge, die laut {@link JobStore} noch warteten oder
- * liefen, als gescheitert ({@code INTERRUPTED}); sie werden nicht stillschweigend fortgesetzt.
+ * liefen, als gescheitert ({@code INTERRUPTED}); sie werden nicht stillschweigend fortgesetzt. Beendete Aufträge
+ * bleiben {@link JobLimits#retention()} lang abrufbar und werden danach beim Start und bei jeder Annahme entfernt.
  */
 public class Jobs implements AutoCloseable {
 
@@ -55,6 +56,7 @@ public class Jobs implements AutoCloseable {
         this.limits = Objects.requireNonNull(limits, "limits");
         this.clock = Objects.requireNonNull(clock, "clock");
         markInterrupted();
+        purgeExpired();
     }
 
     /**
@@ -70,6 +72,7 @@ public class Jobs implements AutoCloseable {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(task, "task");
+        purgeExpired();
         Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, owner, task, clock.instant());
         JobStatus status;
         synchronized (lock) {
@@ -173,6 +176,23 @@ public class Jobs implements AutoCloseable {
                 store.save(job.snapshot());
             }
         }
+    }
+
+    /**
+     * Entfernt beendete Aufträge, deren Ende länger als {@link JobLimits#retention()} zurückliegt.
+     *
+     * @return Anzahl entfernter Aufträge
+     */
+    public int purgeExpired() {
+        Instant limit = clock.instant().minus(limits.retention());
+        int removed = 0;
+        for (JobStatus status : store.all()) {
+            if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)) {
+                store.delete(status.id());
+                removed++;
+            }
+        }
+        return removed;
     }
 
     private void markInterrupted() {
