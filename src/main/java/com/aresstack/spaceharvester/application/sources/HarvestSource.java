@@ -48,4 +48,19 @@ public interface HarvestSource {
      *                               diese Fähigkeit, sonst wie {@link #partitions()}
      */
     PageMetadata pageMetadata(String pageId);
+
+    /**
+     * Die native Antwort der Quelle für eine Seite Byte für Byte, mit den Kopfdaten aus derselben Antwort (Revision und
+     * Inhalt gehören zusammen). Bei Confluence die REST-Antwort mit {@code body.storage} (ADR 0002).
+     *
+     * @param pageId ID der Seite in der Quelle (bei Confluence die Content-ID)
+     * @throws SourceAccessException {@code NOT_FOUND} für eine unbekannte oder nicht sichtbare Seite,
+     *                               {@code INVALID_RESPONSE} auch für eine Antwort über der Größengrenze der Quelle (sie
+     *                               wird nie gekürzt), {@code UNSUPPORTED} für eine fremde ID oder eine Quelle ohne
+     *                               diese Fähigkeit, sonst wie {@link #partitions()}
+     */
+    default StoredPage storedPage(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann native Seitenantworten nicht liefern", null);
+    }
 }
