@@ -24,6 +24,9 @@ dependencies {
     implementation project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
     implementation libs.win.proxy.java
+    // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als Client, MVC bleibt
+    implementation 'org.springframework:spring-webflux'
+    implementation 'io.projectreactor.netty:reactor-netty-http'
     // Seiten-Cache und Index, nur im Paket persistence (#26)
     implementation libs.lucene.core
 
@@ -31,6 +34,8 @@ dependencies {
     testImplementation libs.archunit.junit5
     testImplementation testFixtures(project(':enterprise-ai-sources'))
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // Vertragstest ConfluenceAsyncHttpTransportContract aus der Kopie ist JUnit 4
+    testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
 }
 
 springBoot {
@@ -97,12 +102,47 @@ abstract class BootJarPacCheck extends DefaultTask {
             throw new GradleException("PAC-Auswertung im ausführbaren JAR fehlgeschlagen (Exit ${result.exitValue}):\n${text}")
         }
         logger.lifecycle(text.readLines().findAll { it.startsWith('Result:') }.join('\n'))
+        fetchAsync()
+    }
+
+    /** Der asynchrone Transport (WebClient, Reactor Netty, #47) ruft aus dem JAR einen lokalen Server ab. */
+    private void fetchAsync() {
+        def server = com.sun.net.httpserver.HttpServer.create(
+                new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
+        server.createContext('/') { exchange ->
+            byte[] body = '{"results":[]}'.getBytes('UTF-8')
+            exchange.responseHeaders.add('Content-Type', 'application/json')
+            exchange.sendResponseHeaders(200, body.length)
+            exchange.responseBody.withCloseable { it.write(body) }
+        }
+        server.start()
+        try {
+            def output = new ByteArrayOutputStream()
+            def result = execOperations.exec {
+                commandLine launcher.get().executablePath.asFile.absolutePath,
+                        '-Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsMain',
+                        '-cp', jar.get().asFile.absolutePath,
+                        'org.springframework.boot.loader.launch.PropertiesLauncher',
+                        '--mode=pac-url-manual', "--pac-url=${pac.get().asFile.toURI()}", '--fetch=async',
+                        "http://127.0.0.1:${server.address.port}/rest/api/space"
+                standardOutput = output
+                errorOutput = output
+                ignoreExitValue = true
+            }
+            def text = output.toString('UTF-8')
+            if (result.exitValue != 0 || !text.contains(': HTTP 200, 14 Bytes')) {
+                throw new GradleException("Asynchroner Abruf im ausführbaren JAR fehlgeschlagen (Exit ${result.exitValue}):\n${text}")
+            }
+            logger.lifecycle(text.readLines().findAll { it.startsWith('Fetch ') }.join('\n'))
+        } finally {
+            server.stop(0)
+        }
     }
 }
 
 def bootJarPacCheck = tasks.register('bootJarPacCheck', BootJarPacCheck) {
     group = 'verification'
-    description = 'Wertet ein PAC-Skript mit GraalJS im ausführbaren JAR aus.'
+    description = 'Wertet ein PAC-Skript mit GraalJS im ausführbaren JAR aus und ruft asynchron einen lokalen Server ab.'
     jar = tasks.named('bootJar').flatMap { it.archiveFile }
     pac = layout.projectDirectory.file('src/test/resources/sentinel.pac')
     launcher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }

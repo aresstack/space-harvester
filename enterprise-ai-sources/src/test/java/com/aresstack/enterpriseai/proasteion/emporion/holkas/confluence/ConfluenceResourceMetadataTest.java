@@ -94,6 +94,32 @@ public class ConfluenceResourceMetadataTest {
     }
 
     @Test
+    public void pageRestrictedForTheAccountIsNotFoundAndMissingFromTheListing() throws Exception {
+        confluence.restrict("101");
+        try {
+            source.resourceMetadata("101");
+            fail("expected NOT_FOUND");
+        } catch (KnowledgeSourceException e) {
+            assertEquals(Kind.NOT_FOUND, e.kind());
+            assertFalse(e.getMessage(), e.getMessage().contains("Guide"));
+        }
+        for (KnowledgeResource resource : source.resources("DEV", "", 100).resources()) {
+            assertFalse(resource.id().equals(page("101")));
+        }
+    }
+
+    @Test
+    public void forbiddenOutsideASinglePageStaysAccessDenied() throws Exception {
+        confluence.failNext(401, 1);
+        try {
+            source.resourceMetadata("101");
+            fail("expected ACCESS_DENIED");
+        } catch (KnowledgeSourceException e) {
+            assertEquals(Kind.ACCESS_DENIED, e.kind());
+        }
+    }
+
+    @Test
     public void idOfAnotherFormIsUnsupported() throws Exception {
         try {
             source.resourceMetadata("att123");

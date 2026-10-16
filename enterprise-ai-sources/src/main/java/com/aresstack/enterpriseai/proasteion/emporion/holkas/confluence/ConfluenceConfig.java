@@ -27,6 +27,9 @@ public final class ConfluenceConfig {
     private final List<String> searchSpaceKeys;
     private final boolean allowInsecureHttp;
     private final java.nio.file.Path diagnosticsDirectory;
+    private final int maxRetries;
+    private final int retryBackoffMillis;
+    private final int maxRetryBackoffMillis;
 
     private ConfluenceConfig(Builder builder) {
         if (builder.credentialRef != null && !builder.allowInsecureHttp
@@ -43,6 +46,9 @@ public final class ConfluenceConfig {
         this.maxResponseBytes = builder.maxResponseBytes;
         this.searchSpaceKeys = Collections.unmodifiableList(new ArrayList<String>(builder.searchSpaceKeys));
         this.diagnosticsDirectory = builder.diagnosticsDirectory;
+        this.maxRetries = builder.maxRetries;
+        this.retryBackoffMillis = builder.retryBackoffMillis;
+        this.maxRetryBackoffMillis = Math.max(builder.maxRetryBackoffMillis, builder.retryBackoffMillis);
     }
 
     /**
@@ -97,13 +103,34 @@ public final class ConfluenceConfig {
         return diagnosticsDirectory;
     }
 
+    /**
+     * Wiederholungen eines REST-Aufrufs nach Netzfehler, HTTP 429 oder 5xx; {@code 0} = keine. Andere Fehler (401,
+     * 403, 404, zu große Antwort) werden nie wiederholt.
+     */
+    public int maxRetries() {
+        return maxRetries;
+    }
+
+    /** Wartezeit vor der ersten Wiederholung; jede weitere verdoppelt sie bis {@link #maxRetryBackoffMillis()}. */
+    public int retryBackoffMillis() {
+        return retryBackoffMillis;
+    }
+
+    /** Größte Wartezeit zwischen zwei Versuchen. */
+    public int maxRetryBackoffMillis() {
+        return maxRetryBackoffMillis;
+    }
+
     @Override
     public String toString() {
         return "ConfluenceConfig[" + baseUrl + ", credentials=" + (credentialRef == null ? "keine" : credentialRef)
                 + ", attachments=" + includeAttachments + "]";
     }
 
-    /** Builder; Defaults: 50 Einträge je Seite, ohne Anhänge, Anhänge bis 5 MB, Antworten bis 20 MB. */
+    /**
+     * Builder; Defaults: 50 Einträge je Seite, ohne Anhänge, Anhänge bis 5 MB, Antworten bis 20 MB, keine
+     * Wiederholungen (Wartezeit 1 s, höchstens 30 s, sobald {@link #maxRetries(int)} gesetzt ist).
+     */
     public static final class Builder {
 
         private final URI baseUrl;
@@ -115,6 +142,9 @@ public final class ConfluenceConfig {
         private final List<String> searchSpaceKeys = new ArrayList<String>();
         private boolean allowInsecureHttp;
         private java.nio.file.Path diagnosticsDirectory;
+        private int maxRetries;
+        private int retryBackoffMillis = 1000;
+        private int maxRetryBackoffMillis = 30000;
 
         private Builder(URI baseUrl) {
             this.baseUrl = normalize(baseUrl);
@@ -176,8 +206,39 @@ public final class ConfluenceConfig {
             return this;
         }
 
+        /** Siehe {@link ConfluenceConfig#maxRetries()}; 0–10. */
+        public Builder maxRetries(int value) {
+            if (value < 0 || value > 10) {
+                throw new IllegalArgumentException("maxRetries muss zwischen 0 und 10 liegen");
+            }
+            this.maxRetries = value;
+            return this;
+        }
+
+        /** Siehe {@link ConfluenceConfig#retryBackoffMillis()}; 0 (nur für Tests) bis 60000. */
+        public Builder retryBackoffMillis(int value) {
+            this.retryBackoffMillis = millis(value, "retryBackoffMillis");
+            return this;
+        }
+
+        /** Siehe {@link ConfluenceConfig#maxRetryBackoffMillis()}; 0 bis 300000. */
+        public Builder maxRetryBackoffMillis(int value) {
+            if (value < 0 || value > 300000) {
+                throw new IllegalArgumentException("maxRetryBackoffMillis muss zwischen 0 und 300000 liegen");
+            }
+            this.maxRetryBackoffMillis = value;
+            return this;
+        }
+
         public ConfluenceConfig build() {
             return new ConfluenceConfig(this);
+        }
+
+        private static int millis(int value, String name) {
+            if (value < 0 || value > 60000) {
+                throw new IllegalArgumentException(name + " muss zwischen 0 und 60000 liegen");
+            }
+            return value;
         }
 
         private static int positive(int value, String name) {

@@ -17,13 +17,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * das Ziel weiter und merkt sich Anfragezeile und Kopfzeilen. {@code CONNECT host:port} öffnet einen Tunnel zum Ziel
  * und leitet die Bytes (TLS) unverändert in beide Richtungen; ist das Ziel nicht erreichbar, antwortet er mit 502.
  */
-final class TestProxy implements AutoCloseable {
+public final class TestProxy implements AutoCloseable {
 
     private final ServerSocket server;
     private final List<String> requestLines = new CopyOnWriteArrayList<>();
     private final List<String> headerBlocks = new CopyOnWriteArrayList<>();
 
-    TestProxy() throws IOException {
+    public TestProxy() throws IOException {
         server = new ServerSocket();
         server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
         Thread acceptor = new Thread(this::accept, "test-proxy");
@@ -31,15 +31,15 @@ final class TestProxy implements AutoCloseable {
         acceptor.start();
     }
 
-    int port() {
+    public int port() {
         return server.getLocalPort();
     }
 
-    List<String> requestLines() {
+    public List<String> requestLines() {
         return requestLines;
     }
 
-    List<String> headerBlocks() {
+    public List<String> headerBlocks() {
         return headerBlocks;
     }
 
