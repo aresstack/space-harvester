@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
 import com.aresstack.spaceharvester.application.query.CacheState;
@@ -31,11 +32,16 @@ import java.util.Optional;
  *
  * <p>Ein Artefakt ist nur {@code complete}, wenn es aus einer bestätigten Generation stammt und keine Seite fehlt. Ein
  * abgebrochener oder gescheiterter Export veröffentlicht nichts.
+ *
+ * <p>Artefakte leben so lange wie ihr Auftrag ({@code space-harvester.jobs.retention}): {@link #purge()} entfernt
+ * beim Start und vor jedem neuen Export Artefakte ohne Auftrag sowie Reste von Läufen, die nie fertig wurden.
  */
 public class Exports {
 
     /** Seiten je Lesestapel. */
     public static final int BATCH_SIZE = 100;
+
+    private static final System.Logger LOG = System.getLogger(Exports.class.getName());
 
     private final Jobs jobs;
     private final PageCacheReader cache;
@@ -47,6 +53,7 @@ public class Exports {
         this.cache = Objects.requireNonNull(cache, "cache");
         this.writer = Objects.requireNonNull(writer, "writer");
         this.clock = Objects.requireNonNull(clock, "clock");
+        purgeQuietly();
     }
 
     /**
@@ -59,6 +66,7 @@ public class Exports {
     public JobStatus start(String sourceId, String spaceKey, String owner) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");
+        purgeQuietly();
         return jobs.submit(JobType.EXPORT, sourceId, spaceKey, owner,
                 JobTask.blocking(context -> export(context, sourceId, spaceKey)));
     }
@@ -89,6 +97,58 @@ public class Exports {
             return Optional.empty();
         }
         return writer.open(exportId, name);
+    }
+
+    /**
+     * Entfernt veröffentlichte Artefakte, deren Auftrag nicht mehr existiert (nach Ablauf der Aufbewahrung oder
+     * Verlust der Job-Ablage), und Artefakte im Entstehen, deren Auftrag nicht mehr läuft (Abbruch des Dienstes). Ein
+     * Artefakt eines laufenden oder wartenden Exports bleibt immer.
+     *
+     * @return Anzahl entfernter Artefakte
+     */
+    public int purge() {
+        jobs.purgeExpired();
+        int removed = 0;
+        for (String exportId : writer.published()) {
+            if (!exportJob(exportId)) {
+                writer.delete(exportId);
+                removed++;
+            }
+        }
+        for (String exportId : writer.unpublished()) {
+            if (!running(exportId)) {
+                writer.discard(exportId);
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    /** Aufräumen darf keinen Export verhindern; was liegen bleibt, entfernt der nächste Lauf. */
+    private void purgeQuietly() {
+        try {
+            purge();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Alte Exportartefakte nicht vollständig entfernt: {0}",
+                    e.getClass().getSimpleName());
+        }
+    }
+
+    private boolean exportJob(String exportId) {
+        try {
+            return jobs.status(exportId).type() == JobType.EXPORT;
+        } catch (UnknownJobException e) {
+            return false;
+        }
+    }
+
+    private boolean running(String exportId) {
+        try {
+            JobStatus status = jobs.status(exportId);
+            return status.type() == JobType.EXPORT && !status.state().terminal();
+        } catch (UnknownJobException e) {
+            return false;
+        }
     }
 
     private void export(JobContext context, String sourceId, String spaceKey) {
