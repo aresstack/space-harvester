@@ -45,4 +45,11 @@ class LayeringTest {
             .should().dependOnClassesThat().resideInAnyPackage(
                     "..spaceharvester.api..", "..spaceharvester.source..", "..spaceharvester.config..")
             .allowEmptyShould(true);
+
+    @ArchTest
+    static final ArchRule copiedUpstreamCodeIsUsedOnlyBySourceAdapters = noClasses()
+            .that().resideOutsideOfPackage("..spaceharvester.source..")
+            .should().dependOnClassesThat().resideInAPackage("com.aresstack.enterpriseai..")
+            .because("die Kopie aus enterprise-ai-sources bleibt hinter den Quellenadaptern; "
+                    + "api, application und output arbeiten mit der eigenen, quellenunabhängigen SPI");
 }
