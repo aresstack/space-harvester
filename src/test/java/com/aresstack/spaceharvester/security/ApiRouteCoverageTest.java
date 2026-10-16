@@ -21,6 +21,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
@@ -106,6 +107,11 @@ class ApiRouteCoverageTest {
 
     private HttpResponse<String> send(Route route, String token) throws Exception {
         String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1");
+        // Routen, die die Quelle als Abfrageparameter nehmen (Suche, #28), bekommen sie dort; sonst endete die
+        // Anfrage schon an der Eingabeprüfung statt an der Rechteprüfung.
+        if (takesSourceIdParameter(route)) {
+            path += "?sourceId=wiki";
+        }
         HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getRequiredProperty("local.server.port") + path))
                 .header("Content-Type", "application/json")
@@ -116,7 +122,15 @@ class ApiRouteCoverageTest {
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
-    private record Route(String method, String path, HandlerMethod handler) {
+    private static boolean takesSourceIdParameter(Route route) {
+        return Arrays.stream(route.handler().getMethodParameters()).anyMatch(parameter -> {
+            RequestParam param = parameter.getParameterAnnotation(RequestParam.class);
+            return param != null && "sourceId".equals(param.value().isEmpty() ? parameter.getParameterName()
+                    : param.value());
+        });
+    }
+
+        private record Route(String method, String path, HandlerMethod handler) {
 
         @Override
         public String toString() {
