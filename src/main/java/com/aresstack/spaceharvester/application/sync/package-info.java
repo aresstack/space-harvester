@@ -9,6 +9,8 @@
  * Seiten entfernen. {@code complete=true} am letzten Cursor heißt nur, dass die Paginierung zu Ende ist, nicht, dass
  * der Bestand ein atomarer Schnappschuss der Quelle ist. Eine fehlende Seite wird erst entfernt, wenn die Quelle sie
  * einzeln als nicht vorhanden oder verschoben bestätigt. Persistiert wird über den Port {@link
- * com.aresstack.spaceharvester.application.sync.SyncBaselineStore}; Inhalte lädt diese Schicht nicht.
+ * com.aresstack.spaceharvester.application.sync.SyncBaselineStore}: Alle Schreibvorgänge eines Laufs werden in einer
+ * {@link com.aresstack.spaceharvester.application.sync.StagedGeneration} vorgemerkt und erst mit der neuen Generation
+ * sichtbar; Inhalte lädt der Port {@link com.aresstack.spaceharvester.application.sync.PageContentFetcher}.
  */
 package com.aresstack.spaceharvester.application.sync;
