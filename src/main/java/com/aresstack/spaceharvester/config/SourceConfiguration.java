@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.access.DelegatedSourceAccessFactory;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.util.Arrays;
 import javax.net.ssl.X509TrustManager;
@@ -50,6 +52,12 @@ class SourceConfiguration {
                 throw new IllegalArgumentException("SSL-Bundle '" + name + "' ist nicht konfiguriert", e);
             }
         };
+    }
+
+    /** Prüfung durchgereichter Endnutzer-Anmeldungen bei Confluence-Quellen (#24, Teil C). */
+    @Bean
+    DelegatedSourceAccessFactory confluenceDelegatedAccess(ConfiguredSourceCatalog catalog) {
+        return ConfluenceDelegatedAccess.factory(catalog);
     }
 
     @Bean

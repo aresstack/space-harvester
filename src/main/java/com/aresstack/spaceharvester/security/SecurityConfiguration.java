@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.CorpusReleasePolicy;
 import com.aresstack.spaceharvester.application.access.DelegatedAccessPolicy;
 import com.aresstack.spaceharvester.application.access.DelegatedSourceAccess;
+import com.aresstack.spaceharvester.application.access.DelegatedSourceAccessFactory;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.time.Clock;
 import java.util.HashSet;
@@ -59,11 +60,12 @@ class SecurityConfiguration {
     }
 
     @Bean
-    DelegatedUsers delegatedUsers(SecurityProperties properties, ObjectProvider<DelegatedSourceAccess> sources) {
+    DelegatedUsers delegatedUsers(SecurityProperties properties, ObjectProvider<DelegatedSourceAccess> sources,
+                                  ObjectProvider<DelegatedSourceAccessFactory> factories) {
         if (properties.mode() != SecurityProperties.Mode.CLIENTS) {
             return DelegatedUsers.none();
         }
-        Map<String, DelegatedSourceAccess> bySource = delegatedSources(properties.clients(), sources.stream().toList());
+        Map<String, DelegatedSourceAccess> bySource = delegatedSources(properties.clients(), sources, factories);
         return new DelegatedUsers(DelegatedUsers.sourcesByClient(properties.clients()), bySource,
                 properties.delegation().identityTtl(), properties.delegation().maxEntries(), Clock.systemUTC());
     }
@@ -101,7 +103,8 @@ class SecurityConfiguration {
 
     @Bean
     AccessPolicy accessPolicy(SecurityProperties properties, SourceCatalog catalog,
-                              ObjectProvider<DelegatedSourceAccess> sources) {
+                              ObjectProvider<DelegatedSourceAccess> sources,
+                              ObjectProvider<DelegatedSourceAccessFactory> factories) {
         if (properties.mode() == SecurityProperties.Mode.DEVELOPMENT) {
             return (context, scope, kind) -> context.kind() == AccessContext.PrincipalKind.DEVELOPMENT
                     ? AccessDecision.ALLOW : AccessDecision.DENY;
@@ -111,7 +114,7 @@ class SecurityConfiguration {
                     + "die API verweigert jeden Datenzugriff.");
         }
         CorpusReleasePolicy corpus = new CorpusReleasePolicy(grants(properties.clients(), catalog));
-        Map<String, DelegatedSourceAccess> delegated = delegatedSources(properties.clients(), sources.stream().toList());
+        Map<String, DelegatedSourceAccess> delegated = delegatedSources(properties.clients(), sources, factories);
         if (delegated.isEmpty()) {
             return corpus;
         }
@@ -120,17 +123,27 @@ class SecurityConfiguration {
     }
 
     /**
-     * Die Prüfungen für alle Quellen, für die ein Client durchreichen darf.
+     * Die Prüfungen für alle Quellen, für die ein Client durchreichen darf: eigens registrierte
+     * {@link DelegatedSourceAccess}-Beans, sonst die einer {@link DelegatedSourceAccessFactory} (Confluence).
      *
      * @throws InvalidSecurityConfigurationException wenn eine solche Quelle keine oder mehrere Prüfungen hat
      */
     static Map<String, DelegatedSourceAccess> delegatedSources(List<SecurityProperties.Client> clients,
-                                                               List<DelegatedSourceAccess> available) {
+                                                               ObjectProvider<DelegatedSourceAccess> sources,
+                                                               ObjectProvider<DelegatedSourceAccessFactory> factories) {
         Map<String, DelegatedSourceAccess> result = new LinkedHashMap<>();
         for (SecurityProperties.Client client : clients) {
             for (String sourceId : client.delegation()) {
-                List<DelegatedSourceAccess> matching = available.stream()
+                if (result.containsKey(sourceId)) {
+                    continue;
+                }
+                // Eine eigens registrierte Prüfung geht der aus der Quellenart abgeleiteten vor.
+                List<DelegatedSourceAccess> matching = sources.orderedStream()
                         .filter(access -> access.sourceId().equals(sourceId)).toList();
+                if (matching.isEmpty()) {
+                    matching = factories.orderedStream()
+                            .flatMap(factory -> factory.forSource(sourceId).stream()).toList();
+                }
                 if (matching.size() != 1) {
                     throw new InvalidSecurityConfigurationException("Client " + client.id() + ": delegation nennt "
                             + "Quelle " + sourceId + ", für die " + (matching.isEmpty() ? "keine" : "mehr als eine")

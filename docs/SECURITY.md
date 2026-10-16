@@ -138,11 +138,13 @@ space-harvester:
   In keinem Fall läuft die Anfrage stattdessen mit den Rechten des Clients weiter.
 - **Start:** Nennt ein Client unter `delegation` eine Quelle ohne passende `DelegatedSourceAccess`-Implementierung,
   startet der Dienst nicht.
-- **Confluence:** Die Implementierung für Confluence Data Center (`GET /rest/api/user/current`,
-  `GET /rest/api/content/{id}?expand=space` und `GET /rest/api/space/{key}` mit dem Endnutzer-Token über den
-  Transport der Quelle, also Proxy-Route und mTLS) folgt. Bis dahin ist die Durchreichung nur gegen den
-  Test-Anbieter geprüft (`DelegatedUserApiTest`). Ein Browser-Login am Harvester (Authorization Code Flow) ist nicht
-  Teil dieses Modus.
+- **Confluence:** `ConfluenceDelegatedAccess` fragt mit dem Endnutzer-Token `GET /rest/api/user/current`
+  (Kennung `userKey`, sonst `username`), `GET /rest/api/content/{id}?expand=space` und `GET /rest/api/space/{key}`,
+  über den Transport der Quelle mit derselben Proxy-Route und demselben mTLS wie beim Ernten (#47). Der PAT der
+  Quelle wird dabei nicht gesendet. Gesendet werden nur `Authorization` und `Accept`, ohne Body, Cookies und
+  Weiterleitungen, mit höchstens 10 s je Anfrage. IDs und Keys mit anderen Zeichen als Buchstaben, Ziffern, `_`,
+  `-` und führendem `~` werden nicht angefragt. Ein Browser-Login am Harvester ist nicht vorgesehen (Entscheidung
+  zu #24: Variante A).
 
 ## Abdeckung von #14
 
@@ -166,6 +168,6 @@ Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API
 
 ## Noch offen
 
-- Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; ein Browser-Login am Harvester ist bewusst nicht
-  vorgesehen (#24, Variante A).
+- Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; Live-Test gegen Confluence (#24). Ein
+  Browser-Login am Harvester ist bewusst nicht vorgesehen (Variante A).
 - Artefakte bleiben nach Ablauf der Auftragsaufbewahrung auf der Platte, sind dann aber über die API nicht mehr erreichbar; Aufräumen gehört zu #11/#12.

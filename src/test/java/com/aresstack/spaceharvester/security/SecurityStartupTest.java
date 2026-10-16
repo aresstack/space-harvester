@@ -83,8 +83,8 @@ class SecurityStartupTest {
 
     @Test
     void delegationWithoutDelegatedCheckForTheSourceIsRejected() {
-        assertStartFails("Client etl: delegation nennt Quelle wiki, für die keine delegierte Prüfung verfügbar ist",
-                withSource(client("--space-harvester.security.clients[0].delegation[0]=wiki")));
+        assertStartFails("Client etl: delegation nennt Quelle other, für die keine delegierte Prüfung verfügbar ist",
+                withSource(client("--space-harvester.security.clients[0].delegation[0]=other")));
     }
 
     private static String[] client(String... grants) {
