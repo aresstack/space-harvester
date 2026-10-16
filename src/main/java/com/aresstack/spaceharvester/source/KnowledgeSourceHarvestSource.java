@@ -8,11 +8,14 @@ import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.StoredPage;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -87,6 +90,26 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
+        return withSpace(resource);
+    }
+
+    @Override
+    public StoredPage storedPage(String pageId) {
+        if (!(port instanceof StoredContentSource stored)) {
+            return HarvestSource.super.storedPage(pageId);
+        }
+        StoredContent content;
+        try {
+            content = stored.storedContent(pageId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new StoredPage(withSpace(content.resource()), content.payload(), content.mediaType(),
+                content.nativeFormat(), content.retrievedAt());
+    }
+
+    /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */
+    private PageMetadata withSpace(KnowledgeResource resource) {
         if (resource.scope() == null || resource.scope().isEmpty()) {
             throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
                     "Seite ohne Space in der Antwort der Quelle", null);

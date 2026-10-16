@@ -170,6 +170,37 @@ Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des üb
 Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
 [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 
+## Seiten-Cache (Lucene)
+
+Native Seiten-Snapshots und Kopfdaten liegen in einem eingebetteten Apache-Lucene-Index im lokalen Dateisystem
+(#26); es gibt keinen Datenbankserver. Ohne Verzeichnis läuft der Dienst ohne Cache.
+
+```yaml
+space-harvester:
+  cache:
+    directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
+    max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+```
+
+- **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
+  Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space der Synchronisierungsstand.
+  Feldschema und Version (`page-cache/v1`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+- **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
+  `job-store/v1`); ohne bleiben sie nur im Speicher.
+- **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
+  Verzeichnis gehört allein dem Dienstkonto (unter Linux z. B. `chmod 700`) und liegt auf einem verschlüsselten
+  Datenträger, wenn die Seiten das verlangen.
+- **Ein Prozess je Verzeichnis:** Lucene sperrt den Index (`write.lock`); ein zweiter Dienst auf demselben
+  Verzeichnis startet nicht.
+- **Konsistenz:** Änderungen werden erst mit einem Commit sichtbar und dauerhaft. Ein Synchronisierungslauf schreibt
+  in einem Schreiblauf und wird erst als vollständig bestätigt, wenn die Synchronisierung das meldet; ein Abbruch
+  oder Absturz vorher lässt den zuletzt bestätigten Stand stehen. Beim Lesen wird jede Payload gegen ihren
+  `rawSha256` geprüft.
+- **Sicherung:** Dienst anhalten und das Verzeichnis kopieren. Im laufenden Betrieb ist eine Kopie nur dann
+  konsistent, wenn währenddessen kein Commit geschieht.
+- **Löschen und Wiederaufbau:** Dienst anhalten, Verzeichnis löschen, neu starten und neu ernten. Ein beschädigter
+  Index oder einer mit anderem Schema verhindert den Start mit einer Meldung; er wird nie stillschweigend ersetzt.
+
 ## API-Übersicht
 
 | Pfad | Zweck |
@@ -280,8 +311,10 @@ Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester
 - `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen,
   `source.network` bestimmt die Proxy-Route je Ziel-URL
 - `output` – Exportformate und Artefakte (folgt mit #11)
+- `persistence` – Speicher hinter den Ports aus `application`; `persistence.lucene` ist der Seiten-Cache
 
-`source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
+`source` und `output` kennen weder `api` noch einander, `persistence` nur `application`, Lucene steht nur in
+`persistence.lucene`; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
 wird nicht übernommen.
 
 Der Confluence-Code stammt unverändert aus dem Enterprise AI Client und liegt als Kopie im Gradle-Subprojekt
