@@ -20,6 +20,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation libs.springdoc.openapi.webmvc.ui
+    // Azure Key Vault als optionale PropertySource (#22); ohne Aktivierung kein Azure-Kontakt, siehe docs/SECRETS.md
+    implementation platform(libs.spring.cloud.azure.dependencies)
+    implementation 'com.azure.spring:spring-cloud-azure-starter-keyvault-secrets'
     // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
     implementation project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)

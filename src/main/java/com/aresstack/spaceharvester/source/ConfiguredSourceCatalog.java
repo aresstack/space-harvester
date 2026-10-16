@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,6 +36,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
 
+    private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
     private static final Logger LOG = LoggerFactory.getLogger(ConfiguredSourceCatalog.class);
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
@@ -148,6 +151,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
         }
         problems.addAll(checkAuth(config.auth()));
         problems.addAll(checkCertificate(config.clientCertificate()));
+        problems.addAll(checkResolved(Map.of(
+                "auth.username", nullToEmpty(config.auth().username()),
+                "auth.password", nullToEmpty(config.auth().password()),
+                "auth.token", nullToEmpty(config.auth().token()),
+                "client-certificate.password", nullToEmpty(config.clientCertificate().password()))));
         for (String key : config.options().keySet()) {
             if (RESERVED_OPTIONS.contains(key)) {
                 problems.add("options." + key + " ist nicht erlaubt; dafür gibt es eigene Felder");
@@ -222,6 +230,26 @@ public final class ConfiguredSourceCatalog implements SourceCatalog {
                     + "Hex-Zeichen)");
         }
         return problems;
+    }
+
+    /**
+     * Spring lässt Platzhalter ohne Wert stehen; ein {@code ${...}} darf nie als Zugangsdatum zur Quelle gehen (#22).
+     * Die Meldung nennt nur den Namen des Platzhalters.
+     */
+    private static List<String> checkResolved(Map<String, String> secrets) {
+        List<String> problems = new ArrayList<>();
+        new TreeMap<>(secrets).forEach((field, value) -> {
+            Matcher placeholder = UNRESOLVED.matcher(value);
+            if (placeholder.find()) {
+                problems.add(field + ": Platzhalter " + placeholder.group() + " hat keinen Wert (Umgebungsvariable, "
+                        + "lokale YAML oder Secret im Azure Key Vault mit Profil azure-keyvault prüfen)");
+            }
+        });
+        return problems;
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     private static boolean present(String value) {

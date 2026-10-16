@@ -7,6 +7,12 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  # Azure Key Vault nur über das Profil azure-keyvault (#22, docs/SECRETS.md); ohne es kein Kontakt zu Azure.
+  cloud:
+    azure:
+      keyvault:
+        secret:
+          property-source-enabled: false
 
 server:
   port: ${SPACE_HARVESTER_PORT:8080}
