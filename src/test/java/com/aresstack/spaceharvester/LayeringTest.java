@@ -81,4 +81,11 @@ class LayeringTest {
             .that().resideOutsideOfPackage("..spaceharvester.persistence.lucene..")
             .should().dependOnClassesThat().resideInAPackage("org.apache.lucene..")
             .because("der Index ist ein Detail der Persistenz (#26); Ports tragen keine Lucene-Typen");
+
+    @ArchTest
+    static final ArchRule delegatedTokenIsReadOnlyBySourceAdapters = noClasses()
+            .that().resideOutsideOfPackage("..spaceharvester.source..")
+            .should().callMethod(com.aresstack.spaceharvester.application.access.UserCredential.class, "token")
+            .because("das durchgereichte Endnutzer-Token (#24) liest nur der Quellenadapter für den Aufruf der "
+                    + "Quelle; alle anderen behandeln es als undurchsichtig (wie Adyton in Corenth)");
 }
