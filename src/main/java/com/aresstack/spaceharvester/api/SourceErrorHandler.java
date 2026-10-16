@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.net.URI;
@@ -32,6 +33,12 @@ class SourceErrorHandler {
         return problem;
     }
 
+    @ExceptionHandler(InvalidQueryException.class)
+    ProblemDetail invalidQuery(InvalidQueryException e) {
+        // Die Meldung stammt aus der eigenen Validierung, nicht aus der Quelle.
+        return problem(HttpStatus.BAD_REQUEST, "invalid-request", "Ungültige Anfrage", e.getMessage());
+    }
+
     @ExceptionHandler(SourceAccessException.class)
     ProblemDetail sourceAccess(SourceAccessException e) {
         Throwable cause = e.getCause() != null ? e.getCause() : e;
@@ -49,7 +56,7 @@ class SourceErrorHandler {
             case INVALID_RESPONSE -> problem(HttpStatus.BAD_GATEWAY, "source-invalid-response",
                     "Unerwartete Antwort der Quelle", "Die Antwort der Quelle war nicht auswertbar.");
             case UNSUPPORTED -> problem(HttpStatus.BAD_REQUEST, "source-unsupported",
-                    "Von der Quelle nicht unterstützt", "Die Quelle unterstützt diese Anfrage nicht.");
+                    "Von der Quelle nicht unterstützt", "Die Quelle unterstützt diese Anfrage nicht, etwa einen Cursor aus einer anderen Abfrage.");
         };
         problem.setProperty("sourceId", e.sourceId());
         return problem;

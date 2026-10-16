@@ -134,6 +134,33 @@ final class ConfluenceRestClient {
     }
 
     /**
+     * Genau ein Stapel der Seiten eines Space ohne Inhalt ab Position {@code start} (höchstens {@code limit}, Confluence
+     * kann weniger liefern). {@link PageBatch#nextStart} ist die Position aus dem {@code next}-Link von Confluence oder
+     * {@code -1}, wenn keiner folgt.
+     */
+    PageBatch spacePageBatch(Session session, String spaceKey, int start, int limit) throws KnowledgeSourceException {
+        String what = "Seiten des Space";
+        JsonObject json = getJson(session, "/rest/api/content?type=page&spaceKey=" + query(spaceKey) + "&expand="
+                + LIST_EXPAND + ",ancestors&start=" + start + "&limit=" + limit, what);
+        List<Page> pages = new ArrayList<Page>();
+        for (JsonObject result : results(json, what)) {
+            pages.add(toPage(result));
+        }
+        String next = nextLink(json, what);
+        if (next == null) {
+            return new PageBatch(pages, -1);
+        }
+        java.util.regex.Matcher position = NEXT_START.matcher(next);
+        int nextStart = position.find() ? Integer.parseInt(position.group(1)) : -1;
+        if (nextStart <= start) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Folgelink ohne weiterführende Position");
+        }
+        return new PageBatch(pages, nextStart);
+    }
+
+    private static final java.util.regex.Pattern NEXT_START = java.util.regex.Pattern.compile("[?&]start=([0-9]{1,9})(?:&|$)");
+
+    /**
      * @param withBody {@code true} lädt den gerenderten Inhalt ({@code body.view}) mit
      * @throws KnowledgeSourceException {@code NOT_FOUND}, wenn die Seite nicht existiert oder keine Seite ist
      */
@@ -1263,6 +1290,17 @@ final class ConfluenceRestClient {
             this.id = id;
             this.title = title;
             this.hasChildren = hasChildren;
+        }
+    }
+
+    /** One batch of the pages of a space and the position of the next one ({@code -1}: last batch). */
+    static final class PageBatch {
+        final List<Page> pages;
+        final int nextStart;
+
+        PageBatch(List<Page> pages, int nextStart) {
+            this.pages = Collections.unmodifiableList(pages);
+            this.nextStart = nextStart;
         }
     }
 

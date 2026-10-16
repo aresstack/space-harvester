@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.MetadataHash;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,12 +12,16 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.net.URI;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -53,6 +60,40 @@ public class SourcesController {
         return new SpacesResponse(sourceId, queries.partitions(sourceId).stream().map(SpaceResponse::of).toList());
     }
 
+    @GetMapping("/{sourceId}/spaces/{spaceKey}/pages/metadata")
+    @Operation(summary = "Metadaten aller Seiten eines Space, ohne Inhalte, stapelweise",
+            description = "Live aus der Quelle gelesen (origin=live), kein Cache. Alle Seiten des Space, auch "
+                    + "außerhalb des Baums der Startseite und über mehrere Wurzelseiten, ohne Gesamtgrenze: "
+                    + "nextCursor an den nächsten Aufruf übergeben, bis er null ist (complete=true). "
+                    + "metadataHash ist ein Fingerprint der Verwaltungsmetadaten nach metadataHashSchema, "
+                    + "kein Inhalts-Hash.")
+    @ApiResponse(responseCode = "200", description = "Ein Stapel Seitenmetadaten")
+    @ApiResponse(responseCode = "400", description = "Ungültiges limit (invalid-request) oder ein Cursor, der "
+            + "nicht zu diesem Space gehört (source-unsupported)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder unbekannter bzw. "
+            + "nicht sichtbarer Space (source-object-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff oder antwortet fehlerhaft",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Quelle nicht erreichbar (source-unavailable)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public PageMetadataResponse pageMetadata(
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
+            @Parameter(description = "nextCursor der vorigen Antwort; leer für den ersten Stapel")
+            @RequestParam(required = false) String cursor,
+            @Parameter(description = "Größe des Stapels, 1 bis " + SourceQueries.MAX_PAGE_METADATA_LIMIT
+                    + "; die Quelle darf weniger liefern, auch wenn noch Seiten folgen")
+            @RequestParam(defaultValue = "" + SourceQueries.MAX_PAGE_METADATA_LIMIT) int limit) {
+        return PageMetadataResponse.of(queries.pageMetadata(sourceId, spaceKey, cursor, limit));
+    }
+
     /** Eine konfigurierte Quelle. */
     public record SourceResponse(String id, String type, String title) {
 
@@ -77,6 +118,54 @@ public class SourcesController {
 
         static SpaceResponse of(Partition partition) {
             return new SpaceResponse(partition.key(), partition.name(), partition.homeResourceId());
+        }
+    }
+
+    /**
+     * Ein Stapel Seitenmetadaten eines Space.
+     *
+     * @param origin               {@code live}: direkt aus der Quelle gelesen, nicht aus einem Cache
+     * @param retrievedAt          Zeitpunkt der Abfrage bei der Quelle
+     * @param metadataHashSchema   Schema und Version von {@code metadataHash}
+     * @param nextCursor           Cursor für den nächsten Stapel oder {@code null}, wenn vollständig
+     * @param complete             {@code true}, wenn dies der letzte Stapel ist
+     */
+    public record PageMetadataResponse(String sourceId, String spaceKey, String origin, Instant retrievedAt,
+                                       String metadataHashSchema, List<PageMetadataEntry> pages,
+                                       @Schema(nullable = true) String nextCursor, boolean complete) {
+
+        static PageMetadataResponse of(PageMetadataListing listing) {
+            return new PageMetadataResponse(listing.sourceId(), listing.partitionKey(), "live",
+                    listing.retrievedAt(), MetadataHash.SCHEMA,
+                    listing.entries().stream().map(PageMetadataEntry::of).toList(), listing.nextCursor(),
+                    listing.complete());
+        }
+    }
+
+    /**
+     * Metadaten einer Seite.
+     *
+     * @param pageId       ID der Seite in der Quelle (Confluence-Content-ID)
+     * @param resourceId   quellübergreifende Ressourcen-ID
+     * @param parentPageId ID der Elternseite oder {@code null} für eine Wurzelseite
+     * @param version      Versionskennung oder {@code null}, wenn unbekannt
+     * @param modifiedAt   letzte Änderung oder {@code null}, wenn unbekannt
+     * @param url          Adresse in der Quelle oder {@code null}, wenn unbekannt
+     * @param attributes   weitere Metadaten der Quelle, z. B. {@code confluence.labels}
+     * @param metadataHash {@code sha256:<hex>} nach {@code metadataHashSchema}
+     */
+    public record PageMetadataEntry(String pageId, String resourceId, String title, String spaceKey,
+                                    @Schema(nullable = true) String parentPageId,
+                                    @Schema(nullable = true) String version,
+                                    @Schema(nullable = true) Instant modifiedAt,
+                                    @Schema(nullable = true) URI url, Map<String, String> attributes,
+                                    String metadataHash) {
+
+        static PageMetadataEntry of(PageMetadataListing.Entry entry) {
+            PageMetadata page = entry.page();
+            return new PageMetadataEntry(page.pageId(), page.resourceId(), page.title(), page.partitionKey(),
+                    page.parentPageId(), page.version(), page.modifiedAt(), page.url(), page.attributes(),
+                    entry.metadataHash());
         }
     }
 }

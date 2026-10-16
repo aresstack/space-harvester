@@ -90,6 +90,7 @@ space-harvester:
 | `GET /api/v1/info` | Name, Version und API-Version des Dienstes |
 | `GET /api/v1/sources` | Konfigurierte Quellen (ID, Typ, Titel; ohne Verbindungsdaten) |
 | `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -105,8 +106,21 @@ Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und
 > konfigurierten Zugangsdaten alle Spaces der Quellen, auch deren Namen, die nicht automatisch für jeden freigegeben
 > sind ([#24](https://github.com/aresstack/space-harvester/issues/24)). Den Dienst daher nicht offen im Netz betreiben.
 
-Geplante Endpunkte: Seitenmetadaten mit Hashwerten ([#5](https://github.com/aresstack/space-harvester/issues/5),
-[#6](https://github.com/aresstack/space-harvester/issues/6)), asynchrone Exporte
+**Seitenmetadaten:** Die Liste kommt live aus der Quelle (`origin: live`) und enthält alle Seiten des Space, auch
+außerhalb des Baums der Startseite, ohne Gesamtgrenze. `nextCursor` wird an den nächsten Aufruf übergeben, bis er
+`null` ist (`complete: true`). Ein Fehler beim Nachladen ist ein Fehler (z. B. 503), nie eine leere oder vollständige
+Liste; ein Cursor gilt nur für seinen Space. Je Seite: `pageId`, `title`, `spaceKey`, `parentPageId` (`null` für
+Wurzelseiten), `version`, `modifiedAt`, `url`, weitere Attribute der Quelle (etwa `confluence.labels`) und
+`metadataHash`.
+
+`metadataHash` (Schema `page-metadata/v1`, in `metadataHashSchema` mitgeliefert) ist `sha256:<hex>` über ein
+kanonisches JSON-Objekt aus `schema`, `sourceId`, `pageId`, `spaceKey`, `title`, `parentPageId`, `version` und
+`modifiedAt` in dieser Reihenfolge; unbekannte Werte sind `null`, Zeiten UTC nach ISO-8601, Zeichenketten unverändert
+(keine Unicode-Normalisierung), UTF-8. Abrufzeit, URL und Attribute zählen nicht mit. Der Hash zeigt Änderungen dieser
+Metadaten an, beweist aber keine Inhaltsänderung; ein Inhalts-Hash (`rawSha256`) kommt mit den Rohdaten (#8).
+
+Geplante Endpunkte: Metadaten einer einzelnen Seite und Space-Fingerprint
+([#6](https://github.com/aresstack/space-harvester/issues/6)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
 ## Aufbau
