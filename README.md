@@ -178,7 +178,7 @@ Native Seiten-Snapshots und Kopfdaten liegen in einem eingebetteten Apache-Lucen
 ```yaml
 space-harvester:
   cache:
-    directory: /var/lib/space-harvester/cache   # Indexverzeichnis
+    directory: /var/lib/space-harvester/cache   # Wurzel; der Seiten-Index liegt in pages/
     max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
 ```
 

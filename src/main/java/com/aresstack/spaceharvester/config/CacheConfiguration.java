@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Öffnet den Seiten-Cache, wenn {@code space-harvester.cache.directory} gesetzt ist. Ein gesperrter, beschädigter
+ * Öffnet den Seiten-Cache unter {@code <directory>/}{@value #PAGES}, wenn {@code space-harvester.cache.directory} gesetzt ist. Ein gesperrter, beschädigter
  * oder in einem anderen Schema angelegter Index verhindert den Start. Beim Herunterfahren wird der Index geschlossen
  * und die Sperre freigegeben.
  */
@@ -16,6 +16,9 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(CacheProperties.class)
 class CacheConfiguration {
 
+    /** Unterverzeichnis des Seiten-Index; weitere Indizes (z. B. Aufträge) liegen daneben. */
+    static final String PAGES = "pages";
+
     @Bean(destroyMethod = "close")
     LucenePageCache pageCache(CacheProperties properties) {
         long bytes = properties.maxPayloadSize().toBytes();
@@ -23,6 +26,6 @@ class CacheConfiguration {
             throw new IllegalArgumentException("space-harvester.cache.max-payload-size muss zwischen 1 Byte und "
                     + Integer.MAX_VALUE + " Bytes liegen");
         }
-        return LucenePageCache.open(properties.directory(), (int) bytes);
+        return LucenePageCache.open(properties.directory().resolve(PAGES), (int) bytes);
     }
 }

@@ -31,12 +31,12 @@ class CacheConfigurationTest {
                         .getBean(SnapshotRepository.class).isInstanceOf(LucenePageCache.class));
 
         // Nach dem Schließen des Kontexts ist der Index wieder frei.
-        LucenePageCache.open(directory).close();
+        LucenePageCache.open(directory.resolve(CacheConfiguration.PAGES)).close();
     }
 
     @Test
     void aLockedIndexPreventsTheStart() {
-        try (LucenePageCache held = LucenePageCache.open(directory)) {
+        try (LucenePageCache held = LucenePageCache.open(directory.resolve(CacheConfiguration.PAGES))) {
             runner.withPropertyValues("space-harvester.cache.directory=" + directory)
                     .run(context -> assertThat(context).hasFailed().getFailure()
                             .hasStackTraceContaining("von einem anderen Prozess geöffnet"));
