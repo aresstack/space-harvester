@@ -9,7 +9,7 @@ import java.util.Optional;
  * dafür, dass Aufträge einen Neustart überdauern; {@link Jobs} markiert dabei unterbrochene Aufträge als gescheitert.
  *
  * <p>Pflichten jeder Umsetzung prüft der Vertragstest {@code JobStoreContract} in den Testquellen: alle Felder kommen
- * unverändert zurück, {@link #save} ersetzt den Stand desselben Auftrags, persistente Ablagen überleben einen Neustart.
+ * unverändert zurück, {@link #save} ersetzt den Stand desselben Auftrags, {@link #delete} entfernt ihn, persistente Ablagen überleben einen Neustart.
  */
 public interface JobStore {
 
@@ -19,4 +19,7 @@ public interface JobStore {
     Optional<JobStatus> find(String jobId);
 
     List<JobStatus> all();
+
+    /** Entfernt einen Auftrag; ohne Wirkung, wenn es ihn nicht gibt. {@link Jobs} entfernt nur beendete Aufträge. */
+    void delete(String jobId);
 }
