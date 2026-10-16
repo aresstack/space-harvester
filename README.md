@@ -275,8 +275,15 @@ Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktu
 samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
 können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
-`refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
-antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
+`refresh=true` prüft die Einzelseite vor der Auslieferung gegen die Quelle und liefert nie stattdessen den
+Cache-Stand: Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
+Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
+geladene Payload (`content-changed`); auch Seiten, die noch nicht im Cache liegen, werden so live geliefert.
+Abweichungen vom Cache tragen `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand `stale`. Der Cache
+selbst ändert sich erst mit dem nächsten Abgleich. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
+die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
+`source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
+antwortet `refresh=true` mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`

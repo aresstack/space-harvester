@@ -219,6 +219,8 @@ class PageQueryApiTest {
         assertThat(response.headers().firstValue("ETag")).contains("\"" + rawSha256 + "\"");
         assertThat(response.headers().firstValue("X-Cache-Generation")).contains("g1");
         assertThat(response.headers().firstValue("X-Cache-State")).contains("confirmed");
+        assertThat(response.headers().firstValue("X-Page-Origin")).contains("cache");
+        assertThat(response.headers().firstValue("X-Page-Refresh")).isEmpty();
         assertThat(response.headers().firstValue("X-Cache-Synced-At")).contains("2026-10-16T20:00:00Z");
         assertThat(response.headers().firstValue("X-Cache-Last-Checked-At")).contains("2026-10-16T20:05:00Z");
         assertThat(response.headers().firstValue("X-Page-Revision")).contains("3");
@@ -248,10 +250,12 @@ class PageQueryApiTest {
 
     @Test
     void refreshIsNeverAnsweredFromTheCache() throws Exception {
+        // Die Quelle (127.0.0.1:9) ist nicht erreichbar: ein Fehler, nie der Cache-Stand.
         HttpResponse<String> response = get("/api/v1/sources/wiki/pages/101?refresh=true");
 
-        assertProblem(response, 501, "refresh-unavailable");
+        assertProblem(response, 503, "source-unavailable");
         assertThat(response.headers().firstValue("ETag")).isEmpty();
+        assertThat(response.headers().firstValue("X-Cache-Generation")).isEmpty();
     }
 
     @Test
@@ -307,7 +311,7 @@ class PageQueryApiTest {
     @Test
     void extendedViewFollowsTheSameRulesAsTheNativeView() throws Exception {
         assertProblem(get("/api/v1/sources/wiki/pages/101?view=html"), 400, "invalid-request");
-        assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 501, "refresh-unavailable");
+        assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 503, "source-unavailable");
         assertProblem(get("/api/v1/sources/wiki/pages/4711?view=extended"), 404, "cache-miss");
         HttpResponse<String> denied = getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages/100?view=extended");
         assertProblem(denied, 403, "access-denied");
