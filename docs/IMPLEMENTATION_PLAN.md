@@ -139,11 +139,11 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 - [x] Upstream-Pagination: [enterprise-ai-client PR #167](https://github.com/aresstack/enterprise-ai-client/pull/167) gemergt, über PR #32 in `enterprise-ai-sources` synchronisiert (#2/#5).
 - [x] YAML-Quellen, Basic/PAT, Spaces: [space-harvester PR #25](https://github.com/aresstack/space-harvester/pull/25) gemergt (#3/#4/#24 Teil A). **Laufende Folge-PRs nicht wegen der Cache-Architektur erweitern.**
 
-**M0b – Reale Quellverbindung absichern (eigene PRs, parallel zu M1/M2; vor Live-Tests)**
+**M0b – Gleichrangige Betriebsblocker für die reale Confluence-Verbindung (#33 und #34; parallel zu M1/M2, vor Live-Tests und Library-Nutzung im Unternehmensnetz)**
 - [ ] **#33 – ausgehendes mTLS je Confluence-Quelle:** Windows-MY mit Dienstkonto-Zertifikat und PKCS12, explizite Alias-/Schlüsselwahl, vorhandene Upstream-`ClientCertificates`/`ClientCertificateSockets` anbinden, Basic/PAT unabhängig erhalten. Integrationstest mit HTTPS-Server, der Clientzertifikat verlangt. **Ohne #33 kein belastbarer Live-Durchstich zur aktuellen produktiven Confluence-Instanz**; Fake-Confluence-/Unit-Tests dürfen unabhängig fortgesetzt werden.
-- [ ] **#34 – Proxy-/WPAD-/PAC-Routing:** bestehenden `win-proxy-java`-/`HttpRoutePort`-Pfad über Spring konfigurieren und echte pro-Ziel-Routen anwenden; PAC-/Windows-Dienstkontext, Fehlermeldungen und HTTPS CONNECT prüfen. WebClient/echte asynchrone HTTP-I/O **in separatem ADR mit Regressionstests** gegen bisherigen Confluence-Transport evaluieren, keinen zweiten Confluence-Fachclient bauen.
+- [ ] **#34 – Proxy-/WPAD-/PAC-Routing: ebenso Betriebsblocker wie #33 für Library und Service** im betroffenen Unternehmensnetz. Bestehenden `win-proxy-java`-/`HttpRoutePort`-Pfad über Spring konfigurieren und echte pro-Ziel-Routen anwenden; PAC-/Windows-Dienstkontext, Fehlermeldungen und HTTPS CONNECT prüfen. Die bereits in #34 vorgesehene WebClient-/echte asynchrone HTTP-I/O-Integration im ADR und mit Regressionstests gegen bisherigen Confluence-Transport behandeln, keinen zweiten Confluence-Fachclient bauen. Eine lediglich vorhandene Bibliothek ohne **tatsächlich angewendete** PAC-Routen ist nicht betriebsfähig.
 - [ ] Gemeinsamer Integrationstest **mTLS + HTTPS CONNECT** bei benötigter Proxyroute, ohne die isolierte Fertigstellung von #33 vom vollständigen Umfang von #34 abhängig zu machen.
-- **Abnahme:** Mindestens direkte mTLS-zu-Confluence-Metadatenabfrage (PAT plus Zertifikat) in dokumentierter Serviceidentität erfolgreich; im PAC-Unternehmensnetz zusätzlich durch korrekte Proxyroute. Keine Secrets/Schlüssel/Access-Token in Logs/HTTP-Responses.
+- **Abnahme:** Erstes isoliertes mTLS-Gate: direkte mTLS-Metadatenabfrage mit PAT und Zertifikat. **Produktives Verbindungs-/Library-Gate: dieselbe fachliche Abfrage über die vom Unternehmens-PAC für die Ziel-URL gewählte Route (ggf. HTTPS CONNECT) mit mTLS erfolgreich**; auch beim Einbinden des Connectors in den headless Java-21-Dienst mit dem tatsächlichen Dienstkonto. Kein impliziter DIRECT-Fallback, keine Secrets/Schlüssel/Access-Token in Logs/HTTP-Responses.
 
 **M1 – Vollständige Metadaten (#5/#6)**
 - [x] Paginierter **Live**-Space-Inventar-Endpunkt ohne Content, Cursor/Limit 1–100, keine Trunkierung: [PR #32](https://github.com/aresstack/space-harvester/pull/32) gemergt (#5).
@@ -207,7 +207,7 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 3. #16/#27: Cache-TTL, Refresh-Policy, Stale-Antwortverhalten und Cursor-Semantik über Index-Generationen.
 4. #28: Analyzer-Sprache und Schutz der statischen Volltextprojektion; **Metadatensuche zuerst**.
 5. #14/#24: technischer Client-Zugang, identitätsgebundene delegierte Nutzerprüfung und Freigabemodell.
-6. #33/#34: Quellzertifikat aus Windows-MY/PKCS12, effektives Dienstkonto und Trust-Policy, PAC-Fail-Closed, asynchroner HTTP-Transport und Test-/ADR-Ergebnis. Produktive Erreichbarkeit vor realen Confluence-Live-Tests absichern.
+6. #33/#34: **beide** sind produktive Connectivity-Gates (auch bei Wiederverwendung als Library) im betroffenen Unternehmensnetz: Quellzertifikat aus Windows-MY/PKCS12, effektives Dienstkonto und Trust-Policy, PAC-Fail-Closed, asynchroner HTTP-Transport und Test-/ADR-Ergebnis. Direkten mTLS-Test und kombinierten mTLS+PAC/CONNECT-Test voneinander unterscheiden.
 6. #11/#30: Grenze zwischen synchronen paginierten APIs und großen asynchronen Streaming-/Download-Artefakten.
 
 Diese Punkte **nicht** stillschweigend als bereits implementiert oder endgültig entschieden darstellen.
