@@ -31,8 +31,16 @@ Gesetzt ist *dass* asynchron übertragen wird, offen ist nur *wie*:
    `CompletionStage<ConfluenceHttpResponse> getAsync(URI, Map<String, String>, int maxBytes)` neben dem synchronen
    `ConfluenceHttpTransport`. Ein asynchroner Client hinter dem heutigen synchronen Port müsste `block()` bzw.
    `join()` aufrufen und wäre damit nicht asynchron. Danach Kopie synchronisieren (#2).
-2. **Client im Space Harvester** hinter dieser SPI. Kandidaten: Spring `WebClient` (Reactor Netty) oder JDK
-   `java.net.http.HttpClient.sendAsync` (ohne Netty). Auswahl nach den Kriterien unten.
+2. **Client im Space Harvester** hinter dieser SPI. **Bevorzugt (Arbeitsannahme, 2026-10-16): Spring `WebClient`**
+   im bestehenden Spring-MVC-Dienst, ohne Umstellung auf WebFlux; `spring-webflux` und Reactor Netty kommen nur als
+   Client-Abhängigkeit. Rückgabe an die SPI per `Mono#toFuture()`. Alternative, falls die Paritätstests scheitern:
+   JDK `java.net.http.HttpClient.sendAsync`.
+   - Reactor Netty kennt keinen Proxy je Anfrage-URL. Die Route aus `ProxyRoutes` braucht daher eigene
+     `HttpClient`-/`WebClient`-Instanzen (bzw. Connection-Pools) je Kombination aus Proxy-Route und Quelle, oder
+     einen eigenen `ProxyProvider`-Resolver, der vor dem Verbindungsaufbau die bereits aufgelöste Route nimmt.
+   - PAC-Auflösung und PowerShell laufen vorher auf dem eigenen Pool von `ProxyRoutes`, nie auf dem Event-Loop.
+   - mTLS über Netty-`SslContext` mit eigenem `KeyManagerFactory` (Windows-MY/PKCS12 aus #33), bzw. Spring
+     `SslBundles`/`WebClientSsl`, wo die Zertifikatsquelle passt.
 
 Kriterien, nachzuweisen mit Integrationstests gegen den bisherigen Transport:
 
