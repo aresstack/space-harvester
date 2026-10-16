@@ -9,7 +9,9 @@ import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
 import com.aresstack.spaceharvester.application.query.PageQueries;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -21,6 +23,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -252,8 +255,63 @@ class PageQueryApiTest {
     }
 
     @Test
-    void extendedViewIsNotYetOffered() throws Exception {
-        assertProblem(get("/api/v1/sources/wiki/pages/101?view=extended"), 400, "invalid-request");
+    void extendedViewSeparatesNativeDataFromHarvesterMetadata() throws Exception {
+        byte[] payload = "{\"id\":\"104\",\"type\":\"page\",\"exact\":1.10,\"big\":12345678901234567890.000000001}"
+                .getBytes(StandardCharsets.UTF_8);
+        PageSnapshot stored = page("wiki", "DEV", "104", "100", payload);
+        cache.publish("wiki", "DEV", confirmed("g2"), List.of(stored));
+        // Die Synchronisierung hat neuere Kopfdaten gesehen, aber noch keine neue Payload geladen.
+        PageMetadata renamed = new PageMetadata("104", stored.header().metadata().resourceId(), "Neuer Titel", "DEV",
+                "100", "4", Instant.parse("2026-10-16T20:30:00Z"), null, PageMetadata.sorted(Map.of()));
+        cache.updateHeader("DEV", PageHeader.of("wiki", renamed, Instant.parse("2026-10-16T20:40:00Z")));
+
+        HttpResponse<String> response = get("/api/v1/sources/wiki/pages/104?view=extended");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("application/json"));
+        assertThat(response.headers().firstValue("Cache-Control")).hasValueSatisfying(
+                value -> assertThat(value).contains("no-cache").contains("private"));
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("sourceId").asString()).isEqualTo("wiki");
+        assertThat(body.get("origin").asString()).isEqualTo("cache");
+        assertThat(body.get("cache").get("generation").asString()).isEqualTo("g2");
+        assertThat(body.get("cache").get("state").asString()).isEqualTo("confirmed");
+        // data ist die native Antwort, ohne Harvester-Felder und ohne Stellenverlust.
+        assertThat(body.get("data").propertyNames()).containsExactly("id", "type", "exact", "big");
+        assertThat(response.body()).contains("\"exact\":1.10").contains("\"big\":12345678901234567890.000000001");
+        JsonNode metadata = body.get("metadata");
+        assertThat(metadata.get("metadataHashSchema").asString()).isEqualTo("page-metadata/v1");
+        assertThat(metadata.get("attributesHashSchema").asString()).isEqualTo("page-attributes/v1");
+        assertThat(metadata.get("page").get("title").asString()).isEqualTo("Neuer Titel");
+        assertThat(metadata.get("page").get("version").asString()).isEqualTo("4");
+        assertThat(metadata.get("page").get("rawSha256").asString()).isEqualTo(stored.payload().rawSha256());
+        assertThat(metadata.get("payloadRevision").asString()).isEqualTo("3");
+        assertThat(metadata.get("payloadRetrievedAt").asString()).isEqualTo("2026-10-16T20:00:00Z");
+        assertThat(metadata.get("headerObservedAt").asString()).isEqualTo("2026-10-16T20:40:00Z");
+        assertThat(metadata.get("nativeFormat").asString())
+                .isEqualTo("confluence-rest-content+json;expand=body.storage");
+        assertThat(body.get("enrichments").isArray()).isTrue();
+        assertThat(body.get("enrichments").isEmpty()).isTrue();
+    }
+
+    @Test
+    void extendedViewOfANonJsonPayloadIs422WithoutLeakingIt() throws Exception {
+        HttpResponse<String> response = get("/api/v1/sources/wiki/pages/101?view=extended");
+
+        assertProblem(response, 422, "payload-not-json");
+        assertThat(response.body()).doesNotContain("\\u0000").doesNotContain("\"id\"");
+        assertThat(get("/api/v1/sources/wiki/pages/101?view=native").statusCode()).isEqualTo(200);
+    }
+
+    @Test
+    void extendedViewFollowsTheSameRulesAsTheNativeView() throws Exception {
+        assertProblem(get("/api/v1/sources/wiki/pages/101?view=html"), 400, "invalid-request");
+        assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 501, "refresh-unavailable");
+        assertProblem(get("/api/v1/sources/wiki/pages/4711?view=extended"), 404, "cache-miss");
+        HttpResponse<String> denied = getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages/100?view=extended");
+        assertProblem(denied, 403, "access-denied");
+        assertThat(denied.body()).doesNotContain("Seite 100");
     }
 
     @Test
