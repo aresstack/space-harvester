@@ -218,6 +218,8 @@ class HarvestEndToEndTest {
 
         JsonNode sync = syncUntilFinished();
         assertThat(sync.get("summary").get("complete").asBoolean()).isFalse();
+        assertThat(get("/api/v1/sources/demo/spaces/DEMO/tree").get("cache").get("state").asString())
+                .isEqualTo("incomplete");
 
         JsonNode export = export();
         assertThat(export.get("artifact").get("complete").asBoolean())
