@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.InputStream;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Ablage für Exportartefakte (#11). Ein Artefakt entsteht unsichtbar und wird erst mit
@@ -26,6 +27,18 @@ public interface ExportArtifactWriter {
      * @return leer, wenn es das Artefakt oder die Datei nicht gibt oder der Name aus dem Artefakt hinausführt
      */
     Optional<InputStream> open(String exportId, String name);
+
+    /** IDs aller veröffentlichten Artefakte. */
+    Set<String> published();
+
+    /** IDs aller Artefakte im Entstehen, auch von Läufen, die nie fertig wurden (Abbruch des Dienstes). */
+    Set<String> unpublished();
+
+    /** Entfernt das veröffentlichte Artefakt dieses Exports; ohne Wirkung, wenn es keines gibt. */
+    void delete(String exportId);
+
+    /** Verwirft das Artefakt dieses Exports im Entstehen; ein veröffentlichtes bleibt unberührt. */
+    void discard(String exportId);
 
     /** Ein Artefakt im Entstehen. {@link #close()} ohne vorheriges {@link #publish} verwirft es. */
     interface Session extends AutoCloseable {

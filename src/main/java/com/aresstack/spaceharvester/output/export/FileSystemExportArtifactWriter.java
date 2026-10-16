@@ -35,6 +35,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
@@ -64,6 +66,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String TREE = "tree.json";
     static final String MANIFEST = "manifest.json";
     static final String RAW = "raw";
+    static final String INCOMPLETE = ".incomplete";
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
     // Nur Kleinbuchstaben: Dateisysteme ohne Groß-/Kleinschreibung dürfen keine zwei Seiten zusammenlegen.
@@ -82,7 +85,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     public Session begin(String exportId, ExportScope scope) {
         requireSafe(exportId);
         Path target = root.resolve(exportId);
-        Path work = root.resolve(".incomplete").resolve(exportId);
+        Path work = root.resolve(INCOMPLETE).resolve(exportId);
         try {
             if (Files.exists(target)) {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht");
@@ -129,6 +132,52 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             return Optional.empty();
         } catch (IOException e) {
             throw new UncheckedIOException("Datei des Exports " + exportId + " nicht lesbar", e);
+        }
+    }
+
+    @Override
+    public Set<String> published() {
+        return exportIds(root);
+    }
+
+    @Override
+    public Set<String> unpublished() {
+        return exportIds(root.resolve(INCOMPLETE));
+    }
+
+    @Override
+    public void delete(String exportId) {
+        remove(exportId, root);
+    }
+
+    @Override
+    public void discard(String exportId) {
+        remove(exportId, root.resolve(INCOMPLETE));
+    }
+
+    private static void remove(String exportId, Path parent) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return;
+        }
+        try {
+            deleteRecursively(parent.resolve(exportId));
+        } catch (IOException e) {
+            throw new UncheckedIOException("Export " + exportId + " nicht entfernbar", e);
+        } catch (UncheckedIOException e) {
+            throw new UncheckedIOException("Export " + exportId + " nicht entfernbar", e.getCause());
+        }
+    }
+
+    private static Set<String> exportIds(Path directory) {
+        if (!Files.isDirectory(directory)) {
+            return Set.of();
+        }
+        try (Stream<Path> entries = Files.list(directory)) {
+            return entries.filter(Files::isDirectory).map(path -> path.getFileName().toString())
+                    .filter(name -> SAFE_EXPORT_ID.matcher(name).matches())
+                    .collect(Collectors.toUnmodifiableSet());
+        } catch (IOException e) {
+            throw new UncheckedIOException("Exportverzeichnis nicht lesbar", e);
         }
     }
 
