@@ -92,6 +92,8 @@ Die folgenden Routen sind **Zielverträge**, keine bereits vorhandenen Funktione
 | `GET /api/v1/sources/{sourceId}/spaces` | Sichtbare Spaces (#4/#25) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Live oder explizit als Cache-Ansicht ausgewiesene Metadaten ohne Body, paginiert (#5) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Einzelnes natives Quellobjekt aus dem geschützten Cache (Raw-View, ohne Harvester-Metadaten) (#27) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}?refresh=true` | Berechtigte explizite Aktualitätsprüfung der Seite gegen Confluence-Metadaten; Raw-Body bei Änderung aktualisieren. Bei Prüffehlern kein unmarkierter Stale-Fallback, sondern dokumentierter Fehler (#16/#27). Standard `refresh=false`: Cache-only mit gekennzeichnetem Stand. |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/{pageId}/metadata` | Eigene Verwaltungsmetadaten, Hashes, Freshness und optionale Enrichments **ohne Body**; Source-/Space-Zuordnung prüfen (#6/#27). |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}?view=extended` | Container mit `data`, `metadata`, `enrichments` (#27) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache, **paginierte** Seitenliste; Content nur wenn ausdrücklich angefordert (#27) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Separater Baum mit `roots[]`, IDs und Kindern; mehrere Roots (#27) |
@@ -112,6 +114,8 @@ Flache JSON-Ausgabe: ein Array von Seiten mit `pageId`, Header (Version und verf
 5. **Sync-Generation veröffentlichen:** Erst nach vollständiger fehlerfrei geprüfter Enumeration eine neue bestätigte Bestands-Generation markieren; partieller Lauf bleibt sichtbar und nicht „vollständig“. Wiederaufnahme, Retry und Index-Commit dokumentieren (#12/#13/#16/#26).
 6. **Freshness kenntlich machen:** `lastCheckedAt`, Metadatenrevision, `cacheState` (z. B. fresh/stale/incomplete/not-fetched) und optionalen Abfrage-Modus dokumentieren. **Cache-Hit ist kein Beweis für Aktualität oder Zugriffsberechtigung.**
 7. **Enrichments invalidieren:** Bei verändertem Input-Hash oder Prozessor-/Modellversion ausschließlich die passenden abgeleiteten Ergebnisse als veraltet markieren (#29/#19).
+
+**Abfrage-Vertrag:** `?refresh=true` verlangt eine echte upstream-seitige Metadaten-/Versionsprüfung mit Timeout/Rate-Limits. Nur bei Änderung wird der Rohinhalt nachgeladen; bei Fehler kein unmarkierter Fallback aus dem Cache. Die Berechtigung zur Aktualisierung bleibt von der Berechtigung zur Datenausgabe getrennt. Die genaue OpenAPI-Fehlerabbildung steht in #27.
 
 Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar und kein fest behaupteter SLA**. Auf Zuruf kann ein technischer Client Refresh/Export als gesicherten Job anstoßen. Bei Confluence-Ausfall sind gespeicherte Daten als **stale** gekennzeichnet; ob sie ausgeliefert werden dürfen, entscheidet explizite Cache-Policy **und** unabhängige Berechtigungsprüfung.
 
