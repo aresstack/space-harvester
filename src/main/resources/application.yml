@@ -34,6 +34,9 @@ space-harvester:
       mode: disabled
     # disabled = alles synchron; web-client = Seiten-Snapshots zusätzlich nicht blockierend (#47, ADR 0001).
     async-transport: disabled
+  # Optionale Weboberfläche unter /ui/ (#17); spricht nur die REST-API mit Bearer-Token an.
+  ui:
+    enabled: true
   # Zugriffsschutz der API: Standard mode=clients ohne Clients, also kein Datenzugriff. Siehe docs/SECURITY.md.
   security:
     mode: clients
