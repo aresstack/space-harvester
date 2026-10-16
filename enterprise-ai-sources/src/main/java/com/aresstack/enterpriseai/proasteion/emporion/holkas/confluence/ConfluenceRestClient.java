@@ -3,6 +3,7 @@ package com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.DownloadAccess;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -57,6 +58,13 @@ final class ConfluenceRestClient {
     private static final String LIST_EXPAND = "version,space,metadata.labels";
     /** Für Metadaten einer Seite ohne Inhalt: zusätzlich Eltern und Erstellung ({@code history}). */
     private static final String METADATA_EXPAND = LIST_EXPAND + ",ancestors,history";
+    /**
+     * Für den nativen Snapshot einer Seite ({@code StoredContentSource}): {@code body.storage} statt gerenderter
+     * Ansichten, dazu Revision, Space, Elternkette, Labels und Erstellung/letzte Änderung aus derselben Antwort.
+     * Keine benutzerabhängigen Felder ({@code body.view}, {@code metadata.currentuser}) und keine Rechte.
+     */
+    static final String SNAPSHOT_EXPAND =
+            "body.storage,version,space,ancestors,metadata.labels,history,history.lastUpdated";
     /** Confluence Data Center liefert Zeitstempel auch mit kompaktem Offset ({@code +1100}), kein ISO-8601. */
     private static final DateTimeFormatter COMPACT_OFFSET =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss[.SSS]XX", Locale.ROOT);
@@ -173,6 +181,22 @@ final class ConfluenceRestClient {
             throw new KnowledgeSourceException(Kind.NOT_FOUND, "Inhalt " + contentId + " ist keine Seite");
         }
         return toPage(json);
+    }
+
+    /**
+     * Die unveränderte JSON-Antwort einer Seite mit {@link #SNAPSHOT_EXPAND} und die daraus gelesenen Metadaten.
+     *
+     * @throws KnowledgeSourceException {@code NOT_FOUND}, wenn die Seite nicht existiert oder keine Seite ist;
+     *                                  {@link ResponseTooLargeException} über {@code maxResponseBytes}
+     */
+    StoredPage storedPage(Session session, String contentId) throws KnowledgeSourceException {
+        ConfluenceHttpResponse response = send(session, "/rest/api/content/" + contentId + "?expand="
+                + SNAPSHOT_EXPAND, "Seite", config.maxResponseBytes());
+        JsonObject json = jsonObject(response, "Seite");
+        if (!"page".equals(string(json, "type"))) {
+            throw new KnowledgeSourceException(Kind.NOT_FOUND, "Inhalt " + contentId + " ist keine Seite");
+        }
+        return new StoredPage(response.body(), response.contentType(), toPage(json));
     }
 
     /** Die Seite für die Lese-Ansicht: {@code body.export_view}, leer oder fehlend {@code body.view}. */
@@ -1382,7 +1406,10 @@ final class ConfluenceRestClient {
     }
 
     private JsonObject getJson(Session session, String path, String what) throws KnowledgeSourceException {
-        ConfluenceHttpResponse response = send(session, path, what, config.maxResponseBytes());
+        return jsonObject(send(session, path, what, config.maxResponseBytes()), what);
+    }
+
+    private static JsonObject jsonObject(ConfluenceHttpResponse response, String what) throws KnowledgeSourceException {
         if (!response.contentType().toLowerCase(java.util.Locale.ROOT).contains("json")) {
             throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
                     what + ": keine JSON-Antwort (Anmeldeseite eines Proxys?)");
@@ -1409,6 +1436,8 @@ final class ConfluenceRestClient {
         ConfluenceHttpResponse response;
         try {
             response = transport.get(uri, session.headers, maxBytes);
+        } catch (ConfluenceResponseTooLargeException e) {
+            throw new ResponseTooLargeException(what + ": Antwort größer als " + maxBytes + " Bytes", maxBytes);
         } catch (IOException e) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence nicht erreichbar ("
                     + cause(e) + ")", e);
@@ -1747,6 +1776,19 @@ final class ConfluenceRestClient {
         Page withCreated(Instant created, String creator) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
                     serverBase, storage, created, creator);
+        }
+    }
+
+    /** Antwortkörper einer Seite, unverändert, mit den daraus gelesenen Metadaten. */
+    static final class StoredPage {
+        final byte[] payload;
+        final String contentType;
+        final Page page;
+
+        StoredPage(byte[] payload, String contentType, Page page) {
+            this.payload = payload;
+            this.contentType = contentType;
+            this.page = page;
         }
     }
 

@@ -34,6 +34,8 @@ import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
+import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Attachment;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Page;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Session;
@@ -41,8 +43,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import java.net.URI;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
@@ -92,7 +96,8 @@ import java.util.regex.Pattern;
  * Ohne {@link ConfluenceConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
 public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
-        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource {
+        AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource,
+        StoredContentSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -107,6 +112,12 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
      * Gesamtzahl.
      */
     static final int MAX_PARTITION_BATCH = 100;
+    /**
+     * {@link StoredContent#nativeFormat()} der Seiten-Snapshots: REST-Content-JSON mit der sortierten
+     * {@code expand}-Liste; eine andere Liste ergibt ein anderes, nicht vergleichbares Format.
+     */
+    static final String SNAPSHOT_FORMAT = "confluence-rest-content+json;expand="
+            + sortedExpand(ConfluenceRestClient.SNAPSHOT_EXPAND);
     private static final String PARTITION_CURSOR_PREFIX = "p1.";
     private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Za-z0-9_-]{1,400})\\.([0-9]{1,9})");
 
@@ -626,6 +637,38 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
             }
         });
         return pageResource(page, page.parentId);
+    }
+
+    /**
+     * Die unveränderte JSON-Antwort einer Seite ({@code /rest/api/content/<id>?expand=}{@value
+     * ConfluenceRestClient#SNAPSHOT_EXPAND}) mit den Metadaten aus derselben Antwort, wie {@link #resourceMetadata}.
+     */
+    @Override
+    public StoredContent storedContent(final String localId) throws KnowledgeSourceException {
+        if (!ConfluenceIds.isContentId(localId)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
+        }
+        ConfluenceRestClient.StoredPage stored = withSession(new Operation<ConfluenceRestClient.StoredPage>() {
+            @Override
+            public ConfluenceRestClient.StoredPage run(Session session) throws KnowledgeSourceException {
+                return client.storedPage(session, localId);
+            }
+        });
+        return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
+                mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
+    }
+
+    private static String sortedExpand(String expand) {
+        List<String> fields = new ArrayList<String>(Arrays.asList(expand.split(",")));
+        Collections.sort(fields);
+        return join(fields);
+    }
+
+    /** Medientyp ohne Parameter ({@code application/json;charset=UTF-8} → {@code application/json}). */
+    private static String mediaType(String contentType) {
+        int semicolon = contentType.indexOf(';');
+        String type = (semicolon < 0 ? contentType : contentType.substring(0, semicolon)).trim();
+        return type.isEmpty() ? "application/json" : type.toLowerCase(Locale.ROOT);
     }
 
     /** Outgoing page links of the rendered body; Confluence has no reliable list of incoming links. */
