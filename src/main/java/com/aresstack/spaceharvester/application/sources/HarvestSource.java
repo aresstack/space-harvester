@@ -24,4 +24,17 @@ public interface HarvestSource {
      * @throws SourceAccessException wenn die Quelle nicht erreichbar ist oder den Zugriff verweigert
      */
     List<Partition> partitions();
+
+    /**
+     * Ein Stapel Metadaten aller Seiten einer Partition, ohne Inhalte, vollständig über den Cursor (auch Seiten
+     * außerhalb des Baums der Startseite, ohne Gesamtgrenze).
+     *
+     * @param partitionKey Schlüssel der Partition (Space-Key)
+     * @param cursor       {@code null} für den ersten Stapel, sonst {@link PageMetadataBatch#nextCursor()}
+     * @param limit        größter gewünschter Stapel, mindestens 1; die Quelle darf weniger liefern
+     * @throws SourceAccessException {@code NOT_FOUND} für eine unbekannte Partition, {@code UNSUPPORTED} für einen
+     *                               fremden Cursor oder eine Quelle ohne diese Fähigkeit, sonst wie
+     *                               {@link #partitions()}
+     */
+    PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit);
 }

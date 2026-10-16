@@ -1,9 +1,15 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.PartitionListingSource;
+import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.util.List;
@@ -45,6 +51,42 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
+    }
+
+    @Override
+    public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
+        if (!(port instanceof PartitionListingSource listing)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle kann Seiten einer Partition nicht auflisten", null);
+        }
+        PartitionResources batch;
+        try {
+            batch = listing.resources(partitionKey, cursor == null ? "" : cursor, limit);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageMetadataBatch(batch.resources().stream()
+                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    private static PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
+        String version = resource.revision().version();
+        return new PageMetadata(
+                nativeId(resource.id()),
+                resource.id().value(),
+                resource.title(),
+                resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
+                resource.parentId().map(KnowledgeSourceHarvestSource::nativeId).orElse(null),
+                version == null || version.isEmpty() ? null : version,
+                resource.revision().modifiedAt().orElse(null),
+                resource.location().orElse(null),
+                PageMetadata.sorted(resource.metadata().asMap()));
+    }
+
+    /** Die ID der Quelle: letztes Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}). */
+    private static String nativeId(KnowledgeResourceId id) {
+        String part = id.schemeSpecificPart();
+        return part.substring(part.lastIndexOf('/') + 1);
     }
 
     private static Partition partition(SourcePartition partition) {
