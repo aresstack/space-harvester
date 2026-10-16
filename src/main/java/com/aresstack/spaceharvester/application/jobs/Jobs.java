@@ -61,15 +61,16 @@ public class Jobs implements AutoCloseable {
      * Nimmt einen Auftrag an, ohne auf ihn zu warten.
      *
      * @param partitionKey Partition (Space) oder {@code null}
+     * @param owner        auslösender Client oder {@code null} für interne Aufträge; siehe {@link JobStatus#owner()}
      * @return der Auftrag im Zustand {@link JobState#QUEUED}
      * @throws JobCapacityExceededException wenn bereits {@code maxConcurrent + maxQueued} Aufträge offen sind
      * @throws IllegalStateException         nach {@link #close()}
      */
-    public JobStatus submit(JobType type, String sourceId, String partitionKey, JobTask task) {
+    public JobStatus submit(JobType type, String sourceId, String partitionKey, String owner, JobTask task) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(task, "task");
-        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, task, clock.instant());
+        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, owner, task, clock.instant());
         JobStatus status;
         synchronized (lock) {
             int capacity = limits.maxConcurrent() + limits.maxQueued();
@@ -97,6 +98,33 @@ public class Jobs implements AutoCloseable {
             }
         }
         return store.find(jobId).orElseThrow(() -> new UnknownJobException(jobId));
+    }
+
+    /**
+     * Wie {@link #status(String)}, aber nur für den eigenen Auftrag: ein Auftrag eines anderen Clients gilt als
+     * unbekannt, damit fremde Job-IDs nicht einmal ihre Existenz verraten.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public JobStatus status(String jobId, String owner) {
+        return requireOwner(status(jobId), owner);
+    }
+
+    /**
+     * Wie {@link #cancel(String)}, aber nur für den eigenen Auftrag.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public JobStatus cancel(String jobId, String owner) {
+        requireOwner(status(jobId), owner);
+        return cancel(jobId);
+    }
+
+    private static JobStatus requireOwner(JobStatus status, String owner) {
+        if (!Objects.equals(status.owner(), owner)) {
+            throw new UnknownJobException(status.id());
+        }
+        return status;
     }
 
     /**
@@ -152,7 +180,7 @@ public class Jobs implements AutoCloseable {
         for (JobStatus status : store.all()) {
             if (!status.state().terminal()) {
                 store.save(new JobStatus(status.id(), status.type(), status.sourceId(), status.partitionKey(),
-                        JobState.FAILED, status.progress(),
+                        status.owner(), JobState.FAILED, status.progress(),
                         new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags beendet; der Auftrag wird "
                                 + "nicht fortgesetzt und muss neu gestartet werden"),
                         status.cancelRequested(), status.createdAt(), status.startedAt(), now));
@@ -245,6 +273,7 @@ public class Jobs implements AutoCloseable {
         final JobType type;
         final String sourceId;
         final String partitionKey;
+        final String owner;
         final JobTask task;
         final Instant createdAt;
         final AtomicLong discovered = new AtomicLong();
@@ -258,11 +287,13 @@ public class Jobs implements AutoCloseable {
         Instant finishedAt;
         JobError error;
 
-        Job(String id, JobType type, String sourceId, String partitionKey, JobTask task, Instant createdAt) {
+        Job(String id, JobType type, String sourceId, String partitionKey, String owner, JobTask task,
+            Instant createdAt) {
             this.id = id;
             this.type = type;
             this.sourceId = sourceId;
             this.partitionKey = partitionKey;
+            this.owner = owner;
             this.task = task;
             this.createdAt = createdAt;
         }
@@ -274,7 +305,7 @@ public class Jobs implements AutoCloseable {
         }
 
         JobStatus snapshot() {
-            return new JobStatus(id, type, sourceId, partitionKey, state,
+            return new JobStatus(id, type, sourceId, partitionKey, owner, state,
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
                     cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt);
         }
