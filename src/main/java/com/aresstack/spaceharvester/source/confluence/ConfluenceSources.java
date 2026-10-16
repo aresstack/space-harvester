@@ -5,6 +5,9 @@ import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.enterpriseai.astu.security.SecretRef;
+import java.net.URI;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
@@ -40,11 +43,58 @@ public final class ConfluenceSources {
      */
     public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
                                                    X509TrustManager trust, String thumbprint) {
+        return confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+    }
+
+    /**
+     * Wie {@link #provider(SecretProvider, HttpRoutePort, String, X509TrustManager, String)}, dazu native
+     * Seiten-Snapshots asynchron ({@code AsyncStoredContentSource}, #47) über einen Transport aus {@code async}.
+     *
+     * @param async Besitzer der asynchronen Transporte oder {@code null}: dann nur synchron
+     */
+    public static KnowledgeSourceProvider provider(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                                   X509TrustManager trust, String thumbprint,
+                                                   AsyncSnapshotTransports async) {
+        ConfluenceSourceProvider provider = confluenceProvider(secrets, routes, userAgent, trust, thumbprint);
+        return async == null ? provider : async.attach(provider, trust, thumbprint);
+    }
+
+    private static ConfluenceSourceProvider confluenceProvider(SecretProvider secrets, HttpRoutePort routes,
+                                                               String userAgent, X509TrustManager trust,
+                                                               String thumbprint) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
         return new ConfluenceSourceProvider(secrets, routes, trustOnly(trust), userAgent,
                 new ConfiguredClientCertificates(secrets, trust, thumbprint));
+    }
+
+    /**
+     * Delegierte Aufrufe an die Confluence einer Quelle (#24) über den asynchronen Transport (#47): dieselbe Route,
+     * dasselbe Server-Vertrauen und dasselbe Client-Zertifikat wie {@link #provider}, aber mit dem Token des
+     * Nutzers je Anfrage. Ein unbrauchbares Zertifikat scheitert hier sofort ({@link ClientCertificateException}).
+     *
+     * @param alias        Alias des Client-Zertifikats oder {@code null} ohne mTLS
+     * @param keyStoreFile PKCS12-Datei oder {@code null} für Windows-MY
+     * @param passwordRef  Verweis auf das Passwort der PKCS12-Datei oder {@code null}
+     */
+    public static DelegatedConfluenceHttp delegatedHttp(URI baseUrl, SecretProvider secrets, HttpRoutePort routes,
+                                                        String userAgent, X509TrustManager trust, String thumbprint,
+                                                        String alias, Path keyStoreFile, SecretRef passwordRef) {
+        if (routes == null) {
+            throw new IllegalArgumentException("routes must not be null");
+        }
+        SSLContext trustOnly = trustOnlyContext(trust);
+        SSLContext clientTls = alias == null ? trustOnly
+                : new ConfiguredClientCertificates(secrets, trust, thumbprint).sslContext(alias, keyStoreFile,
+                        passwordRef);
+        WebClientConfluenceTransport transport = WebClientConfluenceTransport.builder()
+                .routes(routes)
+                .clientTls(clientTls)
+                .anonymousTls(trustOnly)
+                .userAgent(userAgent)
+                .build();
+        return new DelegatedConfluenceHttp(baseUrl, transport, DelegatedConfluenceHttp.TIMEOUT);
     }
 
     /** {@code true}, wenn der Fingerabdruck 40 (SHA-1) oder 64 (SHA-256) Hex-Zeichen hat; Trenner sind erlaubt. */
@@ -53,13 +103,19 @@ public final class ConfluenceSources {
     }
 
     private static SSLSocketFactory trustOnly(X509TrustManager trust) {
+        SSLContext context = trustOnlyContext(trust);
+        return context == null ? null : context.getSocketFactory();
+    }
+
+    /** Nur die Vertrauensquellen der Quelle, ohne Client-Zertifikat; {@code null} = JVM-Standard. */
+    static SSLContext trustOnlyContext(X509TrustManager trust) {
         if (trust == null) {
             return null;
         }
         try {
             SSLContext context = SSLContext.getInstance("TLS");
             context.init(null, new TrustManager[] {trust}, null);
-            return context.getSocketFactory();
+            return context;
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("TLS-Kontext für die Vertrauensquellen nicht erstellbar", e);
         }

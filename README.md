@@ -169,9 +169,20 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 
-Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
-[ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+Standardmäßig nutzt der Adapter den synchronen `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
+Daneben gibt es den asynchronen `WebClientConfluenceTransport` (Spring WebClient auf Reactor Netty, #47) mit derselben
+Route je Ziel-URL, demselben Client-Zertifikat und denselben Grenzen. Mit
+
+```yaml
+space-harvester:
+  network:
+    async-transport: web-client   # Standard: disabled
+```
+
+laden native Seiten-Snapshots zusätzlich nicht blockierend darüber (`HarvestSource.storedPageAsync`); alle anderen
+Abrufe bleiben synchron. `disabled` ist der Rückfallpfad. Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+`--fetch=async` ruft jede Ziel-URL der Diagnose zusätzlich ohne Anmeldung über diesen Transport ab und zeigt nur
+Status und Größe.
 
 ## Seiten-Cache (Lucene)
 

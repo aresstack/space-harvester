@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
+import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
@@ -22,6 +23,9 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CompletionStage;
 
 /** {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}. */
 final class KnowledgeSourceHarvestSource implements HarvestSource {
@@ -104,6 +108,43 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
+        return storedPage(content);
+    }
+
+    @Override
+    public boolean asyncStoredPages() {
+        return port instanceof AsyncStoredContentSource;
+    }
+
+    @Override
+    public CompletionStage<StoredPage> storedPageAsync(String pageId) {
+        if (!(port instanceof AsyncStoredContentSource stored)) {
+            return HarvestSource.super.storedPageAsync(pageId);
+        }
+        CompletableFuture<StoredContent> request = stored.storedContentAsync(pageId).toCompletableFuture();
+        CompletableFuture<StoredPage> result = new CompletableFuture<>();
+        request.whenComplete((content, error) -> {
+            if (error != null) {
+                Throwable cause = error instanceof CompletionException && error.getCause() != null
+                        ? error.getCause() : error;
+                result.completeExceptionally(cause instanceof KnowledgeSourceException e ? accessFailure(e) : cause);
+                return;
+            }
+            try {
+                result.complete(storedPage(content));
+            } catch (RuntimeException e) {
+                result.completeExceptionally(e);
+            }
+        });
+        result.whenComplete((page, error) -> {
+            if (result.isCancelled()) {
+                request.cancel(true);
+            }
+        });
+        return result;
+    }
+
+    private StoredPage storedPage(StoredContent content) {
         return new StoredPage(withSpace(content.resource()), content.payload(), content.mediaType(),
                 content.nativeFormat(), content.retrievedAt());
     }

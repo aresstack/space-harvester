@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.sources;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 
 /**
  * Eine konfigurierte Wissensquelle aus Sicht der Anwendungsfälle, unabhängig von ihrem Typ (Confluence, später
@@ -62,5 +64,23 @@ public interface HarvestSource {
     default StoredPage storedPage(String pageId) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann native Seitenantworten nicht liefern", null);
+    }
+
+    /**
+     * {@code true}, wenn {@link #storedPageAsync} nicht blockierend arbeitet, also die Quelle einen asynchronen
+     * HTTP-Client hat ({@code space-harvester.network.async-transport}, #47).
+     */
+    default boolean asyncStoredPages() {
+        return false;
+    }
+
+    /**
+     * Wie {@link #storedPage}, aber ohne den Aufrufer-Thread bis zur Antwort zu belegen. Die Stufe endet mit derselben
+     * Seite oder ausnahmsweise mit derselben {@link SourceAccessException}; ein Abbruch der Stufe bricht die Anfrage
+     * ab. Ohne {@link #asyncStoredPages()} endet sie sofort mit {@code UNSUPPORTED}.
+     */
+    default CompletionStage<StoredPage> storedPageAsync(String pageId) {
+        return CompletableFuture.failedFuture(new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann native Seitenantworten nicht asynchron liefern", null));
     }
 }

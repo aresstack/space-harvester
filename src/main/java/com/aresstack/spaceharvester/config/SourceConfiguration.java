@@ -24,14 +24,15 @@ import org.springframework.context.annotation.Configuration;
 class SourceConfiguration {
 
     @Bean
-    SourceCatalog sourceCatalog(SpaceHarvesterProperties properties, ObjectProvider<BuildProperties> build,
+    ConfiguredSourceCatalog sourceCatalog(SpaceHarvesterProperties properties, ObjectProvider<BuildProperties> build,
                                 ObjectProvider<SslBundles> sslBundles) {
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
         SslBundles bundles = sslBundles.getIfAvailable();
         return ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
-                bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings());
+                bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings(),
+                properties.network().asyncTransport());
     }
 
     /**
