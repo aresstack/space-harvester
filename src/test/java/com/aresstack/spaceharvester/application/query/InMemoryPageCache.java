@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
@@ -100,7 +101,8 @@ public final class InMemoryPageCache implements PageCacheReader {
     public static PageSnapshot page(String sourceId, String spaceKey, String pageId, String parentPageId,
                                     byte[] payload) {
         PageMetadata metadata = new PageMetadata(pageId, "confluence:wiki.example.org/page/" + pageId,
-                "Seite " + pageId, spaceKey, parentPageId, "3", Instant.parse("2026-10-15T10:30:00Z"), null,
+                "Seite " + pageId, spaceKey, parentPageId, "3", Instant.parse("2026-10-15T10:30:00Z"),
+                URI.create("https://wiki.example.org/pages/viewpage.action?pageId=" + pageId),
                 PageMetadata.sorted(Map.of("confluence.labels", "api")));
         return PageSnapshot.of(sourceId, metadata, new NativePayload(payload, "application/json",
                 "confluence-rest-content+json;expand=body.storage"), Instant.parse("2026-10-16T20:00:00Z"));

@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -210,6 +211,25 @@ public class PageQueries {
         return new DeliveredPage(checked.header(), checked.snapshot(),
                 cached.map(CachedPage::generation).orElse(null), checked.cacheStale(), checked.outcome(),
                 checked.checkedAt());
+    }
+
+    /**
+     * Eine Seite über ihre URL, wie {@link #page}. Die URL muss die Seiten-ID enthalten ({@link PageUrls}) und auf
+     * denselben Server zeigen wie die bekannte URL der Seite.
+     *
+     * @throws InvalidQueryException wenn die URL keine Seiten-ID enthält
+     * @throws CacheMissException    wie bei {@link #page}, oder wenn die URL auf einen anderen Server zeigt
+     */
+    public DeliveredPage pageByUrl(AccessContext caller, String sourceId, String url, boolean refresh) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        String pageId = PageUrls.pageId(url).orElseThrow(() -> new InvalidQueryException(
+                "url muss eine absolute Seiten-URL mit Seiten-ID sein (pageId=…, /spaces/KEY/pages/ID oder /x/…)"));
+        DeliveredPage page = page(caller, sourceId, pageId, refresh);
+        URI known = page.header().metadata().url();
+        if (known != null && !PageUrls.sameServer(url, known)) {
+            throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+        }
+        return page;
     }
 
     private boolean readable(AccessContext caller, PageHeader header) {

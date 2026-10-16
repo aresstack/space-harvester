@@ -319,6 +319,26 @@ class PageQueryApiTest {
     }
 
     @Test
+    void pagesCanBeAddressedByTheirUrl() throws Exception {
+        String url = URLEncoder.encode("https://wiki.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8);
+        HttpResponse<byte[]> response = http.send(request("/api/v1/sources/wiki/pages?url=" + url).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).isEqualTo(NOT_UTF8);
+        assertThat(json.readTree(get("/api/v1/sources/wiki/pages?view=extended&url="
+                + URLEncoder.encode("https://wiki.example.org/spaces/DEV/pages/100/Start", StandardCharsets.UTF_8))
+                .body()).get("metadata").get("page").get("pageId").asString()).isEqualTo("100");
+        // Ohne Seiten-ID nicht auflösbar, fremder Server wie eine unbekannte Seite.
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://wiki.example.org/display/DEV/Start", StandardCharsets.UTF_8)), 400, "invalid-request");
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://evil.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8)), 404,
+                "cache-miss");
+        assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages?url=" + url), 403, "access-denied");
+    }
+
+    @Test
     void missingObjectsAreDistinguishedFromUnknownSources() throws Exception {
         assertProblem(get("/api/v1/sources/wiki/pages/4711"), 404, "cache-miss");
         assertProblem(get("/api/v1/sources/wiki/spaces/OPS/pages"), 404, "cache-miss");

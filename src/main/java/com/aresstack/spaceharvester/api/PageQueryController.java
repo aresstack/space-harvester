@@ -140,7 +140,7 @@ public class PageQueryController {
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
-            @Parameter(description = "Zusätzliche Angaben je Knoten. Derzeit nur metadata (title, version, "
+            @Parameter(description = "Zusätzliche Angaben je Knoten. Derzeit nur metadata (title, version, url, "
                     + "modifiedAt); content und enrichments folgen mit eigenen Grenzen.",
                     array = @ArraySchema(schema = @Schema(allowableValues = {"metadata"})))
             @RequestParam(required = false) List<String> include) {
@@ -233,10 +233,49 @@ public class PageQueryController {
                     + "enrichments", schema = @Schema(allowableValues = {"native", "extended"}))
             @RequestParam(defaultValue = "native") String view,
             WebRequest request) {
+        requireView(view);
+        return render(sourceId, queries.page(caller, sourceId, pageId, refresh), view, request);
+    }
+
+    @GetMapping(path = "/{sourceId}/pages", params = "url")
+    @Operation(summary = "Eine Seite über ihre URL: wie GET …/pages/{pageId}",
+            description = "Die URL muss die Seiten-ID enthalten: …?pageId=123 (viewpage.action), "
+                    + "…/spaces/KEY/pages/123[/Titel] oder ein Kurzlink …/x/AgAB. Formen ohne ID (/display/KEY/Titel) "
+                    + "werden nicht aufgelöst (400). Eine URL auf einen anderen Server als die bekannte URL der Seite "
+                    + "ergibt cache-miss. Antworten, Header, view und refresh wie bei der Route mit pageId.")
+    @ApiResponse(responseCode = "200", description = "Wie GET …/pages/{pageId}")
+    @ApiResponse(responseCode = "400", description = "url ohne Seiten-ID oder unbekannte view (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle "
+            + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+            schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Wie GET …/pages/{pageId}, oder URL eines anderen Servers "
+            + "(cache-miss)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+            schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<?> pageByUrl(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "URL der Seite mit Seiten-ID",
+                    example = "https://wiki.example.org/pages/viewpage.action?pageId=123456")
+            @RequestParam String url,
+            @Parameter(description = "true: vor der Auslieferung gegen die Quelle prüfen")
+            @RequestParam(defaultValue = "false") boolean refresh,
+            @Parameter(description = "native oder extended", schema = @Schema(allowableValues = {"native", "extended"}))
+            @RequestParam(defaultValue = "native") String view,
+            WebRequest request) {
+        requireView(view);
+        return render(sourceId, queries.pageByUrl(caller, sourceId, url, refresh), view, request);
+    }
+
+    private static void requireView(String view) {
         if (!"native".equals(view) && !"extended".equals(view)) {
             throw new InvalidQueryException("view kennt nur native und extended");
         }
-        DeliveredPage page = queries.page(caller, sourceId, pageId, refresh);
+    }
+
+    private ResponseEntity<?> render(String sourceId, DeliveredPage page, String view, WebRequest request) {
         if ("extended".equals(view)) {
             return ResponseEntity.ok()
                     .cacheControl(CacheControl.noCache().cachePrivate())
@@ -473,22 +512,23 @@ public class PageQueryController {
     }
 
     /**
-     * Ein Knoten des Baums. {@code title}, {@code version} und {@code modifiedAt} nur mit {@code include=metadata}.
+     * Ein Knoten des Baums. {@code title}, {@code version}, {@code modifiedAt} und {@code url} nur mit {@code include=metadata}.
      *
      * @param id       pageId
      * @param children Kinder, aufsteigend nach pageId
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record TreeNode(String id, String title, String version, Instant modifiedAt, List<TreeNode> children) {
+    public record TreeNode(String id, String title, String version, Instant modifiedAt, URI url,
+                           List<TreeNode> children) {
 
         static TreeNode of(PageTree.Node node, Map<String, ListedPage> pages) {
             ListedPage listed = pages.get(node.pageId());
             List<TreeNode> children = node.children().stream().map(child -> of(child, pages)).toList();
             if (listed == null) {
-                return new TreeNode(node.pageId(), null, null, null, children);
+                return new TreeNode(node.pageId(), null, null, null, null, children);
             }
             PageMetadata page = listed.header().metadata();
-            return new TreeNode(node.pageId(), page.title(), page.version(), page.modifiedAt(), children);
+            return new TreeNode(node.pageId(), page.title(), page.version(), page.modifiedAt(), page.url(), children);
         }
     }
 
