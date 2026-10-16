@@ -33,6 +33,23 @@ final class ProblemResponses {
                 "Für diese Anfrage fehlt die Freigabe.");
     }
 
+    static void delegationNotAllowed(HttpServletResponse response) throws IOException {
+        write(response, HttpServletResponse.SC_FORBIDDEN, "delegation-not-allowed", "Durchreichung nicht erlaubt",
+                "Dieser Client darf für diese Quelle keine Endnutzer-Anmeldung durchreichen, oder "
+                        + "X-Delegated-Source bzw. X-Delegated-Authorization fehlt.");
+    }
+
+    static void delegatedTokenRejected(HttpServletResponse response) throws IOException {
+        write(response, HttpServletResponse.SC_UNAUTHORIZED, "delegated-token-rejected", "Endnutzer-Anmeldung abgelehnt",
+                "Die Quelle lehnt die durchgereichte Anmeldung des Endnutzers ab.");
+    }
+
+    static void delegationUnavailable(HttpServletResponse response) throws IOException {
+        write(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "delegation-unavailable",
+                "Endnutzer-Anmeldung nicht prüfbar",
+                "Die Quelle konnte die durchgereichte Anmeldung des Endnutzers nicht eindeutig prüfen.");
+    }
+
     private static void write(HttpServletResponse response, int status, String type, String title, String detail)
             throws IOException {
         response.setStatus(status);

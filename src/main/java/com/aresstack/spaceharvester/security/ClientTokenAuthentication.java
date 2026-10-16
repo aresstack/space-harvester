@@ -6,8 +6,8 @@ import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 /**
- * Anmeldung per Bearer-Token: vor der Prüfung nur das Token, danach nur der {@link AccessContext} des Clients. Das
- * Token wird nach der Prüfung verworfen und erscheint nie in {@code toString}.
+ * Anmeldung per Bearer-Token: vor der Prüfung nur das Token, danach nur der {@link AccessContext} des Clients bzw. des
+ * durchgereichten Endnutzers. Das Client-Token wird nach der Prüfung verworfen und erscheint nie in {@code toString}.
  */
 final class ClientTokenAuthentication extends AbstractAuthenticationToken {
 
@@ -21,7 +21,7 @@ final class ClientTokenAuthentication extends AbstractAuthenticationToken {
     }
 
     private ClientTokenAuthentication(AccessContext context) {
-        super(List.of(new SimpleGrantedAuthority("ROLE_TECHNICAL_CLIENT")));
+        super(List.of(new SimpleGrantedAuthority("ROLE_" + context.kind().name())));
         this.context = context;
         setAuthenticated(true);
     }

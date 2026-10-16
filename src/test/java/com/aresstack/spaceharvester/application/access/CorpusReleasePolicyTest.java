@@ -57,7 +57,7 @@ class CorpusReleasePolicyTest {
     void unknownClientsAndOtherPrincipalsAreDenied() {
         assertThat(policy.decide(AccessContext.technicalClient("stranger"), ResourceScope.source("wiki"),
                 AccessKind.METADATA)).isEqualTo(AccessDecision.DENY);
-        assertThat(policy.decide(new AccessContext("reader", AccessContext.PrincipalKind.END_USER),
+        assertThat(policy.decide(AccessContext.endUser("reader", "reader", new UserCredential("wiki", "token")),
                 ResourceScope.space("wiki", "DEV"), AccessKind.METADATA)).isEqualTo(AccessDecision.DENY);
         assertThat(policy.decide(new AccessContext("exporter", AccessContext.PrincipalKind.DEVELOPMENT),
                 ResourceScope.space("wiki", "DEV"), AccessKind.METADATA)).isEqualTo(AccessDecision.DENY);

@@ -5,7 +5,10 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.CorpusReleasePolicy;
+import com.aresstack.spaceharvester.application.access.DelegatedAccessPolicy;
+import com.aresstack.spaceharvester.application.access.DelegatedSourceAccess;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import java.time.Clock;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -55,8 +59,19 @@ class SecurityConfiguration {
     }
 
     @Bean
+    DelegatedUsers delegatedUsers(SecurityProperties properties, ObjectProvider<DelegatedSourceAccess> sources) {
+        if (properties.mode() != SecurityProperties.Mode.CLIENTS) {
+            return DelegatedUsers.none();
+        }
+        Map<String, DelegatedSourceAccess> bySource = delegatedSources(properties.clients(), sources.stream().toList());
+        return new DelegatedUsers(DelegatedUsers.sourcesByClient(properties.clients()), bySource,
+                properties.delegation().identityTtl(), properties.delegation().maxEntries(), Clock.systemUTC());
+    }
+
+    @Bean
     SecurityFilterChain apiSecurity(HttpSecurity http, SecurityProperties properties, Environment environment,
-                                    ClientTokenAuthenticationProvider provider) throws Exception {
+                                    ClientTokenAuthenticationProvider provider, DelegatedUsers delegatedUsers)
+            throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
@@ -76,7 +91,7 @@ class SecurityConfiguration {
             http.anonymous(anonymous -> anonymous.principal(DEVELOPMENT_CONTEXT))
                     .authorizeHttpRequests(requests -> requests.anyRequest().permitAll());
         } else {
-            http.addFilterBefore(new ClientTokenAuthenticationFilter(provider), AnonymousAuthenticationFilter.class)
+            http.addFilterBefore(new ClientTokenAuthenticationFilter(provider, delegatedUsers), AnonymousAuthenticationFilter.class)
                     .authorizeHttpRequests(requests -> requests
                             .requestMatchers(PUBLIC_PATHS).permitAll()
                             .anyRequest().authenticated());
@@ -85,7 +100,8 @@ class SecurityConfiguration {
     }
 
     @Bean
-    AccessPolicy accessPolicy(SecurityProperties properties, SourceCatalog catalog) {
+    AccessPolicy accessPolicy(SecurityProperties properties, SourceCatalog catalog,
+                              ObjectProvider<DelegatedSourceAccess> sources) {
         if (properties.mode() == SecurityProperties.Mode.DEVELOPMENT) {
             return (context, scope, kind) -> context.kind() == AccessContext.PrincipalKind.DEVELOPMENT
                     ? AccessDecision.ALLOW : AccessDecision.DENY;
@@ -94,7 +110,36 @@ class SecurityConfiguration {
             LOG.warn("Keine technischen Clients konfiguriert (space-harvester.security.clients): "
                     + "die API verweigert jeden Datenzugriff.");
         }
-        return new CorpusReleasePolicy(grants(properties.clients(), catalog));
+        CorpusReleasePolicy corpus = new CorpusReleasePolicy(grants(properties.clients(), catalog));
+        Map<String, DelegatedSourceAccess> delegated = delegatedSources(properties.clients(), sources.stream().toList());
+        if (delegated.isEmpty()) {
+            return corpus;
+        }
+        return new DelegatedAccessPolicy(corpus, delegated, properties.delegation().decisionTtl(),
+                properties.delegation().maxEntries(), Clock.systemUTC());
+    }
+
+    /**
+     * Die Prüfungen für alle Quellen, für die ein Client durchreichen darf.
+     *
+     * @throws InvalidSecurityConfigurationException wenn eine solche Quelle keine oder mehrere Prüfungen hat
+     */
+    static Map<String, DelegatedSourceAccess> delegatedSources(List<SecurityProperties.Client> clients,
+                                                               List<DelegatedSourceAccess> available) {
+        Map<String, DelegatedSourceAccess> result = new LinkedHashMap<>();
+        for (SecurityProperties.Client client : clients) {
+            for (String sourceId : client.delegation()) {
+                List<DelegatedSourceAccess> matching = available.stream()
+                        .filter(access -> access.sourceId().equals(sourceId)).toList();
+                if (matching.size() != 1) {
+                    throw new InvalidSecurityConfigurationException("Client " + client.id() + ": delegation nennt "
+                            + "Quelle " + sourceId + ", für die " + (matching.isEmpty() ? "keine" : "mehr als eine")
+                            + " delegierte Prüfung verfügbar ist.");
+                }
+                result.put(sourceId, matching.getFirst());
+            }
+        }
+        return result;
     }
 
     @Bean

@@ -81,6 +81,12 @@ class SecurityStartupTest {
                 "--space-harvester.security.clients[0].grants[0].access=metadata")));
     }
 
+    @Test
+    void delegationWithoutDelegatedCheckForTheSourceIsRejected() {
+        assertStartFails("Client etl: delegation nennt Quelle wiki, für die keine delegierte Prüfung verfügbar ist",
+                withSource(client("--space-harvester.security.clients[0].delegation[0]=wiki")));
+    }
+
     private static String[] client(String... grants) {
         List<String> args = new ArrayList<>(List.of("--space-harvester.security.clients[0].id=etl",
                 "--space-harvester.security.clients[0].token-sha256=" + HASH));
