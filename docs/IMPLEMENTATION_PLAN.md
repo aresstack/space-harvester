@@ -133,6 +133,12 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 
 ## 7. Umsetzung in kleinen PRs
 
+**Paralleler Arbeitsmodus:** Die folgenden M0–M8-Etappen definieren **Produkt-/Integrationsmeilensteine, keine serielle Reihenfolge für Entwickler oder Claude-Code-Threads**. Der verbindliche [Parallelisierungsplan](PARALLEL_WORKSTREAMS.md) bündelt die Tickets in sieben gleichzeitig bearbeitbare Stränge A–G, mit eigenen Branches, Datei-Ownern und schmalen Port-Verträgen. An Lucene (#26), Sync (#16), Jobs (#12), API (#27), Zugriffsschutz (#14) und Raw-Payload-Spike (#7) kann **parallel** gearbeitet werden; Integrations-PRs warten nur auf die tatsächlich benötigten Ports und grünen Tests. Netzwerk-Live-Tests (#33/#34) blockieren nicht die Mock-basierte Entwicklung.
+
+**Stand bei dieser Planung:** PR #35 (Einzelmetadaten, `page-attributes/v1`) und PR #37 (mTLS-Basis) sind gemergt; PR #36 (PAC/Proxy mit mTLS integrieren) und PR #38 (Raw-Spike) laufen. Die echten Windows-/PAC-/mTLS-Integrationstests sind noch ausstehend.
+
+
+
 **M0 – Fundament / laufende Arbeit (bereits gestartet)**
 - [x] Spring-Boot-/REST-Grundgerüst: #1, PR #21.
 - [x] Headless-Vendoring von Confluence/source-api/adyton/network: PR #23.

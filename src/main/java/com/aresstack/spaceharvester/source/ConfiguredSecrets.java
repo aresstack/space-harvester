@@ -22,12 +22,21 @@ final class ConfiguredSecrets implements SecretProvider {
         return SecretRef.of("source:" + sourceId);
     }
 
+    /** Passwort der PKCS#12-Datei mit dem Client-Zertifikat einer Quelle; getrennt von der Anmeldung. */
+    static SecretRef certificateRefFor(String sourceId) {
+        return SecretRef.of("source:" + sourceId + ":client-certificate");
+    }
+
     /**
      * @param principal Benutzername oder {@code null} für ein Token ohne Benutzer
      * @param secret    Passwort oder Token
      */
     void put(String sourceId, String principal, String secret) {
-        credentials.put(refFor(sourceId), new Credentials(principal, secret));
+        put(refFor(sourceId), principal, secret);
+    }
+
+    void put(SecretRef ref, String principal, String secret) {
+        credentials.put(ref, new Credentials(principal, secret));
     }
 
     @Override

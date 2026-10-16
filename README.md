@@ -80,8 +80,29 @@ space-harvester:
   Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
-- **Keine Geheimnisse nach außen:** Passwort und Token erscheinen weder in API-Antworten noch in Logs.
-- **Noch nicht unterstützt:** Client-Zertifikate (mTLS), OAuth und ein Spring Cloud Config Server.
+- **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
+- **Client-Zertifikate (mTLS):** je Quelle unter `client-certificate`, zusätzlich zur Anmeldung (`auth` bleibt
+  unverändert). PKCS#12-Datei oder unter Windows der Zertifikatsspeicher `Windows-MY` des Dienstkontos; eigene
+  Server-/Proxy-CAs über `trust-bundle` (ein Spring-SSL-Bundle). Details, Windows-Dienst und Live-Test:
+  [docs/MTLS.md](docs/MTLS.md).
+
+  ```yaml
+  space-harvester:
+    sources:
+      - id: confluence
+        type: confluence
+        base-url: https://confluence.example.org
+        auth:
+          type: pat
+          token: ${CONFLUENCE_PAT}
+        client-certificate:
+          enabled: true
+          type: pkcs12                # pkcs12 | windows-my
+          path: ${CONFLUENCE_CLIENT_KEYSTORE}
+          alias: confluence-client
+          password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
+  ```
+- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server.
 
 ## API-Übersicht
 
