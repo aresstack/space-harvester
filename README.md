@@ -26,7 +26,12 @@ Alternativ das gebaute Jar starten:
 java -jar build/libs/space-harvester-0.1.0-SNAPSHOT.jar
 ```
 
-Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern.
+Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern. Die API verlangt
+ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)); lokal ohne Anmeldung:
+
+```bash
+SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
+```
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -174,20 +179,25 @@ Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI besch
 | `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256` |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
-`type` die Fälle: `source-not-found` (404, unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
+`type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
 abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
 
-> **Nur für den isolierten Entwicklungsbetrieb.** Die REST-API hat noch keine Authentifizierung (folgt mit
-> [#14](https://github.com/aresstack/space-harvester/issues/14)). Wer den Dienst erreicht, sieht über die
-> konfigurierten Zugangsdaten alle Spaces der Quellen, auch deren Namen, die nicht automatisch für jeden freigegeben
-> sind ([#24](https://github.com/aresstack/space-harvester/issues/24)). Den Dienst daher nicht offen im Netz betreiben.
+**Zugriffsschutz:** Alle Pfade unter `/api/**` verlangen `Authorization: Bearer <token>` eines konfigurierten
+technischen Clients (sonst 401 `unauthenticated`). Jeder Client sieht nur die Quellen und Spaces seiner
+Korpusfreigabe; anderes ergibt 403 `access-denied`, eine einzelne Seite außerhalb der Freigabe 404 wie eine unbekannte.
+Ohne konfigurierte Clients verweigert die API jeden Datenzugriff. Frei erreichbar sind nur Health, Info und die
+API-Beschreibung. Für lokale Entwicklung ohne Anmeldung: `space-harvester.security.mode=development` zusammen mit dem
+Profil `local`. Konfiguration und Regeln: [docs/SECURITY.md](docs/SECURITY.md).
 
 **Seitenmetadaten:** Die Liste kommt live aus der Quelle (`origin: live`) und enthält alle Seiten des Space, auch
 außerhalb des Baums der Startseite, ohne Gesamtgrenze. `nextCursor` wird an den nächsten Aufruf übergeben, bis er
@@ -214,8 +224,34 @@ ohne Space-Key aus: eine in einen anderen Space verschobene Seite behält ihre `
 aktuellen Space. Eine unbekannte oder nicht sichtbare Seite ist `source-object-not-found` (404), eine ID in fremder
 Form `source-unsupported` (400).
 
-Geplante Endpunkte: Space-Fingerprint aus bestätigt vollständigen Läufen
-([#16](https://github.com/aresstack/space-harvester/issues/16)), asynchrone Exporte
+**Seiten aus dem Cache (#27):** Seitenliste, Baum und native Einzelseite lesen nur aus dem Cache des Harvesters
+(`origin: cache`), nie live. Jede Antwort nennt den Cache-Stand: `cache.generation`, `cache.state` (`confirmed` aus
+einem vollständigen Abgleich, `incomplete`, `stale`), `syncedAt` und `lastCheckedAt`; ein Treffer im Cache gilt nie
+als frisch. Liste und Baum derselben Generation enthalten dieselben Seiten. Die Liste ist aufsteigend nach `pageId`
+sortiert; ein Stapel kann kürzer als `limit` oder leer sein, solange `nextCursor` nicht `null` ist. Ersetzt ein neuer
+Abgleich die Generation, endet die Abfrage mit `cache-generation-changed` (409) und beginnt ohne `cursor` neu. Im Baum
+erscheint jede Seite genau einmal; Seiten, deren Elternseite fehlt oder nicht sichtbar ist, und Elternzyklen werden
+zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `space-harvester.query.max-tree-nodes`
+(Standard 50000) Seiten oder 200 Ebenen ergeben `tree-too-large` (422); sie liefert der Export. Die Einzelseite gibt die
+gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
+`X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
+`refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
+antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
+(404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
+[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die native
+Einzelseite verlangt `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
+wie bei einer unbekannten Seite.
+
+**Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
+`{"schema":…,"sourceId":…,"spaceKey":…,"pages":[{"pageId":…,"metadataHash":…,"attributesHash":…},…]}` mit den Seiten
+nach `pageId` sortiert (Zeichenkettenordnung), Escaping und UTF-8 wie oben. Er entsteht nur aus einer vollständig und
+widerspruchsfrei gelisteten Inventur und spart den Seitenabgleich, nicht das Listen bei der Quelle. Die
+Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresstack/space-harvester/issues/16)):
+abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
+wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
+
+Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
+([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
 ## Aufbau

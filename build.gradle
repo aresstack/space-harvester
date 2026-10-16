@@ -18,6 +18,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation libs.springdoc.openapi.webmvc.ui
     // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
     implementation project(':enterprise-ai-sources')
