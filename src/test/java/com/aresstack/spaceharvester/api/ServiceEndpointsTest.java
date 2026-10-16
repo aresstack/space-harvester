@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.TestClient;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -11,6 +12,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.core.env.Environment;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.beans.factory.annotation.Autowired;
 
 /**
@@ -25,6 +28,11 @@ class ServiceEndpointsTest {
 
     @Autowired
     private Environment environment;
+
+    @DynamicPropertySource
+    static void client(DynamicPropertyRegistry registry) {
+        TestClient.register(registry);
+    }
 
     @Test
     void serviceInfoIsServedUnderApiV1() throws Exception {
@@ -96,7 +104,8 @@ class ServiceEndpointsTest {
 
     private HttpResponse<String> get(String path) throws IOException, InterruptedException {
         String port = environment.getRequiredProperty("local.server.port");
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build();
+        HttpRequest request = TestClient.authenticated(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)))
+                .GET().build();
         return http.send(request, HttpResponse.BodyHandlers.ofString());
     }
 }

@@ -26,7 +26,12 @@ Alternativ das gebaute Jar starten:
 java -jar build/libs/space-harvester-0.1.0-SNAPSHOT.jar
 ```
 
-Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern.
+Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern. Die API verlangt
+ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)); lokal ohne Anmeldung:
+
+```bash
+SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
+```
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -209,14 +214,16 @@ space-harvester:
 | `GET /actuator/info` | Build-Informationen |
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
-`type` die Fälle: `source-not-found` (404, unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
+`type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
 abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
 
-> **Nur für den isolierten Entwicklungsbetrieb.** Die REST-API hat noch keine Authentifizierung (folgt mit
-> [#14](https://github.com/aresstack/space-harvester/issues/14)). Wer den Dienst erreicht, sieht über die
-> konfigurierten Zugangsdaten alle Spaces der Quellen, auch deren Namen, die nicht automatisch für jeden freigegeben
-> sind ([#24](https://github.com/aresstack/space-harvester/issues/24)). Den Dienst daher nicht offen im Netz betreiben.
+**Zugriffsschutz:** Alle Pfade unter `/api/**` verlangen `Authorization: Bearer <token>` eines konfigurierten
+technischen Clients (sonst 401 `unauthenticated`). Jeder Client sieht nur die Quellen und Spaces seiner
+Korpusfreigabe; anderes ergibt 403 `access-denied`, eine einzelne Seite außerhalb der Freigabe 404 wie eine unbekannte.
+Ohne konfigurierte Clients verweigert die API jeden Datenzugriff. Frei erreichbar sind nur Health, Info und die
+API-Beschreibung. Für lokale Entwicklung ohne Anmeldung: `space-harvester.security.mode=development` zusammen mit dem
+Profil `local`. Konfiguration und Regeln: [docs/SECURITY.md](docs/SECURITY.md).
 
 **Seitenmetadaten:** Die Liste kommt live aus der Quelle (`origin: live`) und enthält alle Seiten des Space, auch
 außerhalb des Baums der Startseite, ohne Gesamtgrenze. `nextCursor` wird an den nächsten Aufruf übergeben, bis er

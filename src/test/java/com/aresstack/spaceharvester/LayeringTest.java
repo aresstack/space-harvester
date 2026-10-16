@@ -24,26 +24,36 @@ class LayeringTest {
     static final ArchRule applicationDoesNotKnowApiOrConfig = noClasses()
             .that().resideInAPackage("..spaceharvester.application..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "..spaceharvester.api..", "..spaceharvester.config..");
+                    "..spaceharvester.api..", "..spaceharvester.config..", "..spaceharvester.security..");
 
     @ArchTest
     static final ArchRule apiUsesApplicationNotAdapters = noClasses()
             .that().resideInAPackage("..spaceharvester.api..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "..spaceharvester.source..", "..spaceharvester.output..", "..spaceharvester.config..");
+                    "..spaceharvester.source..", "..spaceharvester.output..", "..spaceharvester.config..",
+                    "..spaceharvester.security..")
+            .because("Controller erhalten den AccessContext per Parameter und prüfen über den AccessGuard");
+
+    @ArchTest
+    static final ArchRule securityKnowsNeitherApiNorAdapters = noClasses()
+            .that().resideInAPackage("..spaceharvester.security..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..spaceharvester.api..", "..spaceharvester.source..", "..spaceharvester.output..");
 
     @ArchTest
     static final ArchRule sourceKnowsNeitherApiNorOutput = noClasses()
             .that().resideInAPackage("..spaceharvester.source..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "..spaceharvester.api..", "..spaceharvester.output..", "..spaceharvester.config..")
+                    "..spaceharvester.api..", "..spaceharvester.output..", "..spaceharvester.config..",
+                    "..spaceharvester.security..")
             .allowEmptyShould(true);
 
     @ArchTest
     static final ArchRule outputKnowsNeitherApiNorSource = noClasses()
             .that().resideInAPackage("..spaceharvester.output..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "..spaceharvester.api..", "..spaceharvester.source..", "..spaceharvester.config..")
+                    "..spaceharvester.api..", "..spaceharvester.source..", "..spaceharvester.config..",
+                    "..spaceharvester.security..")
             .allowEmptyShould(true);
 
     @ArchTest
