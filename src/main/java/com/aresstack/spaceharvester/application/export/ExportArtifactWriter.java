@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.export;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import java.io.InputStream;
 import java.util.Optional;
 
 /**
@@ -17,6 +18,14 @@ public interface ExportArtifactWriter {
 
     /** Das veröffentlichte Artefakt oder leer, wenn es (noch) keines gibt. */
     Optional<ExportArtifact> find(String exportId);
+
+    /**
+     * Eine Datei eines veröffentlichten Artefakts zum Lesen.
+     *
+     * @param name relativer Name wie in {@link ExportArtifact#files()} oder {@code raw/<Datei>} aus dem Seiten-Array
+     * @return leer, wenn es das Artefakt oder die Datei nicht gibt oder der Name aus dem Artefakt hinausführt
+     */
+    Optional<InputStream> open(String exportId, String name);
 
     /** Ein Artefakt im Entstehen. {@link #close()} ohne vorheriges {@link #publish} verwirft es. */
     interface Session extends AutoCloseable {

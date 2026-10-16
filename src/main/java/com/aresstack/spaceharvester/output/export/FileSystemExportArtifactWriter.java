@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.FilterOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -66,6 +67,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
     // Nur Kleinbuchstaben: Dateisysteme ohne Groß-/Kleinschreibung dürfen keine zwei Seiten zusammenlegen.
+    private static final Pattern SAFE_FILE = Pattern.compile(
+            "(pages\\.ndjson|tree\\.json|manifest\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin))");
     private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
     private final Path root;
@@ -108,6 +111,25 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                     file.path("sha256").asString()));
         }
         return Optional.of(new ExportArtifact(exportId, node.path("complete").asBoolean(false), files));
+    }
+
+    @Override
+    public Optional<InputStream> open(String exportId, String name) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches() || !SAFE_FILE.matcher(name).matches()) {
+            return Optional.empty();
+        }
+        Path dir = root.resolve(exportId);
+        Path file = dir.resolve(name).normalize();
+        if (!file.startsWith(dir) || !Files.isRegularFile(dir.resolve(MANIFEST)) || !Files.isRegularFile(file)) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Files.newInputStream(file));
+        } catch (NoSuchFileException e) {
+            return Optional.empty();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Datei des Exports " + exportId + " nicht lesbar", e);
+        }
     }
 
     /** Dateiname der Payload einer Seite innerhalb von {@code raw/}; eindeutig je Seiten-ID. */

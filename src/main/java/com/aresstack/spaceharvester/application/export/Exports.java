@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
+import java.io.InputStream;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -74,6 +75,20 @@ public class Exports {
             return Optional.empty();
         }
         return writer.find(exportId);
+    }
+
+    /**
+     * Eine Datei des veröffentlichten Artefakts des eigenen Exports.
+     *
+     * @return leer, solange es kein Artefakt oder keine Datei dieses Namens gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es keinen Export mit dieser ID für
+     *                                                                           diesen Client gibt
+     */
+    public Optional<InputStream> artifactFile(String exportId, String owner, String name) {
+        if (jobs.status(exportId, owner).type() != JobType.EXPORT) {
+            return Optional.empty();
+        }
+        return writer.open(exportId, name);
     }
 
     private void export(JobContext context, String sourceId, String spaceKey) {
