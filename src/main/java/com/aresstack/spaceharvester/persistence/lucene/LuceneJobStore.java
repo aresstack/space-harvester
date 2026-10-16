@@ -142,7 +142,7 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         }
     }
 
-    /** Entfernt einen Auftrag; ohne Wirkung für unbekannte IDs (Port-Erweiterung aus #45). */
+    @Override
     public synchronized void delete(String jobId) {
         Objects.requireNonNull(jobId, "jobId");
         requireOpen();

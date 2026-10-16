@@ -48,7 +48,7 @@ class LuceneJobStoreContractTest extends JobStoreContract {
     }
 
     @Test
-    void deleteRemovesOnlyThatJobAndIgnoresUnknownIds() {
+    void aDeletedJobStaysDeletedAfterARestart() {
         LuceneJobStore store = (LuceneJobStore) newStore();
         JobStatus a = new JobStatus("a", JobType.HARVEST, "wiki", null, null, JobState.COMPLETED, JobProgress.NONE,
                 null, false, Instant.parse("2026-10-16T12:00:00Z"), null, Instant.parse("2026-10-16T12:01:00Z"));
@@ -58,9 +58,8 @@ class LuceneJobStoreContractTest extends JobStoreContract {
         store.save(b);
 
         store.delete("a");
-        store.delete("unbekannt");
 
-        assertThat(store.all()).containsExactly(b);
+        assertThat(reopen(store).all()).containsExactly(b);
     }
 
     @Test
