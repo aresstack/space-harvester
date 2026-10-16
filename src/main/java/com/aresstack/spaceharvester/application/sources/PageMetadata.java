@@ -29,12 +29,21 @@ public record PageMetadata(String pageId, String resourceId, String title, Strin
         Objects.requireNonNull(resourceId, "resourceId");
         title = title == null ? "" : title;
         Objects.requireNonNull(partitionKey, "partitionKey");
-        attributes = attributes == null ? new TreeMap<>() : new TreeMap<>(attributes);
+        attributes = natural(attributes);
     }
 
     @Override
     public SortedMap<String, String> attributes() {
-        return new TreeMap<>(attributes);
+        return natural(attributes);
+    }
+
+    /** Kopie mit natürlicher Schlüsselordnung, unabhängig vom Comparator der übergebenen Map. */
+    private static SortedMap<String, String> natural(Map<String, String> attributes) {
+        SortedMap<String, String> copy = new TreeMap<>();
+        if (attributes != null) {
+            copy.putAll(attributes);
+        }
+        return copy;
     }
 
     /** Für Tests und Adapter: Attribute aus einer beliebigen Map. */

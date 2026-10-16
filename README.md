@@ -111,7 +111,8 @@ space-harvester:
 | `GET /api/v1/info` | Name, Version und API-Version des Dienstes |
 | `GET /api/v1/sources` | Konfigurierte Quellen (ID, Typ, Titel; ohne Verbindungsdaten) |
 | `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
-| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -132,7 +133,7 @@ außerhalb des Baums der Startseite, ohne Gesamtgrenze. `nextCursor` wird an den
 `null` ist (`complete: true`). Ein Fehler beim Nachladen ist ein Fehler (z. B. 503), nie eine leere oder vollständige
 Liste; ein Cursor gilt nur für seinen Space. Je Seite: `pageId`, `title`, `spaceKey`, `parentPageId` (`null` für
 Wurzelseiten), `version`, `modifiedAt`, `url`, weitere Attribute der Quelle (etwa `confluence.labels`) und
-`metadataHash`.
+`metadataHash` sowie `attributesHash`.
 
 `metadataHash` (Schema `page-metadata/v1`, in `metadataHashSchema` mitgeliefert) ist `sha256:<hex>` über ein
 kanonisches JSON-Objekt aus `schema`, `sourceId`, `pageId`, `spaceKey`, `title`, `parentPageId`, `version` und
@@ -140,8 +141,20 @@ kanonisches JSON-Objekt aus `schema`, `sourceId`, `pageId`, `spaceKey`, `title`,
 (keine Unicode-Normalisierung), UTF-8. Abrufzeit, URL und Attribute zählen nicht mit. Der Hash zeigt Änderungen dieser
 Metadaten an, beweist aber keine Inhaltsänderung; ein Inhalts-Hash (`rawSha256`) kommt mit den Rohdaten (#8).
 
-Geplante Endpunkte: Metadaten einer einzelnen Seite und Space-Fingerprint
-([#6](https://github.com/aresstack/space-harvester/issues/6)), asynchrone Exporte
+`attributesHash` (Schema `page-attributes/v1`, in `attributesHashSchema`) ist getrennt davon `sha256:<hex>` über
+`{"schema":…,"sourceId":…,"pageId":…,"attributes":{…}}` mit allen `attributes` der Seite, nach Schlüssel sortiert;
+fehlende Attribute fehlen auch im Objekt, Labels stehen sortiert und ohne Duplikate kommagetrennt. Eine reine
+Labeländerung ändert nur `attributesHash`, nicht `metadataHash`. Confluence liefert als Attribute außerdem
+`confluence.createdAt` und `confluence.createdBy` (aus `history`).
+
+**Einzelne Seite:** `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` liefert dieselben Felder und Hashes wie
+die Liste (unter `page`, dazu `origin`, `retrievedAt` und die beiden Schemata), live und ohne Inhalt. Die Route kommt
+ohne Space-Key aus: eine in einen anderen Space verschobene Seite behält ihre `pageId`, `spaceKey` zeigt den
+aktuellen Space. Eine unbekannte oder nicht sichtbare Seite ist `source-object-not-found` (404), eine ID in fremder
+Form `source-unsupported` (400).
+
+Geplante Endpunkte: Space-Fingerprint aus bestätigt vollständigen Läufen
+([#16](https://github.com/aresstack/space-harvester/issues/16)), asynchrone Exporte
 ([#10](https://github.com/aresstack/space-harvester/issues/10)–[#12](https://github.com/aresstack/space-harvester/issues/12)).
 
 ## Aufbau

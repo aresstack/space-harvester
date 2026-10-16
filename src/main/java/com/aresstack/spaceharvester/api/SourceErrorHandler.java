@@ -56,7 +56,7 @@ class SourceErrorHandler {
             case INVALID_RESPONSE -> problem(HttpStatus.BAD_GATEWAY, "source-invalid-response",
                     "Unerwartete Antwort der Quelle", "Die Antwort der Quelle war nicht auswertbar.");
             case UNSUPPORTED -> problem(HttpStatus.BAD_REQUEST, "source-unsupported",
-                    "Von der Quelle nicht unterstützt", "Die Quelle unterstützt diese Anfrage nicht, etwa einen Cursor aus einer anderen Abfrage.");
+                    "Von der Quelle nicht unterstützt", "Die Quelle unterstützt diese Anfrage nicht, etwa einen Cursor aus einer anderen Abfrage oder eine Seiten-ID in fremder Form.");
         };
         problem.setProperty("sourceId", e.sourceId());
         return problem;

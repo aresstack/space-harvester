@@ -76,6 +76,16 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     }
 
     /** Startseite eines Bereichs ({@code /rest/api/space/<key>} liefert sie als {@code homepage}). */
+    /** Verschiebt eine Seite als Wurzelseite in einen anderen Space; die Content-ID bleibt wie in Confluence. */
+    public void move(String pageId, String newSpaceKey) {
+        FakePage page = pages.get(pageId);
+        if (page.parentId != null) {
+            pages.get(page.parentId).children.remove(pageId);
+            page.parentId = null;
+        }
+        page.spaceKey = newSpaceKey;
+    }
+
     public void homepage(String spaceKey, String pageId) {
         spaceHomepages.put(spaceKey, pageId);
     }
@@ -415,6 +425,16 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             metadata.add("labels", labelPage);
             json.add("metadata", metadata);
         }
+        if (expand != null && expand.contains("history")) {
+            JsonObject history = new JsonObject();
+            history.addProperty("createdDate", page.createdDate);
+            JsonObject createdBy = new JsonObject();
+            createdBy.addProperty("type", "known");
+            createdBy.addProperty("username", page.createdBy);
+            createdBy.addProperty("userKey", "key-" + page.createdBy);
+            history.add("createdBy", createdBy);
+            json.add("history", history);
+        }
         JsonObject links = new JsonObject();
         links.addProperty("webui", "/pages/viewpage.action?pageId=" + page.id);
         json.add("_links", links);
@@ -487,7 +507,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public static final class FakePage {
         final String id;
         final String title;
-        final String spaceKey;
+        String spaceKey;
         final String html;
         /** {@code body.export_view}, falls es von {@code body.view} abweicht (Makros server-seitig gerendert). */
         String exportHtml;
@@ -497,6 +517,8 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         String parentId;
         int version = 3;
         String when = "2026-10-01T08:15:00.000+02:00";
+        String createdDate = "2026-09-01T09:00:00.000+02:00";
+        String createdBy = "autorin";
 
         FakePage(String id, String title, String spaceKey, String html) {
             this.id = id;
@@ -505,13 +527,21 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             this.html = html;
         }
 
+        /** Setzt eine neue Version mit Änderungszeitpunkt. */
+        public FakePage version(int number, String modified) {
+            this.version = number;
+            this.when = modified;
+            return this;
+        }
+
         /** Setzt {@code body.export_view} abweichend von {@code body.view}. */
         public FakePage exportView(String exportHtml) {
             this.exportHtml = exportHtml;
             return this;
         }
 
-        FakePage labels(String... names) {
+        /** Fügt Labels hinzu. */
+        public FakePage labels(String... names) {
             Collections.addAll(labels, names);
             return this;
         }

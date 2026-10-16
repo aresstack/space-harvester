@@ -55,6 +55,8 @@ final class ConfluenceRestClient {
     private static final String READING_EXPAND = "body.export_view,body.storage," + PAGE_EXPAND;
     /** Felder für Seiten ohne Inhalt (Startpunkte, Kindseiten, Suchtreffer); Labels sind nicht Standard. */
     private static final String LIST_EXPAND = "version,space,metadata.labels";
+    /** Für Metadaten einer Seite ohne Inhalt: zusätzlich Eltern und Erstellung ({@code history}). */
+    private static final String METADATA_EXPAND = LIST_EXPAND + ",ancestors,history";
     /** Confluence Data Center liefert Zeitstempel auch mit kompaktem Offset ({@code +1100}), kein ISO-8601. */
     private static final DateTimeFormatter COMPACT_OFFSET =
             DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss[.SSS]XX", Locale.ROOT);
@@ -141,7 +143,7 @@ final class ConfluenceRestClient {
     PageBatch spacePageBatch(Session session, String spaceKey, int start, int limit) throws KnowledgeSourceException {
         String what = "Seiten des Space";
         JsonObject json = getJson(session, "/rest/api/content?type=page&spaceKey=" + query(spaceKey) + "&expand="
-                + LIST_EXPAND + ",ancestors&start=" + start + "&limit=" + limit, what);
+                + METADATA_EXPAND + "&start=" + start + "&limit=" + limit, what);
         List<Page> pages = new ArrayList<Page>();
         for (JsonObject result : results(json, what)) {
             pages.add(toPage(result));
@@ -165,7 +167,7 @@ final class ConfluenceRestClient {
      * @throws KnowledgeSourceException {@code NOT_FOUND}, wenn die Seite nicht existiert oder keine Seite ist
      */
     Page page(Session session, String contentId, boolean withBody) throws KnowledgeSourceException {
-        String expand = withBody ? PAGE_EXPAND : LIST_EXPAND + ",ancestors";
+        String expand = withBody ? PAGE_EXPAND : METADATA_EXPAND;
         JsonObject json = getJson(session, "/rest/api/content/" + contentId + "?expand=" + expand, "Seite");
         if (!"page".equals(string(json, "type"))) {
             throw new KnowledgeSourceException(Kind.NOT_FOUND, "Inhalt " + contentId + " ist keine Seite");
@@ -1481,6 +1483,10 @@ final class ConfluenceRestClient {
                 labels.add(string(label.getAsJsonObject(), "name"));
             }
         }
+        JsonObject history = object(json, "history"); // optional, fehlt ohne expand=history
+        JsonObject creator = object(history, "createdBy");
+        String createdBy = creator == null ? null
+                : string(creator, "username") != null ? string(creator, "username") : string(creator, "userKey");
         JsonObject links = object(json, "_links");
         return new Page(id, nullToEmpty(string(json, "title")),
                 space == null ? null : string(space, "key"),
@@ -1488,7 +1494,8 @@ final class ConfluenceRestClient {
                 ancestors.isEmpty() ? null : ancestors.get(ancestors.size() - 1),
                 body == null ? null : string(body, "value"),
                 links == null ? null : string(links, "webui"), labels)
-                .withServerBase(links == null ? null : string(links, "base"));
+                .withServerBase(links == null ? null : string(links, "base"))
+                .withCreated(history == null ? null : instant(string(history, "createdDate")), createdBy);
     }
 
     private static Attachment toAttachment(JsonObject json, String containerId) throws KnowledgeSourceException {
@@ -1680,15 +1687,19 @@ final class ConfluenceRestClient {
         final String serverBase;
         /** {@code body.storage} der Lese-Ansicht (draw.io-Makroparameter); sonst {@code null}. */
         final String storage;
+        /** {@code history.createdDate}, nur mit {@code expand=history}; sonst {@code null}. */
+        final Instant createdAt;
+        /** Benutzername (sonst User-Key) aus {@code history.createdBy}, nur mit {@code expand=history}. */
+        final String createdBy;
 
         Page(String id, String title, String spaceKey, String version, Instant modifiedAt,
              String parentId, String html, String webUi, List<String> labels) {
-            this(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, "", null, null);
+            this(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, "", null, null, null, null);
         }
 
         private Page(String id, String title, String spaceKey, String version, Instant modifiedAt,
                      String parentId, String html, String webUi, List<String> labels, String excerpt,
-                     String serverBase, String storage) {
+                     String serverBase, String storage, Instant createdAt, String createdBy) {
             this.id = id;
             this.title = title;
             this.spaceKey = spaceKey;
@@ -1701,16 +1712,18 @@ final class ConfluenceRestClient {
             this.excerpt = excerpt;
             this.serverBase = serverBase;
             this.storage = storage;
+            this.createdAt = createdAt;
+            this.createdBy = createdBy;
         }
 
         Page withExcerpt(String excerpt) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storage);
+                    serverBase, storage, createdAt, createdBy);
         }
 
         Page withTitle(String newTitle) {
             return new Page(id, newTitle, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storage);
+                    serverBase, storage, createdAt, createdBy);
         }
 
         /** Fill web address and modification time from the search wrapper where the content lacks them. */
@@ -1718,17 +1731,22 @@ final class ConfluenceRestClient {
             String address = webUi == null || webUi.trim().isEmpty() ? url : webUi;
             Instant when = modifiedAt == null ? lastModified : modifiedAt;
             return new Page(id, title, spaceKey, version, when, parentId, html, address, labels, excerpt,
-                    serverBase, storage);
+                    serverBase, storage, createdAt, createdBy);
         }
 
         Page withServerBase(String base) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt, base,
-                    storage);
+                    storage, createdAt, createdBy);
         }
 
         Page withStorage(String storageValue) {
             return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
-                    serverBase, storageValue);
+                    serverBase, storageValue, createdAt, createdBy);
+        }
+
+        Page withCreated(Instant created, String creator) {
+            return new Page(id, title, spaceKey, version, modifiedAt, parentId, html, webUi, labels, excerpt,
+                    serverBase, storage, created, creator);
         }
     }
 
