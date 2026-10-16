@@ -166,6 +166,9 @@ class PageSearchTest {
                 .isInstanceOf(InvalidQueryException.class);
         assertThatThrownBy(() -> search.search(CALLER, query(null, SearchSort.PAGE_ID), "s1.kaputt", 2))
                 .isInstanceOf(InvalidQueryException.class);
+        // Ein Filter mit dem Wert "null" ist eine andere Anfrage als einer ohne Filter.
+        assertThatThrownBy(() -> search.search(CALLER, PageSearchQuery.of("wiki", List.of(), null, "null", null, null,
+                null, null, SearchSort.PAGE_ID), cursor, 2)).isInstanceOf(InvalidQueryException.class);
 
         index.publish("wiki", new SearchIndexState("i2", Instant.parse("2026-10-16T21:00:00Z")), List.of());
         assertThatThrownBy(() -> search.search(CALLER, query(null, SearchSort.PAGE_ID), cursor, 2))
