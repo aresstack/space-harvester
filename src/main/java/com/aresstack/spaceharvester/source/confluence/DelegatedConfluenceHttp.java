@@ -54,8 +54,11 @@ public final class DelegatedConfluenceHttp implements AutoCloseable {
     }
 
     private URI target(String pathAndQuery) {
-        if (pathAndQuery == null || !pathAndQuery.startsWith("/") || pathAndQuery.startsWith("//")
-                || pathAndQuery.contains("\\") || pathAndQuery.contains("#")) {
+        String path = pathAndQuery == null ? null : pathAndQuery.split("\\?", 2)[0];
+        if (path == null || !path.startsWith("/") || path.contains("//") || path.contains("\\")
+                || pathAndQuery.contains("#") || (path + "/").contains("/./") || (path + "/").contains("/../")
+                || path.toLowerCase(java.util.Locale.ROOT).matches(".*%(2e|2f|5c).*")) {
+            // auch kodierte Punkte und Schrägstriche: Confluence dekodiert sie und käme sonst aus dem Pfad heraus
             throw new IllegalArgumentException("nur Pfade relativ zur Confluence der Quelle erlaubt");
         }
         URI target;

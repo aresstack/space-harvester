@@ -119,7 +119,8 @@ class DelegatedConfluenceHttpTest {
     @Test
     void pathsOutsideTheSourceAreRejectedBeforeAnyRequest() {
         for (String path : List.of("http://evil.test/x", "//evil.test/x", "rest/api/space", "/../other",
-                "/rest/../../other", "/rest/api#x", "@evil.test/x")) {
+                "/rest/../../other", "/rest/api#x", "@evil.test/x", "/rest//api/space", "/rest/api/..",
+                "/rest/./api", "/rest\\api", "/rest/%2e%2e/other", "/rest/api%2Fspace")) {
             assertThatThrownBy(() -> http.get(path, TOKEN)).as(path).isInstanceOf(IllegalArgumentException.class)
                     .hasMessageNotContaining(TOKEN);
         }
