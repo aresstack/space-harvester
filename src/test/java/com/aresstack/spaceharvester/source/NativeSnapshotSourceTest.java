@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
@@ -78,6 +79,15 @@ class NativeSnapshotSourceTest {
 
     @Autowired
     private SourceQueries queries;
+
+    @Autowired
+    private PageContentFetcher fetcher;
+
+    @Test
+    void theSynchronizationGetsSnapshotsThroughThePageContentFetcher() {
+        assertThat(fetcher).isSameAs(snapshots);
+        assertThat(fetcher.fetch("wiki", "102").payload().bytes()).isEqualTo(RAW.getBytes(StandardCharsets.UTF_8));
+    }
 
     @Test
     void payloadIsTheResponseByteForByteWithItsHash() throws Exception {
