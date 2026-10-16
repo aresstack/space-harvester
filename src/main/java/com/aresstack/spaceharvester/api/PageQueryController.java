@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
@@ -71,6 +72,9 @@ public class PageQueryController {
     @ApiResponse(responseCode = "400", description = "Ungültiges limit oder ungültiger bzw. fremder cursor "
             + "(invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe für diesen Space oder keine Quelle mit dieser ID (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Space nicht im "
             + "Cache (cache-miss)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
@@ -81,6 +85,7 @@ public class PageQueryController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public PagesResponse pages(
+            @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
@@ -88,7 +93,7 @@ public class PageQueryController {
             @RequestParam(required = false) String cursor,
             @Parameter(description = "Größe des Stapels, 1 bis " + PageQueries.MAX_PAGE_LIMIT)
             @RequestParam(defaultValue = "" + PageQueries.MAX_PAGE_LIMIT) int limit) {
-        return PagesResponse.of(queries.pages(sourceId, spaceKey, cursor, limit));
+        return PagesResponse.of(queries.pages(caller, sourceId, spaceKey, cursor, limit));
     }
 
     @GetMapping("/{sourceId}/spaces/{spaceKey}/tree")
@@ -100,6 +105,9 @@ public class PageQueryController {
                     + "aufsteigend nach pageId. Größere Bäume liefert der Export.")
     @ApiResponse(responseCode = "200", description = "Der Baum")
     @ApiResponse(responseCode = "400", description = "Nicht unterstützter include-Wert (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe für diesen Space oder keine Quelle mit dieser ID (access-denied)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Space nicht im "
@@ -115,6 +123,7 @@ public class PageQueryController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public TreeResponse tree(
+            @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
@@ -133,7 +142,7 @@ public class PageQueryController {
                 default -> throw new InvalidQueryException("include kennt nur metadata");
             }
         }
-        return TreeResponse.of(queries.tree(sourceId, spaceKey), metadata);
+        return TreeResponse.of(queries.tree(caller, sourceId, spaceKey), metadata);
     }
 
     @GetMapping("/{sourceId}/pages/{pageId}")
@@ -158,8 +167,11 @@ public class PageQueryController {
     @ApiResponse(responseCode = "400", description = "Nicht unterstützte view (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle oder keine Quelle mit dieser ID (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Seite nicht im "
-            + "Cache bzw. nicht sichtbar (cache-miss)",
+            + "Cache bzw. ihr Space ohne content-Freigabe, nicht unterscheidbar (cache-miss)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "501", description = "refresh=true, aber keine Prüfung gegen die Quelle angebunden "
@@ -169,6 +181,7 @@ public class PageQueryController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<byte[]> page(
+            @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "ID der Seite in der Quelle (Confluence-Content-ID)", example = "123456")
@@ -182,7 +195,7 @@ public class PageQueryController {
         if (!"native".equals(view)) {
             throw new InvalidQueryException("view=" + view + " wird noch nicht unterstützt");
         }
-        CachedPage page = queries.page(sourceId, pageId, refresh);
+        CachedPage page = queries.page(caller, sourceId, pageId, refresh);
         PageSnapshot snapshot = page.snapshot();
         NativePayload payload = snapshot.payload();
         String etag = "\"" + payload.rawSha256() + "\"";

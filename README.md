@@ -175,8 +175,11 @@ zu Wurzeln und stehen in `anomalies` (`missing-parent`, `cycle`). Bäume über `
 gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den Headern `X-Cache-Generation`,
 `X-Cache-State`, `X-Cache-Synced-At`, `X-Cache-Last-Checked-At`, `X-Page-Revision` und `X-Native-Format`.
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
-antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt oder nicht sichtbar ist, ist `cache-miss`
-(404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503).
+antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
+(404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
+[docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die native
+Einzelseite verlangt `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
+wie bei einer unbekannten Seite.
 
 Geplante Endpunkte: Space-Fingerprint aus bestätigt vollständigen Läufen
 ([#16](https://github.com/aresstack/space-harvester/issues/16)), asynchrone Exporte
