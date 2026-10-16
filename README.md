@@ -141,7 +141,7 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
 ```
 
 Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Ob und wie ein Spring-`WebClient` mit echter asynchroner I/O folgt, klärt
+Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
 [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 
 ## API-Übersicht
