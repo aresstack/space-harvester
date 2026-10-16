@@ -258,4 +258,35 @@ class FileSystemExportArtifactWriterTest {
     private static String sha256(byte[] bytes) throws Exception {
         return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
     }
+    @Test
+    void listsDeletesAndDiscardsArtifactsSeparately() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        assertThat(writer.published()).isEmpty();
+        assertThat(writer.unpublished()).isEmpty();
+        try (ExportArtifactWriter.Session session = writer.begin("done", SCOPE)) {
+            write(session, snapshot("1", null, PRETTY));
+            session.publish(tree(new PageTree.Node("1", List.of())), summary("done", 1, List.of(), true));
+        }
+        ExportArtifactWriter.Session open = writer.begin("running", SCOPE);
+        write(open, snapshot("1", null, PRETTY));
+        // Rest eines Laufs, der beim Beenden des Dienstes nicht mehr aufräumen konnte.
+        Files.createDirectories(root.resolve(".incomplete/crashed/raw"));
+
+        assertThat(writer.published()).containsExactly("done");
+        assertThat(writer.unpublished()).containsExactlyInAnyOrder("running", "crashed");
+
+        writer.discard("crashed");
+        writer.discard("done");
+        writer.delete("running");
+        assertThat(writer.published()).containsExactly("done");
+        assertThat(writer.unpublished()).containsExactly("running");
+
+        writer.delete("done");
+        writer.delete("done");
+        writer.delete("../outside");
+        assertThat(writer.published()).isEmpty();
+        assertThat(writer.find("done")).isEmpty();
+        assertThat(root.resolve("done")).doesNotExist();
+        open.close();
+    }
 }

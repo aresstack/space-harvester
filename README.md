@@ -312,7 +312,9 @@ kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flach
 `artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
 alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu viele offene Aufträge ergeben
-`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`).
+`too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
+leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
+jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)).
