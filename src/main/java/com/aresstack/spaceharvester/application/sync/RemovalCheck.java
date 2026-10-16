@@ -1,6 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
-import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import java.util.LinkedHashMap;
@@ -30,15 +30,20 @@ public class RemovalCheck {
     /**
      * @param pageId          ID der Seite
      * @param verdict         Ergebnis
-     * @param currentSpaceKey Space laut Einzelabfrage bei {@link Verdict#MOVED_OUT} und {@link Verdict#STILL_PRESENT},
-     *                        sonst {@code null}
-     * @param problem         Grund bei {@link Verdict#UNVERIFIED}, sonst {@code null}; ohne Zugangsdaten
+     * @param current Seite laut Einzelabfrage bei {@link Verdict#MOVED_OUT} und {@link Verdict#STILL_PRESENT}, sonst
+     *                {@code null}
+     * @param problem Grund bei {@link Verdict#UNVERIFIED}, sonst {@code null}; ohne Zugangsdaten
      */
-    public record Result(String pageId, Verdict verdict, String currentSpaceKey, String problem) {
+    public record Result(String pageId, Verdict verdict, PageMetadataListing.Entry current, String problem) {
 
         public Result {
             Objects.requireNonNull(pageId, "pageId");
             Objects.requireNonNull(verdict, "verdict");
+        }
+
+        /** Space laut Einzelabfrage oder {@code null}. */
+        public String currentSpaceKey() {
+            return current == null ? null : current.page().partitionKey();
         }
 
         public boolean removes() {
@@ -64,9 +69,10 @@ public class RemovalCheck {
 
     private Result verify(String sourceId, String spaceKey, String pageId) {
         try {
-            PageMetadata page = queries.pageMetadata(sourceId, pageId).entry().page();
-            Verdict verdict = spaceKey.equals(page.partitionKey()) ? Verdict.STILL_PRESENT : Verdict.MOVED_OUT;
-            return new Result(pageId, verdict, page.partitionKey(), null);
+            PageMetadataListing.Entry current = queries.pageMetadata(sourceId, pageId).entry();
+            Verdict verdict = spaceKey.equals(current.page().partitionKey())
+                    ? Verdict.STILL_PRESENT : Verdict.MOVED_OUT;
+            return new Result(pageId, verdict, current, null);
         } catch (SourceAccessException e) {
             if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
                 return new Result(pageId, Verdict.GONE, null, null);
