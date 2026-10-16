@@ -48,6 +48,12 @@ public final class DemoConfluence implements AutoCloseable {
     /** Die Demo-Testdaten. */
     public static FakeConfluence fixture() {
         FakeConfluence confluence = new FakeConfluence();
+        demoData(confluence);
+        return confluence;
+    }
+
+    /** Legt die Demo-Testdaten in einer Fake-Confluence an, etwa um sie danach im Test zu verändern. */
+    public static void demoData(FakeConfluence confluence) {
         confluence.space("DEMO", "Demo-Handbuch");
         confluence.page("1000", "Start", "DEMO", "<p>Willkommen im Demo-Handbuch.</p>").labels("handbuch");
         confluence.page("1001", "Architektur", "DEMO",
@@ -71,7 +77,6 @@ public final class DemoConfluence implements AutoCloseable {
         confluence.attachment("att1001", "1001", "diagramm.png", "image/png", "kein echtes PNG");
         confluence.space("OPS", "Betrieb");
         confluence.page("3000", "Runbook", "OPS", "<p>Bereitschaft</p>");
-        return confluence;
     }
 
     /** Basis-URL inklusive Kontextpfad, wie sie unter {@code space-harvester.sources[].base-url} steht. */
