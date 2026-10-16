@@ -4,17 +4,17 @@ import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import java.time.Clock;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
- * Ablauf eines Sync-Laufs für einen Space, ohne Inhalte selbst zu laden.
+ * Ablauf eines Sync-Laufs für einen Space.
  *
  * <ol>
  *   <li>{@link #plan}: bestätigte Generation lesen, vollständig inventarisieren, abgleichen und fehlende Seiten
  *       einzeln nachprüfen (nur bei bestätigter Inventur).</li>
- *   <li>Der Aufrufer (Job, #12) lädt Inhalte für {@link SyncPlan#contentToFetch()}, aktualisiert Metadaten und
- *       Attribute und entfernt bestätigt fehlende Seiten aus dem Cache.</li>
- *   <li>{@link #confirm}: daraus die nächste Generation bilden und veröffentlichen.</li>
+ *   <li>{@link #run}: Inhalte laden, Metadaten und Attribute aktualisieren und bestätigt fehlende Seiten entfernen,
+ *       alles vorgemerkt und erst zusammen mit der nächsten Generation sichtbar.</li>
  * </ol>
  *
  * <p>Ein abgebrochener Lauf veröffentlicht nichts; die bisherige Generation bleibt gültig, und ein neuer Lauf beginnt
@@ -49,39 +49,52 @@ public class SpaceSync {
     }
 
     /**
+     * Bestätigt die nächste Generation ohne eigene Schreibvorgänge im Cache, etwa wenn nichts zu laden war. Läufe mit
+     * Inhalten gehen über {@link #run}, damit ihre Änderungen erst mit der Generation sichtbar werden.
+     *
      * @param failedPageIds Seiten, deren Abgleich fehlgeschlagen ist
      * @throws UnconfirmableSyncException siehe {@link SyncPlan#nextBaseline}
      * @throws SyncConflictException      wenn inzwischen ein anderer Lauf eine Generation bestätigt hat
      */
-    public SyncBaseline confirm(SyncPlan plan, Set<String> failedPageIds) {
+    SyncBaseline confirm(SyncPlan plan, Set<String> failedPageIds) {
         SyncBaseline next = plan.nextBaseline(clock.instant(), failedPageIds);
-        store.publish(next);
+        try (StagedGeneration staged = store.begin(plan.inventory().sourceId(), plan.inventory().spaceKey())) {
+            staged.commit(next);
+        }
         return next;
     }
 
     /**
-     * Ganzer Lauf: planen, mit {@code applier} anwenden und, wenn möglich, die nächste Generation bestätigen. Auch eine
-     * abgebrochene Inventur aktualisiert die gelesenen Seiten; sie bestätigt nur keine Generation und entfernt nichts.
+     * Ganzer Lauf: planen, die Änderungen mit {@code applier} in einer {@link StagedGeneration} vormerken und sie mit
+     * der nächsten Generation in einem Schritt sichtbar machen.
+     *
+     * <p>Kann der Plan keine Generation werden (abgebrochene oder widersprüchliche Inventur, übersehene Seite), wird
+     * nichts geladen und nichts geschrieben. Wirft das Laden oder der Commit (z. B. {@link SyncConflictException}),
+     * wird verworfen, was vorgemerkt war; der Cache bleibt beim Stand der bisherigen Generation.
      *
      * @throws SyncConflictException wenn inzwischen ein anderer Lauf eine Generation bestätigt hat
      */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier) {
         SyncPlan plan = plan(sourceId, spaceKey);
-        Set<String> failed = applier.apply(plan);
-        try {
-            return new SyncRun(plan, failed, confirm(plan, failed), null);
-        } catch (UnconfirmableSyncException e) {
-            return new SyncRun(plan, failed, null, e.getMessage());
+        Optional<String> unconfirmable = plan.unconfirmable();
+        if (unconfirmable.isPresent()) {
+            return new SyncRun(plan, Set.of(), null, unconfirmable.get());
+        }
+        try (StagedGeneration staged = store.begin(sourceId, spaceKey)) {
+            Set<String> failed = applier.apply(plan, staged);
+            SyncBaseline next = plan.nextBaseline(clock.instant(), failed);
+            staged.commit(next);
+            return new SyncRun(plan, failed, next, null);
         }
     }
 
     /**
      * Ergebnis von {@link #run}.
      *
-     * @param plan          der angewendete Plan
+     * @param plan          der Plan
      * @param failedPageIds Seiten, deren Abgleich fehlgeschlagen ist
      * @param confirmed     die neu bestätigte Generation oder {@code null}
-     * @param notConfirmed  warum keine Generation bestätigt wurde, sonst {@code null}
+     * @param notConfirmed  warum keine Generation bestätigt und nichts geschrieben wurde, sonst {@code null}
      */
     public record SyncRun(SyncPlan plan, Set<String> failedPageIds, SyncBaseline confirmed, String notConfirmed) {
 

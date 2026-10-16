@@ -3,7 +3,7 @@ package com.aresstack.spaceharvester.application.sync;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
-import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
@@ -12,10 +12,11 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Wendet einen {@link SyncPlan} auf das {@link SnapshotRepository} an.
+ * Merkt die Änderungen eines {@link SyncPlan} in einer {@link StagedGeneration} vor.
  *
  * <ul>
- *   <li>{@link PageChange.Kind#NEW}, {@link PageChange.Kind#CONTENT_CHANGED}: Snapshot laden und speichern.</li>
+ *   <li>{@link PageChange.Kind#NEW}, {@link PageChange.Kind#CONTENT_CHANGED}: Snapshot laden und speichern, wenn er
+ *       zur Inventur passt (siehe unten).</li>
  *   <li>{@link PageChange.Kind#METADATA_CHANGED}, {@link PageChange.Kind#ATTRIBUTES_CHANGED}: nur die aktuellen
  *       Kopfdaten ersetzen, kein Inhaltsabruf.</li>
  *   <li>{@link PageChange.Kind#MISSING}: bei {@link RemovalCheck.Verdict#GONE} entfernen, bei
@@ -23,21 +24,22 @@ import java.util.TreeSet;
  *       enthält keinen Space, die Seite bleibt), sonst nichts.</li>
  * </ul>
  *
- * <p>Ein Fehler der Quelle beim Laden macht nur die betroffene Seite fehlgeschlagen; ein Fehler des Speichers bricht
- * den Lauf ab, ohne dass eine Generation bestätigt wird. Mehrfaches Anwenden desselben Plans ist unschädlich.
+ * <p>Ein geladener Snapshot muss Seite, Space und (wenn die Inventur sie kennt) Revision der Inventur tragen. Weicht
+ * er ab, weil sich die Seite zwischen Listung und Abruf geändert hat (ältere, neuere oder verschobene Antwort), wird
+ * er nicht gespeichert und die Seite gilt als fehlgeschlagen: Die Generation behält den bisherigen Stand als veraltet,
+ * und der nächste Lauf gleicht sie erneut ab. So bestätigt eine Generation nie eine Revision, deren Payload nicht
+ * gespeichert ist. Ein Quellfehler beim Laden macht ebenfalls nur die betroffene Seite fehlgeschlagen.
  */
 public class PlanApplier {
 
-    private final SnapshotRepository repository;
     private final PageContentFetcher fetcher;
 
-    public PlanApplier(SnapshotRepository repository, PageContentFetcher fetcher) {
-        this.repository = Objects.requireNonNull(repository, "repository");
+    public PlanApplier(PageContentFetcher fetcher) {
         this.fetcher = Objects.requireNonNull(fetcher, "fetcher");
     }
 
     /** @return die Seiten, deren Abgleich fehlgeschlagen ist, für {@link SyncPlan#nextBaseline} */
-    public Set<String> apply(SyncPlan plan) {
+    public Set<String> apply(SyncPlan plan, StagedGeneration target) {
         String sourceId = plan.inventory().sourceId();
         Instant observedAt = plan.inventory().finishedAt();
         Set<String> failed = new TreeSet<>();
@@ -45,18 +47,18 @@ public class PlanApplier {
             PageKey key = new PageKey(sourceId, change.pageId());
             switch (change.kind()) {
                 case NEW, CONTENT_CHANGED -> {
-                    if (!fetch(key)) {
+                    if (!fetch(key, change.current().page(), target)) {
                         failed.add(change.pageId());
                     }
                 }
                 case METADATA_CHANGED, ATTRIBUTES_CHANGED ->
-                        repository.saveHeader(header(key, change.current(), observedAt));
+                        target.saveHeader(header(key, change.current(), observedAt));
                 case MISSING -> {
                     RemovalCheck.Result removal = plan.removals().get(change.pageId());
                     if (removal != null && removal.verdict() == RemovalCheck.Verdict.GONE) {
-                        repository.remove(key);
+                        target.remove(key);
                     } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.MOVED_OUT) {
-                        repository.saveHeader(header(key, removal.current(), observedAt));
+                        target.saveHeader(header(key, removal.current(), observedAt));
                     }
                 }
                 case UNCHANGED, NOT_SEEN -> {
@@ -66,18 +68,20 @@ public class PlanApplier {
         return failed;
     }
 
-    private boolean fetch(PageKey key) {
+    private boolean fetch(PageKey key, PageMetadata expected, StagedGeneration target) {
         PageSnapshot snapshot;
         try {
             snapshot = fetcher.fetch(key.sourceId(), key.pageId());
         } catch (SourceAccessException e) {
             return false;
         }
-        if (!snapshot.key().equals(key)) {
-            throw new IllegalStateException("Quelle lieferte Seite " + snapshot.key() + " statt " + key);
+        boolean matches = snapshot.key().equals(key)
+                && expected.partitionKey().equals(snapshot.spaceKey())
+                && (expected.version() == null || expected.version().equals(snapshot.revision()));
+        if (matches) {
+            target.save(snapshot);
         }
-        repository.save(snapshot);
-        return true;
+        return matches;
     }
 
     private static PageHeader header(PageKey key, PageMetadataListing.Entry entry, Instant observedAt) {
