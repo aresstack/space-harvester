@@ -80,6 +80,17 @@ class ConfluenceStorageTextProjectorTest {
     }
 
     @Test
+    void theInputHashFollowsTheOutline() {
+        String paragraph = project("<p>Titel</p><p>Text</p>").inputSha256();
+        String h1 = project("<h1>Titel</h1><p>Text</p>").inputSha256();
+        String h2 = project("<h2>Titel</h2><p>Text</p>").inputSha256();
+
+        assertThat(project("<p>Titel</p><p>Text</p>").text()).isEqualTo(project("<h1>Titel</h1><p>Text</p>").text());
+        assertThat(paragraph).isNotEqualTo(h1);
+        assertThat(h1).isNotEqualTo(h2);
+    }
+
+    @Test
     void otherFormatsAreNotSupported() {
         PageSnapshot other = EnrichmentTestPages.page("wiki", "101", "1", "{}".getBytes(StandardCharsets.UTF_8),
                 "confluence-rest-contentX");

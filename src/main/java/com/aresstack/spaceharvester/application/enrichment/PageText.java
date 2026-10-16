@@ -29,11 +29,21 @@ public record PageText(String schema, String text, List<Section> sections) {
         }
     }
 
-    /** {@code sha256:<hex>} über Schema und Text: die Eingabe, gegen die ein Ergebnis berechnet wurde. */
+    /**
+     * {@code sha256:<hex>} über Schema, Abschnitte und Text: die Eingabe, gegen die ein Ergebnis berechnet wurde. Wird
+     * nur eine Überschrift umgestuft, ändert sich der Hash also auch bei gleichem Text.
+     */
     public String inputSha256() {
+        StringBuilder input = new StringBuilder(schema).append('\n');
+        for (Section section : sections) {
+            // Überschriften stehen im Text; Ebene und Grenzen genügen, um die Gliederung festzulegen.
+            input.append(section.level()).append(',').append(section.start()).append(',').append(section.end())
+                    .append(';');
+        }
+        input.append('\n').append(text);
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest((schema + "\n" + text).getBytes(StandardCharsets.UTF_8));
+                    .digest(input.toString().getBytes(StandardCharsets.UTF_8));
             return "sha256:" + HexFormat.of().formatHex(digest);
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
