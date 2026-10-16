@@ -1,14 +1,10 @@
 package com.aresstack.spaceharvester.application;
 
-import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.info.BuildProperties;
-import org.springframework.stereotype.Service;
+import java.util.Objects;
 
 /**
- * Liefert die Selbstauskunft des Dienstes. Ohne Build-Informationen (z. B. Start aus der IDE ohne Gradle-Build)
- * wird die Version als {@code unknown} gemeldet, statt den Start zu verhindern.
+ * Liefert die Selbstauskunft des Dienstes.
  */
-@Service
 public class ServiceInfoQuery {
 
     public static final String SERVICE_NAME = "space-harvester";
@@ -16,9 +12,11 @@ public class ServiceInfoQuery {
 
     private final String version;
 
-    public ServiceInfoQuery(ObjectProvider<BuildProperties> buildProperties) {
-        BuildProperties build = buildProperties.getIfAvailable();
-        this.version = build != null ? build.getVersion() : "unknown";
+    /**
+     * @param version Build-Version des Dienstes, {@code unknown} wenn keine Build-Informationen vorliegen
+     */
+    public ServiceInfoQuery(String version) {
+        this.version = Objects.requireNonNull(version, "version");
     }
 
     public ServiceInfo get() {

@@ -1,4 +1,5 @@
 /**
- * Anwendungsfälle des Space Harvester. Unabhängig von HTTP; Quellen und Ausgaben nur über ihre Verträge.
+ * Anwendungsfälle des Space Harvester. Frameworkneutral: keine Spring-Abhängigkeiten, keine Annotationen;
+ * verdrahtet werden sie in {@code config}. Quellen und Ausgaben kennen sie nur über deren Verträge.
  */
 package com.aresstack.spaceharvester.application;

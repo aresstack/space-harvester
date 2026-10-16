@@ -19,7 +19,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 class ServiceEndpointsTest {
 
-    private final HttpClient http = HttpClient.newHttpClient();
+    private final HttpClient http = HttpClient.newBuilder()
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     @Autowired
     private Environment environment;
@@ -48,8 +50,8 @@ class ServiceEndpointsTest {
     }
 
     @Test
-    void swaggerUiIsReachable() throws Exception {
-        HttpResponse<String> response = get("/swagger-ui/index.html");
+    void swaggerUiIsReachableUnderDocumentedEntryUrl() throws Exception {
+        HttpResponse<String> response = get("/swagger-ui.html");
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("Swagger UI");
@@ -61,6 +63,26 @@ class ServiceEndpointsTest {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"status\":\"UP\"");
+    }
+
+    @Test
+    void livenessAndReadinessProbesAreUp() throws Exception {
+        for (String probe : new String[] {"/actuator/health/liveness", "/actuator/health/readiness"}) {
+            HttpResponse<String> response = get(probe);
+
+            assertThat(response.statusCode()).as(probe).isEqualTo(200);
+            assertThat(response.body()).as(probe).contains("\"status\":\"UP\"");
+        }
+    }
+
+    @Test
+    void actuatorInfoReportsBuild() throws Exception {
+        HttpResponse<String> response = get("/actuator/info");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body())
+                .contains("\"build\"")
+                .contains("\"artifact\":\"space-harvester\"");
     }
 
     @Test

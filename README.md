@@ -40,7 +40,7 @@ SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 | `GET /api/v1/info` | Name, Version und API-Version des Dienstes |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
-| `GET /actuator/health` | Health (mit `liveness`/`readiness`-Gruppen) |
+| `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet.
@@ -55,13 +55,15 @@ Seitenmetadaten mit Hashwerten ([#5](https://github.com/aresstack/space-harveste
 Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester`:
 
 - `api` – REST-Controller, Antwortmodelle, OpenAPI-Konfiguration
-- `application` – Anwendungsfälle, unabhängig von HTTP
+- `application` – Anwendungsfälle, frameworkneutral (kein Spring)
+- `config` – Spring-Konfiguration, die Anwendungsfälle verdrahtet
 - `source` – Quellenadapter hinter einer quellenunabhängigen SPI (folgt mit #2)
 - `output` – Exportformate und Artefakte (folgt mit #11)
 
-`source` und `output` kennen weder `api` noch einander. Desktop- oder Swing-Code aus dem Enterprise AI Client
+`source` und `output` kennen weder `api` noch einander; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
 wird nicht übernommen.
 
 Versionen stehen zentral in `gradle/libs.versions.toml` (Spring Boot 4.1.1, springdoc-openapi 3.1.1);
 die Spring-Starter erhalten ihre Versionen aus der Spring-Boot-BOM. Das Jar wird reproduzierbar gebaut
-(feste Zeitstempel und Dateireihenfolge, keine Build-Zeit in `build-info.properties`).
+(feste Zeitstempel und Dateireihenfolge, keine Build-Zeit in `build-info.properties`); der Wrapper prüft
+die SHA-256 der Gradle-Distribution.
