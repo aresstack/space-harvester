@@ -255,4 +255,77 @@ class ExportsTest {
         assertThat(writer.published).isEmpty();
         assertThat(writer.discarded).containsExactly(jobId.get());
     }
+    @Test
+    void artifactIsRemovedTogetherWithItsExpiredJob() {
+        AtomicReference<Instant> now = new AtomicReference<>(Instant.parse("2026-10-16T12:00:00Z"));
+        Clock moving = new Clock() {
+            @Override
+            public java.time.ZoneId getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(java.time.ZoneId zone) {
+                return this;
+            }
+
+            @Override
+            public Instant instant() {
+                return now.get();
+            }
+        };
+        Jobs expiring = new Jobs(new InMemoryJobStore(), Runnable::run,
+                new JobLimits(1, 5, Duration.ofHours(1), Duration.ofDays(7)), moving);
+        Exports exports = new Exports(expiring, cache, writer, moving);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "1", null)));
+        JobStatus old = exports.start("confluence", "DEV", "client-a");
+
+        now.set(now.get().plus(Duration.ofDays(6)));
+        assertThat(exports.purge()).isZero();
+        assertThat(writer.published()).containsExactly(old.id());
+
+        now.set(now.get().plus(Duration.ofDays(2)));
+        JobStatus fresh = exports.start("confluence", "DEV", "client-a");
+
+        assertThat(writer.published()).containsExactly(fresh.id());
+        assertThatThrownBy(() -> expiring.status(old.id())).isInstanceOf(UnknownJobException.class);
+    }
+
+    @Test
+    void leftoversWithoutRunningJobAreRemovedOnStartup() {
+        writer.unpublished.add("crashed-run");
+        writer.published.put("lost-job", new RecordingExportArtifactWriter.Published(List.of(), null,
+                null));
+
+        exports(cache);
+
+        assertThat(writer.unpublished()).isEmpty();
+        assertThat(writer.discarded).containsExactly("crashed-run");
+        assertThat(writer.published()).isEmpty();
+    }
+
+    @Test
+    void artifactOfRunningOrQueuedExportIsKept() {
+        List<Runnable> pending = new ArrayList<>();
+        Jobs queued = new Jobs(new InMemoryJobStore(), pending::add, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        Exports exports = new Exports(queued, cache, writer, clock);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "1", null)));
+        JobStatus job = exports.start("confluence", "DEV", "client-a");
+        // Ein Lauf hat schon begonnen zu schreiben, der Auftrag ist noch nicht beendet.
+        writer.unpublished.add(job.id());
+
+        assertThat(exports.purge()).isZero();
+        assertThat(writer.unpublished()).containsExactly(job.id());
+    }
+
+    @Test
+    void artifactOfAnotherJobTypeIsNotAnExport() {
+        JobStatus sync = jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "confluence", "DEV",
+                null, context -> java.util.concurrent.CompletableFuture.completedFuture(null));
+        writer.published.put(sync.id(), new RecordingExportArtifactWriter.Published(List.of(), null, null));
+
+        exports(cache).purge();
+
+        assertThat(writer.published()).isEmpty();
+    }
 }
