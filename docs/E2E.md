@@ -260,7 +260,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
     {
       "pageId": "1001", "title": "Architektur", "parentPageId": "1000", "version": "7",
       "metadataHash": "sha256:174e58f1d8a8a6a00f8bee7e458270fdf77f6b3df558c7bae7b6ec0ada1254d1",
-      "rawSha256": "sha256:c9a724aeaf05f35e2d2b9f0245fd7cfec69fb1bae80b77e1397e910860e9a4e3"
+      "rawSha256": "sha256:41311412036eb68fa7e16d7e0c818a1e390c24e5317c3574c604f3090e03019a"
     },
     { "pageId": "1002", "title": "Schnittstellen", "parentPageId": "1001" }
   ],
