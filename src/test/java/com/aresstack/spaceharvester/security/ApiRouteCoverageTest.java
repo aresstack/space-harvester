@@ -106,6 +106,10 @@ class ApiRouteCoverageTest {
 
     private HttpResponse<String> send(Route route, String token) throws Exception {
         String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1");
+        if (!route.path().contains("{sourceId}")) {
+            // Routen, die die Quelle als Parameter nehmen (Suche), sonst scheitern sie an der Eingabe statt am Recht.
+            path += "?sourceId=wiki";
+        }
         HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getRequiredProperty("local.server.port") + path))
                 .header("Content-Type", "application/json")
