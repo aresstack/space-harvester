@@ -11,8 +11,11 @@
  *   <li>{@code output} – Exportformate und Artefakte (JSON/NDJSON, Manifest).</li>
  *   <li>{@code security} – Zugriffsschutz der eigenen API (Anmeldung technischer Clients, Korpusfreigabe). Liefert
  *       Controllern den {@code AccessContext}; geprüft wird über {@code application.access.AccessGuard}.</li>
+ *   <li>{@code persistence} – Speicher hinter den Ports aus {@code application}; Lucene nur in
+ *       {@code persistence.lucene}.</li>
  * </ul>
  * {@code source} und {@code output} kennen weder {@code api} noch einander; {@code api} und {@code application}
- * kennen {@code security} nicht. {@code LayeringTest} prüft diese Regeln.
+ * kennen {@code security} nicht; {@code persistence} kennt nur {@code application}. {@code LayeringTest} prüft diese
+ * Regeln.
  */
 package com.aresstack.spaceharvester;

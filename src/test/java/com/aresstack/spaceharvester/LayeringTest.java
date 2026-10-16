@@ -62,4 +62,23 @@ class LayeringTest {
             .should().dependOnClassesThat().resideInAPackage("com.aresstack.enterpriseai..")
             .because("die Kopie aus enterprise-ai-sources bleibt hinter den Quellenadaptern; "
                     + "api, application und output arbeiten mit der eigenen, quellenunabhängigen SPI");
+
+    @ArchTest
+    static final ArchRule applicationDoesNotKnowPersistence = noClasses()
+            .that().resideInAPackage("..spaceharvester.application..")
+            .should().dependOnClassesThat().resideInAPackage("..spaceharvester.persistence..")
+            .because("Anwendungsfälle arbeiten gegen Ports; die Persistenz setzt sie um");
+
+    @ArchTest
+    static final ArchRule persistenceKnowsOnlyApplication = noClasses()
+            .that().resideInAPackage("..spaceharvester.persistence..")
+            .should().dependOnClassesThat().resideInAnyPackage("..spaceharvester.api..",
+                    "..spaceharvester.source..", "..spaceharvester.output..", "..spaceharvester.config..",
+                    "org.springframework..");
+
+    @ArchTest
+    static final ArchRule luceneStaysInsideItsAdapter = noClasses()
+            .that().resideOutsideOfPackage("..spaceharvester.persistence.lucene..")
+            .should().dependOnClassesThat().resideInAPackage("org.apache.lucene..")
+            .because("der Index ist ein Detail der Persistenz (#26); Ports tragen keine Lucene-Typen");
 }

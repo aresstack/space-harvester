@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.ServiceInfoQuery;
+import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
@@ -17,5 +19,10 @@ class ApplicationConfiguration {
         // Ohne Build-Informationen (z. B. Start aus der IDE ohne Gradle-Build) soll der Dienst trotzdem starten.
         BuildProperties build = buildProperties.getIfAvailable();
         return new ServiceInfoQuery(build != null ? build.getVersion() : "unknown");
+    }
+
+    @Bean
+    SourceSnapshots sourceSnapshots(SourceCatalog catalog) {
+        return new SourceSnapshots(catalog);
     }
 }
