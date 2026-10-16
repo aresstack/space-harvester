@@ -97,7 +97,7 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
             ConfluenceHttpResponse response = once(currentMethod, current,
                     hop == 0 ? headers : withCookies(headers, cookies), currentBody, maxBytes, location, tls);
             merge(cookies, response.cookies());
-            URI next = hop < 5 ? sameHostRedirect(current, response.status(), location[0]) : null;
+            URI next = hop < ConfluenceRedirects.MAX_REDIRECTS ? sameHostRedirect(current, response.status(), location[0]) : null;
             if (next == null) {
                 return new ConfluenceHttpResponse(response.status(), response.contentType(), response.body(),
                         response.location(), pairs(cookies), current, redirects);
@@ -113,86 +113,19 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
 
     /** Die Header mit den unterwegs gesetzten Cookies im {@code Cookie}-Header (gleiche Namen ersetzt). */
     static Map<String, String> withCookies(Map<String, String> headers, Map<String, String> collected) {
-        if (collected.isEmpty()) {
-            return headers;
-        }
-        Map<String, String> jar = new java.util.LinkedHashMap<String, String>();
-        String given = null;
-        for (Map.Entry<String, String> header : headers.entrySet()) {
-            if ("Cookie".equalsIgnoreCase(header.getKey())) {
-                given = header.getValue();
-            }
-        }
-        if (given != null) {
-            for (String pair : given.split(";")) {
-                int eq = pair.indexOf('=');
-                if (eq > 0) {
-                    jar.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
-                }
-            }
-        }
-        jar.putAll(collected);
-        Map<String, String> out = new java.util.LinkedHashMap<String, String>();
-        for (Map.Entry<String, String> header : headers.entrySet()) {
-            if (!"Cookie".equalsIgnoreCase(header.getKey())) {
-                out.put(header.getKey(), header.getValue());
-            }
-        }
-        StringBuilder cookie = new StringBuilder();
-        for (Map.Entry<String, String> entry : jar.entrySet()) {
-            cookie.append(cookie.length() == 0 ? "" : "; ").append(entry.getKey()).append('=').append(entry.getValue());
-        }
-        out.put("Cookie", cookie.toString());
-        return out;
+        return ConfluenceRedirects.withCookies(headers, collected);
     }
 
-    /** Spätere Cookies gleichen Namens ersetzen frühere; ein Löschcookie (leerer Wert) entfernt den Namen. */
     static void merge(Map<String, String> cookies, java.util.List<String> pairs) {
-        for (String pair : pairs) {
-            int eq = pair.indexOf('=');
-            String name = pair.substring(0, eq);
-            String value = pair.substring(eq + 1);
-            cookies.remove(name);
-            if (!value.isEmpty()) {
-                cookies.put(name, value);
-            }
-        }
+        ConfluenceRedirects.merge(cookies, pairs);
     }
 
     private static java.util.List<String> pairs(Map<String, String> cookies) {
-        java.util.List<String> out = new java.util.ArrayList<String>();
-        for (Map.Entry<String, String> cookie : cookies.entrySet()) {
-            out.add(cookie.getKey() + "=" + cookie.getValue());
-        }
-        return out;
+        return ConfluenceRedirects.pairs(cookies);
     }
 
     static URI sameHostRedirect(URI from, int status, String location) {
-        if ((status != 301 && status != 302 && status != 303 && status != 307 && status != 308)
-                || location == null || location.trim().isEmpty()) {
-            return null;
-        }
-        URI target;
-        try {
-            target = from.resolve(location.trim());
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        if (target.getHost() == null || !target.getHost().equalsIgnoreCase(from.getHost())
-                || effectivePort(target) != effectivePort(from) || target.getRawUserInfo() != null) {
-            return null;
-        }
-        if ("https".equalsIgnoreCase(from.getScheme()) && !"https".equalsIgnoreCase(target.getScheme())) {
-            return null;
-        }
-        return target;
-    }
-
-    private static int effectivePort(URI uri) {
-        if (uri.getPort() >= 0) {
-            return uri.getPort();
-        }
-        return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+        return ConfluenceRedirects.sameHostRedirect(from, status, location);
     }
 
     private ConfluenceHttpResponse once(String method, URI uri, Map<String, String> headers, byte[] body,
@@ -230,38 +163,9 @@ public final class UrlConnectionConfluenceTransport implements ConfluenceHttpTra
         }
     }
 
-    /**
-     * {@code name=wert} jedes {@code Set-Cookie}-Headers, ohne Attribute wie Path oder Expires; je Name gilt das
-     * letzte. Ein Löschcookie (leerer Wert oder {@code Max-Age=0}) kommt als {@code name=} und entfernt den Namen
-     * beim Zusammenführen über Weiterleitungen.
-     */
+    /** Siehe {@link ConfluenceRedirects#setCookies(Map)}. */
     static java.util.List<String> setCookies(Map<String, java.util.List<String>> headerFields) {
-        Map<String, String> cookies = new java.util.LinkedHashMap<String, String>();
-        for (Map.Entry<String, java.util.List<String>> header : headerFields.entrySet()) {
-            if (header.getKey() == null || !"Set-Cookie".equalsIgnoreCase(header.getKey())) {
-                continue;
-            }
-            for (String value : header.getValue()) {
-                String[] parts = value == null ? new String[] {""} : value.split(";");
-                String pair = parts[0].trim();
-                int eq = pair.indexOf('=');
-                if (eq <= 0) {
-                    continue;
-                }
-                boolean expired = false;
-                for (int i = 1; i < parts.length; i++) {
-                    expired |= parts[i].trim().replace(" ", "").equalsIgnoreCase("Max-Age=0");
-                }
-                String name = pair.substring(0, eq).trim();
-                cookies.remove(name);
-                cookies.put(name, expired ? "" : pair.substring(eq + 1).trim());
-            }
-        }
-        java.util.List<String> out = new java.util.ArrayList<String>();
-        for (Map.Entry<String, String> cookie : cookies.entrySet()) {
-            out.add(cookie.getKey() + "=" + cookie.getValue());
-        }
-        return out;
+        return ConfluenceRedirects.setCookies(headerFields);
     }
 
     private HttpURLConnection open(URI uri, SSLSocketFactory tls) throws IOException {

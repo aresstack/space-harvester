@@ -1,7 +1,8 @@
 # ADR 0001 – Ausgehender HTTP-Transport (Proxy/PAC, mTLS, asynchrone I/O)
 
-- **Status:** Teil 1 umgesetzt; asynchroner Client ist gesetzt (Angelo, 2026-10-16), offen ist nur die Umsetzung
-- **Tickets:** [#34](https://github.com/aresstack/space-harvester/issues/34), [#33](https://github.com/aresstack/space-harvester/issues/33), [#2](https://github.com/aresstack/space-harvester/issues/2)
+- **Status:** Teil 1 umgesetzt (#36); Teil 2 (asynchroner Transport, #47) als Transport umgesetzt, Verdrahtung in
+  den Adapter offen
+- **Tickets:** [#34](https://github.com/aresstack/space-harvester/issues/34), [#33](https://github.com/aresstack/space-harvester/issues/33), [#47](https://github.com/aresstack/space-harvester/issues/47), [#2](https://github.com/aresstack/space-harvester/issues/2)
 
 ## Kontext
 
@@ -23,33 +24,70 @@ nichtblockierender I/O. Ein synchroner Client (auch `RestClient` mit virtuellen 
    Damit funktionieren Route und Zertifikat zusammen, auch über `CONNECT`.
 3. Der asynchrone Client wird **nicht** in diesem Schritt gebaut, damit PAC-Gate und mTLS (#33) nicht daran hängen.
 
-## Offen: Umsetzung des asynchronen Clients
+## Entscheidung (Teil 2, #47): asynchroner Transport
 
-Gesetzt ist *dass* asynchron übertragen wird, offen ist nur *wie*:
+### Upstream-Port (`aresstack/enterprise-ai-client#173`)
 
-1. **Asynchrone Transport-SPI upstream zuerst** (`aresstack/enterprise-ai-client`), z. B.
-   `CompletionStage<ConfluenceHttpResponse> getAsync(URI, Map<String, String>, int maxBytes)` neben dem synchronen
-   `ConfluenceHttpTransport`. Ein asynchroner Client hinter dem heutigen synchronen Port müsste `block()` bzw.
-   `join()` aufrufen und wäre damit nicht asynchron. Danach Kopie synchronisieren (#2).
-2. **Client im Space Harvester** hinter dieser SPI. **Bevorzugt (Arbeitsannahme, 2026-10-16): Spring `WebClient`**
-   im bestehenden Spring-MVC-Dienst, ohne Umstellung auf WebFlux; `spring-webflux` und Reactor Netty kommen nur als
-   Client-Abhängigkeit. Rückgabe an die SPI per `Mono#toFuture()`. Alternative, falls die Paritätstests scheitern:
-   JDK `java.net.http.HttpClient.sendAsync`.
-   - Reactor Netty kennt keinen Proxy je Anfrage-URL. Die Route aus `ProxyRoutes` braucht daher eigene
-     `HttpClient`-/`WebClient`-Instanzen (bzw. Connection-Pools) je Kombination aus Proxy-Route und Quelle, oder
-     einen eigenen `ProxyProvider`-Resolver, der vor dem Verbindungsaufbau die bereits aufgelöste Route nimmt.
-   - PAC-Auflösung und PowerShell laufen vorher auf dem eigenen Pool von `ProxyRoutes`, nie auf dem Event-Loop.
-   - mTLS über Netty-`SslContext` mit eigenem `KeyManagerFactory` (Windows-MY/PKCS12 aus #33), bzw. Spring
-     `SslBundles`/`WebClientSsl`, wo die Zertifikatsquelle passt.
+- **Port:** `ConfluenceAsyncHttpTransport` neben dem unveränderten `ConfluenceHttpTransport`, mit
+  `CompletionStage<ConfluenceHttpResponse> getAsync(URI, Map<String, String> headers, int maxBytes)` und
+  `getAnonymousAsync(...)`. Java 8, kein Reactor-Typ im Port. Request-Typ bleibt wie synchron: absolute URI,
+  unveränderliche Header, Obergrenze; die Antwort ist dieselbe `ConfluenceHttpResponse` (Status, Content-Type,
+  Bytes, Location, Cookies, Ziel-URI, Weiterleitungen). Ein eigener Request-Typ hätte nichts getragen, was der
+  synchrone Weg nicht schon hat.
+- **Header:** kommen vollständig vom Aufrufer (`Authorization` für Basic/PAT, `Accept`, Sitzungs-`Cookie`);
+  der Transport ergänzt nur den User-Agent, den der Aufrufer überschreiben kann. Header werden nie geloggt.
+- **Anonym:** `getAnonymousAsync` hat bewusst **keine** Standardumsetzung (anders als synchron), damit kein
+  mTLS-Transport fremden Hosts sein Zertifikat zeigt.
+- **Fehler:** 4xx/5xx sind Antworten. Alles andere beendet die Stufe mit `IOException`: Verbindung, Timeout
+  (`SocketTimeoutException`), nicht verfügbare Route, Schema, Überlast; zu groß als
+  `ConfluenceResponseTooLargeException`. Die Methoden selbst werfen dafür nicht. Damit bleibt die Abbildung im
+  Adapter (`UNAVAILABLE`, `ACCESS_DENIED`, `NOT_FOUND`, `INVALID_RESPONSE`) dieselbe.
+- **Abbruch:** `toCompletableFuture().cancel(true)` bricht die Anfrage ab und gibt die Verbindung frei; nichts wird
+  weiter gepuffert.
+- **Gemeinsame Regeln:** Weiterleitung nur auf demselben Host (höchstens 5, nie https→http) und Cookie-Sammlung
+  stehen in `ConfluenceRedirects` und gelten für beide Transporte; der asynchrone Transport baut sie nicht nach.
+- **TLS:** `ClientCertificates.contextFromKeyStore`/`windowsMyContext` liefern denselben Kontext mit erzwungenem
+  Alias als `SSLContext`, weil Engine-basierte Clients keine `SSLSocketFactory` nehmen. Dabei fiel auf, dass der
+  erzwungene Alias über eine `SSLEngine` nie angeboten wurde (reiner `X509KeyManager`); das ist upstream behoben.
+- **Vertragstest:** `ConfluenceAsyncHttpTransportContract` (Testfixtures, JUnit 4) prüft jede Umsetzung gegen
+  einen lokalen Server, unter anderem dass der Aufruf vor der Serverantwort zurückkehrt.
 
-Kriterien, nachzuweisen mit Integrationstests gegen den bisherigen Transport:
+### Umsetzung im Space Harvester
 
-- Verhaltensparität: Header, Basic/PAT, Redirect-Host-Bindung (keine Credentials/Zertifikate an fremde Hosts),
-  Cookies/SSO, Byte-Limit, Fehlerzuordnung, bytegenaue Rohpayload.
-- Route je Ziel-URL aus `ProxyRoutes`, vorher auf eigenem Pool aufgelöst (nie auf einem Event-Loop); kein
-  Connection-Pool verwendet die Route einer anderen Quelle/URL wieder.
-- mTLS mit Windows-MY (eigener `KeyManager`) und PKCS12, auch durch `CONNECT`.
-- Begrenzte Parallelität je Quelle und Fail-Closed wie heute.
+`source.confluence.WebClientConfluenceTransport`: Spring `WebClient` auf Reactor Netty, nur als Client (der Dienst
+bleibt Spring MVC auf Tomcat). Rückgabe per `Mono#toFuture()`, ohne `block()`/`join()` im Anfragepfad.
+
+- **Route:** `HttpRoutePort#routeFor` je Ziel-URL und je Weiterleitungsschritt auf einem begrenzten eigenen
+  Scheduler (Standard 4 Threads, 64 wartend), nie auf einem Netty-Event-Loop. UNAVAILABLE endet als
+  `IOException` ohne Verbindungsversuch.
+- **Isolation:** je Schlüssel aus effektiver Route (Art, Proxy), Ziel (Schema, Host, Port) und TLS-Identität (mit
+  oder ohne Client-Zertifikat) ein eigener `WebClient` mit eigenem `ConnectionProvider`. Höchstens 64 Schlüssel; der
+  älteste wird freigegeben.
+- **Proxy:** Reactor-Netty-`ProxyProvider` vom Typ HTTP mit unaufgelöster Proxy-Adresse. Abweichung vom
+  synchronen Weg: Netty tunnelt auch `http`-Ziele per `CONNECT` statt Absolute-Form. Confluence mit Anmeldung ist
+  ohnehin nur über https zulässig.
+- **TLS:** `JdkSslContext` aus dem `SSLContext` von `ConfiguredClientCertificates.sslContext` (dieselben
+  Prüfungen wie #33); Hostnamenprüfung wie `HttpsURLConnection`.
+- **Größe:** `Content-Length` über der Grenze wird sofort abgelehnt; sonst wird beim Empfang gezählt und beim
+  Überschreiten abgebrochen, auch chunked. Kompression wird nicht angefordert, der Körper bleibt byte-genau.
+- **Parallelität:** je Pool 8 Verbindungen und 64 wartende Anfragen (konfigurierbar); darüber endet eine
+  Anfrage sofort mit `IOException`.
+- **Namensauflösung:** über die JVM (`DefaultAddressResolverGroup`), wie `HttpURLConnection` inklusive Hosts-Datei
+  und Windows-DNS; Nettys eigener DNS-Resolver liest unter Windows nicht dieselbe Konfiguration.
+- **Lebenszyklus:** `close()` gibt alle Pools und den Routen-Scheduler frei.
+- **Nachweis:** Vertragstest aus der Kopie; Parität mit `UrlConnectionConfluenceTransport` für 200/401/403/404/
+  429/500/503, Weiterleitungen und Cookies; echtes PAC mit zwei Zielen und `CONNECT`, PAC-Ausfall ohne DIRECT;
+  PAT + PKCS12 direkt und durch den Tunnel; Abbruch schließt die Verbindung; Lese-Timeout; Backpressure;
+  `bootJarPacCheck` ruft aus dem ausführbaren JAR asynchron ab (`ProxyDiagnosticsMain --fetch=async`).
+
+### Noch offen
+
+- **Verdrahtung in den Adapter:** Die Fachlogik (`ConfluenceRestClient`) ruft heute nur den synchronen Transport.
+  Schmale asynchrone Fähigkeit upstream als nächster Schritt, zuerst für den nativen Seitenabruf
+  (`StoredContentSource`, enterprise-ai-client#172), danach Konfiguration im Harvester. Bis dahin bleibt der
+  synchrone Transport der produktive Weg; nichts schaltet still um.
+- Windows-MY unter dem Dienstkonto und der Live-Test gegen die produktive Instanz bleiben das gemeinsame Gate von
+  #33/#34 (siehe `docs/MTLS.md`).
 
 ## Folgen
 
@@ -57,3 +95,4 @@ Kriterien, nachzuweisen mit Integrationstests gegen den bisherigen Transport:
   nicht am WebClient.
 - Der asynchrone Transport beginnt als Upstream-Änderung in `aresstack/enterprise-ai-client` mit anschließender
   Synchronisierung der Kopie (#2).
+- `spring-webflux` und `reactor-netty-http` sind Laufzeitabhängigkeiten; der Dienst bleibt ein Servlet-Dienst.

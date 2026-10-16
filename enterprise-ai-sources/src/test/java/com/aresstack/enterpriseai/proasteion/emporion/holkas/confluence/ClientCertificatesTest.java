@@ -42,6 +42,20 @@ public class ClientCertificatesTest {
     }
 
     @Test
+    public void buildsAContextForEngineBasedTransportsWithTheSameChecks() throws Exception {
+        javax.net.ssl.SSLContext context = ClientCertificates.contextFromKeyStore(testStore(), PASSWORD,
+                " test-client ", null);
+
+        assertNotNull(context.createSSLEngine("confluence.test", 443));
+        try {
+            ClientCertificates.contextFromKeyStore(testStore(), PASSWORD, "abgelaufen", null);
+            fail();
+        } catch (GeneralSecurityException expected) {
+            assertEquals("keine Zertifikatskette für Alias 'abgelaufen'", expected.getMessage());
+        }
+    }
+
+    @Test
     public void acceptsAnOwnTrustManagerForServerCertificates() throws Exception {
         X509TrustManager trust = new X509TrustManager() {
             @Override
@@ -65,6 +79,9 @@ public class ClientCertificatesTest {
         X509KeyManager forced = ClientCertificates.forceAlias(delegate(), "test-client");
 
         assertEquals("test-client", forced.chooseClientAlias(new String[] {"RSA", "EC"}, null, null));
+        // SSLEngine-Weg (Netty, JDK HttpClient): ohne diese Methode sähe der Server kein Zertifikat
+        assertEquals("test-client", ((javax.net.ssl.X509ExtendedKeyManager) forced)
+                .chooseEngineClientAlias(new String[] {"RSA", "EC"}, null, null));
         assertArrayEquals(new String[] {"test-client"}, forced.getClientAliases("RSA", null));
         assertNotNull(forced.getPrivateKey("test-client"));
         assertEquals(1, forced.getCertificateChain("test-client").length);
