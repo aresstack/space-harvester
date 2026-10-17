@@ -19,7 +19,7 @@ erklärbar ist. Die Status-Ansicht der App und die REST-API zeigen sie an.
 | `code` | maschinenlesbarer Code, beim Scheitern der Fehlercode des Auftrags (`SOURCE_UNAVAILABLE`, `SYNC_INCOMPLETE` …) |
 | `message` | Meldung für Menschen |
 | `httpStatus` | HTTP-Status der Quelle, wenn die Ausnahmekette ihn nennt |
-| `proxyRoute` | Route zur Quelle (`DIRECT`, `PROXY host:port (pac:resolved)`, `UNAVAILABLE (…)`) bei Netzwerk- und Quellenfehlern |
+| `proxyRoute` | Route und Transport genau des gescheiterten Abrufs (`PROXY host:port (pac:resolved) · WebClient`, `DIRECT · WebClient`, `UNAVAILABLE (…) · WebClient`); wo der Abruf keine eigene Route mitbringt (synchroner Transport), die Route zur Basisadresse der Quelle ohne Transport |
 | `tlsFinding` | TLS- oder Zertifikatsbefund, etwa `SSLHandshakeException: PKIX path building failed` |
 | `detail` | Ausnahmekette mit Stacktrace, höchstens 16 000 Zeichen; fehlt bei gewollten Abbrüchen ohne Ursache |
 
@@ -54,3 +54,15 @@ scheitern.
   `Jobs.recentEvents(owner, limit)`, für Abgleiche auch `SpaceSyncJobs.events(syncId, owner)`.
 - REST: `GET /api/v1/exports/{exportId}/events` und `GET /api/v1/syncs/{syncId}/events`, mit denselben Freigaben wie
   der Status. Ein fremder oder unbekannter Auftrag antwortet mit 404.
+
+## Welche Anfrage welchen Transport nimmt
+
+Alle Anfragen an eine Quelle fragen dieselben `ProxyRoutes` (win-proxy-java) je Ziel-URL und je Weiterleitung.
+Eine nicht verfügbare Route (PAC nicht ladbar, Auswertung gescheitert) beendet die Anfrage ohne Verbindung, nie
+`DIRECT`. Über einen Proxy wird der Zielname nie lokal aufgelöst, sondern im `CONNECT` an den Proxy gegeben.
+
+| Anfrage | Transport |
+|---|---|
+| Verbindungsprüfung, Space-Liste, Seitenliste, Seitenbaum, Metadaten | synchron (`HttpURLConnection` über `RouteConnections`) |
+| Einzelseite mit Inhalt (Lesen, Nachladen, Sync-Seitenabruf, Export) | `WebClient` (`WebClientConfluenceTransport`) |
+| Rechteprüfung delegierter Benutzer | `WebClient` (`DelegatedConfluenceHttp`) |

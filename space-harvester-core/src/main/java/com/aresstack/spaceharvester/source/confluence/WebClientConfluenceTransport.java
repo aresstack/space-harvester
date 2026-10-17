@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceResponseTooLargeException;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.application.jobs.RequestRoute;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.ClientAuth;
@@ -67,6 +68,9 @@ import reactor.netty.transport.ProxyProvider;
  * <p>Header werden nie geloggt. {@link #close()} gibt alle Pools und den Routen-Pool frei.
  */
 public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTransport, AutoCloseable {
+
+    /** Name dieses Transports in Diagnoseereignissen ({@link RequestRoute}). */
+    static final String TRANSPORT = "WebClient";
 
     /** Obergrenze gleichzeitig gehaltener Clients (Route × Ziel × TLS); der älteste wird freigegeben. */
     static final int MAX_CLIENTS = 64;
@@ -184,8 +188,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
             return Mono.error(new IOException("keine Routenentscheidung für " + uri.getHost()));
         }
         if (!route.isDirect() && !route.isProxy()) {
-            return Mono.error(new IOException("Proxy-Route für " + uri.getHost() + " nicht verfügbar: "
-                    + route.describe()));
+            return Mono.error(RequestRoute.attach(new IOException("Proxy-Route für " + uri.getHost()
+                    + " nicht verfügbar: " + route.describe()), route.describe(), TRANSPORT));
         }
         WebClient client;
         try {
@@ -201,7 +205,21 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                     }
                     headers.forEach(sent::set);
                 })
-                .exchangeToMono(response -> read(response, maxBytes));
+                .exchangeToMono(response -> read(response, maxBytes))
+                .onErrorMap(error -> routed(error, route));
+    }
+
+    /**
+     * Der Fehler als {@link IOException} mit der Route dieses Abrufs ({@link RequestRoute}). Gemeinsame Netty-Fehler
+     * ohne Stacktrace werden dafür in eine eigene {@link IOException} gehüllt.
+     */
+    private static IOException routed(Throwable error, HttpRoute route) {
+        IOException failure = error instanceof IOException io ? io : ioFailure(error);
+        if (failure.getStackTrace().length == 0) {
+            failure = new IOException(failure.getMessage() == null ? failure.getClass().getSimpleName()
+                    : failure.getMessage(), failure);
+        }
+        return RequestRoute.attach(failure, route.describe(), TRANSPORT);
     }
 
     private static Mono<ConfluenceHttpResponse> read(ClientResponse response, int maxBytes) {

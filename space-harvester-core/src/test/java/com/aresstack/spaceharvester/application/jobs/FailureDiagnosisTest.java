@@ -24,6 +24,20 @@ class FailureDiagnosisTest {
     }
 
     @Test
+    void theRouteOfTheFailedRequestIsTakenFromTheChain() {
+        java.net.UnknownHostException unknown = new java.net.UnknownHostException("confluence.atlassian.com");
+        RequestRoute.attach(unknown, "PROXY proxy.corp:8080", "WebClient");
+        SourceAccessException failure = new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE,
+                "nicht erreichbar", unknown);
+
+        FailureDiagnosis.Findings findings = FailureDiagnosis.of(failure, "SOURCE_UNAVAILABLE");
+
+        assertThat(findings.route()).isEqualTo("PROXY proxy.corp:8080 · WebClient");
+        assertThat(findings.category()).isEqualTo(JobEvent.Category.NETWORK);
+        assertThat(FailureDiagnosis.of(new ConnectException("x"), null).route()).isNull();
+    }
+
+    @Test
     void certificateProblemsAreTlsFindings() {
         SSLHandshakeException handshake = new SSLHandshakeException("PKIX path validation failed");
         handshake.initCause(new CertPathValidatorException("certificate has expired"));

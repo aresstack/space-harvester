@@ -39,10 +39,11 @@ public final class FailureDiagnosis {
      * @param httpStatus HTTP-Status aus der Kette oder {@code null}
      * @param tlsFinding TLS- oder Zertifikatsbefund oder {@code null}
      * @param network    die Kette enthält einen Verbindungs- oder TLS-Fehler; die Proxy-Route ist dann aufschlussreich
+     * @param route      Route und Transport genau des gescheiterten Abrufs ({@link RequestRoute}) oder {@code null}
      * @param detail     Kette mit Stacktrace
      */
     public record Findings(JobEvent.Category category, String component, Integer httpStatus, String tlsFinding,
-                           boolean network, String detail) {
+                           boolean network, String route, String detail) {
     }
 
     private FailureDiagnosis() {
@@ -89,7 +90,8 @@ public final class FailureDiagnosis {
         } else {
             category = JobEvent.Category.JOB;
         }
-        return new Findings(category, component(chain), status, tls, network, stackTrace(failure));
+        String route = RequestRoute.find(failure).map(RequestRoute::describe).orElse(null);
+        return new Findings(category, component(chain), status, tls, network, route, stackTrace(failure));
     }
 
     private static List<Throwable> chain(Throwable failure) {

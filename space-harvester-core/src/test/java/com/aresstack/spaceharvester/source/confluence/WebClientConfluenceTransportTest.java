@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.UrlConnectionConfluenceTransport;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.application.jobs.RequestRoute;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -207,6 +208,8 @@ class WebClientConfluenceTransportTest {
                 .getAsync(base.resolve("/status/200"), HEADERS, 1024));
 
         assertThat(failure).isInstanceOf(IOException.class).hasMessageContaining("nicht verfügbar");
+        assertThat(RequestRoute.find(failure)).map(RequestRoute::describe)
+                .contains(HttpRoute.unavailable("pac-failed", "PAC nicht ladbar").describe() + " · WebClient");
         assertThat(requests).hasValue(0);
     }
 
@@ -265,6 +268,9 @@ class WebClientConfluenceTransportTest {
             if (outcome != null) {
                 // Der Test-Proxy schließt nach seiner Antwort; nur eine lokale Namensauflösung wäre der Fehler.
                 assertThat(rootCause(outcome)).isNotInstanceOf(java.net.UnknownHostException.class);
+                assertThat(RequestRoute.find(outcome)).map(RequestRoute::describe)
+                        .contains(HttpRoute.proxy("127.0.0.1", proxy.getLocalPort(), "PROXY 127.0.0.1").describe()
+                                + " · WebClient");
             }
         }
     }

@@ -378,9 +378,9 @@ public class Jobs implements AutoCloseable {
             default -> {
                 JobError error = finished.error();
                 FailureDiagnosis.Findings findings = FailureDiagnosis.of(cause, error.code());
-                String route = null;
-                if (findings.category() == JobEvent.Category.NETWORK
-                        || findings.category() == JobEvent.Category.SOURCE) {
+                String route = findings.route();
+                if (route == null && (findings.category() == JobEvent.Category.NETWORK
+                        || findings.category() == JobEvent.Category.SOURCE)) {
                     try {
                         route = routes.routeOf(job.sourceId).orElse(null);
                     } catch (RuntimeException e) {
@@ -527,14 +527,16 @@ public class Jobs implements AutoCloseable {
             String detail = null;
             Integer httpStatus = event.httpStatus();
             String tls = event.tlsFinding();
+            String route = null;
             if (event.cause() != null) {
                 FailureDiagnosis.Findings findings = FailureDiagnosis.of(event.cause(), event.code());
                 detail = findings.detail();
                 httpStatus = httpStatus == null ? findings.httpStatus() : httpStatus;
                 tls = tls == null ? findings.tlsFinding() : tls;
+                route = findings.route();
             }
             emit(event.severity(), event.category(), event.component(), event.code(), event.message(), httpStatus,
-                    null, tls, detail);
+                    route, tls, detail);
         }
 
         void emit(JobEvent.Severity severity, JobEvent.Category category, String eventComponent, String code,
