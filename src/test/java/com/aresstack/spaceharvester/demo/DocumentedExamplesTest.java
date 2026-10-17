@@ -33,6 +33,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Führt die Curl-Beispiele aus docs/E2E.md der Reihe nach gegen den Dienst mit der Demo-Konfiguration (Profil
@@ -100,7 +101,12 @@ class DocumentedExamplesTest {
                 "/api/v1/sources/demo/spaces/DEMO/tree",
                 "/api/v1/sources/demo/pages/1001",
                 "/api/v1/sources/demo/spaces/DEMO/exports",
-                "/api/v1/exports/$EXPORT_ID/artifact/manifest.json");
+                "/api/v1/exports/$EXPORT_ID/artifact/manifest.json",
+                "/api/v1/exports/$FORMAT_EXPORT_ID/artifact/manifest.json",
+                "/api/v1/sources/demo/pages/1001/attachments",
+                "/api/v1/sources/demo/pages/1002?view=extended",
+                "/api/v1/search?sourceId=demo&title=architektur",
+                "/api/compat/confluence/demo/rest/api/content/1001?expand=body.storage,version");
     }
 
     @TestFactory
@@ -115,7 +121,9 @@ class DocumentedExamplesTest {
                 return variables.get(match.group(1));
             });
             JsonNode expected = json.readTree(example.expected());
-            int status = expected.has("status") ? expected.get("status").asInt() : example.post() ? 202 : 200;
+            // status im Auszug ist der HTTP-Status; nicht jeder Fehlerkörper (etwa der von Confluence) wiederholt ihn.
+            JsonNode documented = expected instanceof ObjectNode object ? object.remove("status") : null;
+            int status = documented != null ? documented.asInt() : example.post() ? 202 : 200;
             Instant deadline = Instant.now().plus(POLL_TIMEOUT);
             while (true) {
                 HttpRequest.Builder request = HttpRequest.newBuilder(

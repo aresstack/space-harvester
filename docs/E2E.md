@@ -39,7 +39,7 @@ TOKEN=demo-token-nur-lokal
 |---|---|---|---|
 | `DEMO` | 1000 Start | – | Startseite des Space, Label `handbuch` |
 | `DEMO` | 1001 Architektur | 1000 | Version 7, Info-Makro, Bild `diagramm.png` und draw.io-Diagramm `architektur` als Verweise auf Anhänge, zwei Labels |
-| `DEMO` | 1002 Schnittstellen | 1001 | Code-Makro |
+| `DEMO` | 1002 Schnittstellen | 1001 | Überschrift, Akronyme mit Ausschreibung, Code-Makro |
 | `DEMO` | 1003 Betrieb | 1000 | |
 | `DEMO` | 2000 Archiv | – | zweite Wurzelseite außerhalb des Baums der Startseite |
 | `DEMO` | 2001 Altes Konzept | 2000 | |
@@ -370,6 +370,154 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/exports/
     ] },
     { "id": "2000", "children": [{ "id": "2001", "children": [] }] }
   ]
+}
+```
+
+Mit `format` entstehen aus denselben Seiten zusätzliche Dateien, aus dem Storage-Format abgeleitet: `markdown`
+(`pages.md`), `json` (`pages.json`), `docx` und `pdf`. Das Raw-First-Artefakt bleibt unverändert daneben:
+
+```bash
+FORMAT_EXPORT_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/exports?format=markdown&format=json" | jq -r .id)
+```
+
+```json
+{ "sourceId": "demo", "spaceKey": "DEMO" }
+```
+
+Das Manifest nennt unter `conversions` je Format Datei, Converter und den Hash der Eingabe:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/exports/$FORMAT_EXPORT_ID/artifact/manifest.json"
+```
+
+```json
+{
+  "complete": true,
+  "conversions": [
+    { "format": "markdown", "file": "pages.md", "converter": "markdown/1" },
+    { "format": "json", "file": "pages.json", "converter": "json-array/1" }
+  ]
+}
+```
+
+## 8. Anhänge einer Seite
+
+Die Anhangsliste ist eine eigene Metadatenressource, live aus der Quelle. Sie enthält keine Binärdaten; Bilder und
+Diagramme der Seite bleiben Verweise:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/attachments"
+```
+
+```json
+{
+  "sourceId": "demo",
+  "pageId": "1001",
+  "origin": "live",
+  "complete": true,
+  "warnings": [],
+  "attachments": [
+    { "attachmentId": "att1001", "title": "diagramm.png", "mediaType": "image/png", "fileSize": 15, "version": "1" },
+    { "attachmentId": "att1002", "title": "architektur", "mediaType": "application/vnd.jgraph.mxfile", "fileSize": 158, "version": "1" }
+  ]
+}
+```
+
+## 9. Anreicherungen
+
+Nach jedem bestätigten Abgleich berechnet der Dienst Anreicherungen aus der Payload im Cache, als eigene Ergebnisse mit
+Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier Akronyme und Gliederung von 1002:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1002?view=extended"
+```
+
+```json
+{
+  "origin": "cache",
+  "metadata": { "page": { "pageId": "1002", "title": "Schnittstellen" } },
+  "enrichments": [
+    {
+      "processor": "acronyms",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "acronyms": [
+        { "acronym": "API", "count": 1, "expansion": "Application Programming Interface", "section": "REST-Schnittstelle" },
+        { "acronym": "JSON", "count": 1, "expansion": null },
+        { "acronym": "REST", "count": 1, "expansion": null }
+      ] }
+    },
+    {
+      "processor": "outline",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "words": 9, "sections": [{ "heading": "REST-Schnittstelle", "level": 2, "words": 9 }] }
+    }
+  ]
+}
+```
+
+## 10. Suche
+
+Die Suche über Titel und Metadaten läuft auf dem Index, nie live:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sourceId=demo&title=architektur"
+```
+
+```json
+{
+  "sourceId": "demo",
+  "origin": "cache",
+  "hits": [
+    { "page": { "pageId": "1001", "title": "Architektur", "spaceKey": "DEMO", "parentPageId": "1000" }, "cache": { "state": "confirmed" } }
+  ],
+  "nextCursor": null,
+  "complete": true
+}
+```
+
+## 11. Confluence-kompatible Fassade
+
+Ein vorhandener Confluence-Client kann statt der echten Instanz `http://localhost:8080/api/compat/confluence/demo`
+als Basis-URL nutzen. Lesende Endpunkte kommen aus dem Cache, mit den gespeicherten Original-Payloads; nichts geht an
+Confluence weiter ([docs/CONFLUENCE_COMPAT.md](CONFLUENCE_COMPAT.md)):
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/compat/confluence/demo/rest/api/content/1001?expand=body.storage,version"
+```
+
+```json
+{
+  "id": "1001",
+  "type": "page",
+  "title": "Architektur",
+  "version": { "number": 7 },
+  "body": { "storage": { "representation": "storage" } }
+}
+```
+
+Kinder und Seitenlisten in der Hülle von Confluence:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/compat/confluence/demo/rest/api/content/1001/child/page"
+```
+
+```json
+{ "start": 0, "limit": 25, "size": 1, "results": [{ "id": "1002", "title": "Schnittstellen" }] }
+```
+
+Was der Cache nicht hält, lehnt die Fassade ab, statt es zu erfinden:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/compat/confluence/demo/rest/api/content/1001?expand=body.view"
+```
+
+```json
+{
+  "status": 400,
+  "statusCode": 400,
+  "message": "expand=body.view ist im Cache nicht gespeichert; verfügbar: ancestors,body.storage,history,history.lastUpdated,metadata.labels,space,version"
 }
 ```
 

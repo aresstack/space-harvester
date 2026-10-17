@@ -69,7 +69,8 @@ public final class DemoConfluence implements AutoCloseable {
                         + "architektur</ac:parameter></ac:structured-macro>")
                 .version(7, "2026-10-12T10:30:00.000+02:00").labels("architektur", "handbuch");
         page(confluence, "1002", "Schnittstellen", "DEMO",
-                "<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">json</ac:parameter>"
+                "<h2>REST-Schnittstelle</h2><p>Die API (Application Programming Interface) liefert JSON.</p>"
+                        + "<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">json</ac:parameter>"
                         + "<ac:plain-text-body><![CDATA[{\"pageId\": \"1002\"}]]></ac:plain-text-body>"
                         + "</ac:structured-macro>");
         page(confluence, "1003", "Betrieb", "DEMO", "<p>Betriebshandbuch</p>");
