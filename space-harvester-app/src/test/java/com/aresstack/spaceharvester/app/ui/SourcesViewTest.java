@@ -74,6 +74,12 @@ class SourcesViewTest {
         assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SPACES);
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
+        // Mit gewähltem Space startet der Kreispfeil genau dessen Abgleich; die Auswahl übersteht den Klick.
+        SwingUtilities.invokeAndWait(() -> spaces.setRowSelectionInterval(0, 0));
+        SwingUtilities.invokeAndWait(() -> syncs.get(1).doClick());
+        await(() -> !context.runtime().workspace().jobs().isEmpty());
+        assertThat(spaces.getSelectedRow()).isZero();
+
         JTextField filter = find(root, JTextField.class).get(0);
         SwingUtilities.invokeAndWait(() -> filter.setText("gibt es nicht"));
         assertThat(spaces.getRowCount()).isZero();

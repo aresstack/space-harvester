@@ -77,6 +77,8 @@ public final class SourcesView implements View {
     private final JPanel properties = new JPanel(new GridBagLayout());
     private final Map<String, EditableProperty> rows = new LinkedHashMap<>();
     private AppSettings.SourceEntry shown;
+    /** Die Quelle, deren Spaces die Tabelle gerade zeigt. */
+    private String spacesOf;
     private final Facts capabilities = new Facts();
     private final PillTabs tabs = new PillTabs();
     private final SpacesModel spacesModel = new SpacesModel();
@@ -285,7 +287,12 @@ public final class SourcesView implements View {
         }
 
         AppContext.Connection connection = context.connection(entry.id());
+        // Neu setzen löscht die Tabellenauswahl; derselbe Space derselben Quelle bleibt gewählt, damit Kreispfeil und
+        // Export ihn nach dem Klick auf die Karte noch sehen.
+        String keep = entry.id().equals(spacesOf) ? selectedSpace().map(Partition::key).orElse(null) : null;
+        spacesOf = entry.id();
         spacesModel.set(connection.spaces());
+        reselect(keep);
         // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
         if (context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id())) {
             spacesHint.setText("Die Quelle wartet auf Zugangsdaten; an der Karte unter ⋯ eingeben.");
@@ -590,6 +597,21 @@ public final class SourcesView implements View {
             feedback.success("Abgleich von " + spaceKey + " gestartet");
             context.navigator().showJob(status.id());
         }, feedback::problem);
+    }
+
+    private void reselect(String key) {
+        if (key == null) {
+            return;
+        }
+        for (int i = 0; i < spacesModel.rows.size(); i++) {
+            if (spacesModel.rows.get(i).key().equals(key)) {
+                int view = spaces.convertRowIndexToView(i);
+                if (view >= 0) {
+                    spaces.setRowSelectionInterval(view, view);
+                }
+                return;
+            }
+        }
     }
 
     private void openSelectedSpace() {
