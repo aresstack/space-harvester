@@ -20,7 +20,7 @@ import java.awt.geom.RoundRectangle2D;
  */
 enum Glyph implements Icon {
 
-    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL;
+    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL, EXPORT;
 
     private static final int SIZE = 16;
 
@@ -93,6 +93,21 @@ enum Glyph implements Icon {
                 case CANCEL -> {
                     g.draw(new Line2D.Double(4, 4, 12, 12));
                     g.draw(new Line2D.Double(12, 4, 4, 12));
+                }
+                case EXPORT -> {
+                    // Ablage mit Pfeil nach oben: etwas verlässt die App.
+                    Path2D tray = new Path2D.Double();
+                    tray.moveTo(2.5, 9.5);
+                    tray.lineTo(2.5, 13.5);
+                    tray.lineTo(13.5, 13.5);
+                    tray.lineTo(13.5, 9.5);
+                    g.draw(tray);
+                    g.draw(new Line2D.Double(8, 10.5, 8, 2.2));
+                    Path2D head = new Path2D.Double();
+                    head.moveTo(5, 5.2);
+                    head.lineTo(8, 2.2);
+                    head.lineTo(11, 5.2);
+                    g.draw(head);
                 }
                 case MORE -> {
                     for (double cx : new double[] {3, 8, 13}) {

@@ -33,6 +33,7 @@ import java.awt.Frame;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.EnumMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -221,9 +222,9 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
-    public void prepareExport(String sourceId, String spaceKey) {
+    public void prepareExport(String sourceId, List<String> spaceKeys) {
         show(AppContext.Section.EXPORTS);
-        exports.prepare(sourceId, spaceKey);
+        exports.prepare(sourceId, spaceKeys);
     }
 
     @Override

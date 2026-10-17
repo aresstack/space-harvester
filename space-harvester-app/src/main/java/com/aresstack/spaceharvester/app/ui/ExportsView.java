@@ -22,8 +22,10 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Exportieren: Space wählen, Formate wählen, starten. Das Raw-First-Artefakt (Originaldaten und Manifest) entsteht immer;
- * die gewählten Formate kommen dazu. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
+ * Exportieren: Quelle und einen oder mehrere Spaces wählen (oft vorbelegt aus Wissensquellen), Formate wählen, starten;
+ * je Space entsteht ein Auftrag. JSON ist vorgewählt, die übrigen Formate sind optional. Das Raw-First-Artefakt
+ * (Originaldaten und Manifest) entsteht immer. Ein vorheriger Abgleich ist nicht nötig: Fehlende Seiten liest der
+ * Export selbst aus der Quelle. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
  */
 public final class ExportsView implements View {
 
@@ -35,7 +37,17 @@ public final class ExportsView implements View {
     private final SourcePicker picker;
     private final JPanel formatsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
     private final Map<String, JCheckBox> formats = new LinkedHashMap<>();
-    private final ComposerButton start = Comic.primary("Export starten", "Export dieses Space starten");
+    /** Ab so vielen Spaces fragt „Export starten“ nach. */
+    static final int CONFIRM_FROM = 10;
+    static final String DEFAULT_FORMAT = "json";
+
+    private final ComposerButton start = Comic.primary("Export starten", "Je gewähltem Space einen Export starten");
+    private final ComposerButton addSpace = Comic.button("Hinzufügen", "Den Space aus der Auswahl übernehmen");
+    private final ComposerButton clearSpaces = Comic.button("Alle entfernen", "Gewählte Spaces leeren");
+    private final JPanel chosenPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+    /** Die gewählten Spaces der Quelle {@link #chosenSource}, in dieser Reihenfolge. */
+    private final List<String> chosen = new ArrayList<>();
+    private String chosenSource;
     private final Feedback feedback = new Feedback();
     private final ExportsModel model = new ExportsModel();
     private final JTable table = Comic.table(new JTable(model));
@@ -46,7 +58,21 @@ public final class ExportsView implements View {
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         formatsPanel.setOpaque(false);
+        chosenPanel.setOpaque(false);
         start.addActionListener(e -> start());
+        addSpace.addActionListener(e -> {
+            String key = picker.spaceKey();
+            if (!key.isEmpty()) {
+                choose(picker.sourceId(), key);
+            }
+        });
+        clearSpaces.addActionListener(e -> setChosen(picker.sourceId(), List.of()));
+        // Spaces gehören zu einer Quelle: Mit einer anderen Quelle beginnt die Auswahl neu.
+        picker.sourceBox().addActionListener(e -> {
+            if (!java.util.Objects.equals(picker.sourceId(), chosenSource)) {
+                setChosen(picker.sourceId(), List.of());
+            }
+        });
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -60,14 +86,15 @@ public final class ExportsView implements View {
         JPanel form = new JPanel();
         form.setOpaque(false);
         form.setLayout(new javax.swing.BoxLayout(form, javax.swing.BoxLayout.Y_AXIS));
-        form.add(left(Comic.row(Comic.caption("1 · Quelle"), picker.sourceBox(), Comic.caption("2 · Space"),
-                picker.spaceBox())));
+        form.add(left(Comic.row(Comic.caption("1 · Quelle"), picker.sourceBox(), Comic.caption("2 · Spaces"),
+                picker.spaceBox(), addSpace, clearSpaces)));
+        form.add(javax.swing.Box.createVerticalStrut(4));
+        form.add(left(chosenPanel));
         form.add(javax.swing.Box.createVerticalStrut(8));
         form.add(left(Comic.row(Comic.caption("3 · Formate"), formatsPanel)));
         form.add(javax.swing.Box.createVerticalStrut(8));
-        form.add(left(Comic.note("Immer enthalten: die Originaldaten jeder Seite byte-genau und ein Manifest mit "
-                + "Prüfsummen. Ein Export ist nur vollständig, wenn der Space zuvor vollständig abgeglichen wurde; "
-                + "sonst nennt das Manifest die Lücken.")));
+        form.add(left(Comic.muted("Immer dabei: Originaldaten und Manifest mit Prüfsummen. Fehlende Seiten liest der "
+                + "Export selbst aus der Quelle, ein Abgleich vorher ist nicht nötig.")));
         form.add(javax.swing.Box.createVerticalStrut(8));
         form.add(left(Comic.row(start)));
         form.add(left(feedback));
@@ -82,6 +109,7 @@ public final class ExportsView implements View {
         root.add(Comic.plate("Letzte Exporte", Comic.PETROL, list), BorderLayout.CENTER);
         context.onChange(ignored -> refreshFormats());
         refreshFormats();
+        renderChosen();
     }
 
     @Override
@@ -94,10 +122,70 @@ public final class ExportsView implements View {
         refreshList();
     }
 
-    /** Bereitet einen Export vor (aus Wissensquellen oder Inhalte). */
-    public void prepare(String sourceId, String spaceKey) {
-        picker.select(sourceId, spaceKey);
+    /** Bereitet einen Export vor (aus Wissensquellen oder Inhalte): Quelle und Spaces vorbelegt, nichts gestartet. */
+    public void prepare(String sourceId, List<String> spaceKeys) {
+        picker.select(sourceId, spaceKeys.size() == 1 ? spaceKeys.get(0) : null);
+        setChosen(sourceId, spaceKeys);
         feedback.clear();
+    }
+
+    /** Für Tests: die gewählten Spaces. */
+    List<String> chosenSpaces() {
+        return List.copyOf(chosen);
+    }
+
+    /** Für Tests: die vorgewählten Formate. */
+    List<String> chosenFormats() {
+        return formats.entrySet().stream().filter(e -> e.getValue().isSelected()).map(Map.Entry::getKey).toList();
+    }
+
+    private void choose(String sourceId, String key) {
+        if (!java.util.Objects.equals(sourceId, chosenSource)) {
+            chosen.clear();
+            chosenSource = sourceId;
+        }
+        if (!chosen.contains(key)) {
+            chosen.add(key);
+        }
+        renderChosen();
+    }
+
+    private void setChosen(String sourceId, List<String> keys) {
+        chosenSource = sourceId;
+        chosen.clear();
+        keys.stream().distinct().forEach(chosen::add);
+        renderChosen();
+    }
+
+    /** Die gewählten Spaces als kleine Marken mit ✕. */
+    private void renderChosen() {
+        chosenPanel.removeAll();
+        if (chosen.isEmpty()) {
+            chosenPanel.add(Comic.muted("Noch kein Space gewählt: oben wählen und „Hinzufügen“, oder unter "
+                    + "Wissensquellen am Space auf das Export-Symbol klicken."));
+        }
+        for (String key : List.copyOf(chosen)) {
+            JPanel chip = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            chip.setBackground(java.awt.Color.WHITE);
+            chip.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.LINE),
+                    BorderFactory.createEmptyBorder(1, 6, 1, 2)));
+            javax.swing.JLabel label = new javax.swing.JLabel(key);
+            label.setFont(Comic.regular(12.5f));
+            label.setForeground(Comic.INK);
+            chip.add(label);
+            IconButton remove = new IconButton(Glyph.CANCEL, key + " entfernen");
+            remove.addActionListener(e -> {
+                chosen.remove(key);
+                renderChosen();
+            });
+            chip.add(remove);
+            chosenPanel.add(chip);
+        }
+        clearSpaces.setVisible(!chosen.isEmpty());
+        start.setText(chosen.size() > 1 ? Texts.count(chosen.size(), "Export", "Exporte") + " starten"
+                : "Export starten");
+        chosenPanel.revalidate();
+        chosenPanel.repaint();
     }
 
     private void refreshFormats() {
@@ -113,6 +201,8 @@ public final class ExportsView implements View {
             box.setOpaque(false);
             box.setFont(Comic.regular(13f));
             box.setForeground(Comic.INK);
+            // JSON ist die Vorgabe; alle anderen Formate wählt man bei Bedarf dazu.
+            box.setSelected(DEFAULT_FORMAT.equals(format));
             formats.put(format, box);
             formatsPanel.add(box);
         }
@@ -133,24 +223,56 @@ public final class ExportsView implements View {
     private void start() {
         AppRuntime runtime = context.runtime();
         String sourceId = picker.sourceId();
-        String spaceKey = picker.spaceKey();
-        if (runtime == null || sourceId == null || spaceKey.isEmpty()) {
+        List<String> keys = !chosen.isEmpty() && java.util.Objects.equals(sourceId, chosenSource)
+                ? List.copyOf(chosen) : picker.spaceKey().isEmpty() ? List.of() : List.of(picker.spaceKey());
+        if (runtime == null || sourceId == null || keys.isEmpty()) {
             feedback.warning("Quelle und Space wählen", null);
             return;
         }
-        List<String> chosen = formats.entrySet().stream().filter(e -> e.getValue().isSelected())
-                .map(Map.Entry::getKey).toList();
+        if (keys.size() >= CONFIRM_FROM && !Dialogs.confirm(root, "Viele Exporte starten?",
+                Texts.count(keys.size(), "Space", "Spaces") + " von " + sourceId + " werden exportiert, je Space ein "
+                        + "Auftrag. Fehlende Seiten liest jeder Export aus der Quelle; das kann dauern.",
+                Texts.count(keys.size(), "Export", "Exporte") + " starten")) {
+            return;
+        }
+        List<String> chosenFormats = chosenFormats();
         start.setEnabled(false);
-        feedback.working("Export wird gestartet …");
-        Background.run(() -> runtime.workspace().startExport(sourceId, spaceKey, chosen), status -> {
+        feedback.working(keys.size() == 1 ? "Export wird gestartet …" : "Exporte werden gestartet …");
+        Background.run(() -> {
+            List<JobStatus> started = new ArrayList<>();
+            List<String> failed = new ArrayList<>();
+            for (String key : keys) {
+                try {
+                    started.add(runtime.workspace().startExport(sourceId, key, chosenFormats));
+                } catch (RuntimeException e) {
+                    if (keys.size() == 1) {
+                        throw e;
+                    }
+                    failed.add(key + ": " + Problems.describe(e).title());
+                }
+            }
+            return new Started(started, failed);
+        }, result -> {
             start.setEnabled(true);
-            feedback.success("Export gestartet");
             refreshList();
-            context.navigator().showJob(status.id());
+            if (result.failed().isEmpty()) {
+                feedback.success(result.jobs().size() == 1 ? "Export gestartet"
+                        : Texts.count(result.jobs().size(), "Export", "Exporte") + " gestartet");
+            } else {
+                feedback.warning(Texts.count(result.failed().size(), "Export ließ", "Exporte ließen")
+                        + " sich nicht starten", String.join("; ", result.failed()));
+            }
+            // Mit Fehlern bleibt die Ansicht stehen, damit die Meldung sichtbar ist.
+            if (!result.jobs().isEmpty() && result.failed().isEmpty()) {
+                context.navigator().showJob(result.jobs().get(0).id());
+            }
         }, error -> {
             start.setEnabled(true);
             feedback.problem(error);
         });
+    }
+
+    private record Started(List<JobStatus> jobs, List<String> failed) {
     }
 
     private static JComponent left(JComponent component) {

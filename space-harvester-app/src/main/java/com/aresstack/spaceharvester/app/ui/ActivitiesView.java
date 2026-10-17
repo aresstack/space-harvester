@@ -310,8 +310,8 @@ public final class ActivitiesView implements View {
         if (artifact.complete()) {
             feedback.success("Export vollständig: " + Texts.count(artifact.files().size(), "Datei", "Dateien"));
         } else {
-            feedback.warning("Export unvollständig", "Der Bestand war nicht bestätigt oder einzelne Seiten fehlten; "
-                    + "das Manifest nennt sie.");
+            feedback.warning("Export unvollständig", "Einzelne Seiten ließen sich nicht aus der Quelle lesen; das "
+                    + "Manifest nennt sie mit Grund.");
         }
     }
 
