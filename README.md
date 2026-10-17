@@ -116,7 +116,9 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
+- **Spring Cloud Config Server:** optional über das Profil `config-server` (`SPRING_CLOUD_CONFIG_URI`); ohne
+  erreichbaren Server startet der Dienst mit der lokalen Konfiguration. Reihenfolge der Quellen und Fallstricke:
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 

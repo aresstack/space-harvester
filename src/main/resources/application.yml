@@ -13,6 +13,10 @@ spring:
       keyvault:
         secret:
           property-source-enabled: false
+    # Spring Cloud Config Server nur über spring.config.import bzw. Profil config-server (#3, docs/CONFIGURATION.md).
+    config:
+      import-check:
+        enabled: false
 
 server:
   port: ${SPACE_HARVESTER_PORT:8080}
