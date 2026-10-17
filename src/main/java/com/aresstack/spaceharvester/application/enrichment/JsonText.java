@@ -1,13 +1,13 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 /** Minimaler JSON-Text für Prozessorergebnisse, ohne Abhängigkeit auf eine JSON-Bibliothek. */
-final class JsonText {
+public final class JsonText {
 
     private JsonText() {
     }
 
     /** Eine JSON-Zeichenkette in Anführungszeichen. */
-    static String quote(String value) {
+    public static String quote(String value) {
         StringBuilder out = new StringBuilder(value.length() + 2).append('"');
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
