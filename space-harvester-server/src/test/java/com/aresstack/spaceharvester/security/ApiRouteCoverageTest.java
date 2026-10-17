@@ -39,7 +39,8 @@ class ApiRouteCoverageTest {
     private static final String NOBODY_TOKEN = "nobody-token-c41e07";
 
     /** Routen ohne Quellenbezug, die jeder angemeldete Client lesen darf. */
-    private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources");
+    // Die Suche ohne sourceId ist global (#114): 200, aber nur Treffer freigegebener Quellen, hier keine.
+    private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -85,7 +86,7 @@ class ApiRouteCoverageTest {
             HttpResponse<String> response = send(route, NOBODY_TOKEN);
             if (WITHOUT_SOURCE.contains(route.path())) {
                 assertThat(response.statusCode()).as(route.toString()).isEqualTo(200);
-                assertThat(response.body()).as(route.toString()).doesNotContain("\"wiki\"");
+                assertThat(response.body()).as(route.toString()).doesNotContain("\"wiki\"", "\"pageId\"");
             } else {
                 assertThat(response.statusCode()).as("%s ohne Freigabe", route).isIn(403, 404);
                 assertThat(response.body()).as(route.toString()).doesNotContain("\"pageId\"", "\"pages\"", "\"roots\"", "\"spaceKey\"");

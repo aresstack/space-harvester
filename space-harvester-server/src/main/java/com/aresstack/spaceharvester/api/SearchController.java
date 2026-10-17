@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
+import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchResults;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -33,7 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Titel- und Metadatensuche über den Index des Harvesters (#28, erste Ausbaustufe). Liest nur gespeicherte Kopfdaten,
  * nie live aus der Quelle und nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
- * gespeicherten Embeddings (#89).
+ * gespeicherten Embeddings (#89). Ohne {@code sourceId} sucht sie global über alle freigegebenen, indexierten Quellen
+ * (#114, ADR 0009); Rechte, Sortierung und Cursor kommen aus demselben Core-Anwendungsfall wie in der Desktop-App.
  */
 @RestController
 @RequestMapping(path = ApiPaths.V1 + "/search", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -49,28 +51,37 @@ public class SearchController {
     }
 
     @GetMapping
-    @Operation(summary = "Seiten einer Quelle nach Titel und Metadaten suchen, stapelweise",
-            description = "Aus dem Index (origin=cache), nie live. Alle Bedingungen gelten zugleich. title: jedes "
+    @Operation(summary = "Seiten einer oder aller Quellen nach Titel und Metadaten suchen, stapelweise",
+            description = "Aus dem Index (origin=cache), nie live. Mit sourceId nur diese Quelle (scope=source), ohne "
+                    + "alle Quellen, für die der Aufrufer metadata hat und die im Index liegen (scope=global): eine "
+                    + "Abfrage, global sortiert und paginiert, kein Zusammenfügen je Quelle. Global gelten Filter in "
+                    + "jeder Quelle (spaceKey=DEV heißt DEV in jeder freigegebenen Quelle), nicht freigegebene Quellen "
+                    + "fallen ohne Fehler und ohne Spur weg, und ohne lesbare indexierte Quelle ist die Antwort leer "
+                    + "(index=null). Jeder Treffer nennt seine sourceId und ist unter /api/v1/sources/{sourceId}/... "
+                    + "adressierbar; gleiche Sortierwerte ordnet pageId, dann sourceId. Alle Bedingungen gelten "
+                    + "zugleich. title: jedes "
                     + "Wort muss als ganzes Wort im Titel vorkommen, ohne Beachtung der Groß-/Kleinschreibung; "
                     + "Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist. Keine Abfragesprache, kein "
                     + "Präfix, kein Volltext. Alle Stapel einer Suche stammen aus derselben Indexgeneration "
-                    + "(index.generation); ersetzt ein Commit sie, endet die Suche mit 409 und beginnt ohne cursor "
-                    + "neu. Ein Stapel kann kürzer als limit oder leer sein, auch wenn noch Treffer folgen: "
+                    + "(index.generation, global aus allen gelesenen Quellen); ersetzt ein Commit sie, endet die Suche "
+                    + "mit 409 und beginnt ohne cursor neu. Ein Stapel kann kürzer als limit oder leer sein, auch wenn noch Treffer folgen: "
                     + "nextCursor mit denselben Parametern übergeben, bis er null ist (complete=true). Jeder Treffer "
                     + "nennt den Cache-Stand seines Space. sort=relevance: ein einziger Stapel (complete=true, kein "
                     + "cursor) aus höchstens " + Reranking.MAX_WINDOW + " Kandidaten der Vektorsuche nach q und der "
-                    + "Titelsuche, geordnet nach der Kosinusähnlichkeit zu den gespeicherten Embeddings; Kandidaten "
+                    + "Titelsuche, global ein gemeinsames Fenster über alle Quellen (keine Top-K je Quelle), geordnet "
+                    + "nach der Kosinusähnlichkeit zu den gespeicherten Embeddings; Kandidaten "
                     + "der Vektorsuche nur mit content-Freigabe, Ähnlichkeiten (relevance) nur für Seiten mit "
                     + "content-Freigabe. Ohne eingerichtetes Modell nur Titeltreffer in Titelreihenfolge.")
     @ApiResponse(responseCode = "200", description = "Ein Stapel Treffer")
     @ApiResponse(responseCode = "400", description = "Ungültige Parameter, überschrittene Grenzen oder cursor einer "
             + "anderen Suche (invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe für einen genannten Space bzw. die "
-            + "Quelle, oder keine Quelle mit dieser ID (access-denied)",
+    @ApiResponse(responseCode = "403", description = "Nur mit sourceId: keine metadata-Freigabe für einen genannten "
+            + "Space bzw. die Quelle, oder keine Quelle mit dieser ID (access-denied)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "404", description = "Für die Quelle liegt nichts im Index (cache-miss)",
+    @ApiResponse(responseCode = "404", description = "Nur mit sourceId: für die Quelle liegt nichts im Index "
+            + "(cache-miss); global nie",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "409", description = "Der cursor gehört zu einer ersetzten Indexgeneration "
@@ -82,10 +93,11 @@ public class SearchController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     public SearchResponse search(
             @Parameter(hidden = true) AccessContext caller,
-            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence", required = true)
-            @RequestParam String sourceId,
+            @Parameter(description = "Quellen-ID aus der Konfiguration; ohne Angabe alle freigegebenen, indexierten "
+                    + "Quellen", example = "confluence")
+            @RequestParam(required = false) String sourceId,
             @Parameter(description = "Nur diese Spaces (wiederholbar, höchstens " + PageSearchQuery.MAX_SPACE_KEYS
-                    + "); ohne Angabe alle freigegebenen Spaces der Quelle")
+                    + "); ohne Angabe alle freigegebenen Spaces; global in jeder Quelle")
             @RequestParam(required = false) List<String> spaceKey,
             @Parameter(description = "Wörter im Titel, höchstens " + PageSearchQuery.MAX_TITLE_TERMS + " Wörter und "
                     + PageSearchQuery.MAX_TITLE_LENGTH + " Zeichen", example = "Architektur Übersicht")
@@ -98,7 +110,7 @@ public class SearchController {
             @RequestParam(required = false) String modifiedFrom,
             @Parameter(description = "Geändert vor ausschließlich (ISO-8601, UTC)")
             @RequestParam(required = false) String modifiedBefore,
-            @Parameter(description = "Sortierung, jeweils dann nach pageId: title (aufsteigend, ohne Groß-/"
+            @Parameter(description = "Sortierung, jeweils dann nach pageId und sourceId: title (aufsteigend, ohne Groß-/"
                     + "Kleinschreibung), -modifiedAt (neueste zuerst, ohne Änderungszeit zuletzt), pageId; relevance "
                     + "(ähnlichste zuerst, braucht q oder title, ohne cursor)",
                     schema = @Schema(allowableValues = {"title", "-modifiedAt", "pageId", "relevance"}))
@@ -152,46 +164,67 @@ public class SearchController {
     /**
      * Ein Stapel Suchtreffer.
      *
+     * @param scope    {@code source} mit {@code sourceId}, {@code global} ohne (#114)
+     * @param sourceId die angefragte Quelle; global {@code null}, denn die Treffer stammen aus mehreren Quellen
      * @param origin   immer {@code cache}: aus dem Index des Harvesters, nicht live aus der Quelle
+     * @param index    gelesener Indexstand; global {@code null}, wenn keine lesbare Quelle im Index liegt
      * @param reranker nur bei {@code sort=relevance}: Kennung des Rerankers, {@code none} ohne Modell
      */
-    public record SearchResponse(String sourceId, String origin, IndexResponse index, String metadataHashSchema,
+    public record SearchResponse(@Schema(allowableValues = {"source", "global"}) String scope,
+                                 @Schema(nullable = true) String sourceId, String origin,
+                                 @Schema(nullable = true) IndexResponse index, String metadataHashSchema,
                                  String attributesHashSchema, List<HitResponse> hits,
                                  @Schema(nullable = true) String nextCursor, boolean complete,
                                  @JsonInclude(JsonInclude.Include.NON_NULL) String reranker) {
 
         static SearchResponse of(SearchResults results) {
-            return new SearchResponse(results.sourceId(), "cache",
-                    new IndexResponse(results.index().generation(), results.index().committedAt()),
-                    MetadataHash.SCHEMA, AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
-                    results.nextCursor(), results.complete(), null);
+            return new SearchResponse(scope(results.sourceId()), results.sourceId(), "cache",
+                    IndexResponse.of(results.index()), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
+                    results.hits().stream().map(HitResponse::of).toList(), results.nextCursor(), results.complete(),
+                    null);
         }
 
         static SearchResponse of(RelevanceSearch.RelevanceResults results) {
-            return new SearchResponse(results.sourceId(), "cache",
-                    new IndexResponse(results.index().generation(), results.index().committedAt()),
-                    MetadataHash.SCHEMA, AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
-                    null, true, results.reranker());
+            return new SearchResponse(scope(results.sourceId()), results.sourceId(), "cache",
+                    IndexResponse.of(results.index()), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
+                    results.hits().stream().map(HitResponse::of).toList(), null, true, results.reranker());
+        }
+
+        private static String scope(String sourceId) {
+            return sourceId == null ? "global" : "source";
         }
     }
 
-    /** Stand des Suchindex, aus dem alle Treffer dieser Suche stammen. */
+    /**
+     * Stand des Suchindex, aus dem alle Treffer dieser Suche stammen.
+     *
+     * @param generation  Generation der Quelle bzw. global aller gelesenen Quellen zusammen
+     * @param committedAt jüngster Commit dieser Quellen
+     */
     public record IndexResponse(String generation, Instant committedAt) {
+
+        static IndexResponse of(SearchIndexState state) {
+            return state == null ? null : new IndexResponse(state.generation(), state.committedAt());
+        }
     }
 
     /**
-     * Ein Treffer: dieselben Felder wie in der Seitenliste und der Cache-Stand seines Space.
+     * Ein Treffer: seine Quelle, dieselben Felder wie in der Seitenliste und der Cache-Stand seines Space.
+     *
+     * @param sourceId Quelle des Treffers; mit {@code page.pageId} eindeutig, auch global
      */
-    public record HitResponse(PageEntry page, CacheResponse cache,
+    public record HitResponse(String sourceId, PageEntry page, CacheResponse cache,
                               @JsonInclude(JsonInclude.Include.NON_NULL) RelevanceResponse relevance) {
 
         static HitResponse of(SearchHit hit) {
-            return new HitResponse(PageEntry.of(hit.page()), CacheResponse.of(hit.generation()), null);
+            return new HitResponse(hit.page().header().key().sourceId(), PageEntry.of(hit.page()),
+                    CacheResponse.of(hit.generation()), null);
         }
 
         static HitResponse of(RelevanceSearch.RankedHit ranked) {
             RelevanceSearch.Relevance relevance = ranked.relevance();
-            return new HitResponse(PageEntry.of(ranked.hit().page()), CacheResponse.of(ranked.hit().generation()),
+            return new HitResponse(ranked.hit().page().header().key().sourceId(), PageEntry.of(ranked.hit().page()),
+                    CacheResponse.of(ranked.hit().generation()),
                     relevance == null ? null : new RelevanceResponse(relevance.similarity(),
                             new ChunkResponse(relevance.charStart(), relevance.charEnd()),
                             relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale"));
