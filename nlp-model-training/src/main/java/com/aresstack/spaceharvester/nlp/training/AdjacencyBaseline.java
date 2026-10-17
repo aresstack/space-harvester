@@ -6,8 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Einfache Untergrenze für die Evaluation: Jedes Wort hängt am linken Nachbarn, das erste ist die Wurzel; das Label
- * ist das im Train-Teil häufigste für die Wortart. Ein trainiertes Modell muss deutlich darüber liegen.
+ * Einfache Untergrenze für die Evaluation: Jedes Wort hängt am rechten Nachbarn (im Deutschen stehen Artikel,
+ * Adjektive und Präpositionen vor ihrem Kopf), das letzte ist die Wurzel; das Label ist das im Train-Teil häufigste für
+ * die Wortart. Ein trainiertes Modell muss deutlich darüber liegen.
  */
 public final class AdjacencyBaseline {
 
@@ -35,15 +36,15 @@ public final class AdjacencyBaseline {
     }
 
     public ConlluSentence parse(ConlluSentence input) {
+        List<String[]> words = input.words();
         List<String[]> lines = new ArrayList<>();
-        int id = 0;
-        for (String[] word : input.words()) {
-            String[] columns = word.clone();
-            columns[ConlluSentence.HEAD] = Integer.toString(id);
-            columns[ConlluSentence.DEPREL] = id == 0 ? "root"
-                    : labelByUpos.getOrDefault(word[ConlluSentence.UPOS], "dep");
+        for (int i = 0; i < words.size(); i++) {
+            String[] columns = words.get(i).clone();
+            boolean last = i == words.size() - 1;
+            columns[ConlluSentence.HEAD] = last ? "0" : Integer.toString(i + 2);
+            columns[ConlluSentence.DEPREL] = last ? "root"
+                    : labelByUpos.getOrDefault(columns[ConlluSentence.UPOS], "dep");
             lines.add(columns);
-            id++;
         }
         return new ConlluSentence(input.comments(), lines);
     }

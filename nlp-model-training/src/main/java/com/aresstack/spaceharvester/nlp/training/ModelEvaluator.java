@@ -52,7 +52,7 @@ public final class ModelEvaluator {
     static final String CONVENTIONS = "UAS/LAS in Prozent über alle syntaktischen Wörter (Interpunktion zählt mit, "
             + "Mehrwort-Zeilen und leere Knoten entfallen, wie CoNLL 2018); *WithoutPunct ohne UPOS PUNCT; LAS mit "
             + "vollem Label einschließlich Subtyp. Parsereingabe nur FORM und UPOS (InputContract). gold = UPOS aus der "
-            + "Treebank, predicted = UPOS von OpenNLP auf Gold-Tokens, baseline = linker Nachbar mit häufigstem Label "
+            + "Treebank, predicted = UPOS von OpenNLP auf Gold-Tokens, baseline = rechter Nachbar mit häufigstem Label "
             + "je Wortart.";
 
     public Report evaluate(MaltModel model, OpenNlpPosTagger tagger, Splits splits, Map<String, Double> minimum) {

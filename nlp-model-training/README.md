@@ -56,7 +56,7 @@ MaltParser-Konfigurationsname ist fest `maltparser-de-gsd`; die `.mco` darf nich
   beiden Werte.
 - UAS/LAS über alle syntaktischen Wörter einschließlich Interpunktion (wie CoNLL 2018), zusätzlich ohne Interpunktion;
   LAS mit vollem Label einschließlich Subtyp. Je Relation Precision, Recall, F1 und die häufigsten Verwechslungen.
-- **Baseline**: linker Nachbar als Kopf, häufigstes Label je Wortart.
+- **Baseline**: rechter Nachbar als Kopf, häufigstes Label je Wortart.
 - **Prüfsätze**: Kanten aus `german-reference-sentences.conllu`, mit Gold- und vorhergesagten Wortarten. Ein Bericht,
   keine Grenze; er zeigt, wo die objektzentrierte Auswertung dem Parser trauen kann.
 - **Trennung**: Train nur fürs Lernen (und Baseline, Labelset), Dev für die Wahl von Algorithmus und Featuremodell,
@@ -126,8 +126,9 @@ Nur bei bewusster Änderung: neue Treebank-Revision, anderer Algorithmus oder an
 Wechsel, geänderter Eingabevertrag, deutlich bessere Qualität oder ein nachgewiesener Fehler. Dazu Rezept ändern,
 `model.version` erhöhen, Qualitätsgrenzen beibehalten oder anheben, per PR auf main und dann den Workflow starten.
 
-Reproduzierbar sind Eingaben (Commit, SHA-256), Rezept, Featuremodell und Messwerte. Die `.mco` selbst ist nicht
-byte-gleich zwischen zwei Läufen (Zeitstempel im Archiv); die Messwerte eines zweiten Laufs müssen gleich sein.
+Reproduzierbar festgehalten sind Eingaben (Commit, SHA-256), Rezept, Featuremodell und Messwerte. Byte-gleiche `.mco`
+sind nicht zugesichert (MaltParser schreibt Zeitstempel ins Archiv); ob ein zweiter Lauf dieselben Messwerte ergibt,
+zeigt der Vergleich von `evaluation.json` zwischen lokalem Lauf und Workflow-Lauf.
 
 ## Abhängigkeiten
 
@@ -145,7 +146,43 @@ nur Werkzeuge.
 
 ## Messwerte
 
-<!-- RESULTS -->
+Version 1.0.0, lokal trainiert am 2026-10-17 (Container, 4 Kerne, Java 21.0.12, Heap 6 GiB). Diese Werte stammen aus
+einem lokalen Lauf; maßgeblich für ein Release sind `evaluation.json` und die Zusammenfassung des Workflow-Laufs.
+
+| Satz | UAS | LAS | UAS ohne Interpunktion | LAS ohne Interpunktion |
+|---|---:|---:|---:|---:|
+| Dev, Gold-UPOS | 85,87 | 81,33 | 86,37 | 81,13 |
+| **Test, Gold-UPOS** | **84,42** | **79,40** | 85,43 | 79,58 |
+| Dev, OpenNLP-UPOS | 78,82 | 73,44 | 79,68 | 73,47 |
+| **Test, OpenNLP-UPOS** | **77,67** | **71,60** | 78,93 | 71,85 |
+| Test, Baseline (rechter Nachbar) | 28,32 | 22,44 | | |
+
+OpenNLP trifft die UPOS zu 93,4 % (Dev) und 93,0 % (Test); jeder Wortartfehler kostet im Mittel rund eine Kante.
+
+| Relation (Test, Gold-UPOS) | Gold | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|
+| nsubj | 1136 | 78,5 | 79,1 | 78,8 |
+| nsubj:pass | 115 | 60,8 | 56,5 | 58,6 |
+| obj | 584 | 73,9 | 73,6 | 73,8 |
+| obl | 873 | 75,6 | 75,4 | 75,5 |
+| obl:arg | 85 | 65,0 | 45,9 | 53,8 |
+| obl:agent | 13 | 55,0 | 84,6 | 66,7 |
+| nmod | 996 | 67,0 | 67,6 | 67,3 |
+| compound:prt | 77 | 76,0 | 77,9 | 76,9 |
+| conj | 525 | 63,0 | 68,0 | 65,4 |
+
+Häufigste Verwechslungen auf Test: obl ↔ nmod (121 und 107, die Anbindung von Präpositionalgruppen), obj ↔ nsubj (69
+und 51), obl:arg → obj (27). `iobj` und `nmod:poss` kommen in GSD praktisch nicht vor (Dativobjekte sind `obl:arg`).
+
+Prüfsätze: 29 von 30 Kanten richtig, mit Gold- wie mit OpenNLP-Wortarten. Im Referenzsatz stimmen Subjekt
+(Sachbearbeiter), Dativ (Vorgesetzten, `obl:arg`), Akkusativobjekt (Beleg) und Genitiv (des Kunden am Beleg); nur
+„am Montag“ hängt als `nmod` am Vorgesetzten statt als `obl` am Verb. Die Kernrelation Sachbearbeiter → übermitteln →
+Beleg ist damit ableitbar, die Zeitangabe nicht verlässlich.
+
+Training 613 s, Spitzenspeicher des Lernprozesses 3,7 GiB, `.mco` 23 MB, ZIP 23 MB. Parsen in einem Thread rund 900
+Sätze pro Sekunde (Gold-Tokens, ohne Wortartbestimmung).
+
+Qualitätsgrenzen ab 1.0.0 (gemessen minus 1 Punkt): Test Gold UAS ≥ 83,4, LAS ≥ 78,4, Test OpenNLP LAS ≥ 70,6.
 
 ## Fehlerfälle
 

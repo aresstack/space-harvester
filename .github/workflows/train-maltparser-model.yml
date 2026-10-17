@@ -55,7 +55,7 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - name: Treebank holen, trainieren, evaluieren, verpacken, als Verbraucher laden
-        run: ./gradlew :nlp-model-training:buildGermanModel -PtrainingHeap=12g --console=plain
+        run: ./gradlew :nlp-model-training:buildGermanModel --console=plain
       - name: Abhängigkeiten festhalten
         if: always()
         run: ./gradlew -q :nlp-model-training:dependencies --configuration runtimeClasspath > nlp-model-training/build/maltparser-de-gsd/dependencies.txt
