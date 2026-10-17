@@ -86,6 +86,12 @@ public final class SourcesView implements View {
     private final TableRowSorter<SpacesModel> sorter = new TableRowSorter<>(spacesModel);
     private final JTextField filter = Comic.field(14);
     private final JLabel spacesHint = Comic.muted(" ");
+    final ComposerButton exportAll = Comic.button("Alle exportieren …",
+            "Exportieren mit allen Spaces dieser Quelle vorbelegt öffnen");
+    final ComposerButton exportMarked = Comic.button("Ausgewählte exportieren …",
+            "Exportieren mit den angehakten Spaces vorbelegt öffnen");
+    /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
+    private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
             "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
     private final JLabel title = new JLabel(" ");
@@ -119,15 +125,52 @@ public final class SourcesView implements View {
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
         spaces.setRowSorter(sorter);
-        sorter.setSortKeys(List.of(new RowSorter.SortKey(0, SortOrder.ASCENDING)));
+        sorter.setSortKeys(List.of(new RowSorter.SortKey(SpacesModel.NAME, SortOrder.ASCENDING)));
+        sorter.setSortable(SpacesModel.MARK, false);
+        sorter.setSortable(SpacesModel.EXPORT, false);
+        spaces.getColumnModel().getColumn(SpacesModel.MARK).setMaxWidth(34);
+        spaces.getColumnModel().getColumn(SpacesModel.MARK).setMinWidth(34);
+        spaces.getColumnModel().getColumn(SpacesModel.EXPORT).setMaxWidth(40);
+        spaces.getColumnModel().getColumn(SpacesModel.EXPORT).setMinWidth(40);
+        // Derselbe runde Knopf wie an den Einstellungen, je Zeile mit Export-Symbol; der Rand erscheint beim
+        // Darüberfahren.
+        spaces.getColumnModel().getColumn(SpacesModel.EXPORT).setCellRenderer(new RowButton(Glyph.EXPORT,
+                "Exportieren mit diesem Space vorbelegt öffnen", () -> hoverRow));
+        spaces.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                int row = spaces.columnAtPoint(e.getPoint()) == SpacesModel.EXPORT ? spaces.rowAtPoint(e.getPoint())
+                        : -1;
+                if (row != hoverRow) {
+                    hoverRow = row;
+                    spaces.repaint();
+                }
+            }
+        });
+        spacesModel.onMarked(this::updateExportButtons);
+        exportAll.addActionListener(e -> exportSpaces(spacesModel.rows.stream().map(Partition::key).toList()));
+        exportMarked.addActionListener(e -> exportSpaces(spacesModel.marked()));
         spaces.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         spaces.setToolTipText("Doppelklick oder Enter öffnet den Space unter Inhalte");
         spaces.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2 && spaces.rowAtPoint(e.getPoint()) >= 0) {
+                int row = spaces.rowAtPoint(e.getPoint());
+                if (row < 0) {
+                    return;
+                }
+                int column = spaces.columnAtPoint(e.getPoint());
+                if (column == SpacesModel.EXPORT) {
+                    exportSpaces(List.of(spacesModel.rows.get(spaces.convertRowIndexToModel(row)).key()));
+                } else if (e.getClickCount() == 2 && column != SpacesModel.MARK) {
                     openSelectedSpace();
                 }
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                hoverRow = -1;
+                spaces.repaint();
             }
         });
         spaces.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
@@ -172,6 +215,14 @@ public final class SourcesView implements View {
         table.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         table.setPreferredSize(new Dimension(400, 220));
         spacesPanel.add(table, BorderLayout.CENTER);
+        // Werkzeugleiste am unteren Rand wie der Fortschritt unter Aufträge.
+        JPanel spacesBar = new JPanel(new BorderLayout());
+        spacesBar.setOpaque(false);
+        spacesBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(8, 0, 0, 0)));
+        spacesBar.add(Comic.row(exportMarked, exportAll), BorderLayout.WEST);
+        spacesPanel.add(spacesBar, BorderLayout.SOUTH);
+        updateExportButtons();
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
@@ -290,8 +341,12 @@ public final class SourcesView implements View {
         // Neu setzen löscht die Tabellenauswahl; derselbe Space derselben Quelle bleibt gewählt, damit Kreispfeil und
         // Export ihn nach dem Klick auf die Karte noch sehen.
         String keep = entry.id().equals(spacesOf) ? selectedSpace().map(Partition::key).orElse(null) : null;
+        if (!entry.id().equals(spacesOf)) {
+            spacesModel.unmarkAll();
+        }
         spacesOf = entry.id();
         spacesModel.set(connection.spaces());
+        updateExportButtons();
         reselect(keep);
         // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
         if (context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id())) {
@@ -645,6 +700,35 @@ public final class SourcesView implements View {
         }
     }
 
+    /** Öffnet Exportieren mit dieser Quelle und diesen Spaces; gestartet wird erst dort. */
+    private void exportSpaces(List<String> keys) {
+        String id = selectedId();
+        if (id != null && !keys.isEmpty()) {
+            context.navigator().prepareExport(id, keys);
+        }
+    }
+
+    private void updateExportButtons() {
+        int marked = spacesModel.marked().size();
+        exportMarked.setEnabled(marked > 0);
+        exportMarked.setText(marked == 0 ? "Ausgewählte exportieren …" : "Ausgewählte exportieren (" + marked + ") …");
+        exportAll.setEnabled(!spacesModel.rows.isEmpty());
+    }
+
+    /** Für Tests: hakt einen Space an wie ein Klick in die erste Spalte. */
+    void mark(String key, boolean marked) {
+        for (int i = 0; i < spacesModel.rows.size(); i++) {
+            if (spacesModel.rows.get(i).key().equals(key)) {
+                spacesModel.setValueAt(marked, i, SpacesModel.MARK);
+            }
+        }
+    }
+
+    /** Für Tests: der Export-Knopf in der Zeile dieses Space. */
+    void exportRow(String key) {
+        exportSpaces(List.of(key));
+    }
+
     private void openSelectedSpace() {
         selectedSpace().ifPresent(space -> context.navigator().openSpace(selectedId(), space.key()));
     }
@@ -940,13 +1024,86 @@ public final class SourcesView implements View {
                 : config.baseUrl().toString();
     }
 
+    /** Zeichnet einen runden Symbolknopf wie {@link IconButton} in eine Tabellenzelle. */
+    private static final class RowButton extends JLabel implements javax.swing.table.TableCellRenderer {
+
+        private final java.util.function.IntSupplier hoverRow;
+        private boolean hover;
+
+        RowButton(Glyph glyph, String tooltip, java.util.function.IntSupplier hoverRow) {
+            super(glyph);
+            this.hoverRow = hoverRow;
+            setHorizontalAlignment(CENTER);
+            setToolTipText(tooltip);
+            setForeground(Comic.INK);
+            setOpaque(true);
+        }
+
+        @Override
+        public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
+                                                       int row, int column) {
+            hover = row == hoverRow.getAsInt();
+            setBackground(selected ? table.getSelectionBackground() : table.getBackground());
+            return this;
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics graphics) {
+            graphics.setColor(getBackground());
+            graphics.fillRect(0, 0, getWidth(), getHeight());
+            if (hover) {
+                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+                try {
+                    g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+                    int size = Math.min(26, getHeight() - 1);
+                    int x = (getWidth() - size) / 2;
+                    int y = (getHeight() - size) / 2;
+                    g.setColor(new java.awt.Color(255, 255, 255, 170));
+                    g.fillOval(x, y, size - 1, size - 1);
+                    g.setColor(Comic.INK);
+                    g.drawOval(x, y, size - 1, size - 1);
+                } finally {
+                    g.dispose();
+                }
+            }
+            Glyph glyph = (Glyph) getIcon();
+            glyph.paintIcon(this, graphics, (getWidth() - glyph.getIconWidth()) / 2,
+                    (getHeight() - glyph.getIconHeight()) / 2);
+        }
+    }
+
     private static final class SpacesModel extends AbstractTableModel {
 
+        static final int MARK = 0;
+        static final int NAME = 1;
+        static final int KEY = 2;
+        static final int EXPORT = 3;
+
         private List<Partition> rows = new ArrayList<>();
+        /** Angehakte Spaces (Schlüssel); bleiben beim Neuladen derselben Quelle erhalten. */
+        private final java.util.Set<String> marked = new java.util.LinkedHashSet<>();
+        private Runnable onMarked = () -> { };
 
         void set(List<Partition> partitions) {
             rows = new ArrayList<>(partitions);
+            marked.retainAll(rows.stream().map(Partition::key).toList());
             fireTableDataChanged();
+        }
+
+        void onMarked(Runnable listener) {
+            this.onMarked = listener;
+        }
+
+        void unmarkAll() {
+            marked.clear();
+            fireTableDataChanged();
+            onMarked.run();
+        }
+
+        /** Die angehakten Spaces in der Reihenfolge der Liste. */
+        List<String> marked() {
+            return rows.stream().map(Partition::key).filter(marked::contains).toList();
         }
 
         @Override
@@ -956,18 +1113,51 @@ public final class SourcesView implements View {
 
         @Override
         public int getColumnCount() {
-            return 2;
+            return 4;
         }
 
         @Override
         public String getColumnName(int column) {
-            return column == 0 ? "Name" : "Schlüssel";
+            return switch (column) {
+                case NAME -> "Name";
+                case KEY -> "Schlüssel";
+                default -> "";
+            };
+        }
+
+        @Override
+        public Class<?> getColumnClass(int column) {
+            return column == MARK ? Boolean.class : String.class;
+        }
+
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return column == MARK;
+        }
+
+        @Override
+        public void setValueAt(Object value, int row, int column) {
+            if (column == MARK) {
+                String key = rows.get(row).key();
+                if (Boolean.TRUE.equals(value)) {
+                    marked.add(key);
+                } else {
+                    marked.remove(key);
+                }
+                fireTableCellUpdated(row, column);
+                onMarked.run();
+            }
         }
 
         @Override
         public Object getValueAt(int row, int column) {
             Partition partition = rows.get(row);
-            return column == 0 ? partition.name() : partition.key();
+            return switch (column) {
+                case MARK -> marked.contains(partition.key());
+                case NAME -> partition.name();
+                case KEY -> partition.key();
+                default -> "";
+            };
         }
     }
 }
