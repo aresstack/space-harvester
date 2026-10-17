@@ -53,6 +53,9 @@ public final class AppContext {
 
         void showJob(String jobId);
 
+        /** Status mit der Diagnose genau dieses Auftrags. */
+        void showDiagnosis(String jobId);
+
         void prepareExport(String sourceId, String spaceKey);
 
         void search(String text);
