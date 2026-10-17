@@ -96,4 +96,17 @@ public interface HarvestSource {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Anhangslisten nicht liefern", null);
     }
+
+    /**
+     * Lädt einen Anhang aus {@link #attachments(String)} über die Anmeldung und den Netzweg der Quelle herunter (#19).
+     * Nur Anhänge der Quelle selbst, nie fremde URLs. Eine Datei über der Größengrenze der Quelle scheitert mit
+     * {@code INVALID_RESPONSE} und wird nie gekürzt.
+     *
+     * @throws SourceAccessException wie {@link #storedPage(String)}; {@code NOT_FOUND} auch für einen gelöschten
+     *                               Anhang
+     */
+    default AttachmentFile attachmentFile(PageAttachment attachment) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhänge nicht herunterladen", null);
+    }
 }

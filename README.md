@@ -237,6 +237,9 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/attachments` | Alle Anhänge einer Seite als Metadaten, live, auch nicht eingebettete, ohne Dateiinhalte; `complete=false` mit `warnings`, wenn die Quelle Einträge auslassen musste (#9) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets` | Anhänge einer Seite mit Art (`DIAGRAM` vor `VECTOR` vor `IMAGE` vor `OTHER`), Bezug Vorschaubild → draw.io-Diagramm (`previewOf`) und abgelegtem Stand; lädt nichts (#19) |
+| `POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/harvest` | Alle Anhänge der Seite über die Anmeldung der Quelle herunterladen und versioniert ablegen; gleiche Versionen werden nicht erneut übertragen; verlangt `sync` (#19) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/content` | Ein Anhang in seiner aktuellen Version Byte für Byte, aus der Ablage oder bei Bedarf nachgeladen; immer als Download, `ETag` = SHA-256; verlangt `content` (#19) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
@@ -378,6 +381,16 @@ Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `ma
 ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
 `space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
 `CONVERSION_TOO_LARGE`, statt abzuschneiden.
+
+**Assets (#19):** Anhänge und referenzierte Bilder werden getrennt vom Seiten-JSON und nur auf Anfrage geladen, über
+dieselbe Anmeldung, dieselben Zertifikate und denselben Proxy wie die Seiten; fremde URLs (`ri:url`) werden nie
+abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Space der Seite; ein Anhang, der nicht zur
+Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
+(Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
+Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
+(Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502). Fehler je Anhang stehen mit festem Code im
+Ernteergebnis und im Log; drosselt die Quelle, werden die übrigen Anhänge nicht mehr angefragt. Für Diagramme sind die
+draw.io-Daten (`DIAGRAM`) und SVG (`VECTOR`) dem Vorschaubild vorzuziehen, das erst eine KI beschreiben müsste.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#27](https://github.com/aresstack/space-harvester/issues/27)).

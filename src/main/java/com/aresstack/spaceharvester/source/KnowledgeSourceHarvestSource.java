@@ -7,14 +7,17 @@ import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
+import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
@@ -23,6 +26,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -168,6 +172,35 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
                 .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    @Override
+    public AttachmentFile attachmentFile(PageAttachment attachment) {
+        if (!(port instanceof PageViewSource files)) {
+            return HarvestSource.super.attachmentFile(attachment);
+        }
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(attachment.resourceId());
+        } catch (IllegalArgumentException e) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Keine Ressourcen-ID", null);
+        }
+        if (!files.isAttachment(resourceId)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Kein Anhang der Quelle",
+                    null);
+        }
+        SourceFile file;
+        try {
+            file = files.loadAttachmentFile(resourceId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        PageAttachment described = attachment(file.resource());
+        if (!described.attachmentId().equals(attachment.attachmentId())) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Download gehört zu einem anderen Anhang", null);
+        }
+        return new AttachmentFile(described, file.content(), Instant.now());
     }
 
     private static PageAttachment attachment(KnowledgeResource resource) {
