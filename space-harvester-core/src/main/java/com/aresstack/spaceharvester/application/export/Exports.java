@@ -21,6 +21,8 @@ import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import com.aresstack.spaceharvester.application.sync.SyncUnavailableException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
@@ -37,20 +39,30 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Startet Exporte eines Space aus dem Cache als Auftrag und findet ihre Artefakte. Der Export liest die Seitenliste
+ * Startet Exporte eines Space als Auftrag und findet ihre Artefakte. Der Export liest die Seitenliste
  * einer Generation stapelweise, lädt je Seite den Snapshot und schreibt ihn sofort weiter; im Speicher bleiben nur IDs
  * für den Baum.
  *
- * <p>Ein Artefakt ist nur {@code complete}, wenn es aus einer bestätigten Generation stammt und keine Seite fehlt. Ein
- * abgebrochener oder gescheiterter Export veröffentlicht nichts.
+ * <p>Der Cache ist dabei keine Voraussetzung (ADR 0010): Liegt für den Space keine bestätigte Generation vor oder
+ * verlangt der Auftrag Aktualität ({@link ExportRequest#refresh()}), liest der Export den Space zuerst selbst ein
+ * ({@link SpaceProvisioning}), im selben Auftrag und auf demselben Ausführungsplatz. Eine vorhandene bestätigte
+ * Generation wird sonst wiederverwendet. Raw-First bleibt: exportiert wird immer, was die bestätigte Generation im
+ * Cache hält, mit Originalpayload, Revision und Hashes.
+ *
+ * <p>Jede Anmeldeart nutzt denselben Ablauf; der Export enthält genau die Seiten, die der Auftraggeber lesen darf
+ * ({@link ExportRequest#visible()}). Nicht lesbare Seiten erscheinen weder im Artefakt noch im Manifest, in Warnungen
+ * oder Zählern. Ein Artefakt ist nur {@code complete}, wenn es aus einer bestätigten Generation stammt und keine
+ * lesbare Seite fehlt oder beim Einlesen scheiterte. Ein abgebrochener oder gescheiterter Export veröffentlicht nichts.
  *
  * <p>Angefragte Formate (#30) entstehen ganz am Ende aus denselben Seiten: nach dem Raw-First-Artefakt liest jeder
  * {@link ExportConverter} die exportierten Seiten noch einmal einzeln aus dem Cache, in Baumreihenfolge, und prüft
@@ -70,6 +82,7 @@ public class Exports {
     private final PageCacheReader cache;
     private final ExportArtifactWriter writer;
     private final ExportConverters converters;
+    private final SpaceProvisioning provisioning;
     private final Clock clock;
 
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, Clock clock) {
@@ -78,6 +91,13 @@ public class Exports {
 
     public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, ExportConverters converters,
                    Clock clock) {
+        this(jobs, cache, writer, converters, SpaceProvisioning.unavailable(), clock);
+    }
+
+    /** @param provisioning liest fehlende oder veraltete Spaces im Exportauftrag ein */
+    public Exports(Jobs jobs, PageCacheReader cache, ExportArtifactWriter writer, ExportConverters converters,
+                   SpaceProvisioning provisioning, Clock clock) {
+        this.provisioning = Objects.requireNonNull(provisioning, "provisioning");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.cache = Objects.requireNonNull(cache, "cache");
         this.writer = Objects.requireNonNull(writer, "writer");
@@ -110,13 +130,24 @@ public class Exports {
      *                                                                                 bevor ein Auftrag entsteht
      */
     public JobStatus start(String sourceId, String spaceKey, String owner, List<String> formats) {
-        Objects.requireNonNull(sourceId, "sourceId");
-        Objects.requireNonNull(spaceKey, "spaceKey");
-        List<ExportConverter> selected = converters.select(formats);
+        return start(ExportRequest.of(sourceId, spaceKey, owner, formats));
+    }
+
+    /**
+     * Nimmt einen Export an, ohne auf ihn zu warten; die Job-ID ist zugleich die Export-ID.
+     *
+     * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format,
+     *                                                                                 bevor ein Auftrag entsteht
+     * @throws com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException wenn zu viele Aufträge offen
+     *                                                                                   sind
+     */
+    public JobStatus start(ExportRequest request) {
+        Objects.requireNonNull(request, "request");
+        List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
-        return jobs.submit(JobType.EXPORT, sourceId, spaceKey, owner,
-                JobTask.blocking(context -> export(context, sourceId, spaceKey, selected)));
+        return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.owner(),
+                JobTask.blocking(context -> export(context, request, selected)));
     }
 
     /**
@@ -199,9 +230,17 @@ public class Exports {
         }
     }
 
-    private void export(JobContext context, String sourceId, String spaceKey, List<ExportConverter> selected) {
+    private void export(JobContext context, ExportRequest request, List<ExportConverter> selected) {
         try {
-            exportGeneration(context, sourceId, spaceKey, selected);
+            requireAuthorized(request);
+            Prepared prepared = prepare(context, request);
+            exportGeneration(context, request, prepared, selected);
+        } catch (UnknownSourceException e) {
+            throw new JobFailedException("UNKNOWN_SOURCE", "Die Quelle " + request.sourceId()
+                    + " ist nicht konfiguriert", e);
+        } catch (SyncUnavailableException e) {
+            throw new JobFailedException("PROVISIONING_UNAVAILABLE", "Der Space kann nicht von der Quelle "
+                    + "eingelesen werden, weil Cache-Speicher oder Inhaltsabruf nicht angebunden sind", e);
         } catch (CacheUnavailableException e) {
             throw new JobFailedException("CACHE_UNAVAILABLE", "Der Seitencache ist nicht lesbar", e);
         } catch (CacheGenerationChangedException e) {
@@ -212,23 +251,85 @@ public class Exports {
         }
     }
 
-    private void exportGeneration(JobContext context, String sourceId, String spaceKey,
-                                  List<ExportConverter> selected) {
+    /**
+     * Die Freigabe des Auftraggebers muss über den ganzen Auftrag gelten; ein abgelaufenes oder entzogenes Recht wird
+     * nie durch das Erntekonto ersetzt, der Export scheitert dann ohne Artefakt.
+     */
+    private static void requireAuthorized(ExportRequest request) {
+        if (!request.authorized().getAsBoolean()) {
+            throw new JobFailedException("ACCESS_REVOKED", "Die Freigabe für den Export dieses Space gilt nicht mehr "
+                    + "(Recht entzogen oder Anmeldung abgelaufen); es entstand kein Export");
+        }
+    }
+
+    /**
+     * Bestand für den Export: wiederverwendet oder im Auftrag eingelesen.
+     *
+     * @param unrefreshed Seiten, deren Abruf beim Einlesen scheiterte; nur intern, nach außen zählen nur lesbare
+     */
+    private record Prepared(Instant startedAt, CacheGeneration generation, Set<String> unrefreshed,
+                            List<String> warnings) {
+    }
+
+    /**
+     * Sorgt für eine Generation, aus der exportiert wird: eine vorhandene bestätigte, wenn keine Aktualität verlangt
+     * ist, sonst eine im Auftrag neu eingelesene. Scheitert das Einlesen ohne bestätigte Generation, gibt es nur dann
+     * einen (unvollständigen) Export aus dem bisherigen Bestand, wenn keine Aktualität verlangt war.
+     */
+    private Prepared prepare(JobContext context, ExportRequest request) {
         Instant startedAt = clock.instant();
+        String sourceId = request.sourceId();
+        String spaceKey = request.spaceKey();
+        Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
+        boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
+        if (reusable && !request.refresh()) {
+            return new Prepared(startedAt, current.get(), Set.of(), List.of());
+        }
+        if (!provisioning.available()) {
+            if (current.isEmpty() || request.refresh()) {
+                throw new SyncUnavailableException("kein Einlesen");
+            }
+            return new Prepared(startedAt, current.get(), Set.of(), List.of());
+        }
+        List<String> warnings = new ArrayList<>();
+        SpaceProvisioning.Provisioned provisioned = provisioning.provision(
+                new SilentContext(context), sourceId, spaceKey);
+        context.checkpoint();
+        if (!provisioned.confirmed()) {
+            if (current.isEmpty() || request.refresh()) {
+                throw new JobFailedException("SYNC_INCOMPLETE", "Space " + spaceKey + " der Quelle " + sourceId
+                        + " ließ sich nicht vollständig einlesen (Inventur abgebrochen oder widersprüchlich); "
+                        + "es entstand kein Export");
+            }
+            warnings.add("Neues Einlesen ohne bestätigte Generation; exportiert wird der bisherige Bestand");
+        }
+        if (provisioned.superseded()) {
+            warnings.add("Ein gleichzeitiger Abgleich hat zuerst bestätigt; exportiert wird dessen Generation");
+        }
         CacheGeneration generation = cache.currentGeneration(sourceId, spaceKey).orElseThrow(() ->
-                new JobFailedException("NOT_CACHED", "Space " + spaceKey + " der Quelle " + sourceId
-                        + " liegt nicht im Cache"));
+                new JobFailedException("SYNC_INCOMPLETE", "Nach dem Einlesen liegt für Space " + spaceKey
+                        + " der Quelle " + sourceId + " keine Generation vor"));
+        return new Prepared(startedAt, generation, provisioned.failedPageIds(), warnings);
+    }
+
+    private void exportGeneration(JobContext context, ExportRequest request, Prepared prepared,
+                                  List<ExportConverter> selected) {
+        String sourceId = request.sourceId();
+        String spaceKey = request.spaceKey();
+        Instant startedAt = prepared.startedAt();
+        CacheGeneration generation = prepared.generation();
         ExportScope scope = new ExportScope(sourceId, spaceKey, generation);
         List<TreeEntry> entries = new ArrayList<>();
         List<PageFailure> failures = new ArrayList<>();
         Map<String, ListedPage> exported = new HashMap<>();
+        Set<String> hidden = new HashSet<>();
+        int unrefreshed = 0;
         try (ExportArtifactWriter.Session session = writer.begin(context.jobId(), scope)) {
             String after = null;
             List<ListedPage> batch;
             do {
                 context.checkpoint();
                 batch = cache.pages(sourceId, spaceKey, generation.id(), after, BATCH_SIZE);
-                context.discovered(batch.size());
                 for (ListedPage listed : batch) {
                     context.checkpoint();
                     if (after != null && listed.pageId().compareTo(after) <= 0) {
@@ -236,6 +337,16 @@ public class Exports {
                                 + "aufsteigend sortiert (Seite " + listed.pageId() + ")");
                     }
                     after = listed.pageId();
+                    if (!request.visible().test(listed.header())) {
+                        // Nicht lesbar: gehört nicht zur Sicht des Auftraggebers. Weder Artefakt, Manifest, Warnung
+                        // noch Zähler verraten, dass es die Seite gibt.
+                        hidden.add(listed.pageId());
+                        continue;
+                    }
+                    context.discovered(1);
+                    if (prepared.unrefreshed().contains(listed.pageId())) {
+                        unrefreshed++;
+                    }
                     PageFailure failure = exportPage(session, listed, generation);
                     context.processed(1);
                     if (failure == null) {
@@ -250,8 +361,18 @@ public class Exports {
             } while (batch.size() == BATCH_SIZE);
             context.checkpoint();
             PageTree tree = PageTreeBuilder.build(entries);
-            List<String> warnings = new ArrayList<>();
+            List<String> warnings = new ArrayList<>(prepared.warnings());
+            if (unrefreshed > 0) {
+                warnings.add(unrefreshed + " Seiten ließen sich beim Einlesen nicht abrufen; sie fehlen oder sind auf "
+                        + "altem Stand");
+            }
             for (PageTree.Anomaly anomaly : tree.anomalies()) {
+                ListedPage page = exported.get(anomaly.pageId());
+                if (anomaly.kind() == PageTree.Kind.MISSING_PARENT && page != null
+                        && hidden.contains(page.parentPageId())) {
+                    // Die Elternseite ist nur nicht lesbar; das ist kein Mangel des Exports.
+                    continue;
+                }
                 warnings.add("Seite " + anomaly.pageId() + " ist im Baum Wurzel: " + switch (anomaly.kind()) {
                     case MISSING_PARENT -> "Elternseite fehlt im Export";
                     case CYCLE -> "Zyklus in der Elternbeziehung aufgebrochen";
@@ -262,7 +383,9 @@ public class Exports {
                         + "; das Artefakt ist kein bestätigter vollständiger Stand");
             }
             convert(context, session, scope, tree, exported, selected);
-            boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty();
+            requireAuthorized(request);
+            // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
+            boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
                     entries.size(), failures, warnings, complete));
         }
@@ -424,6 +547,50 @@ public class Exports {
                                 "Seite " + pageId + " wurde während der Konvertierung im Cache geändert"));
                 action.accept(new ConvertiblePage(page.header(), page.snapshot(), depth));
             });
+        }
+    }
+
+    /**
+     * Sicht des Einlesens auf den Exportauftrag: Abbruch und Laufzeitgrenze greifen, Zähler nicht. Gezählt werden nur
+     * die Seiten, die der Auftraggeber lesen darf, und das entscheidet erst der Export je Seite.
+     */
+    private static final class SilentContext implements JobContext {
+
+        private final JobContext context;
+
+        SilentContext(JobContext context) {
+            this.context = context;
+        }
+
+        @Override
+        public String jobId() {
+            return context.jobId();
+        }
+
+        @Override
+        public void checkpoint() {
+            context.checkpoint();
+        }
+
+        @Override
+        public boolean cancelRequested() {
+            return context.cancelRequested();
+        }
+
+        @Override
+        public void discovered(long pages) {
+        }
+
+        @Override
+        public void processed(long pages) {
+        }
+
+        @Override
+        public void written(long pages) {
+        }
+
+        @Override
+        public void failed(long pages) {
         }
     }
 
