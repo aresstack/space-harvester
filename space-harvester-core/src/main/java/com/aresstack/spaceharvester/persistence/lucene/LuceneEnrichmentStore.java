@@ -14,6 +14,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
@@ -34,8 +35,10 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
+import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.LockObtainFailedException;
@@ -221,8 +224,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     }
 
     @Override
-    public List<ChunkHit> nearest(String sourceId, String processorVersion, float[] query, int k) {
-        Objects.requireNonNull(sourceId, "sourceId");
+    public List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k) {
+        Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         Objects.requireNonNull(query, "query");
         if (k < 1 || k > MAX_K) {
@@ -230,11 +233,12 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
         requireOpen();
         float[] normalized = EmbeddingIndex.normalized(query);
-        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized)) {
+        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized) || sourceIds.isEmpty()) {
             return List.of();
         }
         BooleanQuery filter = new BooleanQuery.Builder()
-                .add(new TermQuery(new Term(VECTOR_SOURCE, sourceId)), BooleanClause.Occur.FILTER)
+                .add(new TermInSetQuery(VECTOR_SOURCE, sourceIds.stream().map(BytesRef::new).toList()),
+                        BooleanClause.Occur.FILTER)
                 .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
                 .build();
         try {
@@ -254,7 +258,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                             doc.getField(CHAR_END).numericValue().intValue(), doc.get(INPUT_SHA256), similarity));
                 }
                 hits.sort(Comparator.comparingDouble(ChunkHit::similarity).reversed()
-                        .thenComparing(hit -> hit.page().pageId()).thenComparingInt(ChunkHit::chunk));
+                        .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
+                        .thenComparingInt(ChunkHit::chunk));
                 return hits;
             } finally {
                 searchers.release(searcher);
