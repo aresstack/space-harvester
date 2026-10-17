@@ -13,6 +13,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 |---|---|---|
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
+| `docx` | `pages.docx` | Word-Dokument (Office Open XML), Überschriften nach Seitentiefe, Textmarke je Seite |
+| `pdf` | `pages.pdf` | PDF (A4), Lesezeichen entlang des Seitenbaums, jede Wurzelseite beginnt auf einer neuen Seite |
 
 ## Gemeinsame Regeln
 
@@ -33,6 +35,15 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   mit den Freigaben `export` und `content` und nur für den Client, der den Export gestartet hat.
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
+
+Markdown, Word und PDF setzen jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), mit
+Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
+zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
+
+Word und PDF sind deterministisch: feste Zeitstempel im Archiv beziehungsweise feste Dateikennung, keine Datumsangaben.
+Das PDF nutzt ohne Konfiguration Helvetica und Courier (WinAnsi, westeuropäische Zeichen); andere Zeichen erscheinen
+als `?`. Mit `space-harvester.export.pdf.font=/pfad/zur/Schrift.ttf` wird eine TrueType-Schrift eingebettet, die alle
+ihre Zeichen darstellt (fett und kursiv dann ohne eigenen Schnitt).
 
 ## Storage-Format und Formatverluste
 

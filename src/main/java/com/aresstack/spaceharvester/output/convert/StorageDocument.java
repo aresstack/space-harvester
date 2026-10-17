@@ -12,6 +12,42 @@ public final class StorageDocument {
     private StorageDocument() {
     }
 
+    /** Der reine Text von Blöcken, Absätze durch Leerzeichen getrennt; für Stellen, die keine Struktur tragen. */
+    public static String text(List<Block> blocks) {
+        StringBuilder text = new StringBuilder();
+        for (Block block : blocks) {
+            String part = switch (block) {
+                case Heading heading -> inlineText(heading.content());
+                case Paragraph paragraph -> inlineText(paragraph.content());
+                case ListBlock list -> String.join(" ", list.items().stream().map(StorageDocument::text).toList());
+                case Table table -> String.join(" ", table.rows().stream().flatMap(List::stream)
+                        .map(StorageDocument::text).toList());
+                case CodeBlock code -> code.code();
+                case Panel panel -> panel.label() + ": " + text(panel.content());
+                case Rule rule -> "";
+                case Note note -> "[Export: " + note.text() + "]";
+            };
+            if (!part.isBlank()) {
+                text.append(text.isEmpty() ? "" : " ").append(part.strip());
+            }
+        }
+        return text.toString();
+    }
+
+    /** Der reine Text von Inline-Inhalt. */
+    public static String inlineText(List<Inline> content) {
+        StringBuilder text = new StringBuilder();
+        for (Inline inline : content) {
+            switch (inline) {
+                case Text plain -> text.append(plain.text());
+                case Link link -> text.append(link.text());
+                case ImageRef image -> text.append("[Bild: ").append(image.alt()).append(']');
+                case LineBreak lineBreak -> text.append(' ');
+            }
+        }
+        return text.toString();
+    }
+
     /** Ein Block im Fluss einer Seite. */
     public sealed interface Block permits Heading, Paragraph, ListBlock, Table, CodeBlock, Panel, Rule, Note {
     }

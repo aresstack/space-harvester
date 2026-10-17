@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
+import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -25,6 +26,7 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Converter (#30) sind Beans vom Typ {@link ExportConverter}; jede konvertierte Datei darf höchstens
  * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 512 MiB), sonst scheitert der Export.
+ * {@code space-harvester.export.pdf.font} nennt optional eine TrueType-Schrift, die PDFs einbetten.
  */
 @Configuration(proxyBeanMethods = false)
 class ExportConfiguration {
@@ -48,6 +50,11 @@ class ExportConfiguration {
     @Bean
     DocxConverter docxConverter() {
         return new DocxConverter();
+    }
+
+    @Bean
+    PdfConverter pdfConverter(@Value("${space-harvester.export.pdf.font:}") String font) {
+        return new PdfConverter(font.isBlank() ? null : Path.of(font));
     }
 
     @Bean
