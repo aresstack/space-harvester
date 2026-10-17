@@ -122,6 +122,33 @@ space-harvester:
   erreichbaren Server startet der Dienst mit der lokalen Konfiguration. Reihenfolge der Quellen und Fallstricke:
   [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Proxy und PAC: siehe nächsten Abschnitt.
 
+### Weitere Quellentypen (#18)
+
+Jeder Quellentyp ist ein `SourceAdapter` (Paket `source`): er prüft seine Einstellungen und öffnet die Quelle über
+einen Provider aus `enterprise-ai-sources`; Fachlogik wie Partitionierung, Cursor und Größengrenzen liegt upstream im
+Enterprise AI Client. Mitgeliefert sind `confluence` und `files`. Ein weiterer Typ ist eine Spring-Bean vom Typ
+`SourceAdapter`; Routen, Freigaben, Sync und Export bleiben unverändert, weil sie nur die Partitionen, Seiten-IDs und
+Fähigkeiten der Quelle sehen. `GET /api/v1/sources` zeigt je Quelle `capabilities`, etwa `stored-page` (Original
+abrufbar) oder `async-stored-page`.
+
+`type: files` liest ein lokales Verzeichnis, ohne Netz, Anmeldung und Zertifikat:
+
+```yaml
+space-harvester:
+  sources:
+    - id: handbuch
+      type: files
+      title: Betriebshandbuch
+      options:
+        directory: /srv/handbuch       # Pflicht
+        include: "*.md, *.txt, *.pdf"  # optional; außerdem exclude, maxDepth (20), maxFileMegabytes (50)
+```
+
+Das Verzeichnis ist eine Partition mit der Quellen-ID als Schlüssel (`/spaces/handbuch/...`). Die Seiten-ID ist der
+relative Pfad als Base64url ohne Auffüllung (`start.md` → `c3RhcnQubWQ`), das Original die Datei Byte für Byte
+(`nativeFormat` `file`). Eine Datei, die sich während des Lesens ändert, gilt als nicht verfügbar, eine zu große als
+fehlgeschlagen; gekürzt wird nie.
+
 ## Proxy und PAC/WPAD
 
 Ausgehende Verbindungen aller Quellen nehmen die Route, die `space-harvester.network.proxy` für die jeweilige

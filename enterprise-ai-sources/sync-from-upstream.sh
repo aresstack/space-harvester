@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kopiert die Confluence-Quelle und ihre Basismodule unverändert aus aresstack/enterprise-ai-client
+# Kopiert die Confluence-Quelle, die Dateiquelle und ihre Basismodule unverändert aus aresstack/enterprise-ai-client
 # in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
 #
 #   sync-from-upstream.sh sync <commit|tag|branch>   neu kopieren und UPSTREAM.sha256 schreiben
@@ -20,6 +20,14 @@ modules=(
   proasteion/platform/network
   source-api
   proasteion/emporion/holkas/source-confluence
+  proasteion/emporion/deigma
+  proasteion/emporion/holkas/source-localfiles
+)
+
+# Einzelne Klassen aus weiteren Modulen: <Modulpfad>:<Klassenpfad unter src/main/java ohne .java>.
+# SimpleContentDetector (nur JDK) erkennt Dateitypen für source-localfiles, ohne Apache Tika mitzunehmen.
+module_classes=(
+  proasteion/emporion/deigma/document-tika:com/aresstack/enterpriseai/proasteion/emporion/deigma/tika/SimpleContentDetector
 )
 
 # Aus astu nur die Klassen, die die Module oben (inklusive Tests) transitiv brauchen.
@@ -63,6 +71,17 @@ copy_selection() {
         cp -R "$upstream/$module/src/$set/." "$dest/src/$set/"
       fi
     done
+  done
+  local entry module class
+  for entry in "${module_classes[@]}"; do
+    module="${entry%%:*}"
+    class="${entry#*:}"
+    mkdir -p "$dest/src/main/java/$(dirname "$class")"
+    cp "$upstream/$module/src/main/java/$class.java" "$dest/src/main/java/$class.java"
+    if [ -f "$upstream/$module/src/test/java/${class}Test.java" ]; then
+      mkdir -p "$dest/src/test/java/$(dirname "$class")"
+      cp "$upstream/$module/src/test/java/${class}Test.java" "$dest/src/test/java/${class}Test.java"
+    fi
   done
   local astu="com/aresstack/enterpriseai/astu"
   for class in "${astu_classes[@]}"; do

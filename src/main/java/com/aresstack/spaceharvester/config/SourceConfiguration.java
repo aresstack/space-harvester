@@ -5,6 +5,9 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
+import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
+import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
+import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.util.Arrays;
 import javax.net.ssl.X509TrustManager;
@@ -25,16 +28,28 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(SpaceHarvesterProperties.class)
 class SourceConfiguration {
 
+    /** Quellentyp {@code confluence}. Weitere Typen kommen als weitere {@link SourceAdapter}-Beans dazu (#18). */
+    @Bean
+    ConfluenceSourceAdapter confluenceSourceAdapter() {
+        return new ConfluenceSourceAdapter();
+    }
+
+    /** Quellentyp {@code files}: lokale Verzeichnisse. */
+    @Bean
+    LocalFilesSourceAdapter localFilesSourceAdapter() {
+        return new LocalFilesSourceAdapter();
+    }
+
     @Bean
     ConfiguredSourceCatalog sourceCatalog(SpaceHarvesterProperties properties, ObjectProvider<BuildProperties> build,
-                                ObjectProvider<SslBundles> sslBundles) {
+                                ObjectProvider<SslBundles> sslBundles, ObjectProvider<SourceAdapter> adapters) {
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
         SslBundles bundles = sslBundles.getIfAvailable();
         return ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
                 bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings(),
-                properties.network().asyncTransport());
+                properties.network().asyncTransport(), adapters.orderedStream().toList());
     }
 
     /**
