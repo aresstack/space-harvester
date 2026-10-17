@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.api.confluence;
 
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.compat.ContentListing;
+import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -28,6 +30,11 @@ class ConfluenceCompatErrorHandler {
 
     private static final Logger LOG = LoggerFactory.getLogger(ConfluenceCompatErrorHandler.class);
 
+    @ExceptionHandler(CacheGenerationChangedException.class)
+    ResponseEntity<Map<String, Object>> changed(CacheGenerationChangedException e) {
+        return error(HttpStatus.SERVICE_UNAVAILABLE, "The Space Harvester cache changed while reading; retry");
+    }
+
     @ExceptionHandler({CacheMissException.class, UnknownSourceException.class})
     ResponseEntity<Map<String, Object>> notFound(RuntimeException e) {
         return error(HttpStatus.NOT_FOUND, "No content found in the Space Harvester cache");
@@ -50,6 +57,12 @@ class ConfluenceCompatErrorHandler {
     ResponseEntity<Map<String, Object>> unsupported(RuntimeException e) {
         // Die Meldung stammt aus der eigenen Prüfung und nennt nur Parameter und Erweiterungen.
         return error(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+
+    @ExceptionHandler(ContentListing.IncompleteListingException.class)
+    ResponseEntity<Map<String, Object>> incomplete(ContentListing.IncompleteListingException e) {
+        // Die Meldung stammt aus der eigenen Prüfung und nennt keine Seite.
+        return error(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage() + "; die Liste wäre unvollständig");
     }
 
     @ExceptionHandler(CacheUnavailableException.class)
