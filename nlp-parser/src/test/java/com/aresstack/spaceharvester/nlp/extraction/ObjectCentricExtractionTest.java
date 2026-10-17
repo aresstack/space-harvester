@@ -55,6 +55,30 @@ class ObjectCentricExtractionTest {
     }
 
     @Test
+    void timeAttachedToTheRecipientByTheRealModelStaysTimeContextOfTheStatement() {
+        // Echte Ausgabe des GSD-Modells aus #99: "am Montag" hängt als nmod an "dem Vorgesetzten"
+        ObjectCentricAnalysis analysis = Gold.analyze("time-on-nominal.conllu");
+        Statement statement = analysis.statements().get(0);
+
+        assertEquals("Der Sachbearbeiter", text(analysis, statement.core(Role.ACTOR)));
+        assertEquals("den Beleg", text(analysis, statement.core(Role.AFFECTED_OBJECT)));
+        assertEquals("dem Vorgesetzten", text(analysis, statement.withRole(Role.RECIPIENT).get(0)));
+
+        Argument time = statement.withRole(Role.TIME).get(0);
+        assertEquals("Montag", text(analysis, time));
+        assertEquals("nmod", time.relation());
+        assertEquals("am", time.marker());
+        assertEquals(Priority.CONTEXT, time.priority());
+        assertFalse(time.certain(), "Zeitbezug gegen die Parserkante übernommen");
+        assertTrue(statement.has(Finding.TIME_FROM_NOMINAL));
+
+        // Die Parserkante bleibt als nominaler Bezug erhalten; die Kernsicht ist davon unberührt
+        Mention recipient = analysis.mention(statement.withRole(Role.RECIPIENT).get(0).mention());
+        assertEquals(NominalAttachment.Kind.PREPOSITIONAL, analysis.attachmentsOf(recipient.id()).get(0).kind());
+        assertEquals(1, SalienceProjection.project(analysis).core().size());
+    }
+
+    @Test
     void mentionsKeepOriginalSpansAndLemmas() {
         ObjectCentricAnalysis analysis = Gold.analyze("reference.conllu");
         Mention subject = analysis.mention("test/gold@1#s1.t2");

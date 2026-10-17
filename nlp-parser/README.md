@@ -30,8 +30,9 @@ je Satz.
 
 Das Modell liegt im Betrieb als Verzeichnis mit `maltparser-de-gsd.mco` und `model-manifest.json` (Inhalt der
 Release-ZIP aus #99). Version und Prüfsummen stehen in
-`src/main/resources/com/aresstack/spaceharvester/nlp/malt/german-parser-model.properties`; leer, bis #99 ein
-lizenzgeprüftes Modell veröffentlicht hat. `MaltModelLoader` prüft vor dem Laden:
+`src/main/resources/com/aresstack/spaceharvester/nlp/malt/german-parser-model.properties`; hinterlegt ist
+`maltparser-de-gsd-v1.0.0` (CC BY-SA 4.0, freigegeben in #99, `docs/NLP_MODEL_LICENSE.md`; `LICENSE-MODEL.md` und
+`ATTRIBUTION.md` aus der ZIP gehören zu jeder Auslieferung des Modells). `MaltModelLoader` prüft vor dem Laden:
 
 | Prüfung | Fehler, wenn |
 |---|---|
@@ -51,12 +52,14 @@ Herunterladen, nur auf ausdrücklichen Aufruf und nie zur Laufzeit:
 
 ```bash
 ./gradlew :nlp-parser:build     # Tests mit Gold-Analysen und kleinem Testmodell, Lizenz-Gate; ohne Netz, ohne Training
-./gradlew :nlp-parser:test -PnlpModelDir=<Verzeichnis>   # zusätzlich Rauchtest mit echtem Modell, Bericht in build/reports/nlp-parser/smoke.txt
+./gradlew :nlp-parser:downloadGermanParserModel
+./gradlew :nlp-parser:test -PnlpModelDir=nlp-parser/build/nlp-model/maltparser-de-gsd-v1.0.0   # zusätzlich Rauchtest mit echtem Modell, Bericht in build/reports/nlp-parser/smoke.txt
 ```
 
 - `ObjectCentricExtractionTest`: Regeln an handgeschriebenen Gold-Analysen (`src/test/resources/…/extraction`):
   Referenzsatz, Aktiv/Passiv, Genitiv, Dativ gegen Zeitangabe, ohne Akkusativobjekt, Koordination und trennbare
-  Verben, gleiche Wörter in mehreren Aussagen, offene Pronomen, Kasus-Rückfall und eine echte Fehlanalyse.
+  Verben, gleiche Wörter in mehreren Aussagen, offene Pronomen, Kasus-Rückfall, eine echte Fehlanalyse und die echte
+  Ausgabe des Modells v1.0.0 zum Referenzsatz (`time-on-nominal.conllu`).
 - `OpenNlpGermanPreprocessorTest`: vorhergesagte Wortarten (keine Gold-Daten), Verschmelzungen, Spannen.
 - `MaltModelLoaderTest`: alle Prüfungen oben.
 - `GermanPipelineTest`: Rohtext → Baum → Kernrelation mit dem Testmodell, 64 parallele Aufrufe auf einem Modell.
@@ -79,17 +82,29 @@ nachziehen. Kein anderer Task trainiert.
 - Nicht aufgelöst, nur erkannt: Pronomen (`UNRESOLVED`), Relativpronomen, Koreferenz, gleiche Personen hinter
   gleichen Wörtern, Kopulasätze.
 
-## Messung (17.10.2026, Container, lokal trainiertes GSD-Modell, nicht veröffentlicht)
+## Messung mit dem veröffentlichten Modell (17.10.2026, Container)
 
-Lokal trainiert auf UD German GSD r2.16 train (FORM + UPOS, nivreeager, liblinear, ~75–110 s), bewertet auf GSD dev
-mit Gold-UPOS (ohne Satzzeichen) und auf den Gold-Sätzen dieses Moduls:
+`maltparser-de-gsd-v1.0.0` aus #99, Rauchtest `RealModelSmokeTest`:
 
-| Featuremodell | GSD dev UAS / LAS | obj | obl:arg | obl:agent | Referenzsatz | Gold-Sätze LAS (Gold-/OpenNLP-UPOS) |
-|---|---|---|---|---|---|---|
-| MaltParser-Standard (nur FORM, UPOS) | 84,7 / 77,8 | 63 % | 39 % | 0 % | Dativ als `obj`, Kern falsch | 82,1 / 82,1 |
-| + Artikelformen (`FORM` von `ldep`) | 85,8 / 79,7 | 74 % | 51 % | 92 % | richtig | 94,9 / 93,6 |
+| Messgröße | Wert |
+|---|---|
+| Laden `.mco` | ~7–7,5 s, ~225 MB Heap (Dienst mit mindestens 512 MB Heap planen) |
+| OpenNLP-Modelle laden | ~0,2–0,3 s |
+| Rohtext → Baum | ~5 ms je Satz einzeln, ~1,5 ms je Satz mit 4 Threads auf einem Modell |
+| Gold-Sätze dieses Moduls (78 Wörter) | UAS 94,9 % / LAS 92,3 %, mit Gold- und mit OpenNLP-Wortarten gleich |
+| GSD test laut Manifest (#99) | UAS 84,4 / LAS 79,4 (Gold-Wortarten), 77,7 / 71,6 (vorhergesagte Wortarten) |
 
-Laufzeit mit dem zweiten Modell: Laden 1,3 s und ~64 MB Heap, OpenNLP-Modelle 0,3 s, Rohtext → Baum 4,7 ms je Satz,
-1,4 ms je Satz mit 4 Threads. Mit dem Standardmodell würde die Auswertung den Fehler im Referenzsatz als
-`CASE_CONFLICT` markieren und keine Kernrelation daraus machen (`misparse.conllu`). Die Wahl des Featuremodells und
-die verbindlichen Zahlen liegen bei #99.
+Referenzsatz aus Rohtext: Kern `Der Sachbearbeiter → übermitteln → den Beleg`, Empfänger `dem Vorgesetzten`
+(`obl:arg`, Dativ bestätigt), Genitiv `des Kunden` am Beleg. `am Montag` hängt das Modell als `nmod` an
+`dem Vorgesetzten`; die Auswertung führt es zusätzlich als unsichere Zeitrolle der Aussage
+(`Finding.TIME_FROM_NOMINAL`, Fixture `time-on-nominal.conllu`).
+
+Vorversuch mit lokal trainierten, nicht veröffentlichten GSD-r2.16-Modellen (Gold-UPOS, GSD dev ohne Satzzeichen):
+
+| Featuremodell | GSD dev UAS / LAS | obj | obl:arg | obl:agent | Referenzsatz |
+|---|---|---|---|---|---|
+| MaltParser-Standard (nur FORM, UPOS) | 84,7 / 77,8 | 63 % | 39 % | 0 % | Dativ als `obj`, Kern falsch |
+| + Artikelformen (`FORM` von `ldep`) | 85,8 / 79,7 | 74 % | 51 % | 92 % | richtig |
+
+Mit dem Standardmodell würde die Auswertung den Fehler im Referenzsatz als `CASE_CONFLICT` markieren und keine
+Kernrelation daraus machen (`misparse.conllu`).
