@@ -11,7 +11,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
-import com.aresstack.spaceharvester.application.query.CacheMissException;
+import com.aresstack.spaceharvester.application.query.SearchScope;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
@@ -21,7 +21,6 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
-import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -35,6 +34,14 @@ import java.util.Set;
  * Suche nach Relevanz ({@code sort=relevance}, #89, ADR 0004): ein Fenster von höchstens {@value Reranking#MAX_WINDOW}
  * freigegebenen Kandidaten aus Vektorsuche und Titelsuche, umgeordnet nach der Kosinusähnlichkeit der Anfrage zu den
  * gespeicherten Embeddings.
+ *
+ * <p>Umfang (#114): mit {@code sourceId} eine Quelle, ohne alle Quellen, die der Aufrufer sehen darf
+ * ({@link SearchScope}), mit derselben Fehlersemantik wie {@code PageSearch}. Global gibt es genau eine Einbettung der
+ * Anfrage und eine Vektorsuche über alle Quellen des Umfangs zusammen (höchstens {@value #MAX_CHUNKS} Stücke, dann
+ * höchstens {@value #MAX_LOOKUPS} Seiten), dazu die ersten Titeltreffer in globaler Titelreihenfolge. Das Fenster bleibt
+ * bei {@value Reranking#MAX_WINDOW} Kandidaten: ein begrenzter, global gerankter Block, kein vollständiges Ergebnis und
+ * keine Top-K je Quelle. Kandidaten sind Seiten ({@code sourceId + pageId}); gleiche Seiten-IDs verschiedener Quellen
+ * bleiben getrennt. Ähnlichkeiten stammen aus demselben Modell und sind über Quellen vergleichbar.
  *
  * <p>Rechte: wie {@code PageSearch} {@link AccessKind#METADATA} für die genannten Spaces bzw. die Quelle und für jeden
  * Treffer. Ähnlichkeiten sind aus dem Inhalt abgeleitet: Ein Kandidat aus der Vektorsuche braucht zusätzlich
@@ -101,14 +108,7 @@ public class RelevanceSearch {
      *                                              erreichbar ist
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, int limit) {
-        String sourceId = query.sourceId();
-        if (query.spaceKeys().isEmpty()) {
-            access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
-        } else {
-            for (String spaceKey : query.spaceKeys()) {
-                access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
-            }
-        }
+        SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + Reranking.MAX_WINDOW + " liegen");
         }
@@ -119,11 +119,16 @@ public class RelevanceSearch {
         if (queryText.length() > MAX_TEXT_LENGTH) {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
-        if (catalog.find(sourceId).isEmpty()) {
-            throw new UnknownSourceException(sourceId);
+        scope.requireKnown(catalog);
+        SearchIndexState state = scope.state(index).orElse(null);
+        if (state == null && query.titleTerms().isEmpty() && embedding == null) {
+            throw new SemanticSearchUnavailableException(
+                    "Für die Suche ohne title ist kein Embedding-Modell eingerichtet");
         }
-        SearchIndexState state = index.state(sourceId)
-                .orElseThrow(() -> new CacheMissException(sourceId, "Quelle nicht im Suchindex"));
+        if (state == null) {
+            // Nur global: keine lesbare Quelle im Index.
+            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of());
+        }
 
         float[] vector = queryVector(queryText);
         if (vector == null && query.titleTerms().isEmpty()) {
@@ -131,8 +136,10 @@ public class RelevanceSearch {
                     ? "Für die Suche ohne title ist kein Embedding-Modell eingerichtet"
                     : "Das Embedding-Modell ist gerade nicht verfügbar");
         }
-        List<SearchHit> semantic = vector == null ? List.of() : semanticCandidates(caller, query, state, vector);
-        List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of() : lexicalCandidates(caller, query, state);
+        List<SearchHit> semantic = vector == null ? List.of()
+                : semanticCandidates(caller, query, scope, state, vector);
+        List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of()
+                : lexicalCandidates(caller, query, scope, state);
         List<SearchHit> window = interleave(semantic, lexical);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
@@ -158,7 +165,7 @@ public class RelevanceSearch {
                     : new RankedHit(hit, new Relevance(score.similarity(), score.charStart(), score.charEnd(),
                             score.freshness())));
         }
-        return new RelevanceResults(sourceId, state, reranking.rerankerId(), hits);
+        return new RelevanceResults(query.sourceId(), state, reranking.rerankerId(), hits);
     }
 
     private float[] queryVector(String text) {
@@ -176,26 +183,27 @@ public class RelevanceSearch {
     }
 
     /** Seiten der ähnlichsten Stücke, nach bester Ähnlichkeit, gefiltert nach Anfrage und Rechten. */
-    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, SearchIndexState state,
-                                               float[] vector) {
-        Set<String> pageIds = new LinkedHashSet<>();
-        for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(query.sourceId(), embedding.version(), vector,
+    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
+                                               SearchIndexState state, float[] vector) {
+        Set<PageKey> pages = new LinkedHashSet<>();
+        for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), embedding.version(), vector,
                 MAX_CHUNKS)) {
-            pageIds.add(chunk.page().pageId());
+            pages.add(chunk.page());
         }
         List<SearchHit> found = new ArrayList<>();
         int lookups = 0;
-        for (String pageId : pageIds) {
+        for (PageKey page : pages) {
             if (found.size() == Reranking.MAX_WINDOW || lookups++ == MAX_LOOKUPS) {
                 break;
             }
-            if (query.pageId() != null && !query.pageId().equals(pageId)) {
+            // Die Vektorsuche kennt nur Quellen des Umfangs; jede Bedingung der Anfrage gilt trotzdem.
+            if (!scope.sourceIds().contains(page.sourceId())
+                    || query.sourceId() != null && !query.sourceId().equals(page.sourceId())
+                    || query.pageId() != null && !query.pageId().equals(page.pageId())) {
                 continue;
             }
-            PageSearchQuery single = new PageSearchQuery(query.sourceId(), query.spaceKeys(), query.titleTerms(),
-                    pageId, query.parentPageId(), query.version(), query.modifiedFrom(), query.modifiedBefore(),
-                    SearchSort.PAGE_ID);
-            for (SearchHit hit : index.search(single, state.generation(), null, 1)) {
+            PageSearchQuery single = query.with(page.sourceId(), page.pageId(), SearchSort.PAGE_ID);
+            for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
                 if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
                     found.add(hit);
                 }
@@ -204,16 +212,16 @@ public class RelevanceSearch {
         return found;
     }
 
-    /** Die ersten sichtbaren Titeltreffer in der Reihenfolge des Titels. */
-    private List<SearchHit> lexicalCandidates(AccessContext caller, PageSearchQuery query, SearchIndexState state) {
-        PageSearchQuery byTitle = new PageSearchQuery(query.sourceId(), query.spaceKeys(), query.titleTerms(),
-                query.pageId(), query.parentPageId(), query.version(), query.modifiedFrom(), query.modifiedBefore(),
-                SearchSort.TITLE);
+    /** Die ersten sichtbaren Titeltreffer in der Reihenfolge des Titels, über alle Quellen des Umfangs. */
+    private List<SearchHit> lexicalCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
+                                              SearchIndexState state) {
+        PageSearchQuery byTitle = query.with(query.sourceId(), query.pageId(), SearchSort.TITLE);
         List<SearchHit> visible = new ArrayList<>();
         String after = null;
         boolean exhausted = false;
         while (visible.size() < Reranking.MAX_WINDOW && !exhausted) {
-            List<SearchHit> batch = index.search(byTitle, state.generation(), after, Reranking.MAX_WINDOW);
+            List<SearchHit> batch = index.search(byTitle, scope.sourceIds(), state.generation(), after,
+                    Reranking.MAX_WINDOW);
             for (SearchHit hit : batch) {
                 after = hit.position();
                 if (permits(caller, hit, AccessKind.METADATA)) {
@@ -228,15 +236,18 @@ public class RelevanceSearch {
         return visible;
     }
 
-    /** Abwechselnd aus beiden Listen, jede Seite einmal, höchstens {@value Reranking#MAX_WINDOW}. */
+    /**
+     * Abwechselnd aus beiden Listen, jede Seite einmal, höchstens {@value Reranking#MAX_WINDOW}. Eine Seite ist
+     * {@code sourceId + pageId}: Gleiche Seiten-IDs verschiedener Quellen bleiben getrennte Kandidaten (#114).
+     */
     static List<SearchHit> interleave(List<SearchHit> first, List<SearchHit> second) {
-        Map<String, SearchHit> window = new LinkedHashMap<>();
+        Map<PageKey, SearchHit> window = new LinkedHashMap<>();
         for (int i = 0; window.size() < Reranking.MAX_WINDOW && (i < first.size() || i < second.size()); i++) {
             if (i < first.size()) {
-                window.putIfAbsent(first.get(i).page().pageId(), first.get(i));
+                window.putIfAbsent(first.get(i).page().header().key(), first.get(i));
             }
             if (i < second.size() && window.size() < Reranking.MAX_WINDOW) {
-                window.putIfAbsent(second.get(i).page().pageId(), second.get(i));
+                window.putIfAbsent(second.get(i).page().header().key(), second.get(i));
             }
         }
         return List.copyOf(window.values());
@@ -335,12 +346,19 @@ public class RelevanceSearch {
     /**
      * Treffer nach Relevanz, immer vollständig: kein Cursor.
      *
+     * @param sourceId die angefragte Quelle oder {@code null} bei der globalen Suche (#114)
+     * @param index    gelesener Indexstand oder {@code null}, wenn global keine lesbare Quelle im Index liegt
      * @param reranker Kennung des Rerankers, {@code none} ohne Modell
      */
     public record RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits) {
 
         public RelevanceResults {
             hits = List.copyOf(hits);
+        }
+
+        /** Ob die Treffer aus allen freigegebenen Quellen stammen. */
+        public boolean global() {
+            return sourceId == null;
         }
     }
 }

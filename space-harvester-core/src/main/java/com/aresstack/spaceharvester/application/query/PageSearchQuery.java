@@ -10,13 +10,16 @@ import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /**
- * Eine Titel- und Metadatensuche (#28, erste Ausbaustufe) über die gespeicherten Kopfdaten einer Quelle. Alle
- * gesetzten Bedingungen gelten zugleich; ohne Bedingung trifft jede Seite der Quelle.
+ * Eine Titel- und Metadatensuche (#28, erste Ausbaustufe) über die gespeicherten Kopfdaten einer Quelle oder, ohne
+ * {@code sourceId}, aller Quellen, die der Aufrufer sehen darf (#114). Alle gesetzten Bedingungen gelten zugleich; ohne
+ * Bedingung trifft jede Seite im Suchumfang. Global gelten die Filter in jeder Quelle: {@code spaceKey=DEV} heißt
+ * „Space DEV in jeder freigegebenen Quelle“, {@code pageId} „diese ID in jeder Quelle“.
  *
  * <p>Titelsuche: Der Titel wird an jedem Zeichen, das weder Buchstabe noch Ziffer ist, in Wörter zerlegt und klein
  * geschrieben ({@link Locale#ROOT}); jeder Suchbegriff muss als ganzes Wort darin vorkommen. Kein Präfix, keine
  * Unschärfe, keine Abfragesprache: Sonderzeichen trennen nur Wörter. Volltext über den Inhalt folgt getrennt.
  *
+ * @param sourceId       nur diese Quelle oder {@code null} für alle freigegebenen Quellen (globale Suche)
  * @param spaceKeys      nur Seiten dieser Spaces (nach aktuellen Kopfdaten); leer für alle Spaces der Quelle
  * @param titleTerms     Suchbegriffe, bereits zerlegt und klein geschrieben; leer ohne Titelbedingung
  * @param pageId         genau diese Seite oder {@code null}
@@ -38,7 +41,9 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
     private static final Pattern WORD_SEPARATOR = Pattern.compile("[^\\p{L}\\p{N}]+");
 
     public PageSearchQuery {
-        Objects.requireNonNull(sourceId, "sourceId");
+        if (sourceId != null && sourceId.isEmpty()) {
+            sourceId = null;
+        }
         spaceKeys = Set.copyOf(new TreeSet<>(spaceKeys));
         titleTerms = List.copyOf(titleTerms);
         Objects.requireNonNull(sort, "sort");
@@ -47,7 +52,8 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
     /**
      * Prüft und normalisiert die Eingaben der API.
      *
-     * @param title Suchtext für den Titel oder {@code null}
+     * @param sourceId Quelle oder {@code null} bzw. leer für die globale Suche
+     * @param title    Suchtext für den Titel oder {@code null}
      * @throws InvalidQueryException bei überschrittenen Grenzen oder widersprüchlichen Zeitgrenzen
      */
     public static PageSearchQuery of(String sourceId, List<String> spaceKeys, String title, String pageId,
@@ -78,6 +84,17 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
                 sort);
     }
 
+    /** Ob die Suche alle freigegebenen Quellen umfasst statt genau einer. */
+    public boolean global() {
+        return sourceId == null;
+    }
+
+    /** Dieselbe Anfrage mit anderer Quelle, Seite und Sortierung, z. B. zum Nachschlagen eines Kandidaten. */
+    public PageSearchQuery with(String sourceId, String pageId, SearchSort sort) {
+        return new PageSearchQuery(sourceId, spaceKeys, titleTerms, pageId, parentPageId, version, modifiedFrom,
+                modifiedBefore, sort);
+    }
+
     /** Zerlegt einen Text wie einen Titel in klein geschriebene Wörter; Maßstab für jede Umsetzung des Index. */
     public static List<String> words(String text) {
         return WORD_SEPARATOR.splitAsStream(text.toLowerCase(Locale.ROOT)).filter(word -> !word.isEmpty()).toList();
@@ -86,7 +103,7 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
     /** Trifft die Anfrage diese Kopfdaten? Referenz der Semantik für Fakes und Tests des Index. */
     public boolean matches(ListedPage page) {
         var metadata = page.header().metadata();
-        return page.header().key().sourceId().equals(sourceId)
+        return (sourceId == null || page.header().key().sourceId().equals(sourceId))
                 && (spaceKeys.isEmpty() || spaceKeys.contains(metadata.partitionKey()))
                 && (titleTerms.isEmpty() || words(metadata.title()).containsAll(titleTerms))
                 && (pageId == null || pageId.equals(metadata.pageId()))
@@ -100,7 +117,8 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
 
     /** Kanonische Form, an die ein Cursor gebunden wird. */
     String canonical() {
-        // Jeder Wert mit Länge, fehlende als "-": kein Wert kann mit einem anderen oder mit "fehlt" zusammenfallen.
+        // Jeder Wert mit Länge, fehlende als "-": kein Wert kann mit einem anderen oder mit "fehlt" zusammenfallen. Die
+        // globale Suche (sourceId fehlt) hat damit einen anderen Fingerabdruck als jede Einzelquelle.
         StringBuilder canonical = new StringBuilder();
         field(canonical, sourceId);
         canonical.append(spaceKeys.size()).append('[');

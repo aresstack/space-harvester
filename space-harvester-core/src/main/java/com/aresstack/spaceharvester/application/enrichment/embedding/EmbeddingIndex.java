@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.enrichment.embedding;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Ähnlichkeitssuche über die gespeicherten Embeddings (#89, ADR 0004). Die Ablage kennt keine Rechte: Treffer sind
@@ -15,12 +16,19 @@ public interface EmbeddingIndex {
     int MAX_K = 1_000;
 
     /**
-     * Die {@code k} ähnlichsten Stücke einer Quelle, nur aus Ergebnissen mit genau dieser Prozessorversion (also
-     * demselben Modell); absteigend nach Ähnlichkeit, bei Gleichstand nach Seite und Stück.
+     * Die {@code k} ähnlichsten Stücke aus diesen Quellen zusammen (#114), nur aus Ergebnissen mit genau dieser
+     * Prozessorversion (also demselben Modell, damit die Ähnlichkeiten über Quellen vergleichbar sind); absteigend nach
+     * Ähnlichkeit, bei Gleichstand nach Seiten-ID, Quelle und Stück. Eine Abfrage für alle Quellen, nicht {@code k} je
+     * Quelle.
      *
      * @param query Anfragevektor in der Dimension der Prozessorversion
      */
-    List<ChunkHit> nearest(String sourceId, String processorVersion, float[] query, int k);
+    List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query, int k);
+
+    /** Die {@code k} ähnlichsten Stücke einer Quelle; siehe {@link #nearest(Set, String, float[], int)}. */
+    default List<ChunkHit> nearest(String sourceId, String processorVersion, float[] query, int k) {
+        return nearest(Set.of(sourceId), processorVersion, query, k);
+    }
 
     /**
      * Ein ähnliches Stück.

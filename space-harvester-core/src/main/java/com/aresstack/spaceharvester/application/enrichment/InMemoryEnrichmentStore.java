@@ -8,6 +8,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,8 +39,9 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
-    public synchronized List<ChunkHit> nearest(String sourceId, String processorVersion, float[] query, int k) {
-        Objects.requireNonNull(sourceId, "sourceId");
+    public synchronized List<ChunkHit> nearest(Set<String> sourceIds, String processorVersion, float[] query,
+                                               int k) {
+        Objects.requireNonNull(sourceIds, "sourceIds");
         Objects.requireNonNull(processorVersion, "processorVersion");
         if (k < 1 || k > MAX_K) {
             throw new IllegalArgumentException("k muss zwischen 1 und " + MAX_K + " liegen");
@@ -55,7 +57,7 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
         }
         for (Map.Entry<PageKey, TreeMap<String, Enrichment>> page : results.entrySet()) {
             Enrichment result = page.getValue().get(EMBEDDING);
-            if (!page.getKey().sourceId().equals(sourceId) || result == null
+            if (!sourceIds.contains(page.getKey().sourceId()) || result == null
                     || result.status() != Enrichment.Status.OK
                     || !result.processorVersion().equals(processorVersion)) {
                 continue;
@@ -86,7 +88,8 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
             }
         }
         hits.sort(Comparator.comparingDouble(ChunkHit::similarity).reversed()
-                .thenComparing(hit -> hit.page().pageId()).thenComparingInt(ChunkHit::chunk));
+                .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
+                .thenComparingInt(ChunkHit::chunk));
         return List.copyOf(hits.subList(0, Math.min(k, hits.size())));
     }
 }
