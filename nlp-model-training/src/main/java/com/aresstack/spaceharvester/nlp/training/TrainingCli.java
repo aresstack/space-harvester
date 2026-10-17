@@ -7,17 +7,20 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 /**
- * Einstieg der Gradle-Tasks ({@code build.gradle}): {@code prepare | validate | train | evaluate | package | verify},
- * jeweils mit {@code --recipe <properties> --treebank <Verzeichnis> --work <Verzeichnis> [--heap 6g]}. Jeder Schritt
+ * Einstieg der Gradle-Tasks ({@code build.gradle}): {@code prepare | validate | train | evaluate | package | verify |
+ * repackage}, jeweils mit {@code --recipe <properties> --treebank <Verzeichnis> --work <Verzeichnis> [--heap 6g]
+ * [--from <Verzeichnis>]}. Jeder Schritt
  * liest nur, was die vorigen in {@code --work} abgelegt haben, und bricht mit Exit 1 ab, wenn etwas nicht stimmt.
  */
 public final class TrainingCli {
@@ -28,12 +31,18 @@ public final class TrainingCli {
     private final Path treebankDirectory;
     private final Path work;
     private final String heap;
+    private final Path from;
 
     TrainingCli(ModelRecipe recipe, Path treebankDirectory, Path work, String heap) {
+        this(recipe, treebankDirectory, work, heap, null);
+    }
+
+    TrainingCli(ModelRecipe recipe, Path treebankDirectory, Path work, String heap, Path from) {
         this.recipe = recipe;
         this.treebankDirectory = treebankDirectory;
         this.work = work;
         this.heap = heap == null ? recipe.training().heap() : heap;
+        this.from = from;
     }
 
     /** Was {@code train} über den Lauf festhält, als {@code training.json}. */
@@ -47,15 +56,16 @@ public final class TrainingCli {
             options.put(args[i], args[i + 1]);
         }
         if (args.length == 0 || !options.containsKey("--recipe") || !options.containsKey("--work")) {
-            System.err.println("Aufruf: TrainingCli prepare|validate|train|evaluate|package|verify "
-                    + "--recipe <datei> --treebank <verzeichnis> --work <verzeichnis> [--heap 6g]");
+            System.err.println("Aufruf: TrainingCli prepare|validate|train|evaluate|package|verify|repackage "
+                    + "--recipe <datei> --treebank <verzeichnis> --work <verzeichnis> [--heap 6g] [--from <verzeichnis>]");
             System.exit(2);
         }
         Path recipeFile = Path.of(options.get("--recipe"));
         Path work = Path.of(options.get("--work"));
         Path treebank = Path.of(options.getOrDefault("--treebank", work.resolve("treebank").toString()));
         try {
-            new TrainingCli(ModelRecipe.load(recipeFile), treebank, work, options.get("--heap")).run(args[0]);
+            Path from = options.containsKey("--from") ? Path.of(options.get("--from")) : null;
+            new TrainingCli(ModelRecipe.load(recipeFile), treebank, work, options.get("--heap"), from).run(args[0]);
         } catch (RuntimeException e) {
             System.err.println("FEHLER: " + e.getMessage());
             System.exit(1);
@@ -70,6 +80,7 @@ public final class TrainingCli {
             case "evaluate" -> evaluate();
             case "package" -> pack();
             case "verify" -> verify();
+            case "repackage" -> repackage();
             default -> throw new IllegalArgumentException("unbekannter Schritt " + command);
         }
     }
@@ -176,6 +187,91 @@ public final class TrainingCli {
         log(result.parsed().format().strip());
     }
 
+    /**
+     * Verpackt ein bereits trainiertes und geprüftes Modell neu, ohne Treebank und ohne Training: {@code --from} ist ein
+     * Verzeichnis mit den drei Release-Assets (Workflow-Artefakt, Entwurfs-Release oder von Hand abgelegt). Modell,
+     * Evaluation, Treebank-Lizenz und Trainingsangaben bleiben; Lizenzangaben und -texte kommen aus dem aktuellen
+     * Rezept, etwa nach der Freigabe. Das Rezept muss in allem, was das Modell bestimmt, zum Manifest passen.
+     */
+    void repackage() {
+        if (from == null) {
+            throw new IllegalArgumentException("repackage braucht --from <Verzeichnis mit den Release-Assets>");
+        }
+        Path source = resolveAssets(from);
+        Path zip = source.resolve(recipe.releaseTag() + ".zip");
+        String expected = readChecksums(source.resolve("SHA256SUMS")).get(zip.getFileName().toString());
+        if (expected == null) {
+            throw new IllegalStateException(source.resolve("SHA256SUMS") + " nennt " + zip.getFileName() + " nicht");
+        }
+        Path unpacked = work.resolve("repackage-source");
+        ModelManifest old = ModelConsumerCheck.check(zip, expected, unpacked, referenceSentences().get(0)).manifest();
+        checkSameModel(old);
+        ModelEvaluator.Report evaluation = read(unpacked.resolve("evaluation.json"), ModelEvaluator.Report.class);
+        if (evaluation.qualityGate() == null || !evaluation.qualityGate().passed()) {
+            throw new IllegalStateException("evaluation.json im Asset hat keine bestandene Qualitätsgrenze");
+        }
+        ModelManifest manifest = new ModelManifest(old.schemaVersion(), old.modelId(), old.modelVersion(),
+                old.releaseTag(), old.configName(), old.mcoFile(), old.mcoSha256(), old.maltParserVersion(),
+                old.training(), old.treebank(), old.inputSchema(), old.labels(), old.metrics(), old.evaluationFile(),
+                new ModelManifest.License(recipe.license().model(), old.license().treebankAnnotations(),
+                        old.license().treebankTexts(), old.license().parser(), old.license().trainingCode(),
+                        recipe.license().approval(), old.license().files()));
+        Map<String, Path> files = new LinkedHashMap<>();
+        files.put(old.mcoFile(), unpacked.resolve(old.mcoFile()));
+        files.put("evaluation.json", unpacked.resolve("evaluation.json"));
+        Path texts = work.resolve("license");
+        files.put("LICENSE-MODEL.md", render(recipe.directory().resolve("LICENSE-MODEL.md"), texts));
+        files.put("ATTRIBUTION.md", render(recipe.directory().resolve("ATTRIBUTION.md"), texts));
+        String treebankLicense = "LICENSE-" + recipe.treebank().name() + ".txt";
+        files.put(treebankLicense, unpacked.resolve(treebankLicense));
+        ModelPackager.Assets assets = new ModelPackager().pack(recipe, JSON.toJson(manifest) + "\n", files,
+                distribution());
+        // Wie nach einem Training: training.json und evaluation.json liegen für Berichte im Arbeitsverzeichnis
+        ModelManifest.Training training = old.training();
+        writeJson(work.resolve("training.json"), new TrainingRun(old.mcoSha256(), training.trainedAt(),
+                training.durationSeconds(), training.heap(), training.peakRssMiB(), training.javaVersion(),
+                training.sentences(), training.words(), old.labels()));
+        writeJson(work.resolve("evaluation.json"), evaluation);
+        log("neu verpackt ohne Training, Lizenzstand " + recipe.license().approval() + ":");
+        assets.sha256().forEach((name, sha) -> log(sha + "  " + name));
+    }
+
+    /** Die Assets liegen direkt in {@code from} oder, wie im Workflow-Artefakt, in {@code from/dist}. */
+    private Path resolveAssets(Path directory) {
+        String zip = recipe.releaseTag() + ".zip";
+        for (Path candidate : List.of(directory, directory.resolve("dist"))) {
+            if (Files.isRegularFile(candidate.resolve(zip)) && Files.isRegularFile(candidate.resolve("SHA256SUMS"))) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException(directory + " enthält weder " + zip + " noch dist/" + zip + " mit SHA256SUMS");
+    }
+
+    /** Alles, was das Modell bestimmt, muss im Rezept noch so stehen wie beim Training. */
+    void checkSameModel(ModelManifest manifest) {
+        List<String> differences = new ArrayList<>();
+        compare(differences, "modelId", manifest.modelId(), recipe.modelId());
+        compare(differences, "modelVersion", manifest.modelVersion(), recipe.modelVersion());
+        compare(differences, "configName", manifest.configName(), recipe.configName());
+        compare(differences, "maltParserVersion", manifest.maltParserVersion(), recipe.maltParserVersion());
+        compare(differences, "treebank.commit", manifest.treebank().commit(), recipe.treebank().commit());
+        compare(differences, "treebank.files", manifest.treebank().files(), recipe.treebank().files());
+        compare(differences, "training.algorithm", manifest.training().algorithm(), recipe.training().algorithm());
+        compare(differences, "training.learner", manifest.training().learner(), recipe.training().learner());
+        compare(differences, "training.featureModelSha256", manifest.training().featureModelSha256(),
+                Hashing.sha256(recipe.featureModel()));
+        if (!differences.isEmpty()) {
+            throw new IllegalStateException("Asset passt nicht zum Rezept, dafür ist ein Neutraining mit neuer "
+                    + "model.version nötig: " + differences);
+        }
+    }
+
+    private static void compare(List<String> differences, String name, Object asset, Object recipe) {
+        if (!Objects.equals(asset, recipe)) {
+            differences.add(name + ": Asset " + asset + ", Rezept " + recipe);
+        }
+    }
+
     ModelManifest manifest(TrainingRun run, ModelEvaluator.Report evaluation) {
         ModelRecipe.Training training = recipe.training();
         return new ModelManifest(ModelManifest.SCHEMA, recipe.modelId(), recipe.modelVersion(), recipe.releaseTag(),
@@ -220,9 +316,13 @@ public final class TrainingCli {
     }
 
     private Map<String, String> checksums() {
+        return readChecksums(distribution().resolve("SHA256SUMS"));
+    }
+
+    static Map<String, String> readChecksums(Path file) {
         Map<String, String> sums = new HashMap<>();
         try {
-            for (String line : Files.readAllLines(distribution().resolve("SHA256SUMS"), StandardCharsets.UTF_8)) {
+            for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
                 String[] parts = line.split(" {2}", 2);
                 if (parts.length == 2) {
                     sums.put(parts[1].trim(), parts[0].trim());

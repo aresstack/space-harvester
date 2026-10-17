@@ -90,21 +90,36 @@ erkannt.
 GitHub Releases sind der einzige Verteilweg (öffentlich ohne Token, anders als GitHub Packages). Je Version:
 
 - Tag `maltparser-de-gsd-vMAJOR.MINOR.PATCH`, unabhängig von der Anwendungsversion. MAJOR: Eingabevertrag oder
-  Labelset ändern sich; MINOR: Neutraining bei gleichem Vertrag; PATCH: nur neu verpackt.
+  Labelset ändern sich; MINOR: Neutraining mit anderen Daten, Algorithmus oder Featuremodell bei gleichem Vertrag;
+  PATCH: Neutraining mit gleichem Rezeptinhalt (z. B. nach einem Abhängigkeitsupdate). Neu verpacken ohne Training
+  ändert die Version nicht und geht nur, solange die Version nicht veröffentlicht ist.
 - Assets: `<tag>.zip` (Modell, Manifest, Evaluation, Lizenz, Namensnennung, Treebank-Lizenz), `<tag>.manifest.json`,
   `SHA256SUMS` (`<sha256>  <datei>`).
 - Ein Tag wird nie ersetzt, es gibt kein `latest` für Verbraucher.
 
-Workflow `.github/workflows/train-maltparser-model.yml`, nur von Hand (Actions → „MaltParser-Modell trainieren“):
+Training und Bereitstellung sind getrennte Workflows, beide nur von Hand (Actions):
 
-- `publish: none` trainiert, evaluiert, verpackt, prüft und legt alles 30 Tage als Workflow-Artefakt ab
-  (Rechte: nur lesen).
-- `publish: draft` legt zusätzlich ein **Entwurfs-Release** an (eigener Job mit `contents: write`, Environment
-  `maltparser-model-release`, Herkunftsnachweis per `attest-build-provenance`). Bricht ein Upload ab, wird der Entwurf
-  gelöscht. Ein vorhandener Tag oder Release bricht vorher ab.
+- **„MaltParser-Modell trainieren“** (`train-maltparser-model.yml`) trainiert, evaluiert, verpackt, prüft und legt
+  alles 30 Tage als Workflow-Artefakt `<tag>` ab. Nur Leserechte, veröffentlicht nichts. Bricht ab, wenn es den Tag
+  oder einen Entwurf dazu schon gibt.
+- **„MaltParser-Modell bereitstellen“** (`publish-maltparser-model.yml`) trainiert nie. Quelle ist
+  - mit `run_id`: das Artefakt eines erfolgreichen Trainingslaufs auf main (ID aus der URL `…/actions/runs/<id>`),
+  - ohne `run_id`: die Assets des vorhandenen Entwurfs zum Tag des Rezepts.
+
+  Er prüft die Prüfsummen, verpackt die Assets mit dem Lizenzstand des Rezepts neu (`repackageGermanModel`: Modell,
+  Evaluation und Trainingsangaben bleiben, Lizenzangaben und -texte kommen aus dem Rezept; ein Rezept, das ein anderes
+  Modell beschreibt, wird abgelehnt), lädt das Ergebnis wie ein Verbraucher (`verifyGermanModel`) und legt einen
+  **Entwurf** an oder aktualisiert ihn. Eigener Job mit `contents: write`, Environment `maltparser-model-release`,
+  Herkunftsnachweis per `attest-build-provenance`. Ein veröffentlichtes Release verändert er nie.
+- Ein Entwurf läuft nicht ab. Deshalb wird ein geprüftes Artefakt am besten gleich als Entwurf gesichert, auch vor der
+  Lizenzfreigabe; der Entwurf ist nicht öffentlich und trägt bis zur Freigabe einen Warnhinweis im Titel und in den
+  Notizen.
+- Artefakt abgelaufen und kein Entwurf da: das heruntergeladene ZIP-Artefakt entpacken, unter Releases einen Entwurf
+  mit dem Tag anlegen, `<tag>.zip`, `<tag>.manifest.json` und `SHA256SUMS` anhängen und „bereitstellen“ ohne `run_id`
+  starten. Lokal geht dasselbe mit `./gradlew :nlp-model-training:repackageGermanModel
+  :nlp-model-training:verifyGermanModel -PsourceDir=<Verzeichnis mit den drei Dateien>`.
 - **Veröffentlichen** (Entwurf → Release) geschieht nur von Hand, nach der Lizenzfreigabe in
-  [docs/NLP_MODEL_LICENSE.md](../docs/NLP_MODEL_LICENSE.md). Solange das Rezept `license.approval=pending` enthält,
-  trägt der Entwurf im Titel und in den Notizen einen Warnhinweis.
+  [docs/NLP_MODEL_LICENSE.md](../docs/NLP_MODEL_LICENSE.md).
 
 ## Verbraucher (offline-fähig)
 
@@ -159,17 +174,17 @@ einem lokalen Lauf; maßgeblich für ein Release sind `evaluation.json` und die 
 
 OpenNLP trifft die UPOS zu 93,4 % (Dev) und 93,0 % (Test); jeder Wortartfehler kostet im Mittel rund eine Kante.
 
-| Relation (Test, Gold-UPOS) | Gold | Precision | Recall | F1 |
-|---|---:|---:|---:|---:|
-| nsubj | 1136 | 78,5 | 79,1 | 78,8 |
-| nsubj:pass | 115 | 60,8 | 56,5 | 58,6 |
-| obj | 584 | 73,9 | 73,6 | 73,8 |
-| obl | 873 | 75,6 | 75,4 | 75,5 |
-| obl:arg | 85 | 65,0 | 45,9 | 53,8 |
-| obl:agent | 13 | 55,0 | 84,6 | 66,7 |
-| nmod | 996 | 67,0 | 67,6 | 67,3 |
-| compound:prt | 77 | 76,0 | 77,9 | 76,9 |
-| conj | 525 | 63,0 | 68,0 | 65,4 |
+| Relation (Test) | Gold | Precision | Recall | F1 | F1 mit OpenNLP-UPOS |
+|---|---:|---:|---:|---:|---:|
+| nsubj | 1136 | 78,5 | 79,1 | 78,8 | 66,8 |
+| nsubj:pass | 115 | 60,8 | 56,5 | 58,6 | 48,9 |
+| obj | 584 | 73,9 | 73,6 | 73,8 | 63,9 |
+| obl | 873 | 75,6 | 75,4 | 75,5 | 64,4 |
+| obl:arg | 85 | 65,0 | 45,9 | 53,8 | 48,6 |
+| obl:agent | 13 | 55,0 | 84,6 | 66,7 | 66,7 |
+| nmod | 996 | 67,0 | 67,6 | 67,3 | 60,7 |
+| compound:prt | 77 | 76,0 | 77,9 | 76,9 | 70,1 |
+| conj | 525 | 63,0 | 68,0 | 65,4 | 58,0 |
 
 Häufigste Verwechslungen auf Test: obl ↔ nmod (121 und 107, die Anbindung von Präpositionalgruppen), obj ↔ nsubj (69
 und 51), obl:arg → obj (27). `iobj` und `nmod:poss` kommen in GSD praktisch nicht vor (Dativobjekte sind `obl:arg`).

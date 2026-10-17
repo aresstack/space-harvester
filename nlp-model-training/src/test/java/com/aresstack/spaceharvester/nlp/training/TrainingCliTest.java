@@ -77,6 +77,39 @@ class TrainingCliTest {
         assertTrue(manifest.metrics().containsKey("test.predicted.las"));
         String licence = read(zip, "LICENSE-MODEL.md");
         assertTrue(licence.contains(loaded.releaseTag()) && !licence.contains("{{"), licence);
+
+        // Nach der Freigabe: dieselben Assets ohne Treebank und Training neu verpacken
+        Path assets = Files.createDirectories(root.resolve("artifact/dist"));
+        try (var files = Files.list(work.resolve("dist"))) {
+            for (Path file : files.toList()) {
+                Files.copy(file, assets.resolve(file.getFileName()));
+            }
+        }
+        Path approved = model.resolve("approved.properties");
+        Files.writeString(approved, Files.readString(recipeFile).replace("license.approval=pending",
+                "license.approval=approved"));
+        Path repackaged = root.resolve("repackaged");
+        TrainingCli again = new TrainingCli(ModelRecipe.load(approved), root.resolve("keine-treebank"), repackaged,
+                null, root.resolve("artifact"));
+        again.run("repackage");
+        again.run("verify");
+        ModelManifest after = TrainingCli.read(repackaged.resolve("dist").resolve(loaded.releaseTag() + ".manifest.json"),
+                ModelManifest.class);
+        assertEquals("approved", after.license().releaseApproval());
+        assertEquals(manifest.mcoSha256(), after.mcoSha256());
+        assertEquals(manifest.training(), after.training());
+        assertEquals(manifest.metrics(), after.metrics());
+        Path newZip = repackaged.resolve("dist").resolve(loaded.releaseTag() + ".zip");
+        assertTrue(read(newZip, "LICENSE-MODEL.md").contains("**approved**"));
+
+        // Ein Rezept, das ein anderes Modell beschreibt, verpackt die alten Assets nicht
+        Path other = model.resolve("other.properties");
+        Files.writeString(other, Files.readString(recipeFile).replace("training.algorithm=stacklazy",
+                "training.algorithm=nivreeager"));
+        TrainingCli mismatch = new TrainingCli(ModelRecipe.load(other), root, root.resolve("mismatch"), null,
+                root.resolve("artifact"));
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> mismatch.run("repackage"));
+        assertTrue(error.getMessage().contains("training.algorithm"), error.getMessage());
     }
 
     @Test

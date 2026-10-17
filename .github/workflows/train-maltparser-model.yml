@@ -1,16 +1,11 @@
 name: MaltParser-Modell trainieren
 
-# Trainiert das deutsche MaltParser-Modell (#99) nur auf ausdrücklichen Start, nie bei Push oder Pull Request.
-# Ablauf und Freigabe: nlp-model-training/README.md und docs/NLP_MODEL_LICENSE.md. Der Job train liest nur; publish
-# legt höchstens ein Entwurfs-Release an. Veröffentlicht wird ein Entwurf nur von Hand, nach der Lizenzfreigabe.
+# Trainiert das deutsche MaltParser-Modell (#99) nur auf ausdrücklichen Start, nie bei Push oder Pull Request, und
+# legt Modell, Assets und Berichte als Workflow-Artefakt ab (30 Tage). Er veröffentlicht nichts: Einen Release-Entwurf
+# legt ohne Neutraining „MaltParser-Modell bereitstellen“ (publish-maltparser-model.yml) aus diesem Artefakt an.
+# Ablauf und Freigabe: nlp-model-training/README.md und docs/NLP_MODEL_LICENSE.md.
 on:
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'none: trainieren, prüfen, als Workflow-Artefakt ablegen. draft: zusätzlich Entwurfs-Release mit den Assets.'
-        type: choice
-        options: [none, draft]
-        default: none
 
 permissions:
   contents: read
@@ -23,9 +18,6 @@ jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    outputs:
-      tag: ${{ steps.recipe.outputs.tag }}
-      approval: ${{ steps.recipe.outputs.approval }}
     steps:
       - uses: actions/checkout@v4
       - name: Rezept lesen
@@ -36,7 +28,6 @@ jobs:
           tag="$(value model.id)-v$(value model.version)"
           [[ "$tag" =~ ^maltparser-de-gsd-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::ungültiger Tag $tag"; exit 1; }
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "approval=$(value license.approval)" >> "$GITHUB_OUTPUT"
       - name: Release-Tag noch frei
         env:
           GH_TOKEN: ${{ github.token }}
@@ -62,10 +53,6 @@ jobs:
       - name: Bericht
         if: always()
         run: python3 nlp-model-training/tools/evaluation-summary.py nlp-model-training/build/maltparser-de-gsd >> "$GITHUB_STEP_SUMMARY"
-      - name: Release-Notizen
-        run: |
-          python3 nlp-model-training/tools/evaluation-summary.py nlp-model-training/build/maltparser-de-gsd --release-notes \
-            > nlp-model-training/build/maltparser-de-gsd/dist/RELEASE_NOTES.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,49 +64,3 @@ jobs:
             nlp-model-training/build/maltparser-de-gsd/*.json
             nlp-model-training/build/maltparser-de-gsd/dependencies.txt
             nlp-model-training/build/maltparser-de-gsd/model/training.log
-
-  publish:
-    needs: train
-    if: inputs.publish == 'draft'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Im Repository unter Settings → Environments mit Pflicht-Freigabe versehen, damit jeder Entwurf bestätigt wird
-    environment: maltparser-model-release
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      TAG: ${{ needs.train.outputs.tag }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.train.outputs.tag }}
-          path: artifact
-      - name: Prüfsummen
-        working-directory: artifact/dist
-        run: sha256sum -c SHA256SUMS
-      - uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: |
-            artifact/dist/${{ needs.train.outputs.tag }}.zip
-            artifact/dist/${{ needs.train.outputs.tag }}.manifest.json
-      - name: Entwurfs-Release anlegen
-        id: create
-        working-directory: artifact/dist
-        run: |
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::Release $TAG ist inzwischen angelegt worden"; exit 1
-          fi
-          echo "started=true" >> "$GITHUB_OUTPUT"
-          title="$TAG"
-          if [ "${{ needs.train.outputs.approval }}" != "approved" ]; then
-            title="$TAG (Lizenzfreigabe ausstehend, nicht veröffentlichen)"
-          fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
-            --title "$title" --notes-file RELEASE_NOTES.md \
-            "$TAG.zip" "$TAG.manifest.json" SHA256SUMS
-      - name: Unvollständigen Entwurf entfernen
-        if: failure() && steps.create.outputs.started == 'true'
-        run: gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true

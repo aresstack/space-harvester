@@ -62,8 +62,16 @@ Texte, keine zusammenhängenden Sätze.
 
 ## Ablauf der Freigabe
 
+Das Modell wird dafür nicht neu trainiert; v1.0.0 stammt aus dem Trainingslauf
+[39025709576](https://github.com/aresstack/space-harvester/actions/runs/39025709576) vom 17.10.2026 und ist als
+Entwurfs-Release `maltparser-de-gsd-v1.0.0` gesichert (Lizenzstand dort noch `pending`).
+
 1. Offene Punkte entscheiden, diese Seite auf **Status: freigegeben** setzen und Name und Datum eintragen.
-2. Im Rezept `nlp-model-training/model/maltparser-de-gsd.properties` `license.approval=approved` setzen (per PR).
-3. Workflow „MaltParser-Modell trainieren“ mit `publish: draft` starten; der Entwurf trägt dann keinen Warnhinweis.
+2. Im Rezept `nlp-model-training/model/maltparser-de-gsd.properties` `license.approval=approved` setzen (per PR auf
+   main).
+3. Workflow „MaltParser-Modell bereitstellen“ ohne `run_id` starten. Er übernimmt die Assets des Entwurfs, verpackt sie
+   mit dem freigegebenen Lizenzstand neu (Modell, Messwerte und Prüfsumme der `.mco` bleiben, ZIP und Manifest
+   bekommen neue SHA-256) und aktualisiert den Entwurf ohne Warnhinweis.
 4. Entwurf unter Releases prüfen (Assets, Notizen, Messwerte) und von Hand veröffentlichen. Erst danach ist das Modell
-   ohne Token unter `https://github.com/aresstack/space-harvester/releases/download/<tag>/<asset>` abrufbar.
+   ohne Token unter `https://github.com/aresstack/space-harvester/releases/download/<tag>/<asset>` abrufbar. Die
+   SHA-256 aus `SHA256SUMS` des veröffentlichten Release ist der Wert, den Verbraucher (#98) pinnen.

@@ -1,0 +1,128 @@
+name: MaltParser-Modell bereitstellen
+
+# Legt ein bereits trainiertes und geprüftes Modell (#99) als Entwurfs-Release an oder aktualisiert den Entwurf, ohne
+# neu zu trainieren. Quelle ist das Artefakt eines Laufs von „MaltParser-Modell trainieren“ (run_id) oder, ohne
+# run_id, die Assets des vorhandenen Entwurfs zum Tag des Rezepts (z. B. nach der Lizenzfreigabe oder wenn das
+# Artefakt nach 30 Tagen abgelaufen ist und das ZIP von Hand an den Entwurf gehängt wurde). Die Assets werden mit
+# dem Lizenzstand des Rezepts neu verpackt und wie von einem Verbraucher geladen. Veröffentlicht wird ein Entwurf
+# nur von Hand; ein veröffentlichtes Release wird nie verändert. Ablauf: docs/NLP_MODEL_LICENSE.md.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Lauf-ID von „MaltParser-Modell trainieren“ (aus der URL …/actions/runs/<id>); leer: Assets des vorhandenen Entwurfs'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-maltparser-model
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Im Repository unter Settings → Environments mit Pflicht-Freigabe versehen, damit jeder Entwurf bestätigt wird
+    environment: maltparser-model-release
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rezept lesen
+        id: recipe
+        run: |
+          recipe=nlp-model-training/model/maltparser-de-gsd.properties
+          value() { sed -n "s/^$1=//p" "$recipe" | tr -d '\r'; }
+          tag="$(value model.id)-v$(value model.version)"
+          [[ "$tag" =~ ^maltparser-de-gsd-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::ungültiger Tag $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "approval=$(value license.approval)" >> "$GITHUB_OUTPUT"
+      - name: Quelle holen
+        id: source
+        env:
+          TAG: ${{ steps.recipe.outputs.tag }}
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          if [ "$draft" = "false" ]; then
+            echo "::error::$TAG ist schon veröffentlicht und wird nie verändert"; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG existiert schon ohne Entwurf"; exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/source/dist"
+          if [ -n "$RUN_ID" ]; then
+            [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run_id muss eine Zahl sein"; exit 1; }
+            if [ "$draft" = "true" ]; then
+              echo "::error::Entwurf $TAG gibt es schon; ohne run_id starten, um ihn zu aktualisieren, oder ihn löschen"; exit 1
+            fi
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq '[.path, .head_branch, .conclusion] | join(" ")')
+            if [ "$run" != ".github/workflows/train-maltparser-model.yml main success" ]; then
+              echo "::error::Lauf $RUN_ID ist kein erfolgreicher Trainingslauf auf main ($run)"; exit 1
+            fi
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$TAG" --dir "$RUNNER_TEMP/source"
+            echo "Quelle: Artefakt $TAG aus Lauf $RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+          else
+            if [ "$draft" != "true" ]; then
+              echo "::error::Kein Entwurf $TAG; run_id des Trainingslaufs angeben"; exit 1
+            fi
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/source/dist" \
+              --pattern "$TAG.zip" --pattern "$TAG.manifest.json" --pattern SHA256SUMS
+            echo "Quelle: Assets des Entwurfs $TAG" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+      - name: Prüfsummen der Quelle
+        working-directory: ${{ runner.temp }}/source/dist
+        run: sha256sum -c SHA256SUMS
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Neu verpacken (ohne Training) und als Verbraucher laden
+        run: |
+          ./gradlew :nlp-model-training:repackageGermanModel :nlp-model-training:verifyGermanModel \
+            "-PsourceDir=$RUNNER_TEMP/source" --console=plain
+      - name: Bericht und Release-Notizen
+        run: |
+          work=nlp-model-training/build/maltparser-de-gsd
+          python3 nlp-model-training/tools/evaluation-summary.py "$work" >> "$GITHUB_STEP_SUMMARY"
+          python3 nlp-model-training/tools/evaluation-summary.py "$work" --release-notes > "$RUNNER_TEMP/RELEASE_NOTES.md"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            nlp-model-training/build/maltparser-de-gsd/dist/${{ steps.recipe.outputs.tag }}.zip
+            nlp-model-training/build/maltparser-de-gsd/dist/${{ steps.recipe.outputs.tag }}.manifest.json
+      - name: Entwurfs-Release anlegen oder aktualisieren
+        id: release
+        working-directory: nlp-model-training/build/maltparser-de-gsd/dist
+        env:
+          TAG: ${{ steps.recipe.outputs.tag }}
+        run: |
+          title="$TAG"
+          if [ "${{ steps.recipe.outputs.approval }}" != "approved" ]; then
+            title="$TAG (Lizenzfreigabe ausstehend, nicht veröffentlichen)"
+          fi
+          if [ "${{ steps.source.outputs.draft }}" = "true" ]; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$TAG.zip" "$TAG.manifest.json" SHA256SUMS
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true --title "$title" \
+              --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md"
+          else
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
+              "$TAG.zip" "$TAG.manifest.json" SHA256SUMS
+          fi
+      - name: Unvollständigen neuen Entwurf entfernen
+        if: failure() && steps.release.outputs.created == 'true'
+        env:
+          TAG: ${{ steps.recipe.outputs.tag }}
+        run: gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
