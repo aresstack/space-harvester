@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 /** Vertrag von {@link PageSnapshot} und {@link NativePayload}. */
 class PageSnapshotTest {
@@ -62,5 +63,23 @@ class PageSnapshotTest {
 
         assertThat(snapshot.payload().toString()).doesNotContain("geheim").contains("bytes");
         assertThat(snapshot.toString()).doesNotContain("geheim");
+    }
+
+    @Test
+    void truncatedAttributesBecomeWarningsThatSurviveSerialisation() {
+        PageMetadata metadata = new PageMetadata("101", "r", "Titel", "DEV", null, "1", null, null,
+                PageMetadata.sorted(Map.of("confluence.labels", "a,b", "confluence.labels.complete", "false")));
+        PageSnapshot truncated = PageSnapshot.of("wiki", metadata,
+                new NativePayload(SnapshotRepositoryContract.json("{}"), "application/json", "format"), Instant.EPOCH);
+        PageSnapshot complete = SnapshotRepositoryContract.snapshot("wiki", "101", "3",
+                SnapshotRepositoryContract.json("{}"));
+
+        assertThat(truncated.warnings())
+                .containsExactly(new SnapshotWarning(SnapshotWarning.ATTRIBUTES_INCOMPLETE, "confluence.labels"));
+        assertThat(complete.warnings()).isEmpty();
+        ObjectMapper json = new ObjectMapper();
+        String written = json.writeValueAsString(truncated.warnings());
+        assertThat(written).isEqualTo("[{\"code\":\"attributes-incomplete\",\"detail\":\"confluence.labels\"}]");
+        assertThat(json.readValue(written, SnapshotWarning[].class)).containsExactlyElementsOf(truncated.warnings());
     }
 }
