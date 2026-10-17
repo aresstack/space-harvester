@@ -7,11 +7,24 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStoreContract;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndexContract;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StoredField;
+import org.apache.lucene.document.StringField;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.SegmentInfos;
+import org.apache.lucene.store.FSDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -35,6 +48,69 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
     @Override
     protected EnrichmentStore store() {
         return store;
+    }
+
+    @Nested
+    class AsEmbeddingIndex extends EmbeddingIndexContract {
+
+        @Override
+        protected EnrichmentStore store() {
+            return store;
+        }
+
+        @Override
+        protected EmbeddingIndex index() {
+            return store;
+        }
+
+        @Test
+        void vectorsSurviveReopening() {
+            store.save(embedding(NIGHT, VERSION, "[1,0,0]"));
+            store.close();
+
+            store = LuceneEnrichmentStore.open(directory);
+
+            assertThat(store.nearest("wiki", VERSION, new float[] {1, 0, 0}, 1))
+                    .extracting(EmbeddingIndex.ChunkHit::page).containsExactly(NIGHT);
+        }
+    }
+
+    @Test
+    void aVersionOneIndexIsUpgradedAndDropsOnlyItsEmbeddings() throws Exception {
+        store.close();
+        Path old = directory.resolve("v1");
+        try (FSDirectory dir = FSDirectory.open(old);
+                IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+            writer.addDocument(v1Document("outline", "{\"words\":3}"));
+            writer.addDocument(v1Document("embedding",
+                    "{\"model\":\"m\",\"dimensions\":1,\"chunks\":[{\"charStart\":0,\"charEnd\":1,\"vector\":[1]}]}"));
+            writer.setLiveCommitData(Map.of(PageCacheSchema.SCHEMA_KEY, LuceneEnrichmentStore.VERSION_1).entrySet());
+            writer.commit();
+        }
+
+        store = LuceneEnrichmentStore.open(old);
+
+        assertThat(store.find(new PageKey("wiki", "101"))).extracting(Enrichment::processorId)
+                .containsExactly("outline");
+        try (FSDirectory dir = FSDirectory.open(old)) {
+            assertThat(SegmentInfos.readLatestCommit(dir).getUserData().get(PageCacheSchema.SCHEMA_KEY))
+                    .isEqualTo(LuceneEnrichmentStore.VERSION);
+        }
+    }
+
+    private static Document v1Document(String processorId, String payload) {
+        Document doc = new Document();
+        doc.add(new StringField("id", "wiki\u0000101\u0000" + processorId, Field.Store.NO));
+        doc.add(new StringField("page", "wiki\u0000101", Field.Store.NO));
+        doc.add(new StoredField("sourceId", "wiki"));
+        doc.add(new StoredField("pageId", "101"));
+        doc.add(new StoredField("processorId", processorId));
+        doc.add(new StoredField("processorVersion", "1"));
+        doc.add(new StoredField("inputSha256", "sha256:" + "1".repeat(64)));
+        doc.add(new StoredField("status", "OK"));
+        doc.add(new StoredField("payloadJson", payload));
+        doc.add(new StoredField("computedAt", "2026-10-16T22:00:00Z"));
+        return doc;
     }
 
     @Test

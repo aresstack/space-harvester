@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.persistence.lucene;
 
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,15 +17,21 @@ import java.util.Objects;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.VectorSimilarityFunction;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermQuery;
@@ -31,20 +39,36 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.LockObtainFailedException;
+import org.apache.lucene.util.Bits;
 
 /**
  * Ablage der Anreicherungen ({@link EnrichmentStore}, #29) in einem eigenen Lucene-Index neben dem Seiten-Index: ein
  * Dokument je Seite und Prozessor, alle Felder gespeichert, Schema {@value #VERSION} in den Commit-Daten. Payload und
  * Kopfdaten der Seiten bleiben davon unberührt.
  *
+ * <p>Seit {@code enrichment-store/v2} liegt außerdem jedes Stück eines {@code embedding}-Ergebnisses als eigenes
+ * Dokument mit {@link KnnFloatVectorField} im selben Index ({@link EmbeddingIndex}, ADR 0004, #89). Diese Dokumente
+ * gehören zu ihrem Ergebnis: Sie werden mit ihm ersetzt und gelöscht, {@link #find} liefert sie nie. Ein Index im
+ * Schema {@code enrichment-store/v1} wird beim Öffnen hochgestuft; v1 kannte keine Vektoren, also werden seine
+ * {@code embedding}-Ergebnisse gelöscht und beim nächsten Lauf mit Vektoren neu berechnet, alle übrigen bleiben.
+ *
  * <p>Ergebnisse lassen sich jederzeit neu berechnen. Darum wird nicht jedes {@link #save} einzeln dauerhaft gemacht,
  * sondern spätestens alle {@value #COMMIT_EVERY} Änderungen, bei {@link #flush()} und beim Schließen; Lesen sieht
  * jede Änderung sofort. Was ein Absturz verliert, fehlt danach und wird beim nächsten Lauf neu berechnet.
  */
-public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseable {
+public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIndex, AutoCloseable {
 
     /** Schemaversion in den Commit-Daten. */
-    public static final String VERSION = "enrichment-store/v1";
+    public static final String VERSION = "enrichment-store/v2";
+
+    /** Vorgängerschema ohne Vektoren; wird beim Öffnen hochgestuft. */
+    static final String VERSION_1 = "enrichment-store/v1";
+
+    /** Prozessor, dessen Ergebnisse Vektoren tragen ({@code EmbeddingProcessor#id()}). */
+    static final String EMBEDDING = "embedding";
+
+    /** Höchste Dimension, die Lucenes HNSW-Format annimmt; größere Vektoren werden nicht indiziert. */
+    static final int MAX_VECTOR_DIMENSIONS = 1_024;
 
     static final int COMMIT_EVERY = 500;
 
@@ -61,6 +85,16 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
     private static final String WARNING = "warning";
     private static final String ERROR_CODE = "errorCode";
     private static final String COMPUTED_AT = "computedAt";
+    /** Ergebnis ({@link #ID}), zu dem ein Vektordokument gehört. */
+    private static final String VECTOR_OF = "vectorOf";
+    /** Seite eines Vektordokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
+    private static final String VECTOR_PAGE = "vectorPage";
+    /** Quelle und Prozessorversion eines Vektordokuments, indiziert für den Filter der Vektorsuche. */
+    private static final String VECTOR_SOURCE = "vectorSource";
+    private static final String VECTOR_VERSION = "vectorVersion";
+    private static final String CHUNK = "chunk";
+    private static final String CHAR_START = "charStart";
+    private static final String CHAR_END = "charEnd";
     /** Trennzeichen in zusammengesetzten Schlüsseln; kommt in Quellen-, Seiten- und Prozessorkennungen nicht vor. */
     private static final char SEPARATOR = '\u0000';
     /** Mehr Prozessoren je Seite gibt es nicht. */
@@ -97,7 +131,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
             if (exists) {
                 String schema = SegmentInfos.readLatestCommit(directory).getUserData()
                         .get(PageCacheSchema.SCHEMA_KEY);
-                if (!VERSION.equals(schema)) {
+                if (!VERSION.equals(schema) && !VERSION_1.equals(schema)) {
                     throw new PageCacheException("Anreicherungsablage " + root + " hat Schema "
                             + (schema == null ? "(unbekannt)" : schema) + ", erwartet " + VERSION
                             + "; Verzeichnis löschen (die Ergebnisse werden neu berechnet)");
@@ -107,8 +141,13 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
             config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
             config.setCommitOnClose(false);
             writer = new IndexWriter(directory, config);
+            boolean upgrade = exists && VERSION_1.equals(SegmentInfos.readLatestCommit(directory).getUserData()
+                    .get(PageCacheSchema.SCHEMA_KEY));
+            if (upgrade) {
+                dropEmbeddingResults(directory, writer);
+            }
             writer.setLiveCommitData(Map.of(PageCacheSchema.SCHEMA_KEY, VERSION).entrySet());
-            if (!exists) {
+            if (!exists || upgrade) {
                 writer.commit();
             }
             return new LuceneEnrichmentStore(root, directory, writer);
@@ -136,8 +175,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
         Objects.requireNonNull(enrichment, "enrichment");
         requireOpen();
         try {
-            writer.updateDocument(new Term(ID, id(enrichment.key(), enrichment.processorId())),
-                    document(enrichment));
+            String id = id(enrichment.key(), enrichment.processorId());
+            writer.deleteDocuments(new Term(VECTOR_OF, id));
+            writer.updateDocument(new Term(ID, id), document(enrichment));
+            writer.addDocuments(vectors(enrichment));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
@@ -172,10 +213,54 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
         Objects.requireNonNull(key, "key");
         requireOpen();
         try {
-            writer.deleteDocuments(new Term(PAGE, page(key)));
+            writer.deleteDocuments(new Term(PAGE, page(key)), new Term(VECTOR_PAGE, page(key)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    @Override
+    public List<ChunkHit> nearest(String sourceId, String processorVersion, float[] query, int k) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(processorVersion, "processorVersion");
+        Objects.requireNonNull(query, "query");
+        if (k < 1 || k > MAX_K) {
+            throw new IllegalArgumentException("k muss zwischen 1 und " + MAX_K + " liegen");
+        }
+        requireOpen();
+        float[] normalized = EmbeddingIndex.normalized(query);
+        if (query.length > MAX_VECTOR_DIMENSIONS || isZero(normalized)) {
+            return List.of();
+        }
+        BooleanQuery filter = new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(VECTOR_SOURCE, sourceId)), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(VECTOR_VERSION, processorVersion)), BooleanClause.Occur.FILTER)
+                .build();
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(new KnnFloatVectorQuery(vectorField(query.length), normalized, k,
+                        filter), k);
+                StoredFields stored = searcher.storedFields();
+                List<ChunkHit> hits = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    Document doc = stored.document(hit.doc);
+                    // DOT_PRODUCT liefert (1 + Kosinus) / 2.
+                    double similarity = Math.max(-1, Math.min(1, 2.0 * hit.score - 1));
+                    hits.add(new ChunkHit(new PageKey(doc.get(SOURCE_ID), doc.get(PAGE_ID)),
+                            doc.getField(CHUNK).numericValue().intValue(),
+                            doc.getField(CHAR_START).numericValue().intValue(),
+                            doc.getField(CHAR_END).numericValue().intValue(), doc.get(INPUT_SHA256), similarity));
+                }
+                hits.sort(Comparator.comparingDouble(ChunkHit::similarity).reversed()
+                        .thenComparing(hit -> hit.page().pageId()).thenComparingInt(ChunkHit::chunk));
+                return hits;
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
         }
     }
 
@@ -248,6 +333,84 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
         storeIfPresent(doc, ERROR_CODE, enrichment.errorCode());
         doc.add(new StoredField(COMPUTED_AT, enrichment.computedAt().toString()));
         return doc;
+    }
+
+    /**
+     * Ein Dokument je Stück eines gültigen {@code embedding}-Ergebnisses, normiert für {@code DOT_PRODUCT}. Ein
+     * Ergebnis, das sich nicht lesen lässt, ein zu großer oder ein Nullvektor bekommt keinen Vektor; das Ergebnis selbst
+     * bleibt gespeichert, die Suche findet das Stück nur nicht.
+     */
+    private static List<Document> vectors(Enrichment enrichment) {
+        if (!EMBEDDING.equals(enrichment.processorId()) || enrichment.status() != Enrichment.Status.OK) {
+            return List.of();
+        }
+        EmbeddingPayload payload;
+        try {
+            payload = EmbeddingPayload.parse(enrichment.payloadJson());
+        } catch (IllegalArgumentException e) {
+            return List.of();
+        }
+        if (payload.dimensions() < 1 || payload.dimensions() > MAX_VECTOR_DIMENSIONS) {
+            return List.of();
+        }
+        String id = id(enrichment.key(), enrichment.processorId());
+        List<Document> docs = new ArrayList<>(payload.chunks().size());
+        for (int i = 0; i < payload.chunks().size(); i++) {
+            EmbeddingPayload.Chunk chunk = payload.chunks().get(i);
+            float[] vector = EmbeddingIndex.normalized(chunk.vector());
+            if (isZero(vector)) {
+                continue;
+            }
+            Document doc = new Document();
+            doc.add(new StringField(VECTOR_OF, id, Field.Store.NO));
+            doc.add(new StringField(VECTOR_PAGE, page(enrichment.key()), Field.Store.NO));
+            doc.add(new StringField(VECTOR_SOURCE, enrichment.key().sourceId(), Field.Store.NO));
+            doc.add(new StringField(VECTOR_VERSION, enrichment.processorVersion(), Field.Store.NO));
+            doc.add(new StoredField(SOURCE_ID, enrichment.key().sourceId()));
+            doc.add(new StoredField(PAGE_ID, enrichment.key().pageId()));
+            doc.add(new StoredField(INPUT_SHA256, enrichment.inputSha256()));
+            doc.add(new StoredField(CHUNK, i));
+            doc.add(new StoredField(CHAR_START, chunk.charStart()));
+            doc.add(new StoredField(CHAR_END, chunk.charEnd()));
+            doc.add(new KnnFloatVectorField(vectorField(vector.length), vector,
+                    VectorSimilarityFunction.DOT_PRODUCT));
+            docs.add(doc);
+        }
+        return docs;
+    }
+
+    /** Je Dimension ein eigenes Feld, weil Lucene je Feld nur eine Dimension zulässt. */
+    private static String vectorField(int dimensions) {
+        return "vector" + dimensions;
+    }
+
+    private static boolean isZero(float[] vector) {
+        for (float v : vector) {
+            if (v != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** v1 → v2: {@code embedding}-Ergebnisse ohne Vektoren löschen, damit sie neu berechnet werden. */
+    private static void dropEmbeddingResults(Directory directory, IndexWriter writer) throws IOException {
+        try (DirectoryReader reader = DirectoryReader.open(directory)) {
+            for (LeafReaderContext leaf : reader.leaves()) {
+                Bits live = leaf.reader().getLiveDocs();
+                StoredFields stored = leaf.reader().storedFields();
+                for (int doc = 0; doc < leaf.reader().maxDoc(); doc++) {
+                    if (live != null && !live.get(doc)) {
+                        continue;
+                    }
+                    Document found = stored.document(doc);
+                    if (EMBEDDING.equals(found.get(PROCESSOR_ID))) {
+                        writer.deleteDocuments(new Term(ID, id(new PageKey(found.get(SOURCE_ID),
+                                found.get(PAGE_ID)), EMBEDDING)));
+                    }
+                }
+            }
+        }
     }
 
     private static Enrichment enrichment(Document doc) {
