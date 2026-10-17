@@ -307,16 +307,31 @@ public final class SourcesView implements View {
 
     private void removeSelected() {
         String id = selectedId();
-        if (id == null || !Dialogs.confirm(root, "Quelle entfernen",
-                "Die Quelle " + id + " wird aus der Konfigurationsdatei entfernt; die vorige Fassung bleibt als .bak "
-                        + "erhalten. Laufende Aufträge enden mit dem Neu laden. Der lokale Bestand im Datenordner "
-                        + "bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")) {
+        if (id == null) {
             return;
         }
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+        boolean plaintext;
+        try {
+            plaintext = editor.hasPlaintextSecret(context.configFile(), id);
+        } catch (IOException | RuntimeException e) {
+            feedback.problem(e);
+            return;
+        }
+        // Mit Klartext-Geheimnis in der Datei entsteht keine .bak (und eine alte wird gelöscht), sonst läge das
+        // Geheimnis dort weiter; das muss der Bediener vor dem Bestätigen wissen.
+        String backup = plaintext
+                ? "Weil die Quelle ein Passwort oder Token im Klartext enthält, wird KEINE Sicherung (.bak) angelegt "
+                        + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
+                : "Die vorige Fassung bleibt als .bak erhalten.";
+        if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "
+                + "entfernt. " + backup + " Laufende Aufträge enden mit dem Neu laden. Der lokale Bestand im "
+                + "Datenordner bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")) {
+            return;
+        }
         feedback.working("Quelle wird entfernt …");
         Background.execute(() -> editor.save(context.configFile(), editor.remove(context.configFile(), id),
-                !editor.hasPlaintextSecret(context.configFile(), id)), () -> {
+                !plaintext), () -> {
             context.secrets().remove(id);
             context.reload(() -> feedback.success("Quelle " + id + " entfernt"));
         }, feedback::problem);

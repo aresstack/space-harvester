@@ -48,7 +48,8 @@ ersetzt den Eintrag an seiner Stelle. Optionen, die der Assistent nicht abfragt 
 bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht ein Passwort,
 Token oder Zertifikatspasswort im Klartext in der Datei, ersetzt der Assistent es durch den Platzhalter und legt keine
 `.bak` mit dem Geheimnis an (eine vorhandene wird gelöscht). **Entfernen …** nimmt den Eintrag nach Rückfrage aus der
-Datei; der lokale Bestand im Datenordner bleibt liegen.
+Datei; der lokale Bestand im Datenordner bleibt liegen. Auch dabei entsteht bei einem Klartext-Geheimnis keine `.bak`;
+die Rückfrage sagt das vorher ausdrücklich.
 
 ## Konfiguration
 
