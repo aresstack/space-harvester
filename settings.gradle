@@ -27,6 +27,9 @@ include 'space-harvester-server'
 // objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
 include 'nlp-parser'
 
+// Eigenständige Trainingswerkzeuge für das deutsche MaltParser-Modell (#99); weder Anwendung noch Parser hängen davon ab.
+include 'nlp-model-training'
+
 // Unveränderte Kopie der Comic-Bedienelemente aus aresstack/enterprise-ai-client, siehe comic-controls/UPSTREAM.md.
 include 'comic-controls'
 

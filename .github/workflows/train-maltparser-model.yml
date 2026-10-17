@@ -1,0 +1,66 @@
+name: MaltParser-Modell trainieren
+
+# Trainiert das deutsche MaltParser-Modell (#99) nur auf ausdrücklichen Start, nie bei Push oder Pull Request, und
+# legt Modell, Assets und Berichte als Workflow-Artefakt ab (30 Tage). Er veröffentlicht nichts: Einen Release-Entwurf
+# legt ohne Neutraining „MaltParser-Modell bereitstellen“ (publish-maltparser-model.yml) aus diesem Artefakt an.
+# Ablauf und Freigabe: nlp-model-training/README.md und docs/NLP_MODEL_LICENSE.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: train-maltparser-model
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rezept lesen
+        id: recipe
+        run: |
+          recipe=nlp-model-training/model/maltparser-de-gsd.properties
+          value() { sed -n "s/^$1=//p" "$recipe" | tr -d '\r'; }
+          tag="$(value model.id)-v$(value model.version)"
+          [[ "$tag" =~ ^maltparser-de-gsd-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::ungültiger Tag $tag"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Release-Tag noch frei
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.recipe.outputs.tag }}
+        run: |
+          # Eine Modellversion wird nie ersetzt: vorhandener Tag oder Release (auch Entwurf) bricht ab
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG existiert schon; model.version im Rezept erhöhen"; exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release $TAG existiert schon (ggf. als Entwurf); löschen oder model.version erhöhen"; exit 1
+          fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Treebank holen, trainieren, evaluieren, verpacken, als Verbraucher laden
+        run: ./gradlew :nlp-model-training:buildGermanModel --console=plain
+      - name: Abhängigkeiten festhalten
+        if: always()
+        run: ./gradlew -q :nlp-model-training:dependencies --configuration runtimeClasspath > nlp-model-training/build/maltparser-de-gsd/dependencies.txt
+      - name: Bericht
+        if: always()
+        run: python3 nlp-model-training/tools/evaluation-summary.py nlp-model-training/build/maltparser-de-gsd >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ steps.recipe.outputs.tag }}
+          retention-days: 30
+          if-no-files-found: ignore
+          path: |
+            nlp-model-training/build/maltparser-de-gsd/dist/
+            nlp-model-training/build/maltparser-de-gsd/*.json
+            nlp-model-training/build/maltparser-de-gsd/dependencies.txt
+            nlp-model-training/build/maltparser-de-gsd/model/training.log
