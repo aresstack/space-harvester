@@ -83,4 +83,17 @@ public interface HarvestSource {
         return CompletableFuture.failedFuture(new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann native Seitenantworten nicht asynchron liefern", null));
     }
+
+    /**
+     * Alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit den nativen Listenantworten (#9). Lädt keine
+     * Dateien. Eine Liste, die die Quelle nicht vollständig liefern kann, scheitert, statt kürzer zurückzukommen;
+     * einzelne unbrauchbare Einträge stehen in {@link PageAttachments#warnings()}.
+     *
+     * @param pageId ID der Seite in der Quelle
+     * @throws SourceAccessException wie {@link #storedPage(String)}
+     */
+    default PageAttachments attachments(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhangslisten nicht liefern", null);
+    }
 }

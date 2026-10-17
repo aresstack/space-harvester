@@ -54,6 +54,8 @@ class KnowledgeSourceHarvestSourceTest {
 
         assertThatThrownBy(() -> source.storedPage("101")).isInstanceOfSatisfying(SourceAccessException.class,
                 e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNSUPPORTED));
+        assertThatThrownBy(() -> source.attachments("101")).isInstanceOfSatisfying(SourceAccessException.class,
+                e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNSUPPORTED));
     }
 
     @Test
