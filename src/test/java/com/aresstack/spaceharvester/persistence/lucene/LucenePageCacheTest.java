@@ -195,7 +195,8 @@ class LucenePageCacheTest {
         assertThat(cache.remove(snapshot.key())).isTrue();
 
         assertThat(cache.revisions(snapshot.key())).isEmpty();
-        assertThat(cache.documentCount()).isZero();
+        // Übrig bleibt nur die Suchgeneration der Quelle.
+        assertThat(cache.documentCount()).isEqualTo(1);
     }
 
     // --- Abfragen ohne Payload ------------------------------------------------------------------------------------

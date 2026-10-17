@@ -16,18 +16,18 @@ import java.util.function.Consumer;
  * Fake für {@link SyncBaselineStore}: merkt Schreibvorgänge vor und wendet sie erst beim Commit zusammen mit der
  * Generation auf das {@link SnapshotRepository} an. Die Lucene-Umsetzung (#26) muss dieselben Regeln erfüllen.
  */
-final class InMemorySyncStore implements SyncBaselineStore {
+public final class InMemorySyncStore implements SyncBaselineStore {
 
     final SnapshotRepository repository;
     private final Map<String, SyncBaseline> baselines = new HashMap<>();
     /** Lässt den nächsten Commit mit einem Konflikt scheitern, als hätte ein paralleler Lauf gewonnen. */
     boolean failNextCommit;
 
-    InMemorySyncStore() {
+    public InMemorySyncStore() {
         this(new InMemorySnapshotRepository());
     }
 
-    InMemorySyncStore(SnapshotRepository repository) {
+    public InMemorySyncStore(SnapshotRepository repository) {
         this.repository = repository;
     }
 

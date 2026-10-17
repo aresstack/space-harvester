@@ -48,7 +48,7 @@ public record SecurityProperties(Mode mode, List<Client> clients) {
      *
      * @param source Quellen-ID aus {@code space-harvester.sources}
      * @param spaces Space-Keys oder genau {@code "*"} für alle Spaces der Quelle
-     * @param access freigegebene Arten: {@code metadata}, {@code content}, {@code export}
+     * @param access freigegebene Arten: {@code metadata}, {@code content}, {@code export}, {@code sync}
      */
     public record Grant(String source, List<String> spaces, Set<AccessKind> access) {
 

@@ -9,13 +9,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Liefert ein PAC-Skript unter {@code /proxy.pac}; ohne Skript antwortet er mit 404. */
-final class PacServer implements AutoCloseable {
+public final class PacServer implements AutoCloseable {
 
     private final HttpServer server;
     private final AtomicInteger downloads = new AtomicInteger();
     private volatile String script;
 
-    PacServer(String script) throws IOException {
+    public PacServer(String script) throws IOException {
         this.script = script;
         server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
         server.createContext("/proxy.pac", exchange -> {
@@ -34,7 +34,7 @@ final class PacServer implements AutoCloseable {
         server.start();
     }
 
-    URI url() {
+    public URI url() {
         return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/proxy.pac");
     }
 

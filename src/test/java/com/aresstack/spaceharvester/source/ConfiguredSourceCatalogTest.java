@@ -32,6 +32,19 @@ class ConfiguredSourceCatalogTest {
     }
 
     @Test
+    void disabledCertificateMayKeepAnUnresolvedPasswordPlaceholder() {
+        SourceSettingsConfig.ClientCertificate kept = new SourceSettingsConfig.ClientCertificate(false,
+                SourceSettingsConfig.CertificateStoreType.PKCS12, java.nio.file.Path.of("client.p12"), "client",
+                "${KEYSTORE_PASSWORD}", null);
+
+        assertThat(ConfiguredSourceCatalog.of(List.of(new SourceSettingsConfig("wiki", "confluence", null, BASE,
+                new Auth(AuthType.PAT, null, null, "token"), Map.of(), kept, null)), "test").find("wiki")).isPresent();
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(source("wiki",
+                new Auth(AuthType.PAT, null, null, "${CONFLUENCE_PAT}"))), "test"))
+                .hasMessageContaining("auth.token: Platzhalter ${CONFLUENCE_PAT} hat keinen Wert");
+    }
+
+    @Test
     void reportsAllProblemsOfAllSourcesAtOnce() {
         assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
                 new SourceSettingsConfig("Bad Id", "confluence", null, BASE, null, Map.of()),

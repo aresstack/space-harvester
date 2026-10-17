@@ -193,8 +193,160 @@ final class ConfluenceRestClient {
      *                                  {@link ResponseTooLargeException} über {@code maxResponseBytes}
      */
     StoredPage storedPage(Session session, String contentId) throws KnowledgeSourceException {
-        ConfluenceHttpResponse response = send(session, "/rest/api/content/" + contentId + "?expand="
-                + SNAPSHOT_EXPAND, "Seite", config.maxResponseBytes());
+        return storedPage(send(session, storedPagePath(contentId), "Seite", config.maxResponseBytes()), contentId);
+    }
+
+    /**
+     * Wie {@link #storedPage}, aber über den asynchronen Transport: dieselbe Anfrage, dieselben Wiederholungen,
+     * dieselbe Fehlerabbildung und dieselbe JSON-Abbildung, die auf {@code mapping} läuft statt auf dem I/O-Thread des
+     * Transports. Fehler beenden die Stufe ausnahmsweise mit {@link KnowledgeSourceException}; ein Abbruch der Stufe
+     * bricht die laufende Anfrage oder die Wartezeit vor der nächsten Wiederholung ab.
+     */
+    java.util.concurrent.CompletionStage<StoredPage> storedPageAsync(Session session, final String contentId,
+            ConfluenceAsyncHttpTransport async, java.util.concurrent.Executor mapping) {
+        final java.util.concurrent.CompletableFuture<StoredPage> result =
+                new java.util.concurrent.CompletableFuture<StoredPage>();
+        URI uri;
+        try {
+            uri = uri(storedPagePath(contentId), "Seite");
+        } catch (KnowledgeSourceException e) {
+            result.completeExceptionally(e);
+            return result;
+        }
+        final java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>> current =
+                new java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>>();
+        result.whenComplete((page, error) -> {
+            java.util.concurrent.Future<?> running = current.get();
+            if (result.isCancelled() && running != null) {
+                running.cancel(true);
+            }
+        });
+        new AsyncAttempt<StoredPage>(uri, session.headers, "Seite", config.maxResponseBytes(), async, mapping,
+                current, result, response -> storedPage(response, contentId)).start(0);
+        return result;
+    }
+
+    /** Abbildung einer erfolgreichen Antwort; läuft auf dem Executor der Abbildung. */
+    private interface ResponseMapper<T> {
+        T map(ConfluenceHttpResponse response) throws KnowledgeSourceException;
+    }
+
+    /** Wartezeiten vor asynchronen Wiederholungen; der Thread plant nur, er wartet nie auf Netz-I/O. */
+    private static final class RetryTimer {
+        static final java.util.concurrent.ScheduledThreadPoolExecutor TIMER = timer();
+
+        private static java.util.concurrent.ScheduledThreadPoolExecutor timer() {
+            java.util.concurrent.ScheduledThreadPoolExecutor timer = new java.util.concurrent.ScheduledThreadPoolExecutor(
+                    1, runnable -> {
+                        Thread thread = new Thread(runnable, "confluence-retry");
+                        thread.setDaemon(true);
+                        return thread;
+                    });
+            timer.setRemoveOnCancelPolicy(true);
+            return timer;
+        }
+    }
+
+    /** Ein asynchroner Abruf mit den Wiederholungsregeln von {@link #send}. */
+    private final class AsyncAttempt<T> {
+        private final URI uri;
+        private final Map<String, String> headers;
+        private final String what;
+        private final int maxBytes;
+        private final ConfluenceAsyncHttpTransport async;
+        private final java.util.concurrent.Executor mapping;
+        private final java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>> current;
+        private final java.util.concurrent.CompletableFuture<T> result;
+        private final ResponseMapper<T> mapper;
+
+        AsyncAttempt(URI uri, Map<String, String> headers, String what, int maxBytes,
+                     ConfluenceAsyncHttpTransport async, java.util.concurrent.Executor mapping,
+                     java.util.concurrent.atomic.AtomicReference<java.util.concurrent.Future<?>> current,
+                     java.util.concurrent.CompletableFuture<T> result, ResponseMapper<T> mapper) {
+            this.uri = uri;
+            this.headers = headers;
+            this.what = what;
+            this.maxBytes = maxBytes;
+            this.async = async;
+            this.mapping = mapping;
+            this.current = current;
+            this.result = result;
+            this.mapper = mapper;
+        }
+
+        void start(final int attempt) {
+            if (result.isDone()) {
+                return;
+            }
+            final java.util.concurrent.CompletableFuture<ConfluenceHttpResponse> request;
+            try {
+                request = async.getAsync(uri, headers, maxBytes).toCompletableFuture();
+            } catch (RuntimeException e) {
+                result.completeExceptionally(e);
+                return;
+            }
+            current.set(request);
+            if (result.isCancelled()) {
+                request.cancel(true);
+                return;
+            }
+            request.whenCompleteAsync((response, error) -> handle(attempt, response, error), mapping);
+        }
+
+        private void handle(final int attempt, ConfluenceHttpResponse response, Throwable error) {
+            KnowledgeSourceException failure;
+            try {
+                if (error == null && response.isSuccess()) {
+                    result.complete(mapper.map(response));
+                    return;
+                }
+                if (error != null) {
+                    failure = transportFailure(error, what, maxBytes);
+                    if (failure instanceof ResponseTooLargeException || !(unwrapped(error) instanceof IOException)) {
+                        result.completeExceptionally(failure);
+                        return;
+                    }
+                } else {
+                    failure = statusFailure(what, response.status());
+                    if (!retryable(response.status())) {
+                        result.completeExceptionally(failure);
+                        return;
+                    }
+                }
+            } catch (KnowledgeSourceException | RuntimeException e) {
+                result.completeExceptionally(e);
+                return;
+            }
+            if (attempt >= config.maxRetries()) {
+                result.completeExceptionally(attempt == 0 ? failure : exhausted(failure, attempt));
+                return;
+            }
+            long delay = backoffMillis(attempt, config.retryBackoffMillis(), config.maxRetryBackoffMillis());
+            LOG.warning("[Confluence] " + failure.getMessage() + "; Wiederholung " + (attempt + 1) + " von "
+                    + config.maxRetries() + " in " + delay + " ms");
+            java.util.concurrent.Future<?> timer = RetryTimer.TIMER.schedule(() -> start(attempt + 1),
+                    delay, java.util.concurrent.TimeUnit.MILLISECONDS);
+            current.set(timer);
+            if (result.isCancelled()) {
+                timer.cancel(false);
+            }
+        }
+    }
+
+    private static Throwable unwrapped(Throwable error) {
+        Throwable failure = error;
+        while ((failure instanceof java.util.concurrent.CompletionException
+                || failure instanceof java.util.concurrent.ExecutionException) && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
+    }
+
+    private static String storedPagePath(String contentId) {
+        return "/rest/api/content/" + contentId + "?expand=" + SNAPSHOT_EXPAND;
+    }
+
+    private StoredPage storedPage(ConfluenceHttpResponse response, String contentId) throws KnowledgeSourceException {
         JsonObject json = jsonObject(response, "Seite");
         if (!"page".equals(string(json, "type"))) {
             throw new KnowledgeSourceException(Kind.NOT_FOUND, "Inhalt " + contentId + " ist keine Seite");
@@ -1443,12 +1595,7 @@ final class ConfluenceRestClient {
 
     private ConfluenceHttpResponse send(Session session, String path, String what, int maxBytes)
             throws KnowledgeSourceException {
-        URI uri;
-        try {
-            uri = URI.create(config.baseUrl() + path);
-        } catch (IllegalArgumentException e) {
-            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": ungültiger Pfad");
-        }
+        URI uri = uri(path, what);
         for (int attempt = 0; ; attempt++) {
             KnowledgeSourceException failure;
             try {
@@ -1461,10 +1608,9 @@ final class ConfluenceRestClient {
                     throw failure;
                 }
             } catch (ConfluenceResponseTooLargeException e) {
-                throw new ResponseTooLargeException(what + ": Antwort größer als " + maxBytes + " Bytes", maxBytes);
+                throw transportFailure(e, what, maxBytes);
             } catch (IOException e) {
-                failure = new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence nicht erreichbar ("
-                        + cause(e) + ")", e);
+                failure = transportFailure(e, what, maxBytes);
             }
             if (attempt >= config.maxRetries()) {
                 throw attempt == 0 ? failure : exhausted(failure, attempt);
@@ -1509,6 +1655,30 @@ final class ConfluenceRestClient {
             Thread.currentThread().interrupt();
             throw failure;
         }
+    }
+
+    private URI uri(String path, String what) throws KnowledgeSourceException {
+        try {
+            return URI.create(config.baseUrl() + path);
+        } catch (IllegalArgumentException e) {
+            throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": ungültiger Pfad");
+        }
+    }
+
+    /**
+     * Bildet einen Transportfehler ab, synchron wie asynchron (dort ggf. in {@code CompletionException} verpackt):
+     * zu groß → {@link ResponseTooLargeException}, {@link IOException} → {@code UNAVAILABLE}.
+     */
+    private static KnowledgeSourceException transportFailure(Throwable error, String what, int maxBytes) {
+        Throwable failure = unwrapped(error);
+        if (failure instanceof ConfluenceResponseTooLargeException) {
+            return new ResponseTooLargeException(what + ": Antwort größer als " + maxBytes + " Bytes", maxBytes);
+        }
+        if (failure instanceof KnowledgeSourceException) {
+            return (KnowledgeSourceException) failure;
+        }
+        return new KnowledgeSourceException(Kind.UNAVAILABLE, what + ": Confluence nicht erreichbar ("
+                + cause(failure) + ")", failure);
     }
 
     /** Bildet einen Fehlerstatus auf {@link Kind} ab (siehe Klassenkommentar). */

@@ -95,7 +95,7 @@ import java.util.regex.Pattern;
  * HTTP-Request, weil z. B. KeePassRPC dafür eine Verbindung aufbaut) und vergisst sie mit dem Ende des Aufrufs.
  * Ohne {@link ConfluenceConfig#credentialRef()} fragt er keine an (z. B. reine mTLS-Anmeldung).
  */
-public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
+public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
         AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource,
         StoredContentSource {
 
@@ -138,6 +138,9 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
     private final ConfluenceRestClient client;
     private final SecretProvider secrets;
     private final VaultEntryOptions options;
+    /** Nur bei {@link AsyncConfluenceKnowledgeSource}: asynchroner Transport und Executor der JSON-Abbildung. */
+    private final ConfluenceAsyncHttpTransport async;
+    private final java.util.concurrent.Executor mapping;
 
     /**
      * @param transport z. B. {@link UrlConnectionConfluenceTransport} mit Proxy/mTLS aus der Composition Root
@@ -151,6 +154,15 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
 
     ConfluenceKnowledgeSource(SourceAddress sourceId, ConfluenceConfig config,
                               ConfluenceHttpTransport transport, SecretProvider secrets, VaultEntryOptions options) {
+        this(sourceId, config, transport, secrets, options, null, null);
+    }
+
+    ConfluenceKnowledgeSource(SourceAddress sourceId, ConfluenceConfig config,
+                              ConfluenceHttpTransport transport, SecretProvider secrets, VaultEntryOptions options,
+                              ConfluenceAsyncHttpTransport async, java.util.concurrent.Executor mapping) {
+        if ((async == null) != (mapping == null)) {
+            throw new IllegalArgumentException("async und mapping nur gemeinsam");
+        }
         if (sourceId == null || config == null || transport == null) {
             throw new IllegalArgumentException("sourceId, config und transport sind Pflicht");
         }
@@ -164,6 +176,8 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         this.client = new ConfluenceRestClient(config, transport);
         this.secrets = secrets;
         this.options = options;
+        this.async = async;
+        this.mapping = mapping;
     }
 
     @Override
@@ -680,6 +694,57 @@ public final class ConfluenceKnowledgeSource implements SearchableKnowledgeSourc
         }
         return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
                 mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
+    }
+
+    /**
+     * Asynchrone Fassung von {@link #storedContent} für {@link AsyncConfluenceKnowledgeSource}: dieselbe Anfrage,
+     * Anmeldung und Abbildung, nur über {@link ConfluenceAsyncHttpTransport}. Zugangsdaten liest der Aufrufer-Thread
+     * vor dem Start der Anfrage aus dem Tresor; die Header leben bis zur Antwort nur in der laufenden Anfrage.
+     */
+    final java.util.concurrent.CompletionStage<StoredContent> asyncStoredContent(final String localId) {
+        final java.util.concurrent.CompletableFuture<StoredContent> result =
+                new java.util.concurrent.CompletableFuture<StoredContent>();
+        if (async == null) {
+            throw new IllegalStateException("Quelle ohne asynchronen Transport");
+        }
+        if (!ConfluenceIds.isContentId(localId)) {
+            result.completeExceptionally(new KnowledgeSourceException(Kind.UNSUPPORTED,
+                    "Keine Seiten-ID dieser Quelle: " + localId));
+            return result;
+        }
+        final java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage> request;
+        try {
+            request = withSession(new Operation<java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage>>() {
+                @Override
+                public java.util.concurrent.CompletionStage<ConfluenceRestClient.StoredPage> run(Session session) {
+                    return client.storedPageAsync(session, localId, async, mapping);
+                }
+            });
+        } catch (KnowledgeSourceException e) {
+            result.completeExceptionally(e);
+            return result;
+        }
+        request.whenComplete((stored, error) -> {
+            if (error != null) {
+                Throwable failure = error instanceof java.util.concurrent.CompletionException
+                        && error.getCause() != null ? error.getCause() : error;
+                result.completeExceptionally(failure instanceof ConfluenceRestClient.Forbidden
+                        ? notVisible(localId, (ConfluenceRestClient.Forbidden) failure) : failure);
+                return;
+            }
+            try {
+                result.complete(new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
+                        mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now()));
+            } catch (RuntimeException e) {
+                result.completeExceptionally(e);
+            }
+        });
+        result.whenComplete((content, error) -> {
+            if (result.isCancelled()) {
+                request.toCompletableFuture().cancel(true);
+            }
+        });
+        return result;
     }
 
     private static String sortedExpand(String expand) {

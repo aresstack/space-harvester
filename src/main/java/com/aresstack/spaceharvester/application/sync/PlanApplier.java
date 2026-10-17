@@ -40,15 +40,26 @@ public class PlanApplier {
 
     /** @return die Seiten, deren Abgleich fehlgeschlagen ist, für {@link SyncPlan#nextBaseline} */
     public Set<String> apply(SyncPlan plan, StagedGeneration target) {
+        return apply(plan, target, SyncListener.NONE);
+    }
+
+    /**
+     * Wie {@link #apply(SyncPlan, StagedGeneration)}, mit Rückmeldung je Seite und {@link SyncListener#checkpoint()}
+     * vor jedem Inhaltsabruf.
+     */
+    public Set<String> apply(SyncPlan plan, StagedGeneration target, SyncListener listener) {
         String sourceId = plan.inventory().sourceId();
         Instant observedAt = plan.inventory().finishedAt();
         Set<String> failed = new TreeSet<>();
         for (PageChange change : plan.changes()) {
             PageKey key = new PageKey(sourceId, change.pageId());
+            boolean written = true;
             switch (change.kind()) {
                 case NEW, CONTENT_CHANGED -> {
+                    listener.checkpoint();
                     if (!fetch(key, change.current().page(), target)) {
                         failed.add(change.pageId());
+                        written = false;
                     }
                 }
                 case METADATA_CHANGED, ATTRIBUTES_CHANGED ->
@@ -59,11 +70,13 @@ public class PlanApplier {
                         target.remove(key);
                     } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.MOVED_OUT) {
                         target.saveHeader(header(key, removal.current(), observedAt));
+                    } else {
+                        written = false;
                     }
                 }
-                case UNCHANGED, NOT_SEEN -> {
-                }
+                case UNCHANGED, NOT_SEEN -> written = false;
             }
+            listener.pageDone(change, written, failed.contains(change.pageId()));
         }
         return failed;
     }

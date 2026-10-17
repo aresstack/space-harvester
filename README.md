@@ -35,6 +35,11 @@ SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew
 Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
 geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
 
+Unter `http://localhost:8080/ui/` liegt eine schlanke Weboberfläche: Quellen und Spaces ansehen, Abgleich und Export
+starten, Fortschritt, Warnungen und Fehler verfolgen, Export-Dateien herunterladen. Sie ruft nur die REST-API auf; das
+Bearer-Token gibt man im Browser ein, es bleibt im sessionStorage des Tabs. Abschalten mit
+`SPACE_HARVESTER_UI_ENABLED=false`.
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -87,7 +92,8 @@ space-harvester:
 
 - **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
   (Personal Access Token als `Authorization: Bearer`). Die Zugangsdaten gehen über einen `SecretProvider` an den
-  Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
+  Confluence-Adapter. Platzhalter können optional aus Azure Key Vault kommen (Profil `azure-keyvault`); ein
+  Platzhalter ohne Wert verhindert den Start. Varianten, Anmeldung und Live-Test: [docs/SECRETS.md](docs/SECRETS.md).
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
 - **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
@@ -112,7 +118,7 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server. Proxy und PAC: siehe nächsten Abschnitt.
+- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
@@ -171,9 +177,20 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 
-Der Transport bleibt vorerst der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Der vorgesehene asynchrone HTTP-Client und die dafür nötige Upstream-SPI beschreibt
-[ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+Standardmäßig nutzt der Adapter den synchronen `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
+Daneben gibt es den asynchronen `WebClientConfluenceTransport` (Spring WebClient auf Reactor Netty, #47) mit derselben
+Route je Ziel-URL, demselben Client-Zertifikat und denselben Grenzen. Mit
+
+```yaml
+space-harvester:
+  network:
+    async-transport: web-client   # Standard: disabled
+```
+
+laden native Seiten-Snapshots zusätzlich nicht blockierend darüber (`HarvestSource.storedPageAsync`); alle anderen
+Abrufe bleiben synchron. `disabled` ist der Rückfallpfad. Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+`--fetch=async` ruft jede Ziel-URL der Diagnose zusätzlich ohne Anmeldung über diesen Transport ab und zeigt nur
+Status und Größe.
 
 ## Seiten-Cache (Lucene)
 
@@ -185,12 +202,13 @@ space-harvester:
   cache:
     directory: /var/lib/space-harvester/cache   # Wurzel: Seiten-Index in pages/, Aufträge in jobs/
     max-payload-size: 20MB                      # Standard; größere Seiten werden abgewiesen, nie gekürzt
+    search-timeout: 5s                          # Standard; längere Suchen (#28) brechen mit 503 ab
 ```
 
 - **Inhalt:** je Seite (`sourceId` + `pageId`) die aktuellen Kopfdaten, der zuletzt gespeicherte Snapshot mit den
   Originalbytes der Antwort, ein Verlauf der Revisionen (ohne Payload) und je Space die zuletzt bestätigte Generation
   der Synchronisierung.
-  Feldschema und Version (`page-cache/v2`): `PageCacheSchema`. Zugangsdaten, Header oder Cookies stehen nie im Index.
+  Feldschema und Version (`page-cache/v3`): `PageCacheSchema`; Entscheidung und Aufbau: [ADR 0003](docs/adr/0003-lucene-cache.md). Zugangsdaten, Header oder Cookies stehen nie im Index.
 - **Aufträge:** Mit gesetztem Verzeichnis überdauern Auftragszustände (#12) einen Neustart (Index `jobs/`, Schema
   `job-store/v1`); ohne bleiben sie nur im Speicher.
 - **Schutzbedarf:** Die Payloads enthalten Seiteninhalte samt Makroparametern und Benutzerkennungen. Das
@@ -219,13 +237,16 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
+| `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
+| `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}` | Confluence-kompatible Einzelseite aus dem Cache, Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
-Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
+Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet, außer unter `/api/compat/confluence`, wo sie den Fehlerkörper von Confluence haben. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
 abgelehnt), `source-unavailable` (503, nicht erreichbar), `source-rate-limited` (429, die Quelle drosselt auch nach den
 Wiederholungen), `source-object-not-found` (404, auch für Seiten, die das Konto nicht sehen darf) und
@@ -307,11 +328,26 @@ Synchronisierung dazu (Paket `application.sync`, [#16](https://github.com/aresst
 abgebrochene oder widersprüchliche Inventuren bestätigen keine Generation und entfernen nichts; eine fehlende Seite
 wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in einen anderen Space verschoben meldet.
 
+**Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
+antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
+`completed` nur mit neu bestätigter Generation, in der jede Seite abgeglichen ist; sonst `failed` mit `error.code`
+`SYNC_INCOMPLETE` (nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt,
+aber Seiten nicht abgeglichen: neue ohne Inhalt, `summary.complete: false`, Cache-Stand `incomplete`; oder bekannte mit
+altem Stand, Cache-Stand `stale`; nie `confirmed`, der nächste Lauf gleicht sie erneut ab), oder `cancelled`.
+`summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`, `spaceFingerprint`,
+`notConfirmed` als fester Grund; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
+auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
+(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
+`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
+ein noch laufender Abgleich wird nicht doppelt gestartet.
+
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export aus dem
 Cache und antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Dort stehen Zustand (`queued`,
 `running`, `completed`, `failed`, `cancelled`), Fortschritt und Fehlercode; `POST …/{exportId}/cancel` bricht
-kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile),
-`tree.json` (ID-Baum mit `roots`) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
+kooperativ ab. Nach Abschluss nennt `artifact` die Dateien `pages.ndjson` (flaches Seiten-Array, eine Seite je Zeile, im Kopf `pageId` und `url`),
+`tree.json` (Baum aus Verweisen: `roots`, je Knoten `id` und `url` der Seite) und `manifest.json` mit Größe, SHA-256 und Download-Adresse
 `…/{exportId}/artifact/{datei}`; die Rohdaten je Seite liegen unter `raw/` und werden Byte für Byte ausgeliefert.
 `artifact.complete` ist nur `true` bei bestätigter Cache-Generation ohne fehlende Seite. Start, Status, Abbruch und
 Download verlangen `export` und `content` für den Space; einen Export sieht nur der Client, der ihn gestartet hat,
@@ -321,7 +357,7 @@ leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tag
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
-([#16](https://github.com/aresstack/space-harvester/issues/16), [#27](https://github.com/aresstack/space-harvester/issues/27)).
+([#27](https://github.com/aresstack/space-harvester/issues/27)).
 
 ## Aufbau
 

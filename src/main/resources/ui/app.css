@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+[hidden] { display: none !important; }
+body { margin: 0 auto; max-width: 64rem; padding: 0 1rem 2rem; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
+header form { display: flex; gap: .5rem; align-items: center; }
+table { border-collapse: collapse; width: 100%; margin-top: .75rem; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); vertical-align: top; }
+td button { margin-right: .25rem; }
+#message { padding: .5rem .75rem; border-radius: .25rem; background: color-mix(in srgb, #d33 18%, transparent); }
+.incomplete { color: #c60; font-weight: 600; }
+.failed { color: #d33; font-weight: 600; }
+.complete { color: #2a2; font-weight: 600; }
+ul.details { margin: .25rem 0 0; padding-left: 1.1rem; font-size: .9em; }

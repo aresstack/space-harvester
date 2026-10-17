@@ -82,12 +82,34 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
         SSLSocketFactory socketFactory(String alias, Path keyStoreFile, SecretRef passwordRef);
     }
 
+    /**
+     * Baut den asynchronen Transport einer Quelle ({@link #withAsyncTransports}). Die Composition Root gibt ihm
+     * dieselbe Proxy-Route, dasselbe Vertrauen und dasselbe Client-Zertifikat wie dem synchronen Transport und
+     * schließt ihn selbst, wenn sie ihn nicht mehr braucht.
+     */
+    public interface AsyncTransports {
+        /**
+         * @param sourceId             die Quelle
+         * @param alias                Alias des Client-Zertifikats oder {@code null} ohne mTLS
+         * @param keyStoreFile         PKCS12-Datei oder {@code null} für den Windows-Zertifikatspeicher
+         * @param passwordRef          KeePass-Verweis auf das Passwort der Datei oder {@code null}
+         * @param connectTimeoutMillis Verbindungs-Timeout der Quelle
+         * @param readTimeoutMillis    Lese-Timeout der Quelle
+         * @return der Transport oder {@code null}, dann bleibt die Quelle synchron
+         */
+        ConfluenceAsyncHttpTransport transport(SourceAddress sourceId, String alias, Path keyStoreFile,
+                                               SecretRef passwordRef, int connectTimeoutMillis,
+                                               int readTimeoutMillis);
+    }
+
     private final SecretProvider secrets;
     private final HttpRoutePort routes;
     private final SSLSocketFactory sslSocketFactory;
     private final String userAgent;
     private final ClientCertificateSockets certificates;
     private final java.nio.file.Path diagnosticsDirectory;
+    private final AsyncTransports asyncTransports;
+    private final java.util.concurrent.Executor mapping;
 
     /**
      * @param secrets          Security-Port für Benutzer/Passwort je Anfrage
@@ -107,6 +129,13 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
     public ConfluenceSourceProvider(SecretProvider secrets, HttpRoutePort routes, SSLSocketFactory sslSocketFactory,
                                     String userAgent, ClientCertificateSockets certificates,
                                     java.nio.file.Path diagnosticsDirectory) {
+        this(secrets, routes, sslSocketFactory, userAgent, certificates, diagnosticsDirectory, null, null);
+    }
+
+    private ConfluenceSourceProvider(SecretProvider secrets, HttpRoutePort routes, SSLSocketFactory sslSocketFactory,
+                                     String userAgent, ClientCertificateSockets certificates,
+                                     java.nio.file.Path diagnosticsDirectory, AsyncTransports asyncTransports,
+                                     java.util.concurrent.Executor mapping) {
         if (secrets == null || certificates == null) {
             throw new IllegalArgumentException("secrets and certificates must not be null");
         }
@@ -116,6 +145,26 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
         this.userAgent = userAgent;
         this.certificates = certificates;
         this.diagnosticsDirectory = diagnosticsDirectory;
+        this.asyncTransports = asyncTransports;
+        this.mapping = mapping;
+    }
+
+    /**
+     * Derselbe Provider, dessen Quellen zusätzlich {@link com.aresstack.enterpriseai.source.api.AsyncStoredContentSource}
+     * anbieten: Seiten-Snapshots über einen Transport aus {@code transports}, JSON-Abbildung auf {@code mapping}.
+     * Ausgenommen sind Quellen, deren Client-Zertifikat erst der KeePass-Eintrag nennt ({@code MM_CertAlias}): Der
+     * Alias steht erst beim ersten Verbindungsaufbau fest, sie bleiben synchron.
+     *
+     * @param transports baut den asynchronen Transport je Quelle
+     * @param mapping    Executor für die JSON-Abbildung, nie ein I/O-Thread des Transports
+     */
+    public ConfluenceSourceProvider withAsyncTransports(AsyncTransports transports,
+                                                        java.util.concurrent.Executor mapping) {
+        if (transports == null || mapping == null) {
+            throw new IllegalArgumentException("transports and mapping must not be null");
+        }
+        return new ConfluenceSourceProvider(secrets, routes, sslSocketFactory, userAgent, certificates,
+                diagnosticsDirectory, transports, mapping);
     }
 
     /** Der Typ ohne Laufzeitumgebung (Beschreibung, Felder). */
@@ -176,6 +225,9 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
         final VaultEntryOptions options = new VaultEntryOptions(secrets, config.credentialRef());
         final boolean credentialRefPresent = config.credentialRef() != null;
         boolean useCertificate = reader.bool(CERTIFICATE_USE, true);
+        // Zertifikat des asynchronen Transports, wie unten für den synchronen entschieden.
+        Certificate asyncCertificate = null;
+        boolean asyncPossible = true;
         if (!useCertificate) {
             // „Zertifikat verwenden“ abgewählt: wie MainframeMate ohne mTLS, auch wenn KeePass MM_CertAlias trägt.
             LOG.info("[Confluence] " + sourceId + ": Kein Zertifikat konfiguriert — ohne mTLS");
@@ -190,7 +242,9 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
                     + (certificate.keyStoreFile == null ? " (Windows-MY)" : " (" + certificate.keyStoreFile + ")"));
             transport.sslSocketFactory(certificates.socketFactory(certificate.alias, certificate.keyStoreFile,
                     certificate.passwordRef));
+            asyncCertificate = certificate;
         } else if (config.credentialRef() != null) {
+            asyncPossible = false;
             // Wie MainframeMate: Das Client-Zertifikat steht als MM_CertAlias im KeePass-Eintrag (Windows-MY).
             final SourceAddress id = sourceId;
             transport.sslSocketFactory(new LazySslSocketFactory(() -> {
@@ -217,6 +271,19 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
             if (sslSocketFactory != null) {
                 transport.sslSocketFactory(sslSocketFactory);
             }
+        }
+        ConfluenceAsyncHttpTransport async = null;
+        if (asyncTransports != null && asyncPossible) {
+            async = asyncCertificate == null
+                    ? asyncTransports.transport(sourceId, null, null, null, timeouts[0], timeouts[1])
+                    : asyncTransports.transport(sourceId, asyncCertificate.alias, asyncCertificate.keyStoreFile,
+                            asyncCertificate.passwordRef, timeouts[0], timeouts[1]);
+        } else if (asyncTransports != null) {
+            LOG.info("[Confluence] " + sourceId + ": Zertifikat aus dem KeePass-Eintrag — Snapshots nur synchron");
+        }
+        if (async != null) {
+            return new AsyncConfluenceKnowledgeSource(sourceId, config, transport.build(), async, mapping, secrets,
+                    options);
         }
         return new ConfluenceKnowledgeSource(sourceId, config, transport.build(), secrets, options);
     }
