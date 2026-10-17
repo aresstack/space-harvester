@@ -399,7 +399,19 @@ class SourceWizardTest {
             assertThat(w.error(w.proxyPort)).startsWith("Der Proxy-Port");
             w.proxyHost.setText("proxy.firma.de");
             w.proxyPort.setText("3128");
-            w.nonProxyHosts.setText("localhost, *.intern");
+            assertThat(w.proxyExceptions.isVisible()).as("Ausnahmen zunächst zugeklappt").isFalse();
+            w.advanced.doClick();
+            assertThat(w.proxyExceptions.isVisible()).isTrue();
+            for (String host : new String[] {"localhost", "*.intern", "weg.example.org"}) {
+                w.proxyExceptions.add.doClick();
+                // Wie getippt: Der Wert steht im Zelleditor, bis die nächste Aktion ihn übernimmt.
+                ((javax.swing.JTextField) w.proxyExceptions.table.getEditorComponent()).setText(host);
+            }
+            assertThat(w.proxyDraft().nonProxyHosts()).containsExactly("localhost", "*.intern", "weg.example.org");
+            assertThat(w.advanced.getText()).contains("3 Proxy-Ausnahmen");
+            w.proxyExceptions.table.setRowSelectionInterval(2, 2);
+            w.proxyExceptions.remove.doClick();
+            assertThat(w.proxyDraft().nonProxyHosts()).containsExactly("localhost", "*.intern");
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.checkNotes.getText()).contains("ALLE Quellen", "manual-proxy");

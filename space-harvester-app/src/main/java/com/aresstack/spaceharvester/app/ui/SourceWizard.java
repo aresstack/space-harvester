@@ -110,7 +110,10 @@ final class SourceWizard {
     final JTextField pacUrl = Comic.field(32);
     final JTextField proxyHost = Comic.field(24);
     final JTextField proxyPort = Comic.field(6);
-    final JTextField nonProxyHosts = Comic.field(32);
+    /** Proxy-Ausnahmen ({@code non-proxy-hosts}) als Tabelle, unter „Erweitert“ zunächst zugeklappt. */
+    final HostListEditor proxyExceptions = new HostListEditor();
+    final ComposerButton advanced = Comic.button("Erweitert ▸", "Proxy-Ausnahmen anzeigen");
+    private boolean advancedOpen;
     final ComposerButton resolveProxy = Comic.button("Proxy auflösen",
             "Route zur Adresse mit den gewählten Proxy-Einstellungen bestimmen, ohne etwas zu speichern");
     final JTextArea proxyLog = Comic.code();
@@ -178,7 +181,12 @@ final class SourceWizard {
         pacUrl.setText(proxyDraft.pacUrl() == null ? "" : proxyDraft.pacUrl());
         proxyHost.setText(proxyDraft.proxyHost() == null ? "" : proxyDraft.proxyHost());
         proxyPort.setText(proxyDraft.proxyPort() == null ? "" : proxyDraft.proxyPort());
-        nonProxyHosts.setText(proxyDraft.nonProxyHosts() == null ? "" : proxyDraft.nonProxyHosts());
+        proxyExceptions.hosts(proxyDraft.nonProxyHosts());
+        proxyExceptions.onChange(this::updateAdvanced);
+        advanced.addActionListener(e -> {
+            advancedOpen = !advancedOpen;
+            updateVisibility();
+        });
         proxyMode.addActionListener(e -> updateVisibility());
         proxyLog.setRows(6);
         include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
@@ -224,7 +232,12 @@ final class SourceWizard {
         network.row("PAC-Adresse", pacUrl, "z. B. http://proxy.example.org/proxy.pac");
         network.row("Proxy-Host", proxyHost, null);
         network.row("Proxy-Port", proxyPort, "1 bis 65535, z. B. 8080");
-        network.row("Ohne Proxy", nonProxyHosts, "Optional: Hosts, die direkt gehen, z. B. localhost, *.intern");
+        JPanel advancedRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        advancedRow.setOpaque(false);
+        advancedRow.add(advanced);
+        network.row("", advancedRow, null);
+        network.row("Proxy-Ausnahmen", proxyExceptions,
+                "Diese Hosts werden direkt und nicht über den Proxy angesprochen.");
         network.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten glaubt; eigene Truststores unter spring.ssl.bundle");
         JPanel diagnose = new JPanel(new BorderLayout(0, 6));
         diagnose.setOpaque(false);
@@ -511,11 +524,18 @@ final class SourceWizard {
         return proxyChanged() ? editor.withProxy(context.configFile(), draft, proxyDraft()) : draft;
     }
 
+    /** Beschriftung von „Erweitert“: auf- oder zugeklappt und wie viele Ausnahmen darin stehen. */
+    private void updateAdvanced() {
+        int exceptions = proxyExceptions.count();
+        advanced.setText((advancedOpen ? "Erweitert ▾" : "Erweitert ▸")
+                + (exceptions == 0 ? "" : " (" + Texts.count(exceptions, "Proxy-Ausnahme", "Proxy-Ausnahmen") + ")"));
+    }
+
     /** Die Proxy-Einstellungen aus Schritt 3; Fristen, die der Assistent nicht zeigt, bleiben wie bisher. */
     ProxyDraft proxyDraft() {
         ProxySettings.Mode mode = PROXY_MODES.get(Math.max(0, proxyMode.getSelectedIndex()));
         return new ProxyDraft(mode, pacUrl.getText(), proxyHost.getText(), proxyPort.getText(),
-                nonProxyHosts.getText(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
+                proxyExceptions.hosts(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
                 currentProxy.failureTtl());
     }
 
@@ -937,7 +957,12 @@ final class SourceWizard {
         network.visible(pacUrl, mode == ProxySettings.Mode.PAC_URL_MANUAL);
         network.visible(proxyHost, mode == ProxySettings.Mode.MANUAL_PROXY);
         network.visible(proxyPort, mode == ProxySettings.Mode.MANUAL_PROXY);
-        network.visible(nonProxyHosts, mode != ProxySettings.Mode.DISABLED);
+        // „Ohne Proxy (direkt)“ braucht keine Ausnahmen; sonst stehen sie zugeklappt unter „Erweitert“.
+        updateAdvanced();
+        network.visible(advanced, mode != ProxySettings.Mode.DISABLED);
+        network.visible(proxyExceptions, advancedOpen && mode != ProxySettings.Mode.DISABLED);
+        network.revalidate();
+        network.repaint();
         if (pkcs12 && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");

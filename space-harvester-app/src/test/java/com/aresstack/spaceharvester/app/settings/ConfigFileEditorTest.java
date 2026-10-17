@@ -313,7 +313,7 @@ class ConfigFileEditorTest {
                 """);
         ConfigFileEditor.Draft base = editor.draft(file, files("notizen", "/notizen"));
         ProxyDraft proxy = new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.firma.de", "3128",
-                "localhost, *.intern", Duration.ofSeconds(7), null, null);
+                java.util.List.of("localhost", " *.intern ", ""), Duration.ofSeconds(7), null, null);
 
         ConfigFileEditor.Draft draft = editor.withProxy(file, base, proxy);
         editor.save(file, draft);
