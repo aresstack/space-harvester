@@ -57,6 +57,21 @@ class LayeringTest {
             .allowEmptyShould(true);
 
     @ArchTest
+    static final ArchRule embeddingAdaptersKnowOnlyApplication = noClasses()
+            .that().resideInAPackage("..spaceharvester.embedding..")
+            .should().dependOnClassesThat().resideInAnyPackage(
+                    "..spaceharvester.api..", "..spaceharvester.source..", "..spaceharvester.output..",
+                    "..spaceharvester.config..", "..spaceharvester.security..", "..spaceharvester.persistence..",
+                    "org.springframework..")
+            .because("das Modell steckt hinter dem Port EmbeddingProvider (ADR 0004)");
+
+    @ArchTest
+    static final ArchRule modelRuntimesStayInsideTheEmbeddingAdapter = noClasses()
+            .that().resideOutsideOfPackage("..spaceharvester.embedding..")
+            .should().dependOnClassesThat().resideInAnyPackage("ai.onnxruntime..", "ai.djl..")
+            .because("ONNX Runtime und Tokenizer sind ein Detail des lokalen Modells (#89)");
+
+    @ArchTest
     static final ArchRule copiedUpstreamCodeIsUsedOnlyBySourceAdapters = noClasses()
             .that().resideOutsideOfPackage("..spaceharvester.source..")
             .should().dependOnClassesThat().resideInAPackage("com.aresstack.enterpriseai..")

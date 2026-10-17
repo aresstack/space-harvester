@@ -160,7 +160,7 @@ von Hand und bei Änderungen an Auszug oder Werkzeug) meldet, ob die Referenz er
 Auszug mit der veröffentlichten Fassung; ändert Atlassian die Referenz, wird er rot, ohne den Auszug zu ersetzen.
 
 In der IDE: `ConfluenceCompatContractTest` wie jeden anderen Test starten, auf der Kommandozeile
-`./gradlew test --tests '*ConfluenceCompatContractTest'`.
+`./gradlew :test --tests '*ConfluenceCompatContractTest'`.
 
 Weitere Version (z. B. die der produktiven Instanz) hinzunehmen, ohne Code zu ändern:
 

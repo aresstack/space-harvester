@@ -16,6 +16,10 @@ winProxy = "0.2.0"
 lucene = "10.5.2"
 # PDF-Ausgabe (#30)
 pdfbox = "3.0.5"
+# Lokales Embedding-Modell (#89): ONNX Runtime (1.30.0 stürzt in manchen Containern beim Start ab) und der
+# Hugging-Face-Tokenizer von DJL, beide mit nativen Bibliotheken für Linux, Windows und macOS im Jar
+onnxruntime = "1.31.0"
+djlTokenizers = "0.38.0"
 # enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
 gson = "2.10.1"
 jsoup = "1.17.2"
@@ -33,6 +37,8 @@ lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene"
 spring-cloud-dependencies = { module = "org.springframework.cloud:spring-cloud-dependencies", version.ref = "springCloud" }
 spring-cloud-azure-dependencies = { module = "com.azure.spring:spring-cloud-azure-dependencies", version.ref = "springCloudAzure" }
 pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
+onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
+djl-tokenizers = { module = "ai.djl.huggingface:tokenizers", version.ref = "djlTokenizers" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

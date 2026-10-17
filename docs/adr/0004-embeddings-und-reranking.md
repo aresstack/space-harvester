@@ -90,3 +90,21 @@ unverändert.
 2. `enrichment-store/v2` mit `KnnFloatVectorField` und einem Such-Port für die Vektorsuche.
 3. `sort=relevance` in `GET /api/v1/search` mit Kandidatenfenster und `Reranking`.
 4. Einen Reranker umsetzen (Kosinus über Embeddings oder ein Cross-Encoder).
+
+## Nachtrag 17.10.2026: Modell und Reihenfolge (#89)
+
+Entscheidung Angelo ([#89](https://github.com/aresstack/space-harvester/issues/89#issuecomment-6231616582)):
+
+- **Modell:** `intfloat/multilingual-e5-small`, lokal über ONNX Runtime im Prozess. 384 Dimensionen, 512 Token,
+  Deutsch und Englisch, MIT-Lizenz. Keine externe Inferenz, kein Senden von Inhalten nach außen.
+- **Gepinnt:** Revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`, `onnx/model.onnx` und `tokenizer.json` mit fester
+  SHA-256 (`E5Defaults`). Die Dateien stellt der Betrieb bereit; sie liegen nie im Repository und werden nie zur
+  Laufzeit geladen. Betrieb und Prüfung: [docs/EMBEDDINGS.md](../EMBEDDINGS.md).
+- **Umsetzung:** `OnnxEmbeddingProvider` (Paket `embedding.onnx`) mit Hugging-Face-Tokenizer, Präfix `passage: ` für
+  Dokumenttexte und `query: ` für Anfragen, Mean-Pooling über die Attention-Maske und L2-Normierung wie in der
+  Modellkarte. Geprüft gegen Referenzvektoren der PyTorch-Implementierung.
+- **Reihenfolge:** (1) Provider, (2) `enrichment-store/v2` mit `KnnFloatVectorField`, (3) Vektorsuche hinter der
+  `content`-Prüfung und `sort=relevance`. Der erste Reranker nutzt die Kosinusähnlichkeit der vorhandenen Embeddings;
+  ein Cross-Encoder ist keine Voraussetzung.
+- Damit sind Punkt 1 der offenen Liste und die Modellwahl erledigt. Qualität, CPU- und Speicherbedarf auf echten Daten
+  misst Angelo; erst danach wird über ein stärkeres oder entferntes Modell entschieden.
