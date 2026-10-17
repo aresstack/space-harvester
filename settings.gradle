@@ -16,3 +16,7 @@ rootProject.name = 'space-harvester'
 
 // Unveränderte Kopie der Confluence-Quelle aus aresstack/enterprise-ai-client, siehe enterprise-ai-sources/UPSTREAM.md.
 include 'enterprise-ai-sources'
+
+// Deutsches Dependency Parsing nach Universal Dependencies (#98, ADR 0005): Laufzeitmodul mit MaltParser und
+// objektzentrierter Auswertung. Die Anwendung bindet es (noch) nicht ein; das Modell kommt aus #99.
+include 'nlp-parser'

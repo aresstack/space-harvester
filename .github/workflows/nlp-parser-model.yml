@@ -1,0 +1,48 @@
+name: Deutsches Parsermodell
+
+# Rauchtest von :nlp-parser (#98, ADR 0005) mit dem echten, fest hinterlegten MaltParser-Modell aus #99.
+# Lädt das Release-Asset aus german-parser-model.properties (nie "latest"), prüft die SHA-256 und parst die
+# Gold-Sätze mit Gold- und mit OpenNLP-Wortarten. Trainiert nie. Ohne hinterlegtes Modell endet der Job mit Hinweis.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/nlp-parser-model.yml'
+      - 'nlp-parser/**'
+      - 'gradle/libs.versions.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hinterlegtes Modell lesen
+        id: pin
+        run: |
+          tag=$(sed -n 's/^release\.tag=//p' nlp-parser/src/main/resources/com/aresstack/spaceharvester/nlp/malt/german-parser-model.properties)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then
+            echo "::notice::Noch kein deutsches Parsermodell aus #99 hinterlegt; Rauchtest übersprungen."
+          fi
+      - uses: actions/setup-java@v4
+        if: steps.pin.outputs.tag != ''
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.pin.outputs.tag != ''
+      - name: Modell laden und prüfen
+        if: steps.pin.outputs.tag != ''
+        run: ./gradlew :nlp-parser:downloadGermanParserModel --console=plain
+      - name: Rauchtest mit echtem Modell
+        if: steps.pin.outputs.tag != ''
+        run: >-
+          ./gradlew :nlp-parser:test --tests '*RealModelSmokeTest' --console=plain
+          -PnlpModelDir=nlp-parser/build/nlp-model/${{ steps.pin.outputs.tag }}
+      - name: Bericht
+        if: always() && steps.pin.outputs.tag != ''
+        run: cat nlp-parser/build/reports/nlp-parser/smoke.txt >> "$GITHUB_STEP_SUMMARY" || true
