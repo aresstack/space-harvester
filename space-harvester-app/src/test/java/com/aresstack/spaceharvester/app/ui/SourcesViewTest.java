@@ -47,28 +47,51 @@ class SourcesViewTest {
         SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
         Container root = (Container) view[0].component();
 
-        List<IconButton> checks = new ArrayList<>();
-        SwingUtilities.invokeAndWait(() -> find(root, IconButton.class).stream()
-                .filter(b -> b.getToolTipText().startsWith("Verbindung prüfen")).forEach(checks::add));
-        assertThat(checks).hasSize(2);
-        // Keine Knopfleiste mehr über den Details, keine „Verbunden“-Box.
-        assertThat(find(root, AbstractButton.class)).noneMatch(b -> "Verbindung prüfen".equals(b.getText())
-                || "Bearbeiten …".equals(b.getText()) || "Entfernen …".equals(b.getText()));
+        // Keine Knopfleiste mehr, weder über den Details noch über der Space-Tabelle.
+        assertThat(find(root, AbstractButton.class)).noneMatch(b -> List.of("Verbindung prüfen", "Bearbeiten …",
+                "Entfernen …", "Öffnen", "Synchronisieren", "Exportieren …").contains(b.getText()));
+        List<IconButton> syncs = buttons(root, "Gewählten Space");
+        List<IconButton> pencils = buttons(root, "Einstellungen der Quelle");
+        assertThat(syncs).hasSize(2);
+        assertThat(pencils).hasSize(2);
 
         List<StatusMark> marks = find(root, StatusMark.class);
         assertThat(marks).hasSize(2);
-
-        SwingUtilities.invokeAndWait(() -> checks.get(1).doClick());
+        // Die App prüft beim Start selbst; danach steht der Haken an der Karte.
         await(() -> marks.get(1).state() == StatusMark.State.CONNECTED);
         assertThat(marks.get(1).getToolTipText()).isEqualTo("Verbunden · 1 Space");
 
+        // Spaces ist der erste Reiter; der Stift an der Karte öffnet die Einstellungen.
+        assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SPACES);
+        SwingUtilities.invokeAndWait(() -> pencils.get(1).doClick());
+        assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SETTINGS);
+
+        // Ohne gewählten Space startet der Kreispfeil nichts, sondern bittet um eine Auswahl.
         JTable spaces = find(root, JTable.class).get(0);
         await(() -> spaces.getRowCount() == 1);
+        assertThat(spaces.getSelectedRow()).isEqualTo(-1);
+        SwingUtilities.invokeAndWait(() -> syncs.get(1).doClick());
+        assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SPACES);
+        assertThat(context.runtime().workspace().jobs()).isEmpty();
+
+        // Mit gewähltem Space startet der Kreispfeil genau dessen Abgleich; die Auswahl übersteht den Klick.
+        SwingUtilities.invokeAndWait(() -> spaces.setRowSelectionInterval(0, 0));
+        SwingUtilities.invokeAndWait(() -> syncs.get(1).doClick());
+        await(() -> !context.runtime().workspace().jobs().isEmpty());
+        assertThat(spaces.getSelectedRow()).isZero();
+
         JTextField filter = find(root, JTextField.class).get(0);
         SwingUtilities.invokeAndWait(() -> filter.setText("gibt es nicht"));
         assertThat(spaces.getRowCount()).isZero();
         SwingUtilities.invokeAndWait(() -> filter.setText(""));
         assertThat(spaces.getRowCount()).isEqualTo(1);
+    }
+
+    private static List<IconButton> buttons(Container root, String tooltip) throws Exception {
+        List<IconButton> found = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> find(root, IconButton.class).stream()
+                .filter(b -> b.getToolTipText().startsWith(tooltip)).forEach(found::add));
+        return found;
     }
 
     @Test
