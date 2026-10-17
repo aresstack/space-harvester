@@ -430,8 +430,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 ## 9. Anreicherungen
 
 Nach jedem bestätigten Abgleich berechnet der Dienst Anreicherungen aus der Payload im Cache, als eigene Ergebnisse mit
-Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier Akronyme, Gliederung, Begriffe und
-Eigenschaften von 1002 (die Seite nennt keine Eigenschaft, darum ist die Liste leer):
+Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier alle sechs Prozessoren für 1002 (die
+Seite nennt keine Eigenschaft, darum ist diese Liste leer):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1002?view=extended"
@@ -450,6 +450,17 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
         { "acronym": "API", "count": 1, "expansion": "Application Programming Interface", "section": "REST-Schnittstelle" },
         { "acronym": "JSON", "count": 1, "expansion": null },
         { "acronym": "REST", "count": 1, "expansion": null }
+      ] }
+    },
+    {
+      "processor": "activities",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "activities": [
+        { "predicate": "liefert", "lemma": "liefern", "voice": "active", "participants": [
+          { "role": "ACTOR", "term": "API" },
+          { "role": "AFFECTED_OBJECT", "term": "JSON" }
+        ] }
       ] }
     },
     {
@@ -474,6 +485,15 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
       "status": "ok",
       "freshness": "current",
       "result": { "properties": [] }
+    },
+    {
+      "processor": "relations",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "relations": [
+        { "type": "spo", "subject": "API", "predicate": "liefern", "object": "JSON" },
+        { "type": "synonym", "subject": "API", "object": "Application Programming Interface" }
+      ] }
     }
   ]
 }
