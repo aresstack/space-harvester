@@ -13,6 +13,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.DefaultParameterNameDiscoverer;
+import org.springframework.core.MethodParameter;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ValueConstants;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -67,7 +71,7 @@ class ApiRouteCoverageTest {
     @Test
     void everyRouteWithSourceDeclaresTheCaller() {
         for (Route route : apiRoutes()) {
-            if (route.path().contains("{sourceId}")) {
+            if (takesSourceId(route)) {
                 assertThat(Arrays.stream(route.handler().getMethodParameters())
                         .anyMatch(parameter -> parameter.getParameterType() == AccessContext.class))
                         .as("%s nimmt AccessContext und prüft über den AccessGuard", route).isTrue();
@@ -105,11 +109,7 @@ class ApiRouteCoverageTest {
     }
 
     private HttpResponse<String> send(Route route, String token) throws Exception {
-        String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1");
-        if (!route.path().contains("{sourceId}")) {
-            // Routen, die die Quelle als Parameter nehmen (Suche), sonst scheitern sie an der Eingabe statt am Recht.
-            path += "?sourceId=wiki";
-        }
+        String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1") + query(route);
         HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getRequiredProperty("local.server.port") + path))
                 .header("Content-Type", "application/json")
@@ -118,6 +118,27 @@ class ApiRouteCoverageTest {
             request.header("Authorization", "Bearer " + token);
         }
         return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Pflicht-Query-Parameter mit Platzhaltern, damit die Anfrage die Rechteprüfung erreicht. */
+    private static String query(Route route) {
+        List<String> pairs = new ArrayList<>();
+        for (MethodParameter parameter : route.handler().getMethodParameters()) {
+            RequestParam param = parameter.getParameterAnnotation(RequestParam.class);
+            if (param != null && param.required() && ValueConstants.DEFAULT_NONE.equals(param.defaultValue())) {
+                String name = param.name().isEmpty() ? param.value() : param.name();
+                if (name.isEmpty()) {
+                    parameter.initParameterNameDiscovery(new DefaultParameterNameDiscoverer());
+                    name = parameter.getParameterName();
+                }
+                pairs.add(name + "=" + ("sourceId".equals(name) ? "wiki" : "x1"));
+            }
+        }
+        return pairs.isEmpty() ? "" : "?" + String.join("&", pairs);
+    }
+
+    private static boolean takesSourceId(Route route) {
+        return route.path().contains("{sourceId}") || query(route).contains("sourceId=");
     }
 
     private record Route(String method, String path, HandlerMethod handler) {

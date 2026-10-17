@@ -90,7 +90,8 @@ space-harvester:
 
 - **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
   (Personal Access Token als `Authorization: Bearer`). Die Zugangsdaten gehen über einen `SecretProvider` an den
-  Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
+  Confluence-Adapter. Platzhalter können optional aus Azure Key Vault kommen (Profil `azure-keyvault`); ein
+  Platzhalter ohne Wert verhindert den Start. Varianten, Anmeldung und Live-Test: [docs/SECRETS.md](docs/SECRETS.md).
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
 - **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
@@ -115,7 +116,7 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server. Proxy und PAC: siehe nächsten Abschnitt.
+- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
