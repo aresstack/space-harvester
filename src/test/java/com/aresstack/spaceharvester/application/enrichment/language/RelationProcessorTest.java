@@ -67,6 +67,14 @@ class RelationProcessorTest {
     }
 
     @Test
+    void negatesPartRelationsWithKein() {
+        assertThat(processor.process(plain("Das Modul enthält keine Komponenten.")).payloadJson())
+                .contains("\"type\":\"has_part\",\"subject\":\"Modul\",\"subjectNormalized\":\"modul\","
+                        + "\"predicate\":\"has_part\",\"object\":\"Komponenten\","
+                        + "\"objectNormalized\":\"komponenten\",\"negated\":true");
+    }
+
+    @Test
     void findsSynonymsOnlyWithAcronymOrCueWord() {
         String json = processor.process(plain("Die API (Application Programming Interface) liefert JSON. "
                 + "Der Harvester (auch Sammler genannt) läuft. Der Server (Produktion) läuft.")).payloadJson();
@@ -96,6 +104,14 @@ class RelationProcessorTest {
                         + "\"object\":\"starten\",\"objectNormalized\":\"starten\",\"negated\":false,"
                         + "\"cue\":\"Nachdem\"");
         assertThat(json.split("\"type\":\"before\"")).hasSize(4);
+    }
+
+    @Test
+    void ordersASentenceInitialBevorClauseAfterItsMainClause() {
+        assertThat(processor.process(plain("Bevor der Dienst die Daten speichert, prüft er sie.")).payloadJson())
+                .contains("\"subject\":\"prüfen\",\"subjectNormalized\":\"prüfen\",\"predicate\":\"before\","
+                        + "\"object\":\"speichern\",\"objectNormalized\":\"speichern\",\"negated\":false,"
+                        + "\"cue\":\"Bevor\"");
     }
 
     @Test

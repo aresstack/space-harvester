@@ -79,8 +79,13 @@ public class RelationProcessor implements EnrichmentProcessor {
                 Token cue = cue(activity);
                 if (cue != null && previous != null && java.util.Objects.equals(section, previousSection)) {
                     found.add(before(previous, activity, cue));
-                } else if (conjunction != null && conjunction.lower().equals("bevor") && i > 0) {
-                    found.add(before(activities.get(i - 1), activity, conjunction));
+                } else if (conjunction != null && conjunction.lower().equals("bevor")) {
+                    // Der Hauptsatz geschieht zuerst, ob er vor oder nach dem bevor-Satz steht.
+                    Activity main = i > 0 ? activities.get(i - 1) : i + 1 < activities.size()
+                            ? activities.get(i + 1) : null;
+                    if (main != null) {
+                        found.add(before(main, activity, conjunction));
+                    }
                 } else if (conjunction != null && conjunction.lower().equals("nachdem")) {
                     Activity other = i + 1 < activities.size() ? activities.get(i + 1) : i > 0
                             ? activities.get(i - 1) : null;
@@ -220,7 +225,9 @@ public class RelationProcessor implements EnrichmentProcessor {
             if (object == null) {
                 return;
             }
-            found.add(relation(type, subject, object, negated, sentence));
+            Token first = tokens.get(object.from());
+            boolean none = first.is(WordClass.DETERMINER) && first.lower().startsWith("kein");
+            found.add(relation(type, subject, object, negated || none, sentence));
             i = object.to();
             if (i < tokens.size() && (tokens.get(i).punctuation(",") || tokens.get(i).is(WordClass.CONJUNCTION)
                     && Set.of("und", "oder", "sowie").contains(tokens.get(i).lower()))) {
