@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -194,9 +195,9 @@ public final class SourcesView implements View {
         config.options().forEach((key, value) -> facts.add("Option " + key, value));
         facts.add("Anmeldung", Texts.auth(config.auth()));
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-            boolean session = context.secrets().has(config);
+            boolean session = context.secrets().has(entry);
             facts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(config.auth())) ? "verschlüsselt gespeichert"
+                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)) ? "verschlüsselt gespeichert"
                             : session ? "für diese Sitzung eingegeben"
                             : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
                             : "fehlt (im Assistenten unter Bearbeiten … eingeben)",
@@ -209,6 +210,7 @@ public final class SourcesView implements View {
                 + (certificate.alias() == null ? "" : ", Alias " + certificate.alias())
                 + (certificate.thumbprint() == null ? "" : ", Fingerabdruck " + certificate.thumbprint()));
         facts.add("Vertrauen", config.trustBundle() == null ? "Zertifikate der Java-Laufzeit"
+                : TrustStores.WINDOWS.equals(config.trustBundle()) ? SourceWizard.WINDOWS_TRUST
                 : "SSL-Bundle " + config.trustBundle());
         facts.add("Proxy", context.settings().proxy().mode().name().toLowerCase().replace('_', '-'));
 
@@ -221,7 +223,7 @@ public final class SourcesView implements View {
                 capabilities.add(Texts.capability(capability), has ? "ja" : "nein", has ? Comic.INK : Comic.MUTED);
             }
         } else {
-            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry.config())
+            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry)
                     ? "wartet auf Zugangsdaten" : "nicht gestartet");
         }
 
@@ -282,7 +284,7 @@ public final class SourcesView implements View {
         if (value == null || value.length == 0) {
             return;
         }
-        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry.config().auth()), value);
+        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
         // Die Eingabe geht einer Property oder Variable vor und gilt sofort (Neustart der Quellen).
         feedback.working(entry.secretMissing() ? "Quelle wird mit den neuen Zugangsdaten gestartet …"
                 : "Die Eingabe ersetzt für diese Sitzung den Wert aus Property/Umgebung; Quellen starten neu …");

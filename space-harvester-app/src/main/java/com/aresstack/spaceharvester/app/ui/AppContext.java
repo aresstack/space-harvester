@@ -211,12 +211,12 @@ public final class AppContext {
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
         for (AppSettings.SourceEntry entry : loaded.sources()) {
-            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry.config())
+            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
                     || !vault.has(entry.id())) {
                 continue;
             }
             try {
-                String login = AppRuntime.SessionSecrets.login(entry.config().auth());
+                String login = AppRuntime.SessionSecrets.login(entry);
                 // Nur ein Wert für genau diese Anmeldung; nach einem Wechsel (Token → Passwort) fragt die App.
                 char[] value = vault.load(entry.id(), login);
                 if (value != null) {

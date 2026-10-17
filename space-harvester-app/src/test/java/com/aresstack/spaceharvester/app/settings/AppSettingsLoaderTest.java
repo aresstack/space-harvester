@@ -56,6 +56,9 @@ class AppSettingsLoaderTest {
         assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("wiki", "handbuch");
         SourceSettingsConfig wiki = settings.sources().get(0).config();
         assertThat(wiki.auth().type()).isEqualTo(SourceSettingsConfig.AuthType.PAT);
+        assertThat(settings.sources().get(0).secretVariable()).as("Name bleibt auch aufgelöst erhalten")
+                .isEqualTo("WIKI_TOKEN");
+        assertThat(settings.sources().get(0).secretMissing()).isFalse();
         assertThat(wiki.clientCertificate().type()).isEqualTo(SourceSettingsConfig.CertificateStoreType.WINDOWS_MY);
         assertThat(settings.proxy().mode()).isEqualTo(ProxySettings.Mode.PAC_URL_MANUAL);
         assertThat(settings.storage().dataDirectory()).isEqualTo(home.resolve("daten"));

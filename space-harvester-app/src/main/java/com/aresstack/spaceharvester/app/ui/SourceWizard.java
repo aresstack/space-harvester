@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ProxyDraft;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
@@ -74,6 +75,7 @@ final class SourceWizard {
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
     private static final String JAVA_TRUST = "Zertifikate der Java-Laufzeit";
+    static final String WINDOWS_TRUST = "Windows-Zertifikatspeicher und Java-Laufzeit";
     /** Öffentliche Confluence-Instanz (Atlassian-Dokumentation), lesbar ohne Anmeldung: Vorgabe zum Ausprobieren. */
     static final String DEFAULT_URL = "https://confluence.atlassian.com";
     static final String DEFAULT_TITLE = "Confluence-Hilfe (Atlassian)";
@@ -157,9 +159,15 @@ final class SourceWizard {
         certificate.addItem(WINDOWS_MY);
         certificate.addItem(PKCS12);
         trust.addItem(JAVA_TRUST);
+        trust.addItem(WINDOWS_TRUST);
         AppSettings settings = context.settings();
         if (settings != null) {
-            settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
+            settings.trustStores().keySet().stream().sorted()
+                    .filter(name -> !TrustStores.WINDOWS.equals(name)).forEach(trust::addItem);
+        }
+        if (context.loader().windows()) {
+            // Wie Browser und PowerShell: Firmen-CAs aus dem Windows-Speicher gelten ohne eigenen Truststore
+            trust.setSelectedItem(WINDOWS_TRUST);
         }
         for (ProxySettings.Mode mode : PROXY_MODES) {
             proxyMode.addItem(proxyLabel(mode));
@@ -217,7 +225,7 @@ final class SourceWizard {
         network.row("Proxy-Host", proxyHost, null);
         network.row("Proxy-Port", proxyPort, "1 bis 65535, z. B. 8080");
         network.row("Ohne Proxy", nonProxyHosts, "Optional: Hosts, die direkt gehen, z. B. localhost, *.intern");
-        network.row("Vertrauen", trust, "Eigene Zertifizierungsstellen stehen unter spring.ssl.bundle");
+        network.row("Vertrauen", trust, "Wem die App bei Serverzertifikaten glaubt; eigene Truststores unter spring.ssl.bundle");
         JPanel diagnose = new JPanel(new BorderLayout(0, 6));
         diagnose.setOpaque(false);
         JPanel diagnoseButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
@@ -324,7 +332,8 @@ final class SourceWizard {
                 : PKCS12.equals(certificate.getSelectedItem()) ? SourceSettingsConfig.CertificateStoreType.PKCS12
                 : null;
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
-        String bundle = String.valueOf(trust.getSelectedItem());
+        String bundle = WINDOWS_TRUST.equals(trust.getSelectedItem()) ? TrustStores.WINDOWS
+                : String.valueOf(trust.getSelectedItem());
         return new SourceDraft(id.getText(), confluence ? SourceDraft.CONFLUENCE : SourceDraft.FILES,
                 title.getText(), confluence ? address() : null, confluence ? null : directory.getText(),
                 confluence ? null : include.getText(), authType,
@@ -429,36 +438,21 @@ final class SourceWizard {
             ConfigFileEditor.Draft draft = write(source);
             SecretVault vault = context.vault();
             boolean typed = value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE;
-            if (typed && vault.available()) {
-                // Erst der Tresor, dann die Datei: scheitert die Datei, kommt der alte Tresorwert zurück, sodass
-                // ein zweiter Versuch auf demselben Stand beginnt.
-                String previousLogin = editing == null ? null
-                        : AppRuntime.SessionSecrets.login(editing.draft().authType(), editing.draft().username());
-                char[] previous = previousLogin == null ? null : vault.load(source.id(), previousLogin);
-                vault.store(source.id(), login(source), Arrays.copyOf(value, value.length));
-                try {
-                    editor.save(context.configFile(), draft, backup);
-                } catch (IOException | RuntimeException e) {
-                    restore(vault, source.id(), previousLogin, previous, e);
-                    throw e;
-                }
-                if (previous != null) {
-                    Arrays.fill(previous, '\0');
-                }
-            } else if (!typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE)) {
-                // Auch hier erst der Tresor (verschlüsselt gemerkt), dann die Datei; scheitert sie, kommt er zurück.
+            boolean drop = !typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE);
+            if ((typed && vault.available()) || drop) {
+                // Erst der Tresor, dann die Datei: Der bisherige Eintrag wird verschlüsselt gemerkt (ohne ihn zu
+                // entschlüsseln) und kommt zurück, wenn die Datei scheitert; ein zweiter Versuch beginnt auf
+                // demselben Stand.
                 String stored = vault.raw(source.id());
-                vault.remove(source.id());
+                if (typed) {
+                    vault.store(source.id(), login(source), Arrays.copyOf(value, value.length));
+                } else {
+                    vault.remove(source.id());
+                }
                 try {
                     editor.save(context.configFile(), draft, backup);
                 } catch (IOException | RuntimeException e) {
-                    if (stored != null) {
-                        try {
-                            vault.restore(source.id(), stored);
-                        } catch (IOException | RuntimeException restore) {
-                            e.addSuppressed(restore);
-                        }
-                    }
+                    restore(vault, source.id(), stored, e);
                     throw e;
                 }
             } else {
@@ -484,16 +478,15 @@ final class SourceWizard {
     }
 
     private static String login(SourceDraft source) {
-        return AppRuntime.SessionSecrets.login(source.authType(), source.username());
+        return AppRuntime.SessionSecrets.login(source.authType(), source.username(), source.secretVariable());
     }
 
-    private static void restore(SecretVault vault, String sourceId, String login, char[] previous,
-                                Exception failure) {
+    private static void restore(SecretVault vault, String sourceId, String stored, Exception failure) {
         try {
-            if (previous == null) {
+            if (stored == null) {
                 vault.remove(sourceId);
             } else {
-                vault.store(sourceId, login, previous);
+                vault.restore(sourceId, stored);
             }
         } catch (IOException | RuntimeException e) {
             failure.addSuppressed(e);
@@ -591,7 +584,11 @@ final class SourceWizard {
         certificatePath.setText(source.certificatePath() == null ? "" : source.certificatePath());
         certificatePasswordVariable.setText(source.certificatePasswordVariable() == null ? ""
                 : source.certificatePasswordVariable());
-        if (source.trustBundle() != null) {
+        if (source.trustBundle() == null) {
+            trust.setSelectedItem(JAVA_TRUST);
+        } else if (TrustStores.WINDOWS.equals(source.trustBundle())) {
+            trust.setSelectedItem(WINDOWS_TRUST);
+        } else {
             boolean listed = false;
             for (int i = 0; i < trust.getItemCount(); i++) {
                 listed |= source.trustBundle().equals(trust.getItemAt(i));
