@@ -243,7 +243,7 @@ synchronisieren.
   Abschluss zeigt die Ansicht den Bestand; der Fortschritt steht zusätzlich unter Aufträge.
 - **Liste / Seitenbaum** sind zwei Darstellungen derselben Seiten. Der Seitenbaum entsteht aus dem Bestand und ist
   bis zur Synchronisierung ausgegraut (Tooltip sagt warum).
-- **Seite wählen** lädt sie sofort, ohne eigenen Knopf. Fehlt sie im Bestand, kommt sie live. Ohne gewählte Seite
+- **Seite wählen** lädt sie sofort, ohne eigenen Knopf. Fehlt sie im Bestand, holt der Core sie und legt sie ab. Ohne gewählte Seite
   steht rechts nur „Wähle links eine Seite aus …“, nie die Seite eines vorigen Space.
 - **Erweitert** enthält technische Angaben (Herkunft, Hashes, Revision, Cache-Stand), Analyse, Originaldaten
   (Payload, Storage-Format) sowie „Aktualität prüfen“ und „Original speichern …“.
@@ -252,8 +252,8 @@ synchronisieren.
   „Lokaler Bestand nicht lesbar“. Scheitert ein Seitenabruf, obwohl die Spaces kamen, steht die Ursache des Core
   (z. B. Zeitüberschreitung, TLS-Fehler, HTTP-Status) direkt in der Meldung, denn die Verbindungsprüfung fragt nur
   die Spaces ab.
-- Bis der Core eine fehlende Seite beim Abruf selbst nachlädt und speichert, holt die App sie live (`refresh=true`)
-  und legt nichts ab; das übernimmt die Synchronisierung.
+- Eine Seite, die nicht im Bestand liegt, holt der Core beim Öffnen bei der Quelle (nach Rechteprüfung an den
+  Live-Kopfdaten), legt sie im Bestand ab und liefert sie aus; „Space synchronisieren“ übernimmt den ganzen Space.
 
 ## Rückverfolgbarkeit REST → Anwendungsfall → App → Test
 
