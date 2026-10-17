@@ -410,7 +410,9 @@ Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `ma
 `conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
 ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
 `space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
-`CONVERSION_TOO_LARGE`, statt abzuschneiden.
+`CONVERSION_TOO_LARGE`, statt abzuschneiden. Alle Artefakte zusammen belegen höchstens
+`space-harvester.export.max-total-bytes` (Standard 20 GiB); ist die Ablage voll, lehnt der Start mit
+`export-storage-full` (507) ab, ein laufender Export scheitert mit `EXPORT_STORAGE_FULL`.
 
 **Assets (#19):** Anhänge und referenzierte Bilder werden getrennt vom Seiten-JSON und nur auf Anfrage geladen, über
 dieselbe Anmeldung, dieselben Zertifikate und denselben Proxy wie die Seiten; fremde URLs (`ri:url`) werden nie

@@ -26,6 +26,8 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Converter (#30) sind Beans vom Typ {@link ExportConverter}; jede konvertierte Datei darf höchstens
  * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 512 MiB), sonst scheitert der Export.
+ * Alle Artefakte zusammen belegen höchstens {@code space-harvester.export.max-total-bytes} (Standard 20 GiB); ist die
+ * Ablage voll, lehnt der Start mit 507 ab und ein laufender Export scheitert mit {@code EXPORT_STORAGE_FULL}.
  * {@code space-harvester.export.pdf.font} nennt optional eine TrueType-Schrift, die PDFs einbetten.
  */
 @Configuration(proxyBeanMethods = false)
@@ -33,8 +35,10 @@ class ExportConfiguration {
 
     @Bean
     ExportArtifactWriter exportArtifactWriter(
-            @Value("${space-harvester.export.directory:data/exports}") Path directory) {
-        return new FileSystemExportArtifactWriter(directory);
+            @Value("${space-harvester.export.directory:data/exports}") Path directory,
+            @Value("${space-harvester.export.max-total-bytes:"
+                    + FileSystemExportArtifactWriter.DEFAULT_MAX_TOTAL_BYTES + "}") long maxTotalBytes) {
+        return new FileSystemExportArtifactWriter(directory, maxTotalBytes);
     }
 
     @Bean
