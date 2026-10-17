@@ -266,6 +266,28 @@ class ConfigFileEditorTest {
         assertThatThrownBy(() -> editor.editable(file, "zwei")).hasMessageContaining("abgeschaltet");
     }
 
+    @Test
+    void aPlaintextSecretAnywhereInTheFileCounts() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE);
+        assertThat(editor.fileHasPlaintextSecret(file)).isFalse();
+        Files.writeString(file, THREE.replace("${ZWEI_TOKEN}", "klartext"));
+        assertThat(editor.fileHasPlaintextSecret(file)).as("andere Quelle").isTrue();
+        assertThat(editor.hasPlaintextSecret(file, "eins")).isFalse();
+        Files.writeString(file, THREE + """
+                spring:
+                  ssl:
+                    bundle:
+                      jks:
+                        intern:
+                          truststore:
+                            location: file:/certs/intern.p12
+                            password: ${TRUST_PASSWORD:geheim}
+                """);
+        assertThat(editor.fileHasPlaintextSecret(file)).as("Vertrauensspeicher mit Standardwert").isTrue();
+        assertThat(editor.fileHasPlaintextSecret(home.resolve("fehlt.yml"))).isFalse();
+    }
+
     private static SourceDraft wiki() {
         return new SourceDraft("wiki", "confluence", "Wiki", "https://wiki.example.org", null, null,
                 SourceSettingsConfig.AuthType.PAT, null, "WIKI_TOKEN",

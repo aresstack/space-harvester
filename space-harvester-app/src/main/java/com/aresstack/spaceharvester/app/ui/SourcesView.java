@@ -313,15 +313,16 @@ public final class SourcesView implements View {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         boolean plaintext;
         try {
-            plaintext = editor.hasPlaintextSecret(context.configFile(), id);
+            plaintext = editor.fileHasPlaintextSecret(context.configFile());
         } catch (IOException | RuntimeException e) {
             feedback.problem(e);
             return;
         }
-        // Mit Klartext-Geheimnis in der Datei entsteht keine .bak (und eine alte wird gelöscht), sonst läge das
-        // Geheimnis dort weiter; das muss der Bediener vor dem Bestätigen wissen.
+        // Mit Klartext-Geheimnis irgendwo in der Datei entsteht keine .bak (und eine alte wird gelöscht), sonst läge
+        // das Geheimnis dort weiter; das muss der Bediener vor dem Bestätigen wissen.
         String backup = plaintext
-                ? "Weil die Quelle ein Passwort oder Token im Klartext enthält, wird KEINE Sicherung (.bak) angelegt "
+                ? "Weil die Konfigurationsdatei ein Passwort oder Token im Klartext enthält, wird KEINE Sicherung (.bak) "
+                        + "angelegt "
                         + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
                 : "Die vorige Fassung bleibt als .bak erhalten.";
         if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "

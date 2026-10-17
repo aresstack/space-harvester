@@ -11,6 +11,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -28,6 +29,9 @@ public final class ConfigFileEditor {
     private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
     private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
     private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
+    /** Schlüssel (normalisiert wie im Loader), deren Wert ein Geheimnis ist. */
+    private static final Set<String> SECRET_KEYS = Set.of("password", "token", "secret", "clientsecret", "passphrase",
+            "apikey", "keypassword", "storepassword");
     private static final String HEADER = """
             # Space Harvester Desktop – Konfiguration (angelegt vom Quellen-Assistenten)
             # Geheimnisse nie hier eintragen, sondern als Umgebungsvariable referenzieren: ${NAME}.
@@ -137,6 +141,38 @@ public final class ConfigFileEditor {
                         AppSettingsLoader.get(certificate, "password"))
                 .filter(value -> value != null && !String.valueOf(value).isBlank())
                 .anyMatch(value -> !SourceDraft.isBarePlaceholder(String.valueOf(value)));
+    }
+
+    /**
+     * Ob irgendwo in der Datei ein Passwort, Token oder Geheimnis im Klartext steht (alle Quellen, Vertrauensspeicher,
+     * auch nicht ausgewertete Felder). Nur eine Datei ohne Klartext-Geheimnis darf beim Bearbeiten und Entfernen als
+     * {@code .bak} liegen bleiben.
+     */
+    public boolean fileHasPlaintextSecret(Path file) throws IOException {
+        if (!Files.isRegularFile(file)) {
+            return false;
+        }
+        return containsPlaintextSecret(AppSettingsLoader.yaml().load(Files.readString(file, StandardCharsets.UTF_8)));
+    }
+
+    private static boolean containsPlaintextSecret(Object node) {
+        if (node instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                Object value = entry.getValue();
+                if (SECRET_KEYS.contains(AppSettingsLoader.normalize(String.valueOf(entry.getKey())))
+                        && !(value instanceof Map<?, ?>) && !(value instanceof List<?>)
+                        && value != null && !String.valueOf(value).isBlank()
+                        && !SourceDraft.isBarePlaceholder(String.valueOf(value))) {
+                    return true;
+                }
+                if (containsPlaintextSecret(value)) {
+                    return true;
+                }
+            }
+        } else if (node instanceof List<?> list) {
+            return list.stream().anyMatch(ConfigFileEditor::containsPlaintextSecret);
+        }
+        return false;
     }
 
     /** Schreibt den Entwurf; die bisherige Datei bleibt als {@code .bak} erhalten. */

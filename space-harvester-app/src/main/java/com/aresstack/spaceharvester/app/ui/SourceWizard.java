@@ -341,8 +341,8 @@ final class SourceWizard {
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         Background.run(() -> {
-            // Ob die bisherige Fassung ein Geheimnis enthält, entscheidet der Rohtext, nicht die gelesenen Angaben.
-            boolean backup = editing == null || !editor.hasPlaintextSecret(context.configFile(), source.id());
+            // Ob die bisherige Fassung ein Geheimnis enthält, entscheidet der Rohtext der ganzen Datei.
+            boolean backup = editing == null || !editor.fileHasPlaintextSecret(context.configFile());
             editor.save(context.configFile(), write(source), backup);
             return source.id();
         }, savedId -> {
@@ -369,7 +369,7 @@ final class SourceWizard {
             return false;
         }
         try {
-            return editor.hasPlaintextSecret(context.configFile(), editing.draft().id());
+            return editor.fileHasPlaintextSecret(context.configFile());
         } catch (IOException | RuntimeException e) {
             return true;
         }
@@ -494,17 +494,18 @@ final class SourceWizard {
                 .append(editing == null ? "" : "den bisherigen der Quelle " + source.id() + " in ")
                 .append(context.configFile().toAbsolutePath()).append(" unter space-harvester.sources; der Rest der "
                         + "Datei bleibt unverändert");
-        // Dieselbe Entscheidung wie beim Speichern: Steht im bisherigen Eintrag irgendein Geheimnis im Klartext,
-        // entsteht keine .bak (eine vorhandene wird gelöscht).
+        // Dieselbe Entscheidung wie beim Speichern: Steht irgendwo in der Datei ein Geheimnis im Klartext, entsteht
+        // keine .bak (eine vorhandene wird gelöscht).
         if (!dropsBackup()) {
             notes.append(", die vorige Fassung bleibt als .bak erhalten.");
         } else {
-            notes.append(". Weil der bisherige Eintrag ")
-                    .append(editing.plaintextSecrets().isEmpty() ? "ein Passwort oder Token"
-                            : String.join(" und ", editing.plaintextSecrets()))
-                    .append(" im Klartext enthält, entsteht KEINE .bak-Sicherung, und eine vorhandene wird gelöscht; "
-                            + "dort steht künftig nur der Platzhalter. Den Wert als Umgebungsvariable setzen oder hier "
-                            + "für diese Sitzung eingeben.");
+            notes.append(". Weil die Konfigurationsdatei ein Passwort oder Token im Klartext enthält, entsteht "
+                    + "KEINE .bak-Sicherung, und eine vorhandene wird gelöscht.");
+            if (!editing.plaintextSecrets().isEmpty()) {
+                notes.append(" In diesem Eintrag betrifft das ").append(String.join(" und ",
+                        editing.plaintextSecrets())).append("; dort steht künftig nur der Platzhalter. Den Wert als "
+                        + "Umgebungsvariable setzen oder hier für diese Sitzung eingeben.");
+            }
         }
         if (source.secretVariable() != null && System.getenv(source.secretVariable()) == null
                 && System.getProperty(source.secretVariable()) == null) {

@@ -45,11 +45,12 @@ Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu lad
 
 **Bearbeiten …** öffnet denselben Assistenten mit den Angaben der gewählten Quelle (ID und Art bleiben fest) und
 ersetzt den Eintrag an seiner Stelle. Optionen, die der Assistent nicht abfragt (z. B. `connectTimeoutMillis`),
-bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht ein Passwort,
-Token oder Zertifikatspasswort im Klartext in der Datei, ersetzt der Assistent es durch den Platzhalter und legt keine
-`.bak` mit dem Geheimnis an (eine vorhandene wird gelöscht). **Entfernen …** nimmt den Eintrag nach Rückfrage aus der
-Datei; der lokale Bestand im Datenordner bleibt liegen. Auch dabei entsteht bei einem Klartext-Geheimnis keine `.bak`;
-die Rückfrage sagt das vorher ausdrücklich.
+bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht im
+bearbeiteten Eintrag ein Passwort, Token oder Zertifikatspasswort im Klartext, ersetzt der Assistent es durch den
+Platzhalter. **Entfernen …** nimmt den Eintrag nach Rückfrage aus der Datei; der lokale Bestand im Datenordner bleibt
+liegen. Steht irgendwo in der Datei ein Geheimnis im Klartext (jede Quelle, Vertrauensspeicher, auch nicht ausgewertete
+Felder oder `${NAME:wert}`), legen Bearbeiten und Entfernen keine `.bak` an und löschen eine vorhandene; Prüfseite und
+Rückfrage sagen das vorher ausdrücklich.
 
 ## Konfiguration
 

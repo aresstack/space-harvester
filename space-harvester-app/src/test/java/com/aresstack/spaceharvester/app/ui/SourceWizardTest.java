@@ -183,6 +183,56 @@ class SourceWizardTest {
     }
 
     @Test
+    void switchingFromPasswordToTokenDropsTheSessionValueAndAnotherSourcesSecretSkipsTheBackup() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: wiki
+                      type: confluence
+                      base-url: https://wiki.example.invalid
+                      auth:
+                        type: basic
+                        username: angelo
+                        password: ${WIKI_PASSWORD}
+                    - id: andere
+                      type: confluence
+                      base-url: https://andere.example.invalid
+                      auth:
+                        type: pat
+                        token: anderes-klartext
+                """.formatted(home.resolve("data")));
+        Files.writeString(home.resolve("app.yml.bak"), "alt");
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        context.secrets().put("wiki", "sitzungs-passwort".toCharArray());
+
+        SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
+        assertThat(editable.plaintextSecrets()).isEmpty();
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context, editable);
+            w.onSaved(id -> saved.countDown());
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).isTrue();
+            w.auth.setSelectedItem("Personal Access Token");
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).isTrue();
+            assertThat(w.checkNotes.getText()).as("Geheimnis der anderen Quelle").contains("KEINE .bak")
+                    .doesNotContain("bleibt als .bak");
+            w.save();
+        });
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("type: pat", "anderes-klartext");
+        assertThat(home.resolve("app.yml.bak")).doesNotExist();
+        assertThat(context.secrets().has("wiki")).as("Passwort taugt nicht als Token").isFalse();
+    }
+
+    @Test
     void confluenceAsksForLoginAndCertificates() throws Exception {
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), home.resolve("app.yml"),
                 "test");
