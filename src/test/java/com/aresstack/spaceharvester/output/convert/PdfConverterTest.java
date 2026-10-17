@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.output.convert;
 
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
@@ -24,6 +25,7 @@ import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.text.PDFTextStripper;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -158,5 +160,15 @@ class PdfConverterTest {
             assertThat(pdf.getNumberOfPages()).isGreaterThan(20);
             assertThat(new PDFTextStripper().getText(pdf)).contains("Seite 1199");
         }
+    }
+
+    @Test
+    void longWordsDeepNestingAndWideTablesStayCheap() {
+        String word = "x".repeat(200_000);
+        String nested = "<ul><li>".repeat(60) + "tief" + "</li></ul>".repeat(60);
+        String wide = "<table><tbody><tr>" + "<td>zelle</td>".repeat(300) + "</tr></tbody></table>";
+        byte[] pdf = assertTimeoutPreemptively(Duration.ofSeconds(30),
+                () -> convert(List.of(storagePage("100", null, 0, "<p>" + word + "</p>" + nested + wide))));
+        assertThat(pdf).isNotEmpty();
     }
 }

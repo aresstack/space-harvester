@@ -192,6 +192,12 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
   Freigabe für alle Spaces erst nach dem Lesen mit dem Space aus der Quelle geprüft, sonst 404); die Seiten-ID prüft der
   Adapter, die Liste ist auf `MAX_ATTACHMENTS` begrenzt und gehört nachweislich zur angefragten Seite. Sie liefert nur
   Metadaten und die Adresse in der Quelle, keine Inhalte und keine Download-Freigabe.
+- Converter Markdown, Word, PDF (#79): kein XXE (jsoup ohne DTD/Entitäten), kein Nachladen externer Ressourcen,
+  keine Zugangsdaten; Word escaped Text und Attribute, externe Beziehungen nur für `http(s)`/`mailto`-Links, feste
+  Zip-Einträge; PDF ohne JavaScript-Aktionen, Links nur `http(s)`/`mailto`.
+- Lokale Dateiquelle (#77): Wurzel nur aus der Konfiguration, IDs kanonisch Base64url und normalisiert, realer Pfad muss
+  in der Wurzel liegen, Symlinks führen nicht hinaus; keine Anmeldedaten; Rechte wie bei jeder Quelle über den
+  `AccessGuard`.
 - Converter: ein Format wird erst nach der Export-Freigabe angenommen, unbekannte ergeben 400; Dateinamen nur nach
   Whitelist, nie überschreibend (`CREATE_NEW`), Größe begrenzt (`max-converted-bytes`), Download nur für den Eigentümer
   mit `export` und `content`.
@@ -206,6 +212,8 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | Fassade: unbegrenztes `start` ließ eine Anfrage den ganzen Space lesen und prüfen | `start` höchstens 10 000, darüber 400 |
 | Keine Tomcat-Grenzen für Formular- und verworfene Bodies | `max-http-form-post-size` 64 KB, `max-swallow-size` 1 MB |
 | Config-Server-Zugang in der URL möglich | `docs/CONFIGURATION.md`: Zugang nur über `username`/`password` |
+| Markdown-Export: Backticks im Inline-Code oder in der Code-Sprache beendeten den Code früher, Seiteninhalt wurde rohes HTML; `javascript:`/`data:`-Links und eingebettete externe Bilder (laden beim Öffnen nach) | Zaun länger als jede Backtick-Folge, Sprache nur `[A-Za-z0-9_+.#-]`, Links nur `http(s)`, `mailto`, Seiten- und Anhangsverweise, externe Bilder nur als Link; `MarkdownConverterTest` |
+| PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 
 **Bewusst offen**
@@ -217,6 +225,11 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
   gleichzeitige Aufträge. Eine Gesamtgrenze in Bytes kommt mit dem Aufräumen (#11/#12).
 - Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
 - Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
+- PDF: Speicher und Seitenzahl wachsen vor `max-converted-bytes` (PDFBox baut das Dokument vor dem Schreiben);
+  sehr tiefe Verschachtelung im Storage-Format kann den Parser per `StackOverflowError` abbrechen, was nur den Auftrag
+  beendet.
+- Lokale Dateiquelle, upstream zu beheben (an Strang A gemeldet): Dateien in versteckten Verzeichnissen (`.git/…`)
+  werden gelistet, bis 2000 MB je Datei werden ganz gelesen, der absolute Serverpfad steht in den Metadaten.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
   Space existiert.
 

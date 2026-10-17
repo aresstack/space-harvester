@@ -144,4 +144,23 @@ class MarkdownConverterTest {
         assertThat(markdown).contains("\\# keine Überschrift").contains("1\\. keine Liste")
                 .contains("\\<script\\>");
     }
+
+    @Test
+    void pageContentNeverBecomesActiveMarkdownOrHtml() throws Exception {
+        String markdown = convert(storagePage("100", null, 0,
+                "<p><code>a``&lt;img src=x onerror=alert(1)&gt;``b</code></p>"
+                        + "<p><a href=\"javascript:alert(1)\">klick</a> <a href=\"data:text/html,x\">daten</a> "
+                        + "<a href=\"https://example.org/x\">gut</a></p>"
+                        + "<ac:image><ri:url ri:value=\"https://tracker.example/p.gif\" /></ac:image>"
+                        + "<ac:structured-macro ac:name=\"code\"><ac:parameter ac:name=\"language\">a`b x</ac:parameter>"
+                        + "<ac:plain-text-body><![CDATA[<script>x</script>]]></ac:plain-text-body></ac:structured-macro>"));
+
+        assertThat(markdown)
+                .contains("``` a``<img src=x onerror=alert(1)>``b ```")
+                .contains("klick daten [gut](https://example.org/x)")
+                .doesNotContain("javascript:", "data:text")
+                .doesNotContain("![](https://tracker.example")
+                .contains("](https://tracker.example/p.gif)")
+                .contains("```abx\n<script>x</script>\n```");
+    }
 }
