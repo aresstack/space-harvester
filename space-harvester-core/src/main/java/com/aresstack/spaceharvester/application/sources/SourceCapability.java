@@ -16,5 +16,7 @@ public enum SourceCapability {
     /** Dieselbe Antwort nicht blockierend ({@link HarvestSource#storedPageAsync}). */
     ASYNC_STORED_PAGE,
     /** Anhangsliste einer Seite als Metadaten ({@link HarvestSource#attachments}, #9). */
-    PAGE_ATTACHMENTS
+    PAGE_ATTACHMENTS,
+    /** Volltextsuche in der Quelle selbst über Titel und Inhalt ({@link HarvestSource#searchPages}). */
+    LIVE_SEARCH
 }

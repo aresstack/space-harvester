@@ -60,15 +60,32 @@ zwischengespeichert.
    unbekannte. Einen neuen Inhalt (fehlende Seite oder neue Revision bei `refresh=true`) legt der Port
    `PageCacheFill` im gemeinsamen Cache ab und berechnet seine Anreicherungen (`EnrichingCacheFill`), danach ist die
    Seite auch in Suche und Export sichtbar. Abgelegt wird nur, was die Quelle mit der Quellenidentität geliefert hat,
-   nie etwas Benutzerbezogenes. `LucenePageCache.trySave` wartet nie: Schreibt gerade ein Abgleich, wird die Seite
-   nur ausgeliefert (`origin: live`), und der Abgleich bzw. der nächste Abruf legt sie ab. Die Generation des Space
+   nie etwas Benutzerbezogenes. `LucenePageCache.trySave` wartet höchstens 500 ms auf die Schreibsperre, damit
+   gleichzeitige Einzelablagen nacheinander zum Zug kommen: Schreibt gerade ein Abgleich, wird die Seite nur
+   ausgeliefert (`origin: live`), und der Abgleich bzw. der nächste Abruf legt sie ab. Die Generation des Space
    ändert sich dadurch nicht; Löschungen leitet weiter nur ein bestätigter Abgleich ab. Eine nicht erreichbare Quelle
    ist `source-unavailable` und wird nie durch „nicht gefunden“ oder einen alten Stand ersetzt. Dasselbe gilt für die
    Confluence-kompatible Einzelseite, die denselben Anwendungsfall nutzt.
 
+9. **Suche ist Beschaffung.** `ProvisioningSearch` ist die Suche für REST (`GET /api/v1/search`) und App. Mit
+   Suchtext (ohne Cursor und ohne `pageId`) fragt sie jede Quelle des Umfangs, die selbst suchen kann
+   (`SourceCapability.LIVE_SEARCH`, Confluence: CQL `siteSearch` wie die Websuche, also Titel **und** Inhalt), nach
+   höchstens 25 Seiten. Jeder Treffer geht über den Seitenabruf aus 8.: fehlt er im Bestand, wird er geholt, abgelegt
+   und indexiert, mit derselben Rechteprüfung wie beim Lesen (bei delegierten Benutzern je Seite über die Quelle).
+   Ausgeliefert wird er aus dem Index, mit allen Filtern der Anfrage (Spaces, Eltern, Version, Zeit) und
+   `metadata` an seinen aktuellen Kopfdaten; nicht lesbare Treffer fallen ohne Spur weg (auch nicht im Log).
+   Die Suche in der Quelle läuft mit der Quellenidentität und liefert nur IDs; sichtbar wird davon nur, was der
+   Aufrufer lesen darf. Die Antwort heißt `origin: source`, ist ein Stapel ohne Cursor, und `complete` heißt, dass
+   keine Quelle mehr Treffer hatte als abgefragt. Ohne Suchtext, mit Cursor, für Quellen ohne eigene Suche, ohne
+   `content` für die Quelle oder wenn die Quelle nicht antwortet, gilt die Titelsuche im Index (`origin: cache`);
+   ist die einzige Quelle nicht erreichbar und nichts von ihr im Index, ist es `source-unavailable`. Global werden
+   die Quellen in Konfigurationsreihenfolge abgefragt. Zu den Treffern der Quellen kommen ohne Doppelte die
+   Titeltreffer aus dem Index über alle Quellen des Umfangs (Quellen ohne eigene Suche, Seiten, die der Suchindex der
+   Quelle noch nicht kennt); alle zusammen stehen in der Sortierung der Anfrage (`sort`). `sourceIds` gilt wie in
+   ADR 0009.
+
 ## Folgeschritte
 
-- **Suche nach unbekannten Seiten:** Ein leerer Cache ist nicht „keine Treffer“. Eine Seite mit bekannter ID oder
-  URL liefert die Seiten-API inzwischen auch ohne Cache (8.). Eine ergänzende Live-Suche in den Quellen (Confluence
-  CQL), deren Treffer über denselben Nachladeweg abgelegt würden, ist möglich, wird aber gesondert entschieden.
-- **Auftragsdiagnose:** strukturierte Ereignisse je Auftrag (Phase, Komponente, HTTP-Status, Proxy-Route, TLS-Befund).
+- **Volltext im Index:** Ohne erreichbare Quelle trifft die Suche nur Titel. Eine Volltextprojektion des Inhalts im
+  Lucene-Index (aus der statischen Textprojektion der Anreicherungen) folgt gesondert.
+- **Auftragsdiagnose:** umgesetzt, siehe `docs/DIAGNOSTICS.md`.

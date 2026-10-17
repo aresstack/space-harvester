@@ -312,7 +312,7 @@ space-harvester:
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
-| `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
+| `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Suche über Titel und Inhalt live in den Quellen mit Nachladen, sonst Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
 | `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend; eine fehlende Einzelseite wird wie bei der Seiten-API nachgeladen; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
@@ -416,8 +416,14 @@ mit `space-harvester.embedding.provider=onnx` berechnet ein lokales Modell (`int
 gepinnt, Dateien vom Betrieb) die Anreicherung `embedding`; ohne diese Einstellung ändert sich nichts
 ([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md), [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
 
-**Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
-Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
+**Suche über Titel und Inhalt ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 9):** Mit
+`title` und ohne `cursor`/`pageId` sucht der Harvester in jeder Quelle, die selbst suchen kann (Confluence: CQL
+`siteSearch` wie die Websuche, höchstens 25 Treffer je Quelle), lädt fehlende Treffer nach, indexiert sie und liefert
+sie aus dem Index (`origin: source`, ein Stapel ohne Cursor). Ein leerer Bestand ist also nie „keine Treffer“. Rechte
+je Treffer wie beim Lesen einer Seite; antwortet die Quelle nicht, gilt die Titelsuche im Index (`origin: cache`).
+
+**Suche im Index (#28):** Ohne Suchtext, mit `cursor` oder ohne erreichbare Quelle sucht `GET /api/v1/search?sourceId=…`
+in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
 vorkommen, ohne Beachtung der Groß-/Kleinschreibung; Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist;
 kein Präfix, keine Abfragesprache; höchstens 8 Wörter und 200 Zeichen), `spaceKey` (wiederholbar, höchstens 20),
 `pageId`, `parentPageId` (direkte Kinder), `version`, `modifiedFrom` (einschließlich) und `modifiedBefore`

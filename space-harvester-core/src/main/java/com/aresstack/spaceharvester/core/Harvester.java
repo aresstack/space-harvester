@@ -32,6 +32,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
+import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
@@ -114,7 +115,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceKeyCheck spaceKeys;
     private final PageFreshness freshness;
     private final PageQueries pages;
-    private final PageSearch search;
+    private final ProvisioningSearch search;
     private final RelevanceSearch relevance;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -176,7 +177,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
                     builder.maxTreeNodes);
-            this.search = new PageSearch(catalog, index, access);
+            this.search = new ProvisioningSearch(catalog, index, access, pages);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache)));
@@ -229,7 +230,11 @@ public final class Harvester implements AutoCloseable {
         return pages;
     }
 
-    /** Titel- und Metadatensuche im Cache. */
+    /**
+     * Suche über Titel und Inhalt: mit Suchtext live in den Quellen, Treffer werden nachgeladen und indexiert; sonst
+     * Titel- und Metadatensuche im Index. Liefert eine {@link ProvisioningSearch}; der Rückgabetyp bleibt
+     * {@link PageSearch}, damit eingebettete Programme unverändert weiterlaufen.
+     */
     public PageSearch search() {
         return search;
     }

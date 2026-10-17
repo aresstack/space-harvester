@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
+import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Verdrahtet die cachegestützte Query-API (#27) und die Suche (#28). Solange kein {@link PageCacheReader} bzw.
@@ -33,9 +35,21 @@ class QueryConfiguration {
                 fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes);
     }
 
+    /**
+     * Die reine Indexsuche, etwa für die Confluence-kompatible Fassade. {@code @Primary}, weil
+     * {@link ProvisioningSearch} ebenfalls eine {@link PageSearch} ist und nur ausdrücklich angefordert wird.
+     */
     @Bean
+    @Primary
     PageSearch pageSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access) {
         return new PageSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access);
+    }
+
+    /** Die Suche der REST-API: mit Suchtext live in den Quellen, Treffer nachgeladen und indexiert (ADR 0010). */
+    @Bean
+    ProvisioningSearch provisioningSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index,
+                                          AccessGuard access, PageQueries pages) {
+        return new ProvisioningSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access, pages);
     }
 
     /**

@@ -174,10 +174,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 + (page.snapshot() == null ? "-" : page.snapshot().payload().rawSha256());
     }
 
+    /** Längste Wartezeit von {@link #trySave} auf die Schreibsperre. */
+    static final Duration FILL_WAIT = Duration.ofMillis(500);
+
     /**
-     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist und die Seite im Cache noch den Stand
-     * hat, den der Aufrufer vor seinem Abruf gelesen hat ({@link #state}); wartet nie (Nachladen beim Lesen einer
-     * Seite, ADR 0010). So überschreibt ein spät ankommender Abruf nie neuere Kopfdaten oder eine neuere Payload, die
+     * Wie {@link #save}, aber nur, wenn binnen {@link #FILL_WAIT} kein anderer Schreiblauf offen ist und die Seite im
+     * Cache noch den Stand hat, den der Aufrufer vor seinem Abruf gelesen hat ({@link #state}) (Nachladen beim Lesen
+     * einer Seite und bei der Suche, ADR 0010). Die kurze Wartezeit lässt gleichzeitige Einzelablagen nacheinander
+     * zum Zug kommen; ein laufender Abgleich hält die Sperre länger, dann bleibt es beim Nicht-Ablegen. So überschreibt ein spät ankommender Abruf nie neuere Kopfdaten oder eine neuere Payload, die
      * ein Abgleich oder ein anderer Abruf inzwischen abgelegt hat.
      *
      * @param expectedState {@link #state} vor dem Abruf
@@ -185,7 +189,12 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
      */
     public boolean trySave(PageSnapshot snapshot, String expectedState) {
         requireOpen();
-        if (!writeLock.tryLock()) {
+        try {
+            if (!writeLock.tryLock(FILL_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                return false;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return false;
         }
         try {
