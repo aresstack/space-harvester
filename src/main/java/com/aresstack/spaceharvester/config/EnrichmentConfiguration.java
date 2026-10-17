@@ -6,8 +6,10 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
@@ -18,8 +20,9 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
- * {@code outline}, {@code entities} und {@code properties} und die Ablage (Lucene unter {@code enrichments/}, ohne
- * Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie nachgezogen.
+ * {@code outline}, {@code entities}, {@code properties}, {@code activities} und {@code relations} und die Ablage
+ * (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie
+ * nachgezogen.
  */
 @Configuration(proxyBeanMethods = false)
 class EnrichmentConfiguration {
@@ -28,7 +31,7 @@ class EnrichmentConfiguration {
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store) {
         return new Enrichments(new ConfluenceStorageTextProjector(),
                 List.of(new AcronymProcessor(), new OutlineProcessor(), new EntityProcessor(),
-                        new PropertyProcessor()),
+                        new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()),
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC());
     }
 

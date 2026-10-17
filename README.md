@@ -359,14 +359,18 @@ Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfa
 aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
 `outline` (Gliederung mit Wortzahlen), für deutschen Text außerdem `entities` (Begriffe aus Nominalgruppen mit
 Häufigkeit) und `properties` (Eigenschaften, attributiv wie „die zuständige Stelle“ oder prädikativ wie „der Dienst ist
-nicht erreichbar“). Die Sprachprozessoren arbeiten mit festen Regeln und einem Lexikon der Funktionswörter, ohne
-Sprachmodell; Grundformen sind ungeprüfte Vorschläge, Pronomen werden nicht aufgelöst. Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
-und Warnungen und liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten
-Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten
-gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In
-`view=extended` steht je Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich
-geändert haben). Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`.
-Embeddings und Reranking sind als nächste Stufe vorbereitet (Schnittstellen ohne Modell, [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
+nicht erreichbar“) sowie `activities` (Handlungen je Teilsatz mit vorgeschlagener Grundform, Aktiv oder Passiv,
+Anweisung oder Aussage und Beteiligten in den Rollen `ACTOR`, `AFFECTED_OBJECT`, `RECIPIENT`, `INSTRUMENT`) und
+`relations` (Subjekt–Prädikat–Objekt aus den Handlungen, Begriffsrelationen `is_a`, `part_of`, `has_part`, `synonym` und
+zeitliche Folge `before` nur bei Signalwörtern wie „anschließend“ oder „nachdem“). Die Sprachprozessoren arbeiten mit
+festen Regeln und einem Lexikon der Funktionswörter, ohne Sprachmodell; Grundformen sind ungeprüfte Vorschläge, Pronomen
+werden nicht aufgelöst. Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status und Warnungen und
+liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten Payload. Nach jedem
+bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten gelöscht; scheitert
+ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In `view=extended` steht je
+Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich geändert haben).
+Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`. Embeddings und Reranking
+sind als nächste Stufe vorbereitet (Schnittstellen ohne Modell, [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
