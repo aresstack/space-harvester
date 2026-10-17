@@ -96,6 +96,30 @@ class StatusViewTest {
                 && view[0].detailText().contains("Auftrag:"));
         assertThat(view[0].entries()).hasSize(workspace.events(job).size());
         assertThat(view[0].detailText()).contains(job).contains("Komponente:");
+
+        // Ein Ereignis löschen: nur dieses verschwindet, dauerhaft im Core.
+        int before = workspace.events(job).size();
+        StatusView.Entry first = view[0].entries().get(0);
+        SwingUtilities.invokeAndWait(() -> view[0].deleteEntry(first));
+        await(() -> view[0].entries().size() == before - 1);
+        assertThat(workspace.events(job)).hasSize(before - 1)
+                .noneMatch(e -> e.sequence() == first.sequence());
+
+        // Protokoll bereinigen: alle Ereignisse beendeter Aufträge und die Verbindungsprüfung sind weg, der Auftrag
+        // bleibt.
+        SwingUtilities.invokeAndWait(() -> view[0].showJob(null));
+        SwingUtilities.invokeAndWait(() -> view[0].cleanBefore(java.time.Instant.MAX));
+        await(() -> view[0].entries().isEmpty());
+        assertThat(workspace.events(job)).isEmpty();
+        assertThat(workspace.jobs()).extracting(j -> j.id()).contains(job);
+
+        // Der Auftrag selbst lässt sich löschen und verschwindet aus der Liste.
+        workspace.deleteJob(job);
+        assertThat(workspace.jobs()).isEmpty();
+        String second = workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()).id();
+        await(() -> workspace.job(second).state().terminal());
+        assertThat(workspace.deleteFinishedJobs()).isEqualTo(1);
+        assertThat(workspace.jobs()).isEmpty();
     }
 
     private static void await(BooleanSupplier condition) throws Exception {
