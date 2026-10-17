@@ -235,6 +235,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
+| `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
@@ -295,7 +296,8 @@ gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den
 `view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
 Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
 samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
-können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+können neuer sein als die Payload) und `enrichments` die Anreicherungen (siehe unten). Harvester-Angaben stehen nie
+in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
@@ -303,6 +305,16 @@ antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cac
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
+
+**Anreicherungen (#29).** Deterministische Prozessoren ohne KI leiten aus einer konservativen Textprojektion des
+Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfallen, nichts wird ausgeführt oder
+aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
+`outline` (Gliederung mit Wortzahlen). Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
+und Warnungen und liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten
+Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten
+gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In
+`view=extended` steht je Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich
+geändert haben). Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`.
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel

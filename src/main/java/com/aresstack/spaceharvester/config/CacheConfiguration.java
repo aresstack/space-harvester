@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.jobs.JobStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
@@ -13,8 +14,9 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Öffnet die eingebetteten Lucene-Indizes, wenn {@code space-harvester.cache.directory} gesetzt ist: den Seiten-Cache
- * unter {@value #PAGES}/ und die Auftragsablage unter {@value #JOBS}/. Ein gesperrter, beschädigter oder in einem
- * anderen Schema angelegter Index verhindert den Start. Beim Herunterfahren werden die Indizes geschlossen und die
+ * unter {@value #PAGES}/, die Auftragsablage unter {@value #JOBS}/ und die Anreicherungen unter
+ * {@value #ENRICHMENTS}/. Ein gesperrter, beschädigter oder in einem anderen Schema angelegter Index verhindert den
+ * Start. Beim Herunterfahren werden die Indizes geschlossen und die
  * Sperren freigegeben.
  */
 @Configuration(proxyBeanMethods = false)
@@ -26,6 +28,8 @@ class CacheConfiguration {
     static final String PAGES = "pages";
     /** Unterverzeichnis der Auftragsablage (#12). */
     static final String JOBS = "jobs";
+    /** Unterverzeichnis der Anreicherungen (#29). */
+    static final String ENRICHMENTS = "enrichments";
 
     @Bean(destroyMethod = "close")
     LucenePageCache pageCache(CacheProperties properties) {
@@ -62,5 +66,11 @@ class CacheConfiguration {
     @Bean(destroyMethod = "close")
     LuceneJobStore luceneJobStore(CacheProperties properties) {
         return LuceneJobStore.open(properties.directory().resolve(JOBS));
+    }
+
+    /** Anreicherungen (#29) in einem eigenen Index, getrennt von Payload und Kopfdaten der Seiten. */
+    @Bean(destroyMethod = "close")
+    LuceneEnrichmentStore enrichmentStore(CacheProperties properties) {
+        return LuceneEnrichmentStore.open(properties.directory().resolve(ENRICHMENTS));
     }
 }

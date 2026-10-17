@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -83,6 +84,16 @@ public class Enrichments {
             views.add(new View(enrichment, freshness));
         }
         return views;
+    }
+
+    /** Macht die Ergebnisse dauerhaft, etwa am Ende eines Abgleichs. */
+    public void flush() {
+        store.flush();
+    }
+
+    /** Entfernt alle Ergebnisse einer Seite, die es im Cache nicht mehr gibt. */
+    public void remove(PageKey key) {
+        store.removeAll(key);
     }
 
     /** Ein Ergebnis mit seiner Aktualität. */
