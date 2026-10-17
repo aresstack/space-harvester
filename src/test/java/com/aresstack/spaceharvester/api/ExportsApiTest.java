@@ -179,6 +179,22 @@ class ExportsApiTest {
     }
 
     @Test
+    void markdownIsServedAsText() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=markdown&format=json", null))
+                .path("id").asString();
+
+        JsonNode done = awaitFinished(id);
+
+        assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
+                .containsExactly("pages.ndjson", "tree.json", "pages.md", "pages.json", "manifest.json");
+        HttpResponse<byte[]> markdown = send("GET", "/api/v1/exports/" + id + "/artifact/pages.md", null);
+        assertThat(markdown.statusCode()).isEqualTo(200);
+        assertThat(markdown.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("text/markdown"));
+        assertThat(new String(markdown.body(), StandardCharsets.UTF_8)).contains("<a id=\"page-101\"></a>");
+    }
+
+    @Test
     void unknownFormatIsRejected() throws Exception {
         HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
 

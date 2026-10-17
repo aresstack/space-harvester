@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
+import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -36,6 +37,11 @@ class ExportConfiguration {
     @Bean
     JsonArrayConverter jsonArrayConverter() {
         return new JsonArrayConverter();
+    }
+
+    @Bean
+    MarkdownConverter markdownConverter() {
+        return new MarkdownConverter();
     }
 
     @Bean
