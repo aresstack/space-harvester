@@ -600,8 +600,9 @@ final class SourceWizard {
             return true;
         }
         String sourceId = source.id();
-        if (sourceId != null && !loginChanged(source)
-                && (context.secrets().has(sourceId) || context.vault().has(sourceId))) {
+        // Nur ein Wert für genau diese Anmeldung zählt, auch wenn die Datei von Hand umgestellt wurde.
+        if (sourceId != null && !loginChanged(source) && (context.secrets().has(sourceId, login(source))
+                || context.vault().has(sourceId, login(source)))) {
             return true;
         }
         String name = source.secretVariable();
@@ -614,7 +615,7 @@ final class SourceWizard {
         char[] value = sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, login(source), value);
-        } else if (sourceId != null && context.secrets().has(sourceId) && !loginChanged(source)) {
+        } else if (sourceId != null && context.secrets().has(sourceId, login(source)) && !loginChanged(source)) {
             return context.secrets();
         }
         return secrets;
@@ -938,8 +939,8 @@ final class SourceWizard {
 
     /** Wo Token bzw. Passwort landet; beim Bearbeiten, ob schon eins gespeichert ist. */
     private String secretHint() {
-        String stored = editing != null && (context.vault().has(editing.draft().id())
-                || context.secrets().has(editing.draft().id())) ? "Schon hinterlegt; leer lassen zum Behalten. " : "";
+        String stored = editing != null && (context.vault().has(editing.draft().id(), login(editing.draft()))
+                || context.secrets().has(editing.draft().id(), login(editing.draft()))) ? "Schon hinterlegt; leer lassen zum Behalten. " : "";
         return stored + (context.vault().available() ? "Wird verschlüsselt für dein Windows-Konto gespeichert, nie in "
                 + "der Datei" : "Gilt bis zum Schließen der App, nie in der Datei");
     }

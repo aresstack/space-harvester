@@ -438,6 +438,13 @@ class SourceWizardTest {
         SwingUtilities.invokeAndWait(() -> context.reload(basic::countDown));
         assertThat(basic.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(context.runtime().waitingForSecret()).containsExactly("wiki-example");
+        SourceDraft.Editable basicSource = new ConfigFileEditor(context.loader()).editable(config, "wiki-example");
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context, basicSource);
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).as("altes Token zählt nicht als Passwort").isFalse();
+            assertThat(w.error(w.sessionValue)).isNotNull();
+        });
         context.shutdown();
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
         CountDownLatch fresh = new CountDownLatch(1);

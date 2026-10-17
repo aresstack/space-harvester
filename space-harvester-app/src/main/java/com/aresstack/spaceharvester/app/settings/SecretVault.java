@@ -81,6 +81,31 @@ public final class SecretVault {
         return available() && Files.isRegularFile(file(sourceId));
     }
 
+    /** Ob ein Wert für genau diese Anmeldung gespeichert ist (ohne zu entschlüsseln). */
+    public boolean has(String sourceId, String login) {
+        try {
+            String text = raw(sourceId);
+            return text != null && text.startsWith(LOGIN + encode(login) + "\n");
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Der gespeicherte Dateitext, so wie er ist (verschlüsselt); mit {@link #restore} lässt sich ein Eintrag nach
+     * einem gescheiterten Folgeschritt zurückholen, ohne ihn zu entschlüsseln.
+     *
+     * @return {@code null}, wenn es keinen Eintrag gibt
+     */
+    public String raw(String sourceId) throws IOException {
+        return has(sourceId) ? Files.readString(file(sourceId), StandardCharsets.US_ASCII) : null;
+    }
+
+    /** Schreibt einen mit {@link #raw} gelesenen Eintrag zurück. */
+    public void restore(String sourceId, String raw) throws IOException {
+        write(sourceId, raw);
+    }
+
     /**
      * Verschlüsselt und speichert den Wert; {@code secret} wird danach überschrieben.
      *
@@ -95,21 +120,28 @@ public final class SecretVault {
             if (encrypted.isEmpty()) {
                 throw new IOException("PowerShell hat den Wert nicht verschlüsselt.");
             }
-            Files.createDirectories(directory);
-            Path target = file(sourceId);
-            Path temp = Files.createTempFile(directory, sourceId, ".tmp");
-            try {
-                Files.writeString(temp, LOGIN + encode(login) + "\n" + encrypted, StandardCharsets.US_ASCII);
-                try {
-                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException e) {
-                    Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
-                }
-            } finally {
-                Files.deleteIfExists(temp);
-            }
+            write(sourceId, LOGIN + encode(login) + "\n" + encrypted);
         } finally {
             Arrays.fill(secret, '\0');
+        }
+    }
+
+    private void write(String sourceId, String text) throws IOException {
+        if (!available()) {
+            throw new IOException("Unter diesem Betriebssystem gibt es keinen Tresor für Zugangsdaten.");
+        }
+        Files.createDirectories(directory);
+        Path target = file(sourceId);
+        Path temp = Files.createTempFile(directory, sourceId, ".tmp");
+        try {
+            Files.writeString(temp, text, StandardCharsets.US_ASCII);
+            try {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
 
@@ -121,7 +153,7 @@ public final class SecretVault {
         if (!has(sourceId)) {
             return null;
         }
-        String[] lines = Files.readString(file(sourceId), StandardCharsets.US_ASCII).split("\n", 2);
+        String[] lines = raw(sourceId).split("\n", 2);
         if (lines.length != 2 || !lines[0].equals(LOGIN + encode(login))) {
             return null;
         }

@@ -53,6 +53,12 @@ public class SecretVaultTest {
                 .isEqualTo(Base64.getEncoder().encodeToString("Tökén-123".getBytes(StandardCharsets.UTF_8)));
         assertThat(vault.load("wiki", "pat")).containsExactly("Tökén-123".toCharArray());
         assertThat(vault.load("wiki", "basic:angelo")).as("Token taugt nicht als Passwort").isNull();
+        assertThat(vault.has("wiki", "pat")).isTrue();
+        assertThat(vault.has("wiki", "basic:angelo")).isFalse();
+        String raw = vault.raw("wiki");
+        vault.remove("wiki");
+        vault.restore("wiki", raw);
+        assertThat(vault.load("wiki", "pat")).as("zurückgeholt").containsExactly("Tökén-123".toCharArray());
 
         vault.remove("wiki");
         assertThat(vault.has("wiki")).isFalse();

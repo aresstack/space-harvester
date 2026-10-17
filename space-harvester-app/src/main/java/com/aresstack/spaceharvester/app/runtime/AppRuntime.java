@@ -240,9 +240,14 @@ public final class AppRuntime implements AutoCloseable {
 
         /** Ob ein Wert für genau diese Anmeldung der Quelle da ist. */
         public boolean has(SourceSettingsConfig config) {
-            Value value = secrets.get(config.id());
-            return config.auth().type() != SourceSettingsConfig.AuthType.NONE && value != null
-                    && value.login().equals(login(config.auth()));
+            return config.auth().type() != SourceSettingsConfig.AuthType.NONE
+                    && has(config.id(), login(config.auth()));
+        }
+
+        /** Ob ein Wert für die Anmeldung {@code login} ({@link #login}) da ist. */
+        public boolean has(String sourceId, String login) {
+            Value value = secrets.get(sourceId);
+            return value != null && value.login().equals(login);
         }
 
         public void remove(String sourceId) {
