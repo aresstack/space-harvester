@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
@@ -42,6 +43,11 @@ class ExportConfiguration {
     @Bean
     MarkdownConverter markdownConverter() {
         return new MarkdownConverter();
+    }
+
+    @Bean
+    DocxConverter docxConverter() {
+        return new DocxConverter();
     }
 
     @Bean
