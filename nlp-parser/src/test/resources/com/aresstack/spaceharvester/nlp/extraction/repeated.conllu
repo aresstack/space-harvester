@@ -1,0 +1,33 @@
+# Handgeschriebene Gold-Analysen (MIT, Teil der Tests von #98) nach den Konventionen von UD German GSD.
+# sent_id = 1
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	nsubj	_	_
+3	übermittelt	übermitteln	VERB	VVFIN	_	0	root	_	_
+4	dem	der	DET	ART	_	5	det	_	_
+5	Vorgesetzten	Vorgesetzter	NOUN	NN	_	3	obl:arg	_	_
+6-7	am	_	_	_	_	_	_	_	_
+6	an	an	ADP	APPR	_	8	case	_	_
+7	dem	der	DET	ART	_	8	det	_	_
+8	Montag	Montag	NOUN	NN	_	3	obl	_	_
+9	den	der	DET	ART	_	10	det	_	_
+10	Beleg	Beleg	NOUN	NN	_	3	obj	_	_
+11	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Sachbearbeiter übermittelt der Kasse am Freitag den Antrag per Post.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	nsubj	_	_
+3	übermittelt	übermitteln	VERB	VVFIN	_	0	root	_	_
+4	der	der	DET	ART	_	5	det	_	_
+5	Kasse	Kasse	NOUN	NN	_	3	obl:arg	_	_
+6-7	am	_	_	_	_	_	_	_	_
+6	an	an	ADP	APPR	_	8	case	_	_
+7	dem	der	DET	ART	_	8	det	_	_
+8	Freitag	Freitag	NOUN	NN	_	3	obl	_	_
+9	den	der	DET	ART	_	10	det	_	_
+10	Antrag	Antrag	NOUN	NN	_	3	obj	_	_
+11	per	per	ADP	APPR	_	12	case	_	_
+12	Post	Post	NOUN	NN	_	3	obl	_	_
+13	.	.	PUNCT	$.	_	3	punct	_	_
+

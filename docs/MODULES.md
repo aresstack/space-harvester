@@ -150,7 +150,7 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
    `java-library` mit eigenen Abhängigkeiten, `LayeringTest` je Modul, Modulregeln.
 4. **Öffentlicher Einstieg und Veröffentlichung:** `Harvester` mit einem Test, der ohne Spring und ohne HTTP-Server
    des Dienstes einen Space gegen eine Fake-Confluence abgleicht und exportiert; `maven-publish` und POM-Prüfung;
-   ADR 0006; README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
+   ADR 0006 (0005 ist das UD-Parsing aus #98); README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
 
 ## 7. Offene Punkte
 

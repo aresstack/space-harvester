@@ -1,0 +1,21 @@
+# Handgeschriebene Gold-Analysen (MIT, Teil der Tests von #98) nach den Konventionen von UD German GSD.
+# sent_id = 1
+# text = Die Sachbearbeiterin antwortet dem Kunden.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiterin	Sachbearbeiterin	NOUN	NN	_	3	nsubj	_	_
+3	antwortet	antworten	VERB	VVFIN	_	0	root	_	_
+4	dem	der	DET	ART	_	5	det	_	_
+5	Kunden	Kunde	NOUN	NN	_	3	obl:arg	_	_
+6	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = 2
+# text = Der Prüfer arbeitet am Montag.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Prüfer	Prüfer	NOUN	NN	_	3	nsubj	_	_
+3	arbeitet	arbeiten	VERB	VVFIN	_	0	root	_	_
+4-5	am	_	_	_	_	_	_	_	_
+4	an	an	ADP	APPR	_	6	case	_	_
+5	dem	der	DET	ART	_	6	det	_	_
+6	Montag	Montag	NOUN	NN	_	3	obl	_	_
+7	.	.	PUNCT	$.	_	3	punct	_	_
+
