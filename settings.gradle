@@ -16,3 +16,6 @@ rootProject.name = 'space-harvester'
 
 // Unveränderte Kopie der Confluence-Quelle aus aresstack/enterprise-ai-client, siehe enterprise-ai-sources/UPSTREAM.md.
 include 'enterprise-ai-sources'
+
+// Ausführbarer Spring-Boot-Dienst (REST, Fassade, UI), siehe docs/MODULES.md (#100).
+include 'space-harvester-server'

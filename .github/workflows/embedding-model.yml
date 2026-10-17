@@ -16,11 +16,11 @@ on:
     paths:
       - '.github/workflows/embedding-model.yml'
       - 'tools/embedding/**'
-      - 'src/main/java/com/aresstack/spaceharvester/embedding/**'
-      - 'src/test/java/com/aresstack/spaceharvester/embedding/**'
-      - 'src/test/resources/embedding/**'
-      - 'src/main/java/com/aresstack/spaceharvester/application/enrichment/embedding/**'
-      - 'src/main/java/com/aresstack/spaceharvester/application/ranking/**'
+      - '*/src/main/java/com/aresstack/spaceharvester/embedding/**'
+      - '*/src/test/java/com/aresstack/spaceharvester/embedding/**'
+      - '*/src/test/resources/embedding/**'
+      - '*/src/main/java/com/aresstack/spaceharvester/application/enrichment/embedding/**'
+      - '*/src/main/java/com/aresstack/spaceharvester/application/ranking/**'
       - 'gradle/libs.versions.toml'
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
       - name: Vergleich mit den Referenzvektoren
         env:
           SPACE_HARVESTER_E5_DIR: ${{ runner.temp }}/e5
-        run: ./gradlew :test --tests '*E5ReferenceTest' --tests '*E5RelevanceTest' --tests '*OnnxEmbeddingProviderTest' --console=plain
+        run: ./gradlew :space-harvester-server:test --tests '*E5ReferenceTest' --tests '*E5RelevanceTest' --tests '*OnnxEmbeddingProviderTest' --console=plain
       - name: Referenzvektoren neu berechnen (PyTorch)
         if: ${{ inputs.regenerate }}
         run: |
