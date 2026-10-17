@@ -82,6 +82,14 @@ class GermanTextTest {
     }
 
     @Test
+    void keepsGermanSentencesWithWordsThatAreAlsoEnglish() {
+        GermanText text = analyze("Was will der Benutzer an der Stelle?");
+
+        assertThat(text.sentences()).hasSize(1);
+        assertThat(text.warnings()).isEmpty();
+    }
+
+    @Test
     void handlesEmptyTextAndPunctuationOnly() {
         assertThat(analyze("").sentences()).isEmpty();
         assertThat(analyze("…\n--- | !").sentences()).isEmpty();

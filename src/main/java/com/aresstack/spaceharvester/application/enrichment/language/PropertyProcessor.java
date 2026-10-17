@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -50,6 +51,7 @@ public class PropertyProcessor implements EnrichmentProcessor {
             }
             predicative(sentence, found);
         }
+        found.sort(Comparator.comparingInt(Property::start).thenComparingInt(Property::end));
         List<String> warnings = new ArrayList<>(analysis.warnings());
         if (found.size() > MAX_PROPERTIES) {
             warnings.add("Nur die ersten " + MAX_PROPERTIES + " von " + found.size() + " Eigenschaften");

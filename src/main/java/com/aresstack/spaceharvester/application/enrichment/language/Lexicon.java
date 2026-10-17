@@ -97,11 +97,11 @@ final class Lexicon {
             "wird", "werden", "auf", "im", "des", "sich", "auch", "bei", "sind", "oder", "kann", "muss", "wenn",
             "dass", "über", "nach", "aus", "zum", "zur", "wurde", "sie", "es", "einen", "einem", "einer");
 
-    /** Häufige Wörter englischer Sätze. */
+    /** Häufige Wörter englischer Sätze, ohne solche, die auch deutsch sind ({@code was}, {@code will}, {@code an}). */
     static final Set<String> ENGLISH_MARKERS = Set.of(
-            "the", "and", "is", "are", "of", "to", "for", "with", "this", "that", "be", "by", "on", "it", "was",
-            "were", "will", "can", "must", "should", "from", "or", "an", "not", "you", "we", "they", "has", "have",
-            "which", "these", "those", "if", "when");
+            "the", "and", "is", "are", "of", "to", "for", "with", "this", "that", "be", "by", "on", "it", "were",
+            "can", "must", "should", "from", "or", "not", "you", "we", "they", "has", "have", "which", "these",
+            "those", "if", "when");
 
     /** Abtrennbare Verbpartikeln, z. B. {@code an} in „startet … an“. */
     static final Set<String> VERB_PARTICLES = Set.of(

@@ -46,6 +46,14 @@ class PropertyProcessorTest {
     }
 
     @Test
+    void keepsTextOrderAcrossBothForms() {
+        String json = processor.process(plain("Der Dienst ist stabil und die neue Seite funktioniert.")).payloadJson();
+
+        assertThat(json.indexOf("\"property\":\"stabil\"")).isPositive()
+                .isLessThan(json.indexOf("\"property\":\"neue\""));
+    }
+
+    @Test
     void ignoresPassiveVoiceNounPredicatesAndOpenClauses() {
         assertThat(processor.process(plain("Der Beleg wird geprüft. Der Dienst ist ein Server. Die Daten sind "
                 + "exportiert worden. Der Plan ist zu prüfen.")).payloadJson())
