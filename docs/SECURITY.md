@@ -171,7 +171,7 @@ Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API
 Durchgesehen nach dem Zusammenführen aller Stränge: alle Routen unter `/api` (Seiten, Baum, Suche, Metadaten,
 Anreicherungen, Confluence-Fassade, Exporte samt Downloads, Syncs), die Weboberfläche `/ui/`, Logs, Fehlerantworten,
 Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft nach ihrem Merge: die Anhangsliste (#9,
-#76) und die Converter-Ausgaben der Exporte (#30, #68).
+#76), die Converter-Ausgaben der Exporte (#30, #68) und die Asset-Routen (#19, #83).
 
 **Ohne Befund**
 
@@ -201,6 +201,11 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 - Converter: ein Format wird erst nach der Export-Freigabe angenommen, unbekannte ergeben 400; Dateinamen nur nach
   Whitelist, nie überschreibend (`CREATE_NEW`), Größe begrenzt (`max-converted-bytes`), Download nur für den Eigentümer
   mit `export` und `content`.
+- Asset-Routen `…/pages/{pageId}/assets…` (#19): Übersicht verlangt `metadata`, Inhalt `content`, Ernten und
+  Beschreiben `sync`, jeweils verdeckt wie die Seite; nur Anhänge aus der Liste der sichtbaren Seite, die Quelle prüft
+  die Rechte erneut. Ablage nach SHA-256, Einträge mit Präfix- und Hashprüfung, Inhalt beim Lesen gegen den Hash
+  geprüft, Dateien zu groß werden nie abgeschnitten. Download mit `attachment`, `nosniff`, `sandbox`-CSP, Medientyp
+  nur aus der Quelle, ungültige als `application/octet-stream`.
 
 **Behoben**
 
@@ -216,6 +221,9 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 | Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
+| Asset-Inhalt: schon `content` legte beim ersten Lesen in der Ablage ab, jeder Leser konnte so die Platte füllen | ablegen nur mit `sync`, sonst nur ausliefern; höchstens 4 Downloads gleichzeitig, sonst 429; `AssetsTest` |
+| Asset-Dateiname: Richtungs- und Formatzeichen (U+202E, U+2028) blieben im `Content-Disposition` und konnten eine Endung vortäuschen | alle Zeichen der Klasse `\p{C}` ersetzt, `AssetsApiTest` |
+| Asset-Ablage: ein manipulierter Eintrag konnte auf eine Datei außerhalb der Blobs zeigen; `X-Asset-Version` ungeprüft | Hash vor dem Pfad geprüft (`FileSystemAssetStoreTest`), Version nur `[0-9A-Za-z._-]` |
 
 **Bewusst offen**
 
@@ -231,6 +239,10 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 - Lokale Dateiquelle, in Arbeit bei Strang A (upstream enterprise-ai-client#178): Dateien in versteckten Verzeichnissen
   (`.git/…`) werden gelistet, bis 2000 MB je Datei ganz gelesen (im Harvester künftig Standard 20 MB, höchstens 64 MB),
   der absolute Serverpfad steht in den Metadaten.
+- Assets, bei Strang B: keine Gesamtgrenze der Ablage auf der Platte (wie `export.max-total-bytes`); der Download
+  aus der Quelle wird erst nach dem vollständigen Lesen an der Grenze gemessen (Abbruch beim Streamen gehört in den
+  Transport, upstream); Weiterleitungen beim Anhang-Download sind upstream noch nicht auf den Host der Quelle
+  beschränkt. Für das Beschreiben fehlen Sperre und Grenze gleichzeitiger Läufe, bevor ein Modell-Adapter kommt.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
   Space existiert.
 

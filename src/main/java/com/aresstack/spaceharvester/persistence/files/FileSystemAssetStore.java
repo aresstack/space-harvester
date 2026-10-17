@@ -69,7 +69,8 @@ public class FileSystemAssetStore implements AssetStore {
                     AssetKind.valueOf(p.getProperty("kind")), Long.parseLong(p.getProperty("size")),
                     p.getProperty("sha256"), Instant.parse(p.getProperty("retrievedAt")));
             if (!asset.sourceId().equals(sourceId) || !asset.attachmentId().equals(attachmentId)
-                    || !version.equals(asset.version()) || !Files.isRegularFile(blob(asset.sha256()))) {
+                    || !version.equals(asset.version()) || !HEX_SHA.matcher(asset.sha256()).matches()
+                    || !Files.isRegularFile(blob(asset.sha256()))) {
                 return Optional.empty();
             }
             return Optional.of(asset);

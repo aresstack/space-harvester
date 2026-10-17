@@ -18,6 +18,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Anwendungsfälle der Asset-Ernte (#19). Arbeitet immer auf einer frisch gelesenen Anhangsliste ({@link
@@ -53,6 +55,11 @@ public class Assets {
         }
         this.maxBytes = maxBytes;
     }
+
+    /** Gleichzeitige Downloads von Anhängen, und wie lange ein weiterer auf einen freien Platz wartet. */
+    static final int MAX_CONCURRENT_DOWNLOADS = 4;
+    private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
+    private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
 
     /** Alle Anhänge der Seite mit Art, Diagrammbezug und dem abgelegten Stand; lädt nichts herunter. */
     public PageAssets overview(PageAttachmentList list) {
@@ -110,12 +117,21 @@ public class Assets {
      * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
      */
     public AssetContent content(PageAttachmentList list, String attachmentId) {
+        return content(list, attachmentId, true);
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String)}; mit {@code mayStore=false} wird ein nicht abgelegter Anhang
+     * nur ausgeliefert, nicht abgelegt. Ablegen ist ein Schreibvorgang und bleibt Aufrufern mit {@code sync}
+     * vorbehalten, sonst füllte jeder Leser die Ablage.
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore) {
         PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
             return new AssetContent(stored.get(), store.read(stored.get()));
         }
-        return download(source(list.sourceId()), list.attachments().pageId(), attachment);
+        return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
     }
 
     /**
@@ -193,10 +209,30 @@ public class Assets {
     }
 
     private AssetContent download(HarvestSource source, String pageId, PageAttachment attachment) {
+        return download(source, pageId, attachment, true);
+    }
+
+    private AssetContent download(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
         if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
         }
-        AttachmentFile file = source.attachmentFile(attachment);
+        AttachmentFile file;
+        // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
+        try {
+            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
+                        "Zu viele gleichzeitige Downloads von Anhängen", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                    "Download abgebrochen", e);
+        }
+        try {
+            file = source.attachmentFile(attachment);
+        } finally {
+            downloads.release();
+        }
         byte[] content = file.content();
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
@@ -208,7 +244,9 @@ public class Assets {
         String title = described.title().isEmpty() ? attachment.title() : described.title();
         Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType,
                 AssetKind.of(mediaType, title), content.length, sha256(content), file.retrievedAt());
-        store.put(asset, content);
+        if (keep) {
+            store.put(asset, content);
+        }
         return new AssetContent(asset, content);
     }
 

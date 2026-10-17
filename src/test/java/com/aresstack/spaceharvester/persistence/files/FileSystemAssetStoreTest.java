@@ -88,6 +88,22 @@ class FileSystemAssetStoreTest {
     }
 
     @Test
+    void aTamperedEntryNeverPointsOutsideTheBlobs() throws Exception {
+        FileSystemAssetStore store = new FileSystemAssetStore(root.resolve("store"));
+        byte[] content = bytes("x");
+        store.put(asset("att1", "1", content), content);
+        Path entry;
+        try (Stream<Path> files = Files.walk(root.resolve("store"))) {
+            entry = files.filter(Files::isRegularFile).filter(p -> !p.startsWith(root.resolve("store/blobs")))
+                    .findFirst().orElseThrow();
+        }
+        Files.writeString(root.resolve("secret"), "x");
+        Files.writeString(entry, Files.readString(entry).replaceAll("sha256=.*", "sha256=sha256:../secret"));
+
+        assertThat(store.find("wiki", "att1", "1")).isEmpty();
+    }
+
+    @Test
     void withoutVersionOnlyTheContentIsKept() {
         FileSystemAssetStore store = new FileSystemAssetStore(root);
         byte[] content = bytes("x");

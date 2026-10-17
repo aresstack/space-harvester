@@ -48,7 +48,9 @@ public class AssetsController {
 
     /** Anhang-IDs der Quellen (Confluence {@code att<Ziffern>}); alles andere ist unbekannt, bevor etwas geladen wird. */
     private static final Pattern ATTACHMENT_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
-    private static final Pattern UNSAFE_FILENAME = Pattern.compile("[\\p{Cntrl}\"\\\\/;]");
+    // Alle Steuer-, Format- und Richtungszeichen (auch U+202E, mit dem ein Titel eine Endung vortäuschen könnte).
+    private static final Pattern UNSAFE_FILENAME = Pattern.compile("[\\p{C}\\p{Zl}\\p{Zp}\"\\\\/;]");
+    private static final Pattern SAFE_VERSION = Pattern.compile("[0-9A-Za-z._-]{1,64}");
 
     private final SourceQueries queries;
     private final Assets assets;
@@ -108,8 +110,10 @@ public class AssetsController {
             @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId,
             @RequestHeader(name = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
         requireAttachmentId(sourceId, attachmentId);
-        Assets.AssetContent content = assets.content(visible(caller, sourceId, pageId, AccessKind.CONTENT),
-                attachmentId);
+        PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
+        // Nur wer sync hat, legt beim Lesen auch ab; alle anderen bekommen die Datei, ohne die Ablage zu füllen.
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        Assets.AssetContent content = assets.content(list, attachmentId, mayStore);
         Asset asset = content.asset();
         String etag = "\"" + asset.sha256() + "\"";
         HttpHeaders headers = new HttpHeaders();
@@ -117,7 +121,8 @@ public class AssetsController {
         headers.setCacheControl("private, no-cache");
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
-        headers.set("X-Asset-Version", asset.version() == null ? "" : asset.version());
+        headers.set("X-Asset-Version", asset.version() == null || !SAFE_VERSION.matcher(asset.version()).matches()
+                ? "" : asset.version());
         if (etag.equals(ifNoneMatch)) {
             return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
         }
