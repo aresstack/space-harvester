@@ -4,7 +4,11 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.c
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.TestClient;
+import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
+import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
+import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -61,6 +65,11 @@ class ConfluenceCompatApiTest {
         InMemoryPageCache pageCache() {
             return new InMemoryPageCache();
         }
+
+        @Bean
+        InMemorySearchIndex searchIndex() {
+            return new InMemorySearchIndex();
+        }
     }
 
     private final HttpClient http = HttpClient.newHttpClient();
@@ -72,12 +81,75 @@ class ConfluenceCompatApiTest {
     @Autowired
     private InMemoryPageCache cache;
 
+    @Autowired
+    private InMemorySearchIndex index;
+
     @BeforeEach
     void fillCache() {
         cache.clear();
+        index.clear();
         cache.publish("wiki", "DEV", confirmed("g1"), List.of(
                 snapshot("101", CONFLUENCE_RESPONSE, HARVEST_FORMAT),
                 snapshot("102", "{}".getBytes(StandardCharsets.UTF_8), "confluence-blogpost+json")));
+        List<PageSnapshot> ops = List.of(snapshot("OPS", "500", null, "Betrieb"), snapshot("OPS", "501", "500", "A"),
+                snapshot("OPS", "502", "500", "B"), snapshot("OPS", "503", "500", "C"));
+        cache.publish("wiki", "OPS", confirmed("g7"), ops);
+        index.publish("wiki", new SearchIndexState("s1", Instant.parse("2026-10-16T20:10:00Z")),
+                ops.stream().map(page -> InMemorySearchIndex.entry(page, confirmed("g7"))).toList());
+    }
+
+    @Test
+    void contentListIsAConfluenceEnvelopeAroundTheStoredResponses() throws Exception {
+        HttpResponse<byte[]> response = getBytes("/api/compat/confluence/wiki/rest/api/content?spaceKey=OPS&limit=2"
+                + "&expand=body.storage");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        String body = new String(response.body(), StandardCharsets.UTF_8);
+        assertThat(body).startsWith("{\"results\":[" + payload("500") + "," + payload("501") + "],");
+        JsonNode envelope = json.readTree(body);
+        assertThat(envelope.get("start").asInt()).isZero();
+        assertThat(envelope.get("limit").asInt()).isEqualTo(2);
+        assertThat(envelope.get("size").asInt()).isEqualTo(2);
+        JsonNode links = envelope.get("_links");
+        assertThat(links.get("base").asString()).endsWith("/api/compat/confluence/wiki");
+        assertThat(links.get("context").asString()).isEqualTo("/api/compat/confluence/wiki");
+        assertThat(links.get("next").asString()).startsWith("/rest/api/content?")
+                .contains("spaceKey=OPS", "start=2", "limit=2", "expand=body.storage");
+
+        JsonNode rest = json.readTree(getBytes("/api/compat/confluence/wiki" + links.get("next").asString()).body());
+        assertThat(rest.get("size").asInt()).isEqualTo(2);
+        assertThat(rest.get("results").get(0).get("id").asString()).isEqualTo("502");
+        assertThat(rest.get("_links").has("next")).isFalse();
+    }
+
+    @Test
+    void childPagesAndTitleFilter() throws Exception {
+        JsonNode children = json.readTree(get(BASE + "500/child/page?start=1").body());
+        assertThat(children.get("size").asInt()).isEqualTo(2);
+        assertThat(children.get("results").get(0).get("id").asString()).isEqualTo("502");
+        assertThat(children.get("_links").get("self").asString()).endsWith("/rest/api/content/500/child/page");
+
+        JsonNode titled = json.readTree(get("/api/compat/confluence/wiki/rest/api/content?spaceKey=OPS&title=B")
+                .body());
+        assertThat(titled.get("size").asInt()).isEqualTo(1);
+        assertThat(titled.get("results").get(0).get("id").asString()).isEqualTo("502");
+    }
+
+    @Test
+    void listsTheCacheCannotServeCompletelyAreRefused() throws Exception {
+        String list = "/api/compat/confluence/wiki/rest/api/content";
+        assertConfluenceError(get(list), 400, "spaceKey");
+        assertConfluenceError(get(list + "?spaceKey=OPS&type=blogpost"), 400, "type=blogpost");
+        assertConfluenceError(get(list + "?spaceKey=OPS&expand=children.page"), 400, "children.page");
+        assertConfluenceError(get(list + "?spaceKey=OPS&start=-1"), 400, "start");
+
+        List<PageSnapshot> ops = List.of(snapshot("OPS", "500", null, "Betrieb"));
+        CacheGeneration incomplete = new CacheGeneration("g8", CacheState.INCOMPLETE, null, null);
+        cache.publish("wiki", "OPS", incomplete, ops);
+        index.publish("wiki", new SearchIndexState("s2", Instant.parse("2026-10-16T20:20:00Z")),
+                List.of(InMemorySearchIndex.entry(ops.get(0), incomplete)));
+        assertConfluenceError(get(list + "?spaceKey=OPS"), 503, "unvollständig");
+        assertConfluenceError(get(BASE + "500/child/page"), 503, "unvollständig");
     }
 
     @Test
@@ -103,6 +175,7 @@ class ConfluenceCompatApiTest {
                 HttpResponse.BodyHandlers.ofByteArray());
 
         assertThat(again.statusCode()).isEqualTo(304);
+        assertThat(again.headers().firstValue("X-Cache-Generation")).contains("g1");
     }
 
     @Test
@@ -148,9 +221,23 @@ class ConfluenceCompatApiTest {
         assertThat(response.body()).doesNotContain("<p>");
     }
 
+    private static PageSnapshot snapshot(String space, String pageId, String parentPageId, String title) {
+        return snapshot(space, pageId, parentPageId, title, payload(pageId).getBytes(StandardCharsets.UTF_8),
+                HARVEST_FORMAT);
+    }
+
+    private static String payload(String pageId) {
+        return "{\"id\":\"" + pageId + "\", \"type\":\"page\",\"x\":1.50}";
+    }
+
     private static PageSnapshot snapshot(String pageId, byte[] payload, String nativeFormat) {
+        return snapshot("DEV", pageId, null, "Seite " + pageId, payload, nativeFormat);
+    }
+
+    private static PageSnapshot snapshot(String space, String pageId, String parentPageId, String title,
+                                         byte[] payload, String nativeFormat) {
         PageMetadata metadata = new PageMetadata(pageId, "confluence:wiki.example.org/page/" + pageId,
-                "Seite " + pageId, "DEV", null, "3", Instant.parse("2026-10-15T10:30:00Z"), null,
+                title, space, parentPageId, "3", Instant.parse("2026-10-15T10:30:00Z"), null,
                 PageMetadata.sorted(Map.of()));
         return PageSnapshot.of("wiki", metadata, new NativePayload(payload, "application/json", nativeFormat),
                 Instant.parse("2026-10-16T20:00:00Z"));
