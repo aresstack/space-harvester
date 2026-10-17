@@ -4,9 +4,14 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.ProxyDraft;
+import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
+import com.aresstack.spaceharvester.source.network.ProxyRoutes;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -37,17 +42,21 @@ import java.util.stream.Collectors;
 
 /**
  * Quellen-Assistent: legt eine Wissensquelle in der Konfigurationsdatei an oder ändert eine bestehende an ihrer Stelle.
- * Schritte: Quelle (Art und Adresse zuerst, Anzeigename und technische Kennung werden daraus vorgeschlagen), Anmeldung,
- * Zertifikate und Netz, Prüfen und Speichern. Ohne eigene Adresse gilt die öffentliche Confluence-Hilfe von Atlassian,
- * damit sich die App sofort ausprobieren lässt. Fehlende Angaben stehen direkt unter dem Feld. Passwort und Token kommen nie in die Datei, dort steht nur der
- * Platzhalter der Umgebungsvariable; ein hier eingegebener Wert gilt nur für den Test und diese Sitzung. Der
- * Verbindungstest läuft mit einem eigenen Harvester in einem leeren Arbeitsordner, bevor etwas gespeichert ist.
+ * Schritte wie im Enterprise AI Client: Quelle (Art und Adresse zuerst, Anzeigename und technische Kennung werden
+ * daraus vorgeschlagen), Anmeldung mit optionalem Client-Zertifikat aus dem Windows-Zertifikatsspeicher, Proxy und
+ * Netzwerk (gilt für alle Quellen, mit „Proxy auflösen“), Prüfen und Speichern. Ohne eigene Adresse gilt die
+ * öffentliche Confluence-Hilfe von Atlassian, damit sich die App sofort ausprobieren lässt. Fehlende Angaben stehen
+ * direkt unter dem Feld.
+ *
+ * <p>Passwort und Token kommen nie in die Datei, dort steht nur der Platzhalter {@code ${NAME}}. Den Wert legt die
+ * App im {@link SecretVault} ab (unter Windows mit DPAPI verschlüsselt) und setzt ihn beim Start selbst; eine
+ * Umgebungsvariable ist nicht nötig. Der Verbindungstest nutzt genau die gewählten Einstellungen (Quelle, Anmeldung,
+ * Proxy) mit einem eigenen Harvester in einem leeren Arbeitsordner, bevor etwas gespeichert ist.
  */
 final class SourceWizard {
 
     enum Step {
-        SOURCE("Quelle"), AUTH("Anmeldung"), SECURITY("Zertifikate und Netz"),
-        CHECK("Prüfen und speichern");
+        SOURCE("Quelle"), AUTH("Anmeldung"), NETWORK("Proxy und Netzwerk"), CHECK("Prüfen und speichern");
 
         private final String title;
 
@@ -93,12 +102,22 @@ final class SourceWizard {
     final JTextField certificatePath = Comic.field(32);
     final JTextField certificatePasswordVariable = Comic.field(24);
     final JComboBox<String> trust = Comic.combo();
+    final ComposerButton chooseCertificate = Comic.button("Wählen …",
+            "Aus dem Windows-Zertifikatsspeicher wählen (nur öffentliche Zertifikate, keine Schlüssel)");
+    final JComboBox<String> proxyMode = Comic.combo();
+    final JTextField pacUrl = Comic.field(32);
+    final JTextField proxyHost = Comic.field(24);
+    final JTextField proxyPort = Comic.field(6);
+    final JTextField nonProxyHosts = Comic.field(32);
+    final ComposerButton resolveProxy = Comic.button("Proxy auflösen",
+            "Route zur Adresse mit den gewählten Proxy-Einstellungen bestimmen, ohne etwas zu speichern");
+    final JTextArea proxyLog = Comic.code();
     private final JTextArea preview = Comic.code();
     final JTextArea checkNotes = Comic.note("");
-    private final JLabel variableState = Comic.muted(" ");
     private final Form address = new Form();
     private final Form login = new Form();
-    private final Form security = new Form();
+    private final Form network = new Form();
+    private final ProxySettings currentProxy;
 
     final ComposerButton back = Comic.button("Zurück", null);
     final ComposerButton next = Comic.primary("Weiter", null);
@@ -126,7 +145,7 @@ final class SourceWizard {
         this.editing = editing;
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
-        root.setPreferredSize(new Dimension(660, 470));
+        root.setPreferredSize(new Dimension(700, 540));
         Comic.style(sessionValue);
 
         kind.addItem(CONFLUENCE);
@@ -142,6 +161,18 @@ final class SourceWizard {
         if (settings != null) {
             settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
+        for (ProxySettings.Mode mode : PROXY_MODES) {
+            proxyMode.addItem(proxyLabel(mode));
+        }
+        currentProxy = settings != null ? settings.proxy() : context.loader().defaultProxy();
+        ProxyDraft proxyDraft = ProxyDraft.of(currentProxy);
+        proxyMode.setSelectedItem(proxyLabel(proxyDraft.mode()));
+        pacUrl.setText(proxyDraft.pacUrl() == null ? "" : proxyDraft.pacUrl());
+        proxyHost.setText(proxyDraft.proxyHost() == null ? "" : proxyDraft.proxyHost());
+        proxyPort.setText(proxyDraft.proxyPort() == null ? "" : proxyDraft.proxyPort());
+        nonProxyHosts.setText(proxyDraft.nonProxyHosts() == null ? "" : proxyDraft.nonProxyHosts());
+        proxyMode.addActionListener(e -> updateVisibility());
+        proxyLog.setRows(6);
         include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
         kind.addActionListener(e -> {
             updateVisibility();
@@ -164,19 +195,40 @@ final class SourceWizard {
 
         login.row("Anmeldung", auth);
         login.row("Benutzer", username);
-        login.row("Umgebungsvariable", variable,
-                "Die Datei enthält nur ${NAME}. Den Wert unter Windows einmalig setzen: setx NAME \"…\"");
-        login.row("", variableState, null);
-        login.row("Wert für diese Sitzung", sessionValue,
-                "Optional: für den Test und bis zum Schließen der App; wird nie gespeichert");
+        login.row("Token", sessionValue, " ");
+        login.row("Platzhalter", variable, "Name in der Datei (${NAME}); die App setzt den Wert selbst");
+        login.row("Client-Zertifikat", certificate, "mTLS, zusätzlich zur Anmeldung oder ohne sie");
+        login.row("Alias", row(alias, chooseCertificate), "Zertifikat im Speicher bzw. in der Datei");
+        login.row("Fingerabdruck", thumbprint, "Optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
+        login.row("PKCS#12-Datei", row(certificatePath, browse(certificatePath, false)), null);
+        login.row("Passwort-Platzhalter", certificatePasswordVariable,
+                "Java-Property oder Umgebungsvariable mit dem Zertifikatspasswort");
+        chooseCertificate.addActionListener(e -> {
+            String chosen = CertificateChooser.choose(root, alias.getText().trim());
+            if (chosen != null) {
+                alias.setText(chosen);
+            }
+        });
 
-        security.row("Client-Zertifikat", certificate, "mTLS zusätzlich zur Anmeldung");
-        security.row("Alias", alias, "Name des Zertifikats im Speicher bzw. in der Datei");
-        security.row("Fingerabdruck", thumbprint, "optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
-        security.row("PKCS#12-Datei", row(certificatePath, browse(certificatePath, false)), null);
-        security.row("Passwort-Variable", certificatePasswordVariable, "Umgebungsvariable mit dem Zertifikatspasswort");
-        security.row("Vertrauen", trust, "Eigene Zertifizierungsstellen stehen unter spring.ssl.bundle");
-        security.row("Proxy", Comic.text(proxy()), "Gilt für alle Quellen; in der Datei unter space-harvester.network");
+        network.row("", Comic.text("Diese Einstellungen gelten für alle Quellen (space-harvester.network.proxy)."),
+                null);
+        network.row("Proxy", proxyMode, "Standard unter Windows: PAC-Adresse der Interneteinstellungen per PowerShell");
+        network.row("PAC-Adresse", pacUrl, "z. B. http://proxy.example.org/proxy.pac");
+        network.row("Proxy-Host", proxyHost, null);
+        network.row("Proxy-Port", proxyPort, "1 bis 65535, z. B. 8080");
+        network.row("Ohne Proxy", nonProxyHosts, "Optional: Hosts, die direkt gehen, z. B. localhost, *.intern");
+        network.row("Vertrauen", trust, "Eigene Zertifizierungsstellen stehen unter spring.ssl.bundle");
+        JPanel diagnose = new JPanel(new BorderLayout(0, 6));
+        diagnose.setOpaque(false);
+        JPanel diagnoseButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        diagnoseButtons.setOpaque(false);
+        diagnoseButtons.add(resolveProxy);
+        diagnose.add(diagnoseButtons, BorderLayout.NORTH);
+        JComponent log = Comic.scroll(proxyLog);
+        log.setPreferredSize(new Dimension(480, 110));
+        diagnose.add(log, BorderLayout.CENTER);
+        network.row("Diagnose", diagnose, null);
+        resolveProxy.addActionListener(e -> resolveProxy(() -> { }));
 
         JPanel check = new JPanel(new BorderLayout(0, 8));
         check.setOpaque(false);
@@ -193,7 +245,7 @@ final class SourceWizard {
         pages.setOpaque(false);
         pages.add(address, Step.SOURCE.name());
         pages.add(login, Step.AUTH.name());
-        pages.add(security, Step.SECURITY.name());
+        pages.add(network, Step.NETWORK.name());
         pages.add(check, Step.CHECK.name());
 
         heading.setFont(Comic.semiBold(13f));
@@ -245,7 +297,7 @@ final class SourceWizard {
                 wizard.clearSecret();
             }
         });
-        Dialogs.present(dialog, new Dimension(620, 480));
+        Dialogs.present(dialog, new Dimension(660, 600));
     }
 
     JComponent component() {
@@ -339,6 +391,7 @@ final class SourceWizard {
         SourceDraft source = draft();
         ConfigFileEditor.Draft draft;
         try {
+            // Genau die gewählten Einstellungen, auch der noch nicht gespeicherte Proxy.
             draft = write(source);
         } catch (IOException | RuntimeException e) {
             feedback.problem(e);
@@ -374,6 +427,14 @@ final class SourceWizard {
             // Ob die bisherige Fassung ein Geheimnis enthält, entscheidet der Rohtext der ganzen Datei.
             boolean backup = editing == null || !editor.fileHasPlaintextSecret(context.configFile());
             editor.save(context.configFile(), write(source), backup);
+            SecretVault vault = context.vault();
+            if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
+                if (vault.available()) {
+                    vault.store(source.id(), Arrays.copyOf(value, value.length));
+                }
+            } else if (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE) {
+                vault.remove(source.id());
+            }
             return source.id();
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
@@ -404,9 +465,60 @@ final class SourceWizard {
         }
     }
 
+    /** Der neue Dateitext: die Quelle und, falls geändert, der Proxy für alle Quellen. */
     private ConfigFileEditor.Draft write(SourceDraft source) throws IOException {
-        return editing == null ? editor.draft(context.configFile(), source)
+        ConfigFileEditor.Draft draft = editing == null ? editor.draft(context.configFile(), source)
                 : editor.replace(context.configFile(), source);
+        return proxyChanged() ? editor.withProxy(context.configFile(), draft, proxyDraft()) : draft;
+    }
+
+    /** Die Proxy-Einstellungen aus Schritt 3; Fristen, die der Assistent nicht zeigt, bleiben wie bisher. */
+    ProxyDraft proxyDraft() {
+        ProxySettings.Mode mode = PROXY_MODES.get(Math.max(0, proxyMode.getSelectedIndex()));
+        return new ProxyDraft(mode, pacUrl.getText(), proxyHost.getText(), proxyPort.getText(),
+                nonProxyHosts.getText(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
+                currentProxy.failureTtl());
+    }
+
+    /** Ob Schritt 3 vom bisherigen Proxy abweicht (nur für Confluence, Dateien brauchen kein Netz). */
+    boolean proxyChanged() {
+        if (!CONFLUENCE.equals(kind.getSelectedItem())) {
+            return false;
+        }
+        ProxyDraft draft = proxyDraft();
+        return !draft.problems().isEmpty() || !draft.settings().equals(currentProxy);
+    }
+
+    /** „Proxy auflösen“: die Route zur Adresse mit den gewählten Einstellungen, ohne etwas zu speichern. */
+    void resolveProxy(Runnable done) {
+        ProxyDraft draft = proxyDraft();
+        if (!draft.problems().isEmpty()) {
+            proxyLog.setText(String.join("\n", draft.problems()));
+            done.run();
+            return;
+        }
+        java.net.URI target;
+        try {
+            target = java.net.URI.create(address().trim());
+        } catch (IllegalArgumentException e) {
+            proxyLog.setText("Die Adresse aus Schritt 1 ist ungültig: " + e.getMessage());
+            done.run();
+            return;
+        }
+        proxyLog.setText("Route zu " + target + " wird bestimmt …");
+        resolveProxy.setEnabled(false);
+        Background.run(() -> ProxyRoutes.from(draft.settings()).diagnose(target), lines -> {
+            resolveProxy.setEnabled(true);
+            proxyLog.setText(String.join("\n", lines));
+            proxyLog.setCaretPosition(0);
+            done.run();
+        }, error -> {
+            resolveProxy.setEnabled(true);
+            proxyLog.setText("Der Proxy lässt sich so nicht verwenden: " + (error instanceof
+                    InvalidNetworkConfigurationException invalid ? String.join("; ", invalid.problems())
+                    : error.getMessage()));
+            done.run();
+        });
     }
 
     private void prefill(SourceDraft source) {
@@ -449,6 +561,20 @@ final class SourceWizard {
         sessionValue.setText("");
     }
 
+    /** Ob für Token bzw. Passwort schon ein Wert da ist: eingegeben, in der Sitzung, im Tresor oder als Property. */
+    private boolean secretAvailable(SourceDraft source) {
+        if (source.authType() == SourceSettingsConfig.AuthType.NONE || sessionValue.getPassword().length > 0) {
+            return true;
+        }
+        String sourceId = source.id();
+        if (sourceId != null && !loginChanged(source)
+                && (context.secrets().has(sourceId) || context.vault().has(sourceId))) {
+            return true;
+        }
+        String name = source.secretVariable();
+        return name != null && (System.getProperty(name) != null || System.getenv(name) != null);
+    }
+
     AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
         String sourceId = source.id();
@@ -479,11 +605,17 @@ final class SourceWizard {
         List<String> mine = new ArrayList<>();
         for (String problem : all) {
             Form form = form(current);
-            boolean other = !address.has(field(problem)) && !login.has(field(problem)) && !security.has(field(problem));
+            boolean other = !address.has(field(problem)) && !login.has(field(problem)) && !network.has(field(problem));
             if (current == Step.CHECK || (form != null && form.has(field(problem)))
-                    || (current == Step.SECURITY && other)) {
+                    || (current == Step.AUTH && other)) {
                 mine.add(problem);
             }
+        }
+        if ((current == Step.AUTH || current == Step.CHECK) && source.confluence() && !secretAvailable(source)) {
+            mine.add(source.authType() == SourceSettingsConfig.AuthType.PAT ? "Das Token fehlt." : "Das Passwort fehlt.");
+        }
+        if ((current == Step.NETWORK || current == Step.CHECK) && source.confluence()) {
+            mine.addAll(proxyDraft().problems());
         }
         if (current == Step.SOURCE && editing == null && source.id() != null && context.settings() != null
                 && context.settings().sources().stream().anyMatch(s -> s.id().equals(source.id()))) {
@@ -496,7 +628,7 @@ final class SourceWizard {
         return switch (target) {
             case SOURCE -> address;
             case AUTH -> login;
-            case SECURITY -> security;
+            case NETWORK -> network;
             case CHECK -> null;
         };
     }
@@ -521,6 +653,14 @@ final class SourceWizard {
             return certificatePath;
         } else if (problem.startsWith("Der Alias")) {
             return alias;
+        } else if (problem.startsWith("Das Token") || problem.startsWith("Das Passwort")) {
+            return sessionValue;
+        } else if (problem.startsWith("Die PAC-Adresse")) {
+            return pacUrl;
+        } else if (problem.startsWith("Der Proxy-Host")) {
+            return proxyHost;
+        } else if (problem.startsWith("Der Proxy-Port")) {
+            return proxyPort;
         }
         return null;
     }
@@ -546,7 +686,11 @@ final class SourceWizard {
         } else if (problem.startsWith("Die PKCS#12-Datei")) {
             return "Bitte die PKCS#12-Datei wählen.";
         } else if (problem.startsWith("Der Alias")) {
-            return "Bitte den Alias des Zertifikats eintragen.";
+            return "Bitte den Alias wählen oder eintragen.";
+        } else if (problem.startsWith("Das Token")) {
+            return "Bitte das Token eingeben.";
+        } else if (problem.startsWith("Das Passwort")) {
+            return "Bitte das Passwort eingeben.";
         }
         return problem;
     }
@@ -687,7 +831,8 @@ final class SourceWizard {
 
     private void renderCheck() {
         SourceDraft source = draft();
-        preview.setText(source.yaml(""));
+        preview.setText(source.yaml("") + (proxyChanged() && proxyDraft().problems().isEmpty()
+                ? "\n# space-harvester.network (gilt für alle Quellen)\n" + proxyDraft().yaml("") : ""));
         preview.setCaretPosition(0);
         StringBuilder notes = new StringBuilder(editing == null ? "Dieser Eintrag kommt in " : "Dieser Eintrag ersetzt ")
                 .append(editing == null ? "" : "den bisherigen der Quelle " + source.id() + " in ")
@@ -702,22 +847,24 @@ final class SourceWizard {
                     + "KEINE .bak-Sicherung, und eine vorhandene wird gelöscht.");
             if (!editing.plaintextSecrets().isEmpty()) {
                 notes.append(" In diesem Eintrag betrifft das ").append(String.join(" und ",
-                        editing.plaintextSecrets())).append("; dort steht künftig nur der Platzhalter. Den Wert als "
-                        + "Umgebungsvariable setzen oder hier für diese Sitzung eingeben.");
+                        editing.plaintextSecrets())).append("; dort steht künftig nur der Platzhalter. Den Wert im "
+                        + "Schritt Anmeldung eingeben; die App legt ihn verschlüsselt ab.");
             }
         }
-        if (source.secretVariable() != null && System.getenv(source.secretVariable()) == null
-                && System.getProperty(source.secretVariable()) == null) {
-            notes.append("\n\nDie Umgebungsvariable ").append(source.secretVariable()).append(" ist nicht gesetzt. ")
-                    .append(sessionValue.getPassword().length > 0
-                            ? "Der eingegebene Wert gilt für den Test und diese Sitzung. "
-                            : "Ohne Wert fragt die App beim Start danach. ")
-                    .append("Dauerhaft: setx ").append(source.secretVariable()).append(" \"…\" und die App neu starten.");
+        if (source.secretVariable() != null && sessionValue.getPassword().length > 0) {
+            String what = source.secretName();
+            notes.append("\n\n").append(Character.toUpperCase(what.charAt(0))).append(what.substring(1))
+                    .append(" steht nicht in der Datei, sondern wird ")
+                    .append(context.vault().describe()).append(" gespeichert; die App setzt es beim Start selbst.");
         }
         if (source.certificatePasswordVariable() != null && System.getenv(source.certificatePasswordVariable()) == null
                 && System.getProperty(source.certificatePasswordVariable()) == null) {
-            notes.append("\n\nDas Zertifikatspasswort kommt aus der Umgebungsvariable ")
+            notes.append("\n\nDas Zertifikatspasswort kommt aus der Java-Property bzw. Umgebungsvariable ")
                     .append(source.certificatePasswordVariable()).append("; sie ist noch nicht gesetzt.");
+        }
+        if (proxyChanged()) {
+            notes.append("\n\nDer Proxy ändert sich für ALLE Quellen: ").append(proxyLabel(proxyDraft().mode()))
+                    .append(" (space-harvester.network.proxy).");
         }
         checkNotes.setText(notes.toString());
     }
@@ -731,15 +878,21 @@ final class SourceWizard {
         boolean anonymous = NONE.equals(auth.getSelectedItem());
         login.visible(username, basic);
         login.visible(variable, !anonymous);
-        login.visible(variableState, !anonymous);
         login.visible(sessionValue, !anonymous);
-        variableState.setText(anonymous ? " " : "Fehlt die Variable, fragt die App beim Start nach dem Wert.");
+        login.label(sessionValue, basic ? "Passwort" : "Token");
+        login.hint(sessionValue, secretHint());
         boolean windows = WINDOWS_MY.equals(certificate.getSelectedItem());
         boolean pkcs12 = PKCS12.equals(certificate.getSelectedItem());
-        security.visible(thumbprint, windows || pkcs12);
-        security.visible(alias, windows || pkcs12);
-        security.visible(certificatePath, pkcs12);
-        security.visible(certificatePasswordVariable, pkcs12);
+        login.visible(thumbprint, windows || pkcs12);
+        login.visible(alias, windows || pkcs12);
+        chooseCertificate.setVisible(windows);
+        login.visible(certificatePath, pkcs12);
+        login.visible(certificatePasswordVariable, pkcs12);
+        ProxySettings.Mode mode = PROXY_MODES.get(Math.max(0, proxyMode.getSelectedIndex()));
+        network.visible(pacUrl, mode == ProxySettings.Mode.PAC_URL_MANUAL);
+        network.visible(proxyHost, mode == ProxySettings.Mode.MANUAL_PROXY);
+        network.visible(proxyPort, mode == ProxySettings.Mode.MANUAL_PROXY);
+        network.visible(nonProxyHosts, mode != ProxySettings.Mode.DISABLED);
         if (pkcs12 && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");
@@ -749,10 +902,33 @@ final class SourceWizard {
         root.repaint();
     }
 
-    private String proxy() {
-        AppSettings settings = context.settings();
-        return settings == null ? "aus" : settings.proxy().mode().name().toLowerCase(Locale.ROOT).replace('_', '-');
+    /** Wo Token bzw. Passwort landet; beim Bearbeiten, ob schon eins gespeichert ist. */
+    private String secretHint() {
+        String stored = editing != null && (context.vault().has(editing.draft().id())
+                || context.secrets().has(editing.draft().id())) ? "Schon hinterlegt; leer lassen zum Behalten. " : "";
+        return stored + (context.vault().available() ? "Wird verschlüsselt für dein Windows-Konto gespeichert, nie in "
+                + "der Datei" : "Gilt bis zum Schließen der App, nie in der Datei");
     }
+
+    /** Die wählbaren Modi des Cores in dieser Reihenfolge; die Vorgabe unter Windows zuerst. */
+    static final List<ProxySettings.Mode> PROXY_MODES = List.of(ProxySettings.Mode.PAC_URL_POWERSHELL,
+            ProxySettings.Mode.PAC_URL_WINDOWS_SETTINGS, ProxySettings.Mode.PAC_URL_WSCRIPT,
+            ProxySettings.Mode.WINDOWS_STATIC_PROXY, ProxySettings.Mode.PAC_URL_MANUAL,
+            ProxySettings.Mode.MANUAL_PROXY, ProxySettings.Mode.DISABLED);
+
+    static String proxyLabel(ProxySettings.Mode mode) {
+        String text = switch (mode) {
+            case PAC_URL_POWERSHELL -> "PAC aus den Windows-Einstellungen per PowerShell";
+            case PAC_URL_WINDOWS_SETTINGS -> "PAC aus den Windows-Einstellungen per reg.exe";
+            case PAC_URL_WSCRIPT -> "PAC aus den Windows-Einstellungen per VBScript";
+            case WINDOWS_STATIC_PROXY -> "Fester Proxy aus den Windows-Einstellungen";
+            case PAC_URL_MANUAL -> "PAC-Datei von fester Adresse";
+            case MANUAL_PROXY -> "Fester Proxy (Host und Port)";
+            case DISABLED -> "Ohne Proxy (direkt)";
+        };
+        return text + " · " + ProxyDraft.name(mode);
+    }
+
 
     private JPanel row(JTextField field, ComposerButton button) {
         JPanel row = new JPanel(new BorderLayout(6, 0));
@@ -827,7 +1003,7 @@ final class SourceWizard {
             Row row = new Row(key, label, field, hintLabel, hint == null ? " " : hint);
             rows.add(row);
             if (key instanceof JTextField textField) {
-                onEdit(textField, () -> clear(row));
+                onEdit(textField, () -> clear(key));
             }
             // Ein dehnbarer Rest unter der letzten Zeile hält das Formular oben.
             GridBagConstraints rest = new GridBagConstraints();
@@ -866,11 +1042,34 @@ final class SourceWizard {
                     .map(row -> row.hint().getText()).findFirst().orElse(null);
         }
 
+        private void clear(JComponent key) {
+            rows.stream().filter(row -> row.key() == key).forEach(this::clear);
+        }
+
         private void clear(Row row) {
             row.hint().setText(row.text());
             row.hint().setToolTipText(null);
             row.hint().setForeground(Comic.MUTED);
             row.label().setForeground(Comic.TEXT);
+        }
+
+        void label(JComponent field, String text) {
+            rows.stream().filter(row -> row.key() == field).forEach(row -> row.label().setText(text));
+        }
+
+        /** Ersetzt den grauen Hinweis einer Zeile (auch den, zu dem ein Fehler zurückkehrt). */
+        void hint(JComponent field, String text) {
+            for (int i = 0; i < rows.size(); i++) {
+                Row row = rows.get(i);
+                if (row.key() == field) {
+                    boolean error = row.hint().getForeground() == Comic.RED;
+                    Row changed = new Row(row.key(), row.label(), row.field(), row.hint(), text);
+                    rows.set(i, changed);
+                    if (!error) {
+                        row.hint().setText(text);
+                    }
+                }
+            }
         }
 
         void visible(JComponent field, boolean visible) {
@@ -886,7 +1085,7 @@ final class SourceWizard {
 
     /** Der Hinweis unter einem Feld, solange dort ein Fehler steht; sonst {@code null}. */
     String error(JComponent field) {
-        for (Form form : List.of(address, login, security)) {
+        for (Form form : List.of(address, login, network)) {
             String error = form.error(field);
             if (error != null) {
                 return error;

@@ -83,8 +83,9 @@ public final class SourcesView implements View {
         JPanel south = new JPanel(new BorderLayout(0, 8));
         south.setOpaque(false);
         south.add(add, BorderLayout.NORTH);
-        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Zugangsdaten kommen aus "
-                + "Umgebungsvariablen oder werden hier für die Sitzung eingegeben."), BorderLayout.SOUTH);
+        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
+                + "der Assistent verschlüsselt ab; hier lassen sie sich auch für die Sitzung eingeben."),
+                BorderLayout.SOUTH);
         left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
@@ -194,10 +195,10 @@ public final class SourcesView implements View {
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
             boolean session = context.secrets().has(entry.id());
             facts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    !entry.secretMissing() ? "gesetzt (Konfiguration/Umgebung)"
+                    context.vault().has(entry.id()) ? "verschlüsselt gespeichert"
                             : session ? "für diese Sitzung eingegeben"
-                            : "fehlt" + (entry.secretVariable() == null ? "" : " (Umgebungsvariable "
-                            + entry.secretVariable() + ")"),
+                            : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
+                            : "fehlt (im Assistenten unter Bearbeiten … eingeben)",
                     entry.secretMissing() && !session ? Comic.RED : Comic.INK);
         }
         SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
@@ -334,6 +335,7 @@ public final class SourcesView implements View {
         Background.execute(() -> editor.save(context.configFile(), editor.remove(context.configFile(), id),
                 !plaintext), () -> {
             context.secrets().remove(id);
+            Background.execute(() -> context.vault().remove(id), () -> { }, ignored -> { });
             context.reload(() -> feedback.success("Quelle " + id + " entfernt"));
         }, feedback::problem);
     }

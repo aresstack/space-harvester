@@ -50,13 +50,33 @@ public final class AppSettingsLoader {
 
     private final Placeholders placeholders;
     private final Path home;
+    private final boolean windows;
 
     /**
      * @param home Standard-Basisverzeichnis der App ({@code ~/.space-harvester}); darunter liegen Daten und Konfiguration
      */
     public AppSettingsLoader(Placeholders placeholders, Path home) {
+        this(placeholders, home, System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows"));
+    }
+
+    /** @param windows ob die App unter Windows läuft; bestimmt den Proxy ohne Angabe in der Datei */
+    AppSettingsLoader(Placeholders placeholders, Path home, boolean windows) {
         this.placeholders = placeholders;
         this.home = home;
+        this.windows = windows;
+    }
+
+    /**
+     * Proxy ohne Angabe in der Datei: unter Windows wie im Enterprise AI Client die PAC-Adresse der
+     * Interneteinstellungen per PowerShell ({@code pac-url-powershell}), sonst ohne Proxy.
+     */
+    public ProxySettings defaultProxy() {
+        return defaultProxy(windows);
+    }
+
+    static ProxySettings defaultProxy(boolean windows) {
+        return windows ? new ProxySettings(ProxySettings.Mode.PAC_URL_POWERSHELL, null, null, null, null, null, null,
+                null) : ProxySettings.disabled();
     }
 
     /** Standard-Basisverzeichnis {@code <user.home>/.space-harvester}. */
@@ -229,7 +249,7 @@ public final class AppSettingsLoader {
 
     private ProxySettings proxy(Map<?, ?> proxy, List<String> problems) {
         if (proxy.isEmpty()) {
-            return ProxySettings.disabled();
+            return defaultProxy();
         }
         ProxySettings.Mode mode = enumValue(ProxySettings.Mode.class, text(get(proxy, "mode"), problems),
                 ProxySettings.Mode.DISABLED, "space-harvester.network.proxy.mode", problems);
