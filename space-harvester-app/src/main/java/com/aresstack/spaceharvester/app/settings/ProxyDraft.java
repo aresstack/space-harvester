@@ -6,7 +6,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -16,28 +15,24 @@ import java.util.Locale;
  * der bisherigen Datei und bleiben erhalten. Die Auflösung selbst macht der Core (win-proxy-java).
  */
 public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHost, String proxyPort,
-                         String nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+                         List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl,
+                         Duration failureTtl) {
 
     public ProxyDraft {
         mode = mode == null ? ProxySettings.Mode.DISABLED : mode;
         pacUrl = trim(pacUrl);
         proxyHost = trim(proxyHost);
         proxyPort = trim(proxyPort);
-        nonProxyHosts = trim(nonProxyHosts);
+        // Die Ausnahmen bleiben eine Liste wie im Core; leere Zeilen der Tabelle fallen weg.
+        nonProxyHosts = nonProxyHosts == null ? List.of() : nonProxyHosts.stream().map(ProxyDraft::trim)
+                .filter(host -> host != null).toList();
     }
 
     /** Der Entwurf zu bestehenden Einstellungen. */
     public static ProxyDraft of(ProxySettings settings) {
         return new ProxyDraft(settings.mode(), settings.pacUrl() == null ? null : settings.pacUrl().toString(),
                 settings.proxyHost(), settings.proxyPort() == null ? null : String.valueOf(settings.proxyPort()),
-                String.join(", ", settings.nonProxyHosts()), settings.resolveTimeout(), settings.cacheTtl(),
-                settings.failureTtl());
-    }
-
-    /** Ausnahmen als Liste: Komma, Semikolon oder Leerzeichen trennen. */
-    public List<String> hosts() {
-        return nonProxyHosts == null ? List.of() : Arrays.stream(nonProxyHosts.split("[,;\\s]+"))
-                .filter(host -> !host.isBlank()).toList();
+                settings.nonProxyHosts(), settings.resolveTimeout(), settings.cacheTtl(), settings.failureTtl());
     }
 
     /** Was fehlt oder nicht passt; leer, wenn die Einstellungen so in die Datei können. */
@@ -77,7 +72,7 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
         boolean pac = mode == ProxySettings.Mode.PAC_URL_MANUAL;
         boolean manual = mode == ProxySettings.Mode.MANUAL_PROXY;
         return new ProxySettings(mode, pac && pacUrl != null ? URI.create(pacUrl) : null, manual ? proxyHost : null,
-                manual ? port() : null, hosts(), resolveTimeout, cacheTtl, failureTtl);
+                manual ? port() : null, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl);
     }
 
     /** Der Block {@code proxy:} mit Einrückung {@code indent}; nur Schlüssel mit Wert. */

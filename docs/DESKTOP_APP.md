@@ -89,7 +89,8 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
 3. **Proxy und Netzwerk** (Confluence), gilt für **alle Quellen** (`space-harvester.network.proxy`): die sieben Modi
    des Cores (win-proxy-java), Standard unter Windows `pac-url-powershell` (PAC-Adresse der Interneteinstellungen per
    PowerShell, wie im Enterprise AI Client; gilt auch ohne Abschnitt in der Datei), dazu PAC-Adresse, fester Proxy
-   (Host und Port) und Hosts ohne Proxy. **Vertrauen** (je Quelle): Java-Laufzeit, `windows` (Java-Truststore plus
+   (Host und Port); unter **Erweitert** (zugeklappt) die **Proxy-Ausnahmen** (`non-proxy-hosts`) als Tabelle mit
+   Hinzufügen und Entfernen: Diese Hosts werden direkt und nicht über den Proxy angesprochen. **Vertrauen** (je Quelle): Java-Laufzeit, `windows` (Java-Truststore plus
    Windows-Zertifikatspeicher Root und CA über win-trust-java wie im Enterprise AI Client, Standard für neue Quellen
    unter Windows; der Export läuft erst beim ersten TLS-Handshake) oder ein vorhandenes `spring.ssl.bundle`. **Proxy auflösen** zeigt
    mit den gewählten Einstellungen jeden Schritt der Auflösung zur Adresse aus Schritt 1, ohne etwas zu speichern.
