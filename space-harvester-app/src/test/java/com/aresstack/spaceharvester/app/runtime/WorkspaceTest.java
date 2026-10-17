@@ -110,6 +110,12 @@ class WorkspaceTest {
                 SearchSort.TITLE);
         assertThat(workspace.search(query, null, 10).hits()).extracting(hit -> hit.page().header().key().pageId())
                 .containsExactly("102");
+        // Ohne Quelle global über alle Quellen (#114); jeder Treffer nennt seine Quelle.
+        PageSearchQuery global = PageSearchQuery.of(null, List.of(), "wartung", null, null, null, null, null,
+                SearchSort.TITLE);
+        assertThat(workspace.search(global, null, 10).hits()).extracting(hit -> hit.page().header().key().toString())
+                .containsExactly(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "102")
+                        .toString());
         assertThat(workspace.semanticSearch()).isFalse();
         assertThat(workspace.relevance(query, "wartung", 10).hits()).isNotEmpty();
 

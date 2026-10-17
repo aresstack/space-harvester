@@ -110,7 +110,7 @@ spring:
 | Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
 | Aktivitäten | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
 | Exporte | Space und Formate wählen, Export starten, letzte Exporte |
-| Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz |
+| Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Weitere laden“ blättert weiter |
 | Einstellungen | Konfigurationsdatei, Hinweise, Ablage, Netz und Zertifikate, Embedding-Modell, Diagnose |
 
 Lange Arbeit (Netz, Lucene, Export) läuft immer im Hintergrund; die Oberfläche zeigt „läuft …“ und bleibt bedienbar.
@@ -174,8 +174,8 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 | `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
 | `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
 | `GET …/pages/{pageId}?view=extended` (`acronyms`) | `PageAcronyms.read` | Seite › Inhalt: Akronyme markiert, Tooltip, Alt+→ | `ReaderAcronymsTest`, `PageAcronymsTest` |
-| `GET /api/v1/search` | `PageSearch.search` | Suche (Titel, Neueste), Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `MainWindowTest` |
-| `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/search[?sourceId=…]` | `PageSearch.search` (ohne Quelle global, #114) | Suche (Titel, Neueste) mit „Weitere laden“ über den Core-Cursor, Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `SearchViewTest`, `MainWindowTest` |
+| `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` (ein Fenster über alle Quellen) | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aktivitäten | `WorkspaceTest.harvestsBrowses…` |
 | `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aktivitäten › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |

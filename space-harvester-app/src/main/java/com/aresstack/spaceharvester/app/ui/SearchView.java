@@ -4,6 +4,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
+import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchResults;
@@ -29,12 +31,15 @@ import java.util.Locale;
 
 /**
  * Globale Suche über den lokalen Bestand: Titelwörter, optional nach Quelle und Space gefiltert, sortiert nach Titel,
- * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Ohne gewählte Quelle durchsucht sie jede Quelle
- * einzeln mit derselben Anfrage; Quellen, die die Suche ablehnen, nennt sie, statt sie still zu überspringen.
+ * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Nur Bedienung und Darstellung: Suche, Sortierung,
+ * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, {@code RelevanceSearch}, #114), ohne gewählte Quelle als
+ * eine globale Suche über alle Quellen, mit gewählter Quelle mit demselben Anwendungsfall und {@code sourceId}.
+ * „Weitere laden“ folgt dem Cursor des Core; hat ein Abgleich den Index inzwischen geändert, beginnt dieselbe Suche von
+ * vorn. Nur die jeweils letzte Anfrage darf die Liste ändern.
  */
 public final class SearchView implements View {
 
-    private static final int LIMIT = 100;
+    private static final int LIMIT = PageSearch.MAX_LIMIT;
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
@@ -44,10 +49,16 @@ public final class SearchView implements View {
     private final ComposerToggleButton byModified = toggle("Neueste", "Zuletzt geänderte zuerst");
     private final ComposerToggleButton byRelevance = toggle("Relevanz", "Nach Ähnlichkeit zur Anfrage");
     private final ComposerButton run = Comic.primary("Suchen", "Im lokalen Bestand suchen");
+    private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
+    /** Anfrage und Cursor der zuletzt angezeigten Titelsuche, für „Weitere laden“. */
+    private PageSearchQuery lastQuery;
+    private String nextCursor;
+    /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
+    private int request;
 
     public SearchView(AppContext context) {
         this.context = context;
@@ -61,6 +72,8 @@ public final class SearchView implements View {
         query.setToolTipText("Wörter im Titel; bei Relevanz auch freier Text");
         query.addActionListener(e -> search());
         run.addActionListener(e -> search());
+        more.addActionListener(e -> loadMore());
+        more.setEnabled(false);
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -83,7 +96,11 @@ public final class SearchView implements View {
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
         body.add(Comic.scroll(table), BorderLayout.CENTER);
-        body.add(status, BorderLayout.SOUTH);
+        JPanel foot = new JPanel(new BorderLayout(12, 0));
+        foot.setOpaque(false);
+        foot.add(status, BorderLayout.CENTER);
+        foot.add(more, BorderLayout.EAST);
+        body.add(foot, BorderLayout.SOUTH);
         root.add(Comic.plate("Globale Suche", Comic.BLUE, head), BorderLayout.NORTH);
         root.add(body, BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
@@ -113,11 +130,10 @@ public final class SearchView implements View {
         }
         String text = query.getText().trim();
         String sourceId = picker.sourceId();
-        List<String> sources = sourceId == null ? picker.allSourceIds() : List.of(sourceId);
         String spaceKey = picker.spaceKey();
         boolean relevance = byRelevance.isSelected();
         SearchSort sort = byModified.isSelected() ? SearchSort.MODIFIED_DESC : SearchSort.TITLE;
-        if (sources.isEmpty()) {
+        if (picker.allSourceIds().isEmpty()) {
             feedback.warning("Keine Quelle eingerichtet", "Wissensquellen werden in der Konfigurationsdatei angelegt.");
             return;
         }
@@ -125,55 +141,35 @@ public final class SearchView implements View {
             feedback.warning("Suchtext fehlt", "Die Relevanzsuche braucht einen Suchtext.");
             return;
         }
+        List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
+        int id = ++request;
         run.setEnabled(false);
+        more.setEnabled(false);
         feedback.working("Suche läuft …");
         Background.run(() -> {
-            List<Hit> hits = new ArrayList<>();
-            List<String> refused = new ArrayList<>();
-            boolean more = false;
-            String semanticNote = null;
-            for (String id : sources) {
-                try {
-                    if (relevance) {
-                        boolean semantic = runtime.workspace().semanticSearch();
-                        PageSearchQuery q = PageSearchQuery.of(id, spaceKey.isEmpty() ? List.of() : List.of(spaceKey),
-                                semantic ? null : text, null, null, null, null, null, SearchSort.TITLE);
-                        RelevanceSearch.RelevanceResults results = runtime.workspace().relevance(q, text, LIMIT);
-                        if (!semantic) {
-                            semanticNote = "Kein Embedding-Modell eingerichtet: sortiert nach Titeltreffern.";
-                        }
-                        for (RelevanceSearch.RankedHit ranked : results.hits()) {
-                            hits.add(Hit.of(id, ranked.hit(), ranked.relevance()));
-                        }
-                    } else {
-                        PageSearchQuery q = PageSearchQuery.of(id, spaceKey.isEmpty() ? List.of() : List.of(spaceKey),
-                                text.isEmpty() ? null : text, null, null, null, null, null, sort);
-                        SearchResults results = runtime.workspace().search(q, null, LIMIT);
-                        for (SearchHit hit : results.hits()) {
-                            hits.add(Hit.of(id, hit, null));
-                        }
-                        more |= !results.complete();
-                    }
-                } catch (RuntimeException e) {
-                    if (sources.size() == 1) {
-                        throw e;
-                    }
-                    refused.add(id + " (" + Problems.describe(e).title() + ")");
-                }
+            if (relevance) {
+                // Ein Block über alle gewählten Quellen; ohne Modell nur Titeltreffer.
+                boolean semantic = runtime.workspace().semanticSearch();
+                PageSearchQuery q = PageSearchQuery.of(sourceId, spaces, semantic ? null : text, null, null, null,
+                        null, null, SearchSort.TITLE);
+                RelevanceSearch.RelevanceResults results = runtime.workspace().relevance(q, text, LIMIT);
+                List<Hit> hits = results.hits().stream().map(ranked -> Hit.of(ranked.hit(), ranked.relevance()))
+                        .toList();
+                return new Outcome(null, hits, null, semantic ? null
+                        : "Kein Embedding-Modell eingerichtet: sortiert nach Titeltreffern.");
             }
-            if (sources.size() > 1) {
-                hits.sort(relevance ? Hit.BY_SIMILARITY : sort == SearchSort.MODIFIED_DESC ? Hit.BY_MODIFIED
-                        : Hit.BY_TITLE);
-            }
-            return new Outcome(hits, refused, more, semanticNote);
+            PageSearchQuery q = PageSearchQuery.of(sourceId, spaces, text.isEmpty() ? null : text, null, null, null,
+                    null, null, sort);
+            SearchResults results = runtime.workspace().search(q, null, LIMIT);
+            return new Outcome(q, hits(results), results.nextCursor(), null);
         }, outcome -> {
+            if (id != request) {
+                return;
+            }
             run.setEnabled(true);
             model.set(outcome.hits());
-            status.setText(Texts.count(outcome.hits().size(), "Treffer", "Treffer")
-                    + (outcome.more() ? " · weitere vorhanden, Suche eingrenzen" : ""));
-            if (!outcome.refused().isEmpty()) {
-                feedback.warning("Nicht alle Quellen durchsucht", String.join(", ", outcome.refused()));
-            } else if (outcome.semanticNote() != null) {
+            show(outcome);
+            if (outcome.semanticNote() != null) {
                 feedback.info("Relevanz ohne Modell", outcome.semanticNote());
             } else if (outcome.hits().isEmpty()) {
                 feedback.info("Keine Treffer", "Im Bestand passt keine Seite. Vielleicht ist der Space noch nicht "
@@ -182,11 +178,74 @@ public final class SearchView implements View {
                 feedback.clear();
             }
         }, error -> {
+            if (id != request) {
+                return;
+            }
             run.setEnabled(true);
             model.set(List.of());
-            status.setText(" ");
+            show(new Outcome(null, List.of(), null, null));
             feedback.problem(error);
         });
+    }
+
+    /**
+     * Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. Lehnt der Core den Cursor ab, weil sich
+     * der Index geändert hat (409 {@code cache-generation-changed}), ersetzt die erste Seite derselben Anfrage die Liste.
+     */
+    private void loadMore() {
+        AppRuntime runtime = context.runtime();
+        PageSearchQuery q = lastQuery;
+        String cursor = nextCursor;
+        if (runtime == null || q == null || cursor == null) {
+            return;
+        }
+        int id = ++request;
+        run.setEnabled(false);
+        more.setEnabled(false);
+        feedback.working("Weitere Treffer werden geladen …");
+        Background.run(() -> {
+            try {
+                SearchResults results = runtime.workspace().search(q, cursor, LIMIT);
+                return new Page(new Outcome(q, hits(results), results.nextCursor(), null), false);
+            } catch (CacheGenerationChangedException changed) {
+                SearchResults results = runtime.workspace().search(q, null, LIMIT);
+                return new Page(new Outcome(q, hits(results), results.nextCursor(), null), true);
+            }
+        }, page -> {
+            if (id != request) {
+                return;
+            }
+            run.setEnabled(true);
+            if (page.restarted()) {
+                model.set(page.outcome().hits());
+                show(page.outcome());
+                feedback.info("Bestand geändert", "Ein Abgleich hat den Index geändert; die Suche beginnt von vorn.");
+            } else {
+                model.add(page.outcome().hits());
+                show(page.outcome());
+                feedback.clear();
+            }
+        }, error -> {
+            if (id != request) {
+                return;
+            }
+            // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
+            run.setEnabled(true);
+            show(new Outcome(null, List.of(), null, null));
+            feedback.problem(error);
+        });
+    }
+
+    private void show(Outcome outcome) {
+        lastQuery = outcome.query();
+        nextCursor = outcome.nextCursor();
+        more.setEnabled(nextCursor != null);
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
+                + (nextCursor != null ? " · weitere vorhanden" : ""));
+    }
+
+    private static List<Hit> hits(SearchResults results) {
+        return results.hits().stream().map(hit -> Hit.of(hit, null)).toList();
     }
 
     private static ComposerToggleButton toggle(String text, String tooltip) {
@@ -195,24 +254,25 @@ public final class SearchView implements View {
         return button;
     }
 
-    private record Outcome(List<Hit> hits, List<String> refused, boolean more, String semanticNote) {
+    /**
+     * @param query      Anfrage der Titelsuche für „Weitere laden“ oder {@code null}
+     * @param nextCursor Cursor des Core oder {@code null}, wenn alle Treffer geladen sind
+     */
+    private record Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor, String semanticNote) {
     }
 
+    /** Ein Stapel von „Weitere laden“; {@code restarted}: die erste Seite nach geändertem Index. */
+    private record Page(Outcome outcome, boolean restarted) {
+    }
+
+    /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */
     record Hit(String sourceId, String pageId, String title, String spaceKey, Instant modifiedAt, String state,
                Double similarity, String freshness) {
 
-        static final java.util.Comparator<Hit> BY_TITLE = java.util.Comparator
-                .comparing((Hit h) -> h.title().toLowerCase(Locale.ROOT)).thenComparing(Hit::pageId);
-        static final java.util.Comparator<Hit> BY_MODIFIED = java.util.Comparator
-                .comparing(Hit::modifiedAt, java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))
-                .thenComparing(Hit::pageId);
-        static final java.util.Comparator<Hit> BY_SIMILARITY = java.util.Comparator
-                .comparing(Hit::similarity, java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))
-                .thenComparing(Hit::pageId);
-
-        static Hit of(String sourceId, SearchHit hit, RelevanceSearch.Relevance relevance) {
+        static Hit of(SearchHit hit, RelevanceSearch.Relevance relevance) {
             PageMetadata m = hit.page().header().metadata();
-            return new Hit(sourceId, m.pageId(), m.title(), m.partitionKey(), m.modifiedAt(),
+            return new Hit(hit.page().header().key().sourceId(), m.pageId(), m.title(), m.partitionKey(),
+                    m.modifiedAt(),
                     Texts.cacheState(hit.generation().state()),
                     relevance == null ? null : relevance.similarity(),
                     relevance == null ? null : relevance.freshness() == RelevanceSearch.Freshness.CURRENT
@@ -229,6 +289,14 @@ public final class SearchView implements View {
         void set(List<Hit> hits) {
             rows = new ArrayList<>(hits);
             fireTableDataChanged();
+        }
+
+        void add(List<Hit> hits) {
+            int first = rows.size();
+            rows.addAll(hits);
+            if (!hits.isEmpty()) {
+                fireTableRowsInserted(first, rows.size() - 1);
+            }
         }
 
         @Override
