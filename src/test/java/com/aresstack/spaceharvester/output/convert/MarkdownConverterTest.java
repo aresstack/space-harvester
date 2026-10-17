@@ -163,4 +163,13 @@ class MarkdownConverterTest {
                 .contains("](https://tracker.example/p.gif)")
                 .contains("```abx\n<script>x</script>\n```");
     }
+
+    @Test
+    void maliciouslyDeepStorageBecomesText() throws Exception {
+        String markdown = convert(storagePage("100", null, 0, "<ul><li>".repeat(20_000) + "ganz unten"
+                + "</li></ul>".repeat(20_000) + "<p>" + "<em>".repeat(20_000) + "innen" + "</em>".repeat(20_000)
+                + "</p>"));
+
+        assertThat(markdown).contains("ganz unten", "innen", "Verschachtelung tiefer als 64 Ebenen");
+    }
 }

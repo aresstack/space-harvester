@@ -30,6 +30,11 @@ import java.util.Objects;
  * <p>Eine Liste wird nie stillschweigend unvollständig: Liegt eine Seite nur mit Kopfdaten im Cache oder ist der
  * Abgleich des Space unvollständig ({@link CacheState#INCOMPLETE}), scheitert die Abfrage mit
  * {@link IncompleteListingException}.
+ *
+ * <p>Die Payloads einer Antwort zusammen sind auf {@code maxResponseBytes} begrenzt (#90): Ist das Budget erreicht,
+ * endet der Ausschnitt früher, {@code size} ist kleiner als {@code limit} und {@code _links.next} zeigt auf den Rest,
+ * wie bei Confluence, das ebenfalls weniger als {@code limit} liefern darf. Die erste Seite kommt immer mit (ihre Größe
+ * begrenzt schon der Abruf); weitere Seiten werden nach Erreichen des Budgets nicht mehr geladen.
  */
 public class ContentListing {
 
@@ -39,14 +44,26 @@ public class ContentListing {
     /** Höchstes {@code limit}; größere Werte werden wie bei Confluence auf diesen Wert gesenkt. */
     public static final int MAX_LIMIT = PageSearch.MAX_LIMIT;
 
+    /** Standard für die Payload-Bytes einer Antwort zusammen. */
+    public static final long DEFAULT_MAX_RESPONSE_BYTES = 32L * 1024 * 1024;
+
     private final PageSearch search;
     private final PageQueries pages;
     private final AccessGuard access;
+    private final long maxResponseBytes;
 
     public ContentListing(PageSearch search, PageQueries pages, AccessGuard access) {
+        this(search, pages, access, DEFAULT_MAX_RESPONSE_BYTES);
+    }
+
+    public ContentListing(PageSearch search, PageQueries pages, AccessGuard access, long maxResponseBytes) {
         this.search = Objects.requireNonNull(search, "search");
         this.pages = Objects.requireNonNull(pages, "pages");
         this.access = Objects.requireNonNull(access, "access");
+        if (maxResponseBytes <= 0) {
+            throw new IllegalArgumentException("maxResponseBytes muss positiv sein");
+        }
+        this.maxResponseBytes = maxResponseBytes;
     }
 
     /**
@@ -131,13 +148,22 @@ public class ContentListing {
             cursor = batch.nextCursor();
         } while (!more && !batch.complete());
         List<DeliveredPage> loaded = new ArrayList<>(visible.size());
+        long bytes = 0;
         for (SearchHit hit : visible) {
+            DeliveredPage page;
             try {
-                loaded.add(pages.page(caller, query.sourceId(), hit.page().pageId(), false));
+                page = pages.page(caller, query.sourceId(), hit.page().pageId(), false);
             } catch (CacheMissException e) {
                 // Zwischen Suche und Abruf entfernt oder unsichtbar geworden: wie ein neuer Stand behandeln.
                 throw new CacheGenerationChangedException("Seite zwischen Suche und Abruf geändert");
             }
+            bytes += page.snapshot().payload().bytes().length;
+            if (bytes > maxResponseBytes && !loaded.isEmpty()) {
+                // Budget erreicht: der Rest kommt über next, die Liste ist nicht abgeschnitten, nur kürzer.
+                more = true;
+                break;
+            }
+            loaded.add(page);
         }
         return new Slice(start, limit, loaded, more);
     }

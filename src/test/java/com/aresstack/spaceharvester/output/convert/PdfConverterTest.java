@@ -2,10 +2,12 @@ package com.aresstack.spaceharvester.output.convert;
 
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -170,5 +172,33 @@ class PdfConverterTest {
         byte[] pdf = assertTimeoutPreemptively(Duration.ofSeconds(30),
                 () -> convert(List.of(storagePage("100", null, 0, "<p>" + word + "</p>" + nested + wide))));
         assertThat(pdf).isNotEmpty();
+    }
+
+    @Test
+    void maliciouslyDeepStorageBecomesTextInsteadOfStackOverflow() throws Exception {
+        String lists = "<ul><li>".repeat(20_000) + "ganz unten" + "</li></ul>".repeat(20_000);
+        String inline = "<p>" + "<strong><em>".repeat(20_000) + "innen" + "</em></strong>".repeat(20_000) + "</p>";
+        String macros = "<ac:structured-macro ac:name=\"info\"><ac:rich-text-body>".repeat(5_000) + "Kasten"
+                + "</ac:rich-text-body></ac:structured-macro>".repeat(5_000);
+
+        byte[] pdf = assertTimeoutPreemptively(Duration.ofSeconds(60),
+                () -> convert(List.of(storagePage("100", null, 0, lists + inline + macros))));
+
+        try (PDDocument document = Loader.loadPDF(pdf)) {
+            String text = new PDFTextStripper().getText(document).replaceAll("\\s+", " ");
+            assertThat(text).contains("ganz unten", "innen", "Kasten", "tiefer als 64 Ebenen");
+        }
+    }
+
+    @Test
+    void tooManyPdfPagesFailOnlyThisConversion() {
+        List<ConvertiblePage> pages = IntStream.range(0, 50)
+                .mapToObj(i -> storagePage(String.valueOf(1000 + i), null, 0,
+                        "<p>" + "Absatz mit Inhalt. ".repeat(200) + "</p>"))
+                .toList();
+
+        assertThatThrownBy(() -> new PdfConverter(null, 5).convert(new Input(pages), new ByteArrayOutputStream()))
+                .isInstanceOf(ConversionLimitExceededException.class)
+                .hasMessage("Konvertierte Datei pages.pdf überschreitet 5 Seiten");
     }
 }

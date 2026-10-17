@@ -98,6 +98,10 @@ Einzelseite; nur die Hülle schreibt der Harvester.
 - **Vollständigkeit:** Ist der letzte Abgleich des Space unvollständig (`incomplete`) oder liegt eine Seite der Liste
   nur mit Kopfdaten im Cache, antwortet die Route mit 503 statt einer Liste, die vollständig aussähe. Ändert sich der
   Cache während des Lesens zweimal hintereinander, ebenfalls 503.
+- **Antwortgröße:** Die Payloads einer Antwort zusammen sind auf `space-harvester.compat.max-response-bytes`
+  (Standard 32 MiB) begrenzt. Ist das Budget erreicht, enthält die Antwort weniger Seiten als `limit`, `size` nennt die
+  tatsächliche Zahl und `next` zeigt auf den Rest; Confluence darf ebenfalls weniger als `limit` liefern. Die erste
+  Seite kommt immer mit, ihre Größe begrenzt schon der Abruf (20 MiB).
 - **Stand zwischen Aufrufen:** Wie bei Confluence kann sich die Liste zwischen zwei Aufrufen mit verschiedenem
   `start` ändern; ein Stapel stammt immer aus einem Stand.
 
@@ -136,7 +140,7 @@ Referenz dokumentiert nur 200 und 404; 304, 400, 401, 403 und 503 sind Ergänzun
   `expand`-Kombinationen, Ablehnung nicht gespeicherter Erweiterungen, Fehlerkörper, 304, Rechte und 405; Hülle der
   Listen mit unveränderten Payloads, `next`-Link, Kinder, Titelfilter und Ablehnung unvollständiger Listen.
 - `ContentListingTest`: `start`/`limit` über mehrere interne Stapel, Obergrenze, Titel, Kinder, Seiten ohne
-  Freigabe, unvollständige Abgleiche und Seiten nur mit Kopfdaten.
+  Freigabe, unvollständige Abgleiche, Seiten nur mit Kopfdaten und das Bytebudget je Antwort.
 - `ApiRouteCoverageTest`: Die Fassade verlangt wie jede Route unter `/api` eine Anmeldung und gibt ohne Freigabe
   nichts heraus.
 - Offen: Vergleich gegen eine echte Confluence-Data-Center-Instanz (Abschnitt „Live-Vergleich“); #31 bleibt bis zu

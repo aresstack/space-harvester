@@ -222,6 +222,10 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 | Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
 | Asset-Ablage ohne Gesamtgrenze; Download erst nach vollständigem Lesen gemessen; Weiterleitungen beim Anhang-Download auf fremde Hosts verfolgt; Bildbeschreibungen ohne Sperre | `space-harvester.assets.max-total-bytes` (Standard 20 GiB), darüber 507 `asset-store-full` (`FileSystemAssetStoreTest`); die Grenze reicht bis in den Transport (upstream enterprise-ai-client#179, `KnowledgeSourceHarvestSourceTest`); `foreignFileRedirects` standardmäßig aus; je Bild und Modell ein Lauf, höchstens 2 gleichzeitig, sonst 429 (`AssetsTest`) |
+| Fassade: bis zu 100 Payloads je Antwort ohne Gesamtgrenze (#90) | `space-harvester.compat.max-response-bytes` (Standard 32 MiB); darüber endet der Ausschnitt früher, `size` < `limit`, `next` zeigt auf den Rest, weitere Seiten werden nicht mehr geladen; die erste Seite kommt immer mit (`ContentListingTest`) |
+| Converter: bösartig tiefes Storage-Format brach den Export per `StackOverflowError` ab; PDF ohne Seitengrenze (#90) | Struktur bis 64 Ebenen, tiefer als Text mit Hinweis, für Markdown, Word und PDF; PDF höchstens 20 000 Seiten, darüber `CONVERSION_TOO_LARGE` nur für diesen Export (`PdfConverterTest`, `MarkdownConverterTest`) |
+| Dateiquelle: `resourceId` `file:<Verzeichnis>/<Pfad>` nannte den Serverpfad in Metadaten, Cache und Exporten; Fehlermeldungen der Quelle nannten Pfade in Sync-Ergebnissen (#90) | öffentliche ID `files:<Quelle>/<Seiten-ID>`, undurchsichtig und so stabil wie die Seiten-ID, zurückgelesen wird sie nie; Fehler der Dateiquelle mit festem Text je Grund (`LocalFilesSourceApiTest`) |
+| Asset-Download: `options.foreignFileRedirects: true` ließ eine Quelle den Dienst anonym auf beliebige, auch interne Hosts schicken (SSRF, #90) | im Dienst nicht einschaltbar: der Wert ist immer `false`, `true` ist ein Konfigurationsfehler beim Start (`ConfluenceSourceAdapterSettingsTest`) |
 | Lokale Dateiquelle listete versteckte Ordner (`.git`, `.ssh`), las Dateien bis 2000 MB ganz und nannte den absoluten Serverpfad als `url` | versteckte Dateien und Ordner ausgeschlossen, Standard 20 MB, höchstens 64 MB, keine `url` (#85, upstream enterprise-ai-client#178) |
 | Asset-Inhalt: schon `content` legte beim ersten Lesen in der Ablage ab, jeder Leser konnte so die Platte füllen | ablegen nur mit `sync`, sonst nur ausliefern; höchstens 4 Downloads gleichzeitig, sonst 429; `AssetsTest` |
 | Asset-Dateiname: Richtungs- und Formatzeichen (U+202E, U+2028) blieben im `Content-Disposition` und konnten eine Endung vortäuschen | alle Zeichen der Klasse `\p{C}` ersetzt, `AssetsApiTest` |
@@ -232,17 +236,18 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 - `parentPageId` einer sichtbaren Seite nennt auch einen Elternteil, den ein Endnutzer in Confluence nicht sehen darf
   (nur die ID, kein Titel oder Inhalt). Confluence vererbt Leseeinschränkungen auf Unterseiten, der Fall ist daher
   selten. Der Baum blendet solche Elternteile schon aus.
-- Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
 - Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
-- PDF: Seitenbaum und Objekte wachsen im Speicher vor `max-converted-bytes` (Streams cacht PDFBox in einer
-  temporären Datei); eine Grenze für Seiten oder Tabellen fehlt noch;
-  sehr tiefe Verschachtelung im Storage-Format kann den Parser per `StackOverflowError` abbrechen, was nur den Auftrag
-  beendet.
-- Lokale Dateiquelle: die `resourceId` folgt dem Upstream-Format `file:<Verzeichnis>/<Pfad>` und nennt damit den
-  Verzeichnispfad auf dem Server (nur für Clients mit `metadata`, `url` ist leer).
+- PDF: bis zur Seitengrenze wachsen Seitenbaum, Gliederung und Verweise im Speicher (Streams cacht PDFBox in einer
+  temporären Datei). Breite Tabellen werden nicht auf weniger Spalten umgebrochen, sondern laufen über den Rand; der
+  Aufwand bleibt linear in der Zahl der Zellen, die die 20-MiB-Grenze je Seite begrenzt.
+- Lokale Dateiquelle: Seiten-IDs sind der relative Pfad als Base64url, verraten also Datei- und Ordnernamen unterhalb
+  der Wurzel (wie `file.path` in den Metadaten), nie die Wurzel selbst. Bestehende Cache-Einträge zeigen die alte
+  `resourceId` bis zum nächsten Abgleich der Quelle, ältere Exporte behalten sie.
 - Assets: die Gesamtgrenze der Ablage zählt nur Inhalte, nicht Einträge und Beschreibungen; zwei gleichzeitige
-  Ablagen desselben neuen Inhalts zählen bis zum Neustart doppelt (zu vorsichtig, nie zu großzügig). Ist
-  `foreignFileRedirects` eingeschaltet, lädt der Transport vom fremden Host anonym, ohne dessen Host zu prüfen.
+  Ablagen desselben neuen Inhalts zählen bis zum Neustart doppelt (zu vorsichtig, nie zu großzügig).
+- Exportartefakte: Nach Ablauf der Aufbewahrung (`space-harvester.jobs.retention`) sind sie über die API nicht mehr
+  erreichbar; von der Platte entfernt werden sie beim Start und vor jedem neuen Export (#51), ohne neuen Export bleiben
+  sie bis dahin liegen.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
   Space existiert.
 
@@ -250,4 +255,3 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 
 - Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; Live-Test gegen Confluence (#24). Ein
   Browser-Login am Harvester ist bewusst nicht vorgesehen (Variante A).
-- Artefakte bleiben nach Ablauf der Auftragsaufbewahrung auf der Platte, sind dann aber über die API nicht mehr erreichbar; Aufräumen gehört zu #11/#12.

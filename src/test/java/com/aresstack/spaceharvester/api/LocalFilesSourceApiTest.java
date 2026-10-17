@@ -89,10 +89,9 @@ class LocalFilesSourceApiTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"pageId\":\"" + pageId("start.md") + "\"",
                 "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"", "\"complete\":true")
-                // Versteckte Ordner bleiben außen vor, und es gibt keinen Link auf den Serverpfad. Die resourceId
-                // folgt noch dem Upstream-Format file:<Verzeichnis>/<Pfad>.
-                .contains("\"url\":null")
-                .doesNotContain(pageId(".ssh/schluessel.txt"), "schluessel");
+                // Versteckte Ordner bleiben außen vor, und weder Link noch resourceId nennen den Serverpfad.
+                .contains("\"url\":null", "\"resourceId\":\"files:docs/" + pageId("start.md") + "\"")
+                .doesNotContain(pageId(".ssh/schluessel.txt"), "schluessel", DIR.toString(), "\"file:");
         assertThat(get("/api/v1/sources/docs/pages/" + pageId(".ssh/schluessel.txt") + "/metadata").statusCode())
                 .isEqualTo(404);
     }
@@ -104,8 +103,10 @@ class LocalFilesSourceApiTest {
         HttpResponse<String> missing = get("/api/v1/sources/docs/pages/" + pageId("fehlt.md") + "/metadata");
 
         assertThat(found.statusCode()).isEqualTo(200);
-        assertThat(found.body()).contains("\"spaceKey\":\"docs\"");
+        assertThat(found.body()).contains("\"spaceKey\":\"docs\"",
+                "\"resourceId\":\"files:docs/" + pageId("handbuch/betrieb.txt") + "\"").doesNotContain(DIR.toString());
         assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).doesNotContain(DIR.toString());
     }
 
     @Test

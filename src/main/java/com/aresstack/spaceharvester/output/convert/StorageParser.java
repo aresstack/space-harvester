@@ -35,6 +35,10 @@ import org.jsoup.parser.Parser;
  * übernommen. draw.io und Gliffy halten ihre Quelle in einem Seitenanhang, der nicht zur Payload gehört; dafür steht ein
  * {@link Note} mit dem Diagrammnamen. Bilder bleiben {@link ImageRef}. Was sich nicht abbilden lässt, wird als
  * {@link Note} sichtbar, nie still verworfen.
+ *
+ * <p>Verschachtelung ist auf {@link #MAX_NESTING} Ebenen begrenzt (#90): Tiefer liegender Inhalt wird als reiner Text
+ * übernommen, mit einem Hinweis. So bleiben Parser und Converter bei bösartig tiefem Storage ohne
+ * {@code StackOverflowError}; jsoup selbst parst und liest Text ohne Rekursion.
  */
 public final class StorageParser {
 
@@ -49,6 +53,12 @@ public final class StorageParser {
             "ui-tabs", "ui-tab", "ui-expand", "center");
     private static final Set<String> INLINE_MACROS = Set.of("status", "anchor", "jira", "emoticon");
 
+    /** Höchste Verschachtelung von Blöcken und Inline-Elementen, die als Struktur übernommen wird. */
+    static final int MAX_NESTING = 64;
+
+    /** Aktuelle Verschachtelung; der Parser wird je Export von einem Thread benutzt. */
+    private int depth;
+
     /** Findet zu Space und Titel einer verlinkten Seite das Ziel im Export, sonst {@code null}. */
     private final BiFunction<String, String, String> pageTargets;
 
@@ -62,16 +72,34 @@ public final class StorageParser {
 
     public List<Block> parse(String storage) {
         Element root = Jsoup.parse("<body>" + storage + "</body>", "", Parser.xmlParser()).selectFirst("body");
+        depth = 0;
         return blocks(root);
     }
 
     /** Blöcke eines Containers; lose Inline-Inhalte werden zu Absätzen zusammengefasst. */
     private List<Block> blocks(Element container) {
         List<Block> blocks = new ArrayList<>();
-        List<Inline> pending = new ArrayList<>();
         if (container == null) {
             return blocks;
         }
+        if (depth >= MAX_NESTING) {
+            blocks.add(new Note("Verschachtelung tiefer als " + MAX_NESTING + " Ebenen; der Inhalt folgt als Text"));
+            String text = collapse(container.text()).trim();
+            if (!text.isEmpty()) {
+                blocks.add(new Paragraph(List.of(Text.plain(text))));
+            }
+            return blocks;
+        }
+        depth++;
+        try {
+            return blocksOf(container, blocks);
+        } finally {
+            depth--;
+        }
+    }
+
+    private List<Block> blocksOf(Element container, List<Block> blocks) {
+        List<Inline> pending = new ArrayList<>();
         for (Node node : container.childNodes()) {
             if (node instanceof Element element && isBlock(element)) {
                 flush(pending, blocks);
@@ -227,6 +255,22 @@ public final class StorageParser {
         if (!(node instanceof Element element)) {
             return;
         }
+        if (depth >= MAX_NESTING) {
+            String value = collapse(element.text());
+            if (!value.isEmpty()) {
+                out.add(new Text(value, bold, italic, code));
+            }
+            return;
+        }
+        depth++;
+        try {
+            inlineElement(element, out, bold, italic, code);
+        } finally {
+            depth--;
+        }
+    }
+
+    private void inlineElement(Element element, List<Inline> out, boolean bold, boolean italic, boolean code) {
         switch (element.normalName()) {
             case "strong", "b" -> children(element, out, true, italic, code);
             case "em", "i", "cite" -> children(element, out, bold, true, code);

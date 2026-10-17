@@ -43,7 +43,7 @@ import java.util.zip.ZipOutputStream;
 public final class DocxConverter implements ExportConverter {
 
     public static final String FORMAT = "docx";
-    public static final String VERSION = "docx/1";
+    public static final String VERSION = "docx/2";
 
     /** Fester Zeitstempel der Archiveinträge: 1980-01-01, der früheste, den ZIP kennt. */
     private static final long ZIP_TIME = 315532800000L;

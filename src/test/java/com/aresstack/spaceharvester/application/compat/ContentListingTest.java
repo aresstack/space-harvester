@@ -77,10 +77,14 @@ class ContentListingTest {
     }
 
     private ContentListing listing(AccessPolicy policy) {
+        return listing(policy, ContentListing.DEFAULT_MAX_RESPONSE_BYTES);
+    }
+
+    private ContentListing listing(AccessPolicy policy, long maxResponseBytes) {
         AccessGuard guard = new AccessGuard(policy);
         return new ContentListing(new PageSearch(CATALOG, index, guard), new PageQueries(CATALOG, cache, guard,
                 new PageFreshness(new SourceQueries(CATALOG, Clock.systemUTC()), null, Clock.systemUTC()), 1000),
-                guard);
+                guard, maxResponseBytes);
     }
 
     private static List<String> ids(ContentListing.Slice slice) {
@@ -109,6 +113,38 @@ class ContentListingTest {
 
         assertThat(listing.space(CALLER, "wiki", "DEV", null, 230, 25).pages()).isEmpty();
         assertThat(listing.space(CALLER, "wiki", "DEV", null, 229, 25).more()).isFalse();
+    }
+
+    @Test
+    void theByteBudgetEndsTheSliceEarlyAndNextCoversTheRest() {
+        List<PageSnapshot> pages = new ArrayList<>();
+        IntStream.range(0, 7).forEach(i -> pages.add(page(String.format("%04d", i), null, "Seite " + i)));
+        publish(confirmed("g1"), pages);
+        // Jede Payload {"id":"000n"} hat 13 Bytes: zwei passen in 30, die dritte nicht mehr.
+        ContentListing listing = listing(ALLOW_ALL, 30);
+
+        List<String> walked = new ArrayList<>();
+        int start = 0;
+        ContentListing.Slice slice;
+        do {
+            slice = listing.space(CALLER, "wiki", "DEV", null, start, 100);
+            assertThat(slice.pages()).hasSizeBetween(1, 2);
+            assertThat(slice.limit()).isEqualTo(100);
+            walked.addAll(ids(slice));
+            start += slice.pages().size();
+        } while (slice.more());
+
+        assertThat(walked).containsExactly("0000", "0001", "0002", "0003", "0004", "0005", "0006");
+    }
+
+    @Test
+    void aSinglePageLargerThanTheBudgetIsStillDelivered() {
+        publish(confirmed("g1"), List.of(page("1", null, "a"), page("2", null, "b")));
+
+        ContentListing.Slice slice = listing(ALLOW_ALL, 5).space(CALLER, "wiki", "DEV", null, 0, 25);
+
+        assertThat(ids(slice)).containsExactly("1");
+        assertThat(slice.more()).isTrue();
     }
 
     @Test
