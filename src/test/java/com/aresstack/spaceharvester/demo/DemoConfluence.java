@@ -9,6 +9,7 @@ import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,10 +21,19 @@ import java.util.Map;
  * <p>Space {@code DEMO} hat zwei Wurzelseiten, verschachtelte Seiten, Makros, ein eingebettetes Bild und ein
  * draw.io-Diagramm als Verweise auf Anhänge sowie Labels; Space {@code OPS} eine einzelne Seite. Eine unbekannte Seite (etwa {@code 9999}) beantwortet sie mit 404.
  * Manuell starten mit {@code ./gradlew demoConfluence} (Port 8090).
+ *
+ * <p>Für die Durchreichung von Endnutzer-Tokens (#24) kennt sie einen Endnutzer: Mit {@value #USER_TOKEN} als
+ * Bearer-Token antwortet {@code /rest/api/user/current} mit {@code anna}, und Anna sieht weder Seite
+ * {@value #RESTRICTED_PAGE} noch den Space {@code OPS} (404 wie bei Confluence). Jedes andere Bearer-Token lehnt sie
+ * mit 401 ab. Anfragen ohne Bearer-Token (das Ernten mit {@code auth: none}) bleiben unverändert.
  */
 public final class DemoConfluence implements AutoCloseable {
 
     public static final int DEFAULT_PORT = 8090;
+    /** Confluence-Token der Demo-Endnutzerin Anna, nur für diese Demo. */
+    public static final String USER_TOKEN = "anna-token-nur-lokal";
+    static final String RESTRICTED_PAGE = "2001";
+    private static final String CONTEXT = FakeConfluence.BASE.getPath();
 
     private final FakeConfluence confluence;
     private final HttpServer server;
@@ -121,13 +131,16 @@ public final class DemoConfluence implements AutoCloseable {
                 headers.put(header.getKey(), header.getValue().get(0));
             }
         }
-        ConfluenceHttpResponse response;
-        try {
-            synchronized (confluence) {
-                response = confluence.get(mapped, headers, Integer.MAX_VALUE);
+        ConfluenceHttpResponse response =
+                endUser(incoming.getRawPath(), exchange.getRequestHeaders().getFirst("Authorization"));
+        if (response == null) {
+            try {
+                synchronized (confluence) {
+                    response = confluence.get(mapped, headers, Integer.MAX_VALUE);
+                }
+            } catch (IOException e) {
+                response = new ConfluenceHttpResponse(500, "text/plain", new byte[0]);
             }
-        } catch (IOException e) {
-            response = new ConfluenceHttpResponse(500, "text/plain", new byte[0]);
         }
         byte[] body = response.body();
         if (response.contentType() != null) {
@@ -137,6 +150,34 @@ public final class DemoConfluence implements AutoCloseable {
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
         }
+    }
+
+    /**
+     * Antwort für eine Anfrage mit Bearer-Token eines Endnutzers, soweit sie von den Testdaten abweicht; {@code null}
+     * für Anfragen ohne Bearer-Token und für alles, was Anna sehen darf.
+     */
+    private static ConfluenceHttpResponse endUser(String path, String authorization) {
+        if (authorization == null || !authorization.startsWith("Bearer ")) {
+            return null;
+        }
+        if (!authorization.equals("Bearer " + USER_TOKEN)) {
+            return text(401);
+        }
+        if (path.equals(CONTEXT + "/rest/api/user/current")) {
+            return new ConfluenceHttpResponse(200, "application/json",
+                    "{\"type\":\"known\",\"userKey\":\"anna\",\"username\":\"anna\",\"displayName\":\"Anna\"}"
+                            .getBytes(StandardCharsets.UTF_8));
+        }
+        if (path.equals(CONTEXT + "/rest/api/content/" + RESTRICTED_PAGE)
+                || path.startsWith(CONTEXT + "/rest/api/content/" + RESTRICTED_PAGE + "/")
+                || path.equals(CONTEXT + "/rest/api/space/OPS")) {
+            return text(404);
+        }
+        return null;
+    }
+
+    private static ConfluenceHttpResponse text(int status) {
+        return new ConfluenceHttpResponse(status, "text/plain", new byte[0]);
     }
 
     /** Startet die Demo-Fake-Confluence bis zum Beenden des Prozesses; optional mit Port als Argument. */

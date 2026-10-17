@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,7 +58,7 @@ class DocumentedExamplesTest {
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern URL = Pattern.compile("\"http://localhost:8080(/[^\"]*)\"");
     private static final Pattern TOKEN = Pattern.compile("(?m)^TOKEN=(\\S+)$");
-    private static final String AUTHORIZATION = "-H \"Authorization: Bearer $TOKEN\"";
+    private static final Pattern HEADER = Pattern.compile("-H \"([A-Za-z-]+): ([^\"]*)\"");
 
     private static final DemoConfluence CONFLUENCE;
     private static final Path DATA;
@@ -128,8 +129,8 @@ class DocumentedExamplesTest {
             while (true) {
                 HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getProperty("local.server.port") + path));
-                if (example.authenticated()) {
-                    request.header("Authorization", "Bearer " + token);
+                for (Map.Entry<String, String> header : example.headers().entrySet()) {
+                    request.header(header.getKey(), header.getValue().replace("$TOKEN", token));
                 }
                 request.method(example.post() ? "POST" : "GET", HttpRequest.BodyPublishers.noBody());
                 HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
@@ -190,8 +191,10 @@ class DocumentedExamplesTest {
             } else if (!curl.startsWith("curl ")) {
                 fail("Zuweisung nur in der Form NAME=$(curl … | jq -r .id): " + curl);
             }
-            examples.add(new Example(curl, url.group(1), curl.contains(AUTHORIZATION), curl.contains(" -X POST "),
-                    variable, matcher.group(2)));
+            Map<String, String> headers = new LinkedHashMap<>();
+            HEADER.matcher(curl).results().forEach(header -> headers.put(header.group(1), header.group(2)));
+            examples.add(new Example(curl, url.group(1), headers, curl.contains(" -X POST "), variable,
+                    matcher.group(2)));
         }
         long curls = Pattern.compile("(?m)^(?:[A-Z_]+=\\$\\()?curl ").matcher(guide).results().count();
         assertThat(examples).as("jedes curl in docs/E2E.md hat einen Antwortauszug").hasSize((int) curls);
@@ -204,7 +207,7 @@ class DocumentedExamplesTest {
         return matcher.group(1);
     }
 
-    private record Example(String curl, String path, boolean authenticated, boolean post, String variable,
+    private record Example(String curl, String path, Map<String, String> headers, boolean post, String variable,
                            String expected) {
     }
 }

@@ -1,6 +1,7 @@
 # Demo-Konfiguration für docs/E2E.md: eine Quelle gegen die Fake-Confluence aus ./gradlew demoConfluence
 # (http://127.0.0.1:8090, nur Testdaten) und ein technischer Client mit dem öffentlich dokumentierten Token
-# "demo-token-nur-lokal". Nie gegen eine echte Confluence oder mit echten Zugangsdaten verwenden.
+# "demo-token-nur-lokal", dazu die lokalen Dateien unter config/demo-handbuch. Nie gegen eine echte Confluence oder
+# mit echten Zugangsdaten verwenden.
 space-harvester:
   sources:
     - id: demo
@@ -9,6 +10,12 @@ space-harvester:
       base-url: ${SPACE_HARVESTER_DEMO_CONFLUENCE:http://127.0.0.1:8090/wiki}
       auth:
         type: none
+    # Zweite Quelle ohne Netz: das Verzeichnis config/demo-handbuch.
+    - id: handbuch
+      type: files
+      title: Demo-Dateien
+      options:
+        directory: ${SPACE_HARVESTER_DEMO_FILES:config/demo-handbuch}
   # Eingebetteter Lucene-Cache und Exportartefakte der Demo; mit rm -rf build/demo zurücksetzen.
   cache:
     directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/cache
@@ -22,3 +29,8 @@ space-harvester:
           - source: demo
             spaces: ["DEMO"]
             access: [metadata, content, export, sync]
+          - source: handbuch
+            spaces: ["handbuch"]
+            access: [metadata, content, export, sync]
+        # Darf Endnutzer-Tokens für die Quelle demo durchreichen (Demo-Endnutzerin: siehe docs/E2E.md).
+        delegation: [demo]

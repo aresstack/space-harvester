@@ -42,19 +42,23 @@ TOKEN=demo-token-nur-lokal
 | `DEMO` | 1002 Schnittstellen | 1001 | Überschrift, Akronyme mit Ausschreibung, Code-Makro |
 | `DEMO` | 1003 Betrieb | 1000 | |
 | `DEMO` | 2000 Archiv | – | zweite Wurzelseite außerhalb des Baums der Startseite |
-| `DEMO` | 2001 Altes Konzept | 2000 | |
+| `DEMO` | 2001 Altes Konzept | 2000 | für die Endnutzerin Anna nicht sichtbar (Abschnitt 12) |
 | `OPS` | 3000 Runbook | – | Space ohne Freigabe für `demo-client` |
 
 ## 1. Quellen und Spaces
 
-Konfigurierte Quellen, ohne Verbindungsdaten:
+Konfigurierte Quellen, ohne Verbindungsdaten. Neben der Fake-Confluence liest die Quelle `handbuch` das Verzeichnis
+[`config/demo-handbuch`](../config/demo-handbuch) (Abschnitt 13):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources"
 ```
 
 ```json
-[{ "id": "demo", "type": "confluence", "title": "Demo-Confluence" }]
+[
+  { "id": "demo", "type": "confluence", "title": "Demo-Confluence" },
+  { "id": "handbuch", "type": "files", "title": "Demo-Dateien" }
+]
 ```
 
 Spaces der Quelle. `OPS` fehlt, weil der Client dafür keine Freigabe hat:
@@ -518,6 +522,106 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/compat/conf
   "status": 400,
   "statusCode": 400,
   "message": "expand=body.view ist im Cache nicht gespeichert; verfügbar: ancestors,body.storage,history,history.lastUpdated,metadata.labels,space,version"
+}
+```
+
+## 12. Anfragen mit den Rechten eines Endnutzers
+
+Ein vorgelagerter Dienst kann das Confluence-Token eines Endnutzers durchreichen; dann sieht die Anfrage nur, was
+dieser Endnutzer in Confluence sehen darf, begrenzt durch die Freigabe des Clients ([docs/SECURITY.md](SECURITY.md)).
+`demo-client` darf das für die Quelle `demo`. Die Fake-Confluence kennt die Endnutzerin Anna mit dem Token
+`anna-token-nur-lokal`; Anna darf Seite 2001 nicht sehen. Der Baum aus dem Cache ist für sie beschnitten:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-Delegated-Authorization: Bearer anna-token-nur-lokal" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/tree"
+```
+
+```json
+{
+  "nodeCount": 5,
+  "roots": [
+    { "id": "1000", "children": [
+      { "id": "1001", "children": [{ "id": "1002", "children": [] }] },
+      { "id": "1003", "children": [] }
+    ] },
+    { "id": "2000", "children": [] }
+  ]
+}
+```
+
+Seite 2001 antwortet für Anna wie eine unbekannte Seite, für den Client allein dagegen normal:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-Delegated-Authorization: Bearer anna-token-nur-lokal" "http://localhost:8080/api/v1/sources/demo/pages/2001/metadata"
+```
+
+```json
+{ "status": 404, "type": "https://github.com/aresstack/space-harvester/problems/source-object-not-found" }
+```
+
+Ein Token, das die Quelle ablehnt, ergibt 401. Die Anfrage läuft nie stattdessen mit den Rechten des Clients weiter:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-Delegated-Authorization: Bearer falsch" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/tree"
+```
+
+```json
+{ "status": 401, "type": "https://github.com/aresstack/space-harvester/problems/delegated-token-rejected" }
+```
+
+Endnutzer dürfen nur lesen; Exporte und Abgleiche bleiben technischen Clients vorbehalten:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-Delegated-Authorization: Bearer anna-token-nur-lokal" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/exports"
+```
+
+```json
+{ "status": 403, "type": "https://github.com/aresstack/space-harvester/problems/access-denied" }
+```
+
+## 13. Lokale Dateien als zweite Quelle
+
+Quellentypen sind austauschbar: Die Quelle `handbuch` (Typ `files`) liest `config/demo-handbuch`, und Abgleich, Cache,
+Baum und Export laufen über dieselben Routen. Das Verzeichnis ist ein Space mit der Quellen-ID als Schlüssel:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/handbuch/spaces"
+```
+
+```json
+{ "sourceId": "handbuch", "spaces": [{ "key": "handbuch" }] }
+```
+
+```bash
+FILES_SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/handbuch/spaces/handbuch/syncs" | jq -r .id)
+```
+
+```json
+{ "sourceId": "handbuch", "spaceKey": "handbuch" }
+```
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/syncs/$FILES_SYNC_ID"
+```
+
+```json
+{ "state": "completed", "summary": { "added": 2, "complete": true, "generation": 1 } }
+```
+
+Die Seiten-ID ist der relative Pfad als Base64url (`start.md` → `c3RhcnQubWQ`); das Original ist die Datei Byte für
+Byte (`GET …/pages/c3RhcnQubWQ` liefert `text/markdown`):
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/handbuch/spaces/handbuch/pages"
+```
+
+```json
+{
+  "origin": "cache",
+  "pages": [
+    { "pageId": "YmV0cmllYi9iZXJlaXRzY2hhZnQubWQ", "title": "bereitschaft.md", "spaceKey": "handbuch", "parentPageId": null },
+    { "pageId": "c3RhcnQubWQ", "title": "start.md", "spaceKey": "handbuch", "parentPageId": null }
+  ]
 }
 ```
 
