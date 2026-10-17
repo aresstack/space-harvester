@@ -15,7 +15,6 @@ import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
-import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -250,9 +249,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand und, wenn sie dort fehlt, live aus der Quelle; mit
-     * {@code refresh} wird sie live geprüft und, wenn sie fehlt oder neuer ist, live geladen. Der Bestand ändert sich
-     * dabei nicht ({@link #deliver}).
+     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
+     * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
      */
     public void load(String sourceId, String pageId, boolean refresh) {
         AppRuntime runtime = context.runtime();
@@ -279,7 +277,7 @@ public final class PageDetailPanel extends JPanel {
         setActionsEnabled(false);
         Font font = reader.getFont();
         Background.run(() -> {
-            DeliveredPage delivered = deliver(runtime, sourceId, pageId, refresh);
+            DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
             PageText text = project(delivered.snapshot());
             return new Loaded(delivered, enrichments, document(sourceId, pageId, enrichments, text, font),
@@ -301,22 +299,6 @@ public final class PageDetailPanel extends JPanel {
             page = null;
             acronymHint.setText(" ");
         });
-    }
-
-    /**
-     * Die Seite aus dem Bestand, und fehlt sie dort, live aus der Quelle ({@code refresh}); nie eine Fehlermeldung nur
-     * weil der Bestand leer ist. Der Bestand ändert sich dabei nicht: das übernimmt der Abgleich bzw. der Core, sobald
-     * der Seitenabruf selbst nachlädt und speichert; dann genügt hier der erste Aufruf.
-     */
-    static DeliveredPage deliver(AppRuntime runtime, String sourceId, String pageId, boolean refresh) {
-        if (refresh) {
-            return runtime.workspace().page(sourceId, pageId, true);
-        }
-        try {
-            return runtime.workspace().page(sourceId, pageId, false);
-        } catch (CacheMissException e) {
-            return runtime.workspace().page(sourceId, pageId, true);
-        }
     }
 
     /** Lädt eine Seite über ihre Quell-URL (enthält die Seiten-ID). */
