@@ -251,7 +251,8 @@ public final class SearchView implements View {
             PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text.isEmpty() ? null : text, null, null,
                     null, null, null, sort);
             SearchResults results = runtime.workspace().search(q, null, LIMIT);
-            return new Outcome(q, hits(results), results.nextCursor(), null, results.live());
+            // Titelsuche im Bestand; die Schlagwortsuche der Quellen ist Harvester.keywordSearch().
+            return new Outcome(q, hits(results), results.nextCursor(), null, false);
         }, outcome -> {
             if (id != request) {
                 return;

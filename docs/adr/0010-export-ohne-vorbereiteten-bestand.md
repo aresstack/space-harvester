@@ -67,25 +67,19 @@ zwischengespeichert.
    ist `source-unavailable` und wird nie durch „nicht gefunden“ oder einen alten Stand ersetzt. Dasselbe gilt für die
    Confluence-kompatible Einzelseite, die denselben Anwendungsfall nutzt.
 
-9. **Suche ist Beschaffung.** `ProvisioningSearch` ist die Suche für REST (`GET /api/v1/search`) und App. Mit
-   Suchtext (ohne Cursor und ohne `pageId`) fragt sie jede Quelle des Umfangs, die selbst suchen kann
-   (`SourceCapability.LIVE_SEARCH`, Confluence: CQL `siteSearch` wie die Websuche, also Titel **und** Inhalt), nach
-   höchstens 25 Seiten. Jeder Treffer geht über den Seitenabruf aus 8.: fehlt er im Bestand, wird er geholt, abgelegt
-   und indexiert, mit derselben Rechteprüfung wie beim Lesen (bei delegierten Benutzern je Seite über die Quelle).
-   Ausgeliefert wird er aus dem Index, mit allen Filtern der Anfrage (Spaces, Eltern, Version, Zeit) und
-   `metadata` an seinen aktuellen Kopfdaten; nicht lesbare Treffer fallen ohne Spur weg (auch nicht im Log).
-   Die Suche in der Quelle läuft mit der Quellenidentität und liefert nur IDs; sichtbar wird davon nur, was der
-   Aufrufer lesen darf. Die Antwort heißt `origin: source`, ist ein Stapel ohne Cursor, und `complete` heißt, dass
-   keine Quelle mehr Treffer hatte als abgefragt. Ohne Suchtext, mit Cursor, für Quellen ohne eigene Suche, ohne
-   `content` für die Quelle oder wenn die Quelle nicht antwortet, gilt die Titelsuche im Index (`origin: cache`);
-   ist die einzige Quelle nicht erreichbar und nichts von ihr im Index, ist es `source-unavailable`. Global werden
-   die Quellen in Konfigurationsreihenfolge abgefragt. Zu den Treffern der Quellen kommen ohne Doppelte die
-   Titeltreffer aus dem Index über alle Quellen des Umfangs (Quellen ohne eigene Suche, Seiten, die der Suchindex der
-   Quelle noch nicht kennt); alle zusammen stehen in der Sortierung der Anfrage (`sort`). `sourceIds` gilt wie in
-   ADR 0009.
+9. **Suche ist Schlagwortsuche in den Quellen** (Angelo, 17.10. 23:41). `KeywordSearch` ist die Suche über Titel
+   und Inhalt für REST (`GET /api/v1/search?text=…`) und App (`Harvester.keywordSearch()`). Sie fragt jede Quelle des
+   Umfangs, die selbst suchen kann (`SourceCapability.LIVE_SEARCH`, Confluence: CQL `siteSearch` über
+   `/rest/api/search` mit Textauszug, wie die Websuche), und führt die Treffer reihum zusammen. Sie lädt **keine**
+   Seiteninhalte und legt nichts ab; den Inhalt beschafft erst das Öffnen einer Seite über 8. Vor jedem Treffer
+   liest sie die Kopfdaten der Seite live und prüft an ihnen `metadata` für genau diese Seite (bei delegierten
+   Benutzern über die Quelle); so gilt der Space-Filter auch global, und nicht freigegebene Seiten erscheinen weder
+   als Titel noch als Auszug noch im Log. Der Cursor merkt sich je Quelle, wie weit sie gelesen ist (höchstens 1000
+   Treffer tief). Eine nicht erreichbare Quelle steht als `unavailable` in `sources` und verwirft die anderen nicht
+   (`complete=false`); Quellen ohne eigene Suche stehen dort als `not-supported`. Ohne `text` bleibt die Titel- und
+   Metadatensuche im Index. Semantische Suche ist nicht Teil davon. Die frühere `ProvisioningSearch`, die die ersten
+   25 Treffer je Quelle nachlud und indexierte, ist entfernt.
 
 ## Folgeschritte
 
-- **Volltext im Index:** Ohne erreichbare Quelle trifft die Suche nur Titel. Eine Volltextprojektion des Inhalts im
-  Lucene-Index (aus der statischen Textprojektion der Anreicherungen) folgt gesondert.
 - **Auftragsdiagnose:** umgesetzt, siehe `docs/DIAGNOSTICS.md`.

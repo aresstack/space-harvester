@@ -502,9 +502,30 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 
 ## 10. Suche
 
-Mit Suchtext fragt der Harvester die Quelle selbst (Confluence: CQL `siteSearch` über Titel und Inhalt), lädt fehlende
-Treffer nach und liefert sie aus dem Index (`origin: source`). Ohne Suchtext oder ohne erreichbare Quelle sucht er nur
-im Index nach Titel und Metadaten (`origin: cache`):
+Mit `text` sucht der Harvester per Schlagwort in der Suche jeder Quelle (Confluence: CQL `siteSearch` über Titel und
+Inhalt, wie die Websuche). Er lädt dabei keine Seiten und speichert nichts; jeder Treffer trägt Titel, Textauszug,
+Adresse, Version, Quelle und Space (`origin: source`). Ohne `sourceId` sucht er in allen freigegebenen Quellen und
+führt die Treffer zusammen; `sources` sagt je Quelle, ob sie gesucht hat:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sourceId=demo&text=architektur"
+```
+
+```json
+{
+  "scope": "source",
+  "sourceId": "demo",
+  "origin": "source",
+  "hits": [
+    { "sourceId": "demo", "pageId": "1001", "spaceKey": "DEMO", "title": "Architektur", "snippet": "Überblick über die Architektur des Demo-Handbuchs", "version": "7", "parentPageId": "1000" }
+  ],
+  "sources": [ { "sourceId": "demo", "status": "searched" } ],
+  "nextCursor": null,
+  "complete": true
+}
+```
+
+Mit `title` statt `text` sucht er nur im Index nach Titel und Metadaten (`origin: cache`):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sourceId=demo&title=architektur"
@@ -513,7 +534,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 ```json
 {
   "sourceId": "demo",
-  "origin": "source",
+  "origin": "cache",
   "hits": [
     { "page": { "pageId": "1001", "title": "Architektur", "spaceKey": "DEMO", "parentPageId": "1000" }, "cache": { "state": "confirmed" } }
   ],

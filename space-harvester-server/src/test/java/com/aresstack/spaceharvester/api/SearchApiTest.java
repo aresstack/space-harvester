@@ -115,6 +115,23 @@ class SearchApiTest {
     }
 
     @Test
+    void keywordSearchNamesUnreachableSourcesInsteadOfFailing() throws Exception {
+        HttpResponse<String> response = get("/api/v1/search?text=Nachtlauf&spaceKey=DEV");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("scope").asString()).isEqualTo("global");
+        assertThat(body.get("origin").asString()).isEqualTo("source");
+        assertThat(body.get("hits")).isEmpty();
+        assertThat(body.get("sources")).extracting(source -> source.get("sourceId").asString() + ":"
+                + source.get("status").asString()).containsExactlyInAnyOrder("wiki:unavailable", "wiki2:unavailable");
+        assertThat(body.get("complete").asBoolean()).isFalse();
+        assertProblem(get("/api/v1/search?text=Nachtlauf&title=seite"), 400, "invalid-request");
+        assertProblem(get("/api/v1/search?text=Nachtlauf&sort=title"), 400, "invalid-request");
+        assertProblem(get("/api/v1/search?text=+"), 400, "invalid-request");
+    }
+
+    @Test
     void invalidParametersAre400() throws Exception {
         assertProblem(get("/api/v1/search?sourceId=wiki&sort=relevance"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?sourceId=wiki&modifiedFrom=gestern"), 400, "invalid-request");

@@ -91,6 +91,8 @@ public final class DemoConfluence implements AutoCloseable {
         confluence.child("1000", "1003");
         confluence.child("2000", "2001");
         confluence.homepage("DEMO", "1000");
+        // Die Websuche der Quelle findet „Architektur“ mit Textauszug (Schlagwortsuche, docs/E2E.md).
+        confluence.wrappedSearchResult("1001", "Überblick über die Architektur des Demo-Handbuchs");
         confluence.attachment("att1001", "1001", "diagramm.png", "image/png", "kein echtes PNG");
         confluence.attachment("att1002", "1001", "architektur", "application/vnd.jgraph.mxfile",
                 "<mxfile><diagram name=\"Architektur\"><mxGraphModel><root><mxCell id=\"0\"/>"
