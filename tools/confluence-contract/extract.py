@@ -15,7 +15,7 @@ import json
 import sys
 
 # Die Endpunkte der Fassade, in der Schreibweise der Referenz.
-PATHS = ("/rest/api/content", "/rest/api/content/{id}", "/rest/api/content/{id}/child/page")
+PATHS = ("/rest/api/content", "/rest/api/content/{id}", "/rest/api/content/{id}/child/{type}")
 DROP = {"description", "summary", "externalDocs", "x-atlassian-connect-scope", "x-experimental", "tags",
         "operationId", "deprecated"}
 

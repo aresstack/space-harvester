@@ -53,9 +53,10 @@ jobs:
             fi
           done
           if [ "$found" = 0 ]; then
-            for version in 10.2.0 10.0.0 9.2.0; do
+            for version in 10.2.0; do
               if curl -sSf --max-time 120 -o "$RUNNER_TEMP/$version.json" \
                   "https://dac-static.atlassian.com/server/confluence/$version.swagger.v3.json"; then
+                python3 -c "import json,sys; print([p for p in json.load(open(sys.argv[1]))['paths'] if '/content/{' in p and 'child' in p])" "$RUNNER_TEMP/$version.json"
                 echo "----- Auszug $version -----"
                 python3 tools/confluence-contract/extract.py "$RUNNER_TEMP/$version.json"
                 echo "----- Ende $version -----"
