@@ -15,14 +15,12 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
-import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
@@ -33,7 +31,6 @@ import javax.swing.RowSorter;
 import javax.swing.Scrollable;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SortOrder;
-import javax.swing.SwingConstants;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
@@ -63,9 +60,9 @@ import java.util.function.Consumer;
 import java.util.Arrays;
 
 /**
- * Wissensquellen: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten,
- * entfernen, mehr), rechts die Spaces der gewählten Quelle als Hauptinhalt, darunter ihre Einstellungen (Geheimnisse
- * nur als „gesetzt“) und eingeklappt die technischen Fähigkeiten. „Verbunden“ erscheint nur nach einer erfolgreichen
+ * Wissensquellen: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (Space synchronisieren,
+ * Einstellungen, entfernen, mehr), rechts die gewählte Quelle mit Textreitern: Spaces als Hauptinhalt, Einstellungen
+ * (Geheimnisse nur als „gesetzt“) und die technischen Fähigkeiten. „Verbunden“ erscheint nur nach einer erfolgreichen
  * Prüfung.
  */
 public final class SourcesView implements View {
@@ -81,20 +78,20 @@ public final class SourcesView implements View {
     private final Map<String, EditableProperty> rows = new LinkedHashMap<>();
     private AppSettings.SourceEntry shown;
     private final Facts capabilities = new Facts();
-    private final JButton capabilitiesToggle = new JButton();
-    private boolean capabilitiesOpen;
+    private final PillTabs tabs = new PillTabs();
     private final SpacesModel spacesModel = new SpacesModel();
     private final JTable spaces = Comic.table(new JTable(spacesModel));
     private final TableRowSorter<SpacesModel> sorter = new TableRowSorter<>(spacesModel);
     private final JTextField filter = Comic.field(14);
     private final JLabel spacesHint = Comic.muted(" ");
-    private final ComposerButton open = Comic.primary("Öffnen", "Seiten dieses Space ansehen (Doppelklick, Enter)");
-    private final ComposerButton sync = Comic.button("Synchronisieren", "Space vollständig mit der Quelle abgleichen");
-    private final ComposerButton export = Comic.button("Exportieren …", "Export dieses Space vorbereiten");
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
             "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
     private final JLabel title = new JLabel(" ");
     private final JLabel address = Comic.muted(" ");
+
+    static final String SPACES = "Spaces";
+    static final String SETTINGS = "Einstellungen";
+    static final String CAPABILITIES = "Fähigkeiten";
 
     public SourcesView(AppContext context) {
         this.context = context;
@@ -119,20 +116,15 @@ public final class SourcesView implements View {
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
-        open.addActionListener(e -> selectedSpace().ifPresent(space ->
-                context.navigator().openSpace(selectedId(), space.key())));
-        sync.addActionListener(e -> selectedSpace().ifPresent(space -> startSync(space.key())));
-        export.addActionListener(e -> selectedSpace().ifPresent(space ->
-                context.navigator().prepareExport(selectedId(), space.key())));
         spaces.setRowSorter(sorter);
         sorter.setSortKeys(List.of(new RowSorter.SortKey(0, SortOrder.ASCENDING)));
         spaces.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        spaces.getSelectionModel().addListSelectionListener(e -> updateButtons());
+        spaces.setToolTipText("Doppelklick oder Enter öffnet den Space unter Inhalte");
         spaces.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getClickCount() == 2 && spaces.rowAtPoint(e.getPoint()) >= 0) {
-                    open.doClick();
+                    openSelectedSpace();
                 }
             }
         });
@@ -141,7 +133,7 @@ public final class SourcesView implements View {
         spaces.getActionMap().put("openSpace", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                open.doClick();
+                openSelectedSpace();
             }
         });
         filter.setToolTipText("Spaces nach Name oder Schlüssel filtern");
@@ -163,14 +155,10 @@ public final class SourcesView implements View {
             }
         });
 
-        JPanel spacesTools = new JPanel(new BorderLayout(8, 0));
+        JPanel spacesTools = new JPanel(new BorderLayout(6, 0));
         spacesTools.setOpaque(false);
-        JPanel search = new JPanel(new BorderLayout(6, 0));
-        search.setOpaque(false);
-        search.add(Comic.muted("Filter"), BorderLayout.WEST);
-        search.add(filter, BorderLayout.CENTER);
-        spacesTools.add(search, BorderLayout.CENTER);
-        spacesTools.add(Comic.row(open, sync, export), BorderLayout.EAST);
+        spacesTools.add(Comic.muted("Filter"), BorderLayout.WEST);
+        spacesTools.add(filter, BorderLayout.CENTER);
         JPanel spacesTop = new JPanel(new BorderLayout(0, 6));
         spacesTop.setOpaque(false);
         spacesTop.add(spacesTools, BorderLayout.NORTH);
@@ -190,45 +178,26 @@ public final class SourcesView implements View {
         header.add(address, BorderLayout.CENTER);
         header.add(feedback, BorderLayout.SOUTH);
 
-        JPanel top = new JPanel(new BorderLayout());
-        top.setBackground(Comic.SURFACE);
-        top.add(header, BorderLayout.NORTH);
-        JPanel spacesPlate = Comic.plate("Spaces", Comic.ORANGE, spacesPanel);
-        JPanel spacesFrame = new JPanel(new BorderLayout());
-        spacesFrame.setOpaque(false);
-        spacesFrame.setBorder(BorderFactory.createEmptyBorder(0, 14, 8, 14));
-        spacesFrame.add(spacesPlate, BorderLayout.CENTER);
-        top.add(spacesFrame, BorderLayout.CENTER);
-
-        capabilitiesToggle.setContentAreaFilled(false);
-        capabilitiesToggle.setBorderPainted(false);
-        capabilitiesToggle.setFocusPainted(true);
-        capabilitiesToggle.setForeground(Comic.BLUE);
-        capabilitiesToggle.setFont(Comic.semiBold(12.5f));
-        capabilitiesToggle.setHorizontalAlignment(SwingConstants.LEFT);
-        capabilitiesToggle.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
-        capabilitiesToggle.addActionListener(e -> {
-            capabilitiesOpen = !capabilitiesOpen;
-            updateCapabilities();
-        });
-        JPanel capabilityPanel = new JPanel(new BorderLayout(0, 4));
-        capabilityPanel.setOpaque(false);
-        capabilityPanel.add(capabilitiesToggle, BorderLayout.NORTH);
-        capabilityPanel.add(capabilities, BorderLayout.CENTER);
-        JPanel settings = new JPanel(new BorderLayout(0, 10));
-        settings.setOpaque(false);
         properties.setOpaque(false);
-        settings.add(properties, BorderLayout.CENTER);
-        settings.add(capabilityPanel, BorderLayout.SOUTH);
-        updateCapabilities();
+        JPanel settings = new JPanel(new BorderLayout());
+        settings.setOpaque(false);
+        settings.add(properties, BorderLayout.NORTH);
+        JPanel capabilityPanel = new JPanel(new BorderLayout());
+        capabilityPanel.setOpaque(false);
+        capabilityPanel.add(capabilities, BorderLayout.NORTH);
+        // Textreiter statt Trenner: je Reiter die ganze Höhe, die Einstellungen scrollen bei Bedarf.
+        tabs.tab(SPACES, spacesPanel)
+                .tab(SETTINGS, flush(Comic.column(settings)))
+                .tab(CAPABILITIES, flush(Comic.column(capabilityPanel)));
+        JPanel tabsFrame = new JPanel(new BorderLayout());
+        tabsFrame.setOpaque(false);
+        tabsFrame.setBorder(BorderFactory.createEmptyBorder(0, 14, 12, 14));
+        tabsFrame.add(tabs, BorderLayout.CENTER);
 
-        JSplitPane detail = new JSplitPane(JSplitPane.VERTICAL_SPLIT, top,
-                Comic.column(Comic.plate("Einstellungen", Comic.PETROL, settings)));
-        detail.setResizeWeight(0.6);
-        detail.setContinuousLayout(true);
-        detail.setBorder(BorderFactory.createEmptyBorder());
-        detail.setDividerSize(8);
+        JPanel detail = new JPanel(new BorderLayout());
         detail.setBackground(Comic.SURFACE);
+        detail.add(header, BorderLayout.NORTH);
+        detail.add(tabsFrame, BorderLayout.CENTER);
 
         root.add(new ComicSplitPane(left, detail, 240, 460), BorderLayout.CENTER);
         context.onChange(ignored -> refresh());
@@ -294,7 +263,6 @@ public final class SourcesView implements View {
                     ? "„Quelle hinzufügen …“ führt durch die Einrichtung; alternativ die Konfigurationsdatei bearbeiten."
                     : " ");
             feedback.clear();
-            updateButtons();
             return;
         }
         SourceSettingsConfig config = entry.config();
@@ -320,12 +288,12 @@ public final class SourcesView implements View {
         spacesModel.set(connection.spaces());
         // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
         if (context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id())) {
-            spacesHint.setText("Die Quelle wartet auf Zugangsdaten; an der Karte unter „Weitere Aktionen“ eingeben.");
+            spacesHint.setText("Die Quelle wartet auf Zugangsdaten; an der Karte unter ⋯ eingeben.");
             feedback.clear();
         } else {
             switch (connection.state()) {
                 case NOT_CHECKED -> {
-                    spacesHint.setText("Nicht geprüft. Das Prüfzeichen an der Karte lädt die Spaces live.");
+                    spacesHint.setText("Nicht geprüft. „Verbindung prüfen“ unter ⋯ an der Karte lädt die Spaces live.");
                     feedback.clear();
                 }
                 case CHECKING -> {
@@ -335,7 +303,7 @@ public final class SourcesView implements View {
                 case CONNECTED -> {
                     spacesHint.setText(Texts.count(connection.spaces().size(), "Space", "Spaces")
                             + " sichtbar · live geprüft " + Texts.time(connection.checkedAt())
-                            + " · Doppelklick öffnet");
+                            + " · Doppelklick öffnet, der Kreispfeil an der Karte synchronisiert den gewählten");
                     feedback.clear();
                 }
                 case FAILED -> {
@@ -345,8 +313,6 @@ public final class SourcesView implements View {
             }
         }
         applyFilter();
-        updateCapabilities();
-        updateButtons();
     }
 
     /**
@@ -453,8 +419,8 @@ public final class SourcesView implements View {
         Background.run(() -> {
             SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
             if (!editable.plaintextSecrets().isEmpty()) {
-                throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über „Weitere "
-                        + "Aktionen › Assistent erneut öffnen“ bearbeiten; der Assistent legt es sicher ab.");
+                throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über ⋯ › "
+                        + "„Assistent erneut öffnen“ an der Karte bearbeiten; der Assistent legt es sicher ab.");
             }
             boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
             ConfigFileEditor.Draft draft = editor.replace(context.configFile(), change.apply(editable.draft()));
@@ -505,24 +471,6 @@ public final class SourcesView implements View {
         });
     }
 
-    private void updateButtons() {
-        AppSettings.SourceEntry entry = selectedEntry();
-        boolean running = entry != null && context.runtime() != null
-                && !context.runtime().waitingForSecret().contains(entry.id());
-        boolean space = running && spaces.getSelectedRow() >= 0;
-        open.setEnabled(space);
-        sync.setEnabled(space);
-        export.setEnabled(space);
-    }
-
-    private void updateCapabilities() {
-        capabilitiesToggle.setText("Technische Fähigkeiten");
-        capabilitiesToggle.setIcon(capabilitiesOpen ? Glyph.COLLAPSE : Glyph.EXPAND);
-        capabilitiesToggle.setToolTipText(capabilitiesOpen ? "Einklappen" : "Was die Quelle technisch unterstützt");
-        capabilities.setVisible(capabilitiesOpen);
-        capabilities.revalidate();
-    }
-
     private void applyFilter() {
         String text = filter.getText().trim().toLowerCase(Locale.ROOT);
         sorter.setRowFilter(text.isEmpty() ? null : new RowFilter<>() {
@@ -533,10 +481,6 @@ public final class SourcesView implements View {
                         || partition.name().toLowerCase(Locale.ROOT).contains(text);
             }
         });
-        if (spaces.getSelectedRow() < 0 && spaces.getRowCount() > 0) {
-            spaces.setRowSelectionInterval(0, 0);
-        }
-        updateButtons();
     }
 
     private void check(AppSettings.SourceEntry entry) {
@@ -622,7 +566,20 @@ public final class SourcesView implements View {
         }, feedback::problem);
     }
 
-    private void startSync(String spaceKey) {
+    /**
+     * Gleicht den gewählten Space vollständig mit der Quelle ab. Ohne Auswahl startet nichts, auch nicht der erste
+     * Space der Liste: Die Ansicht zeigt die Spaces und bittet um eine Auswahl.
+     */
+    private void syncSelected() {
+        tabs.select(SPACES);
+        Optional<Partition> space = selectedSpace();
+        if (space.isEmpty()) {
+            feedback.info("Bitte zuerst einen Space auswählen",
+                    "Der Kreispfeil gleicht den in der Liste gewählten Space vollständig mit der Quelle ab.");
+            spaces.requestFocusInWindow();
+            return;
+        }
+        String spaceKey = space.get().key();
         String id = selectedId();
         AppRuntime runtime = context.runtime();
         if (id == null || runtime == null) {
@@ -633,6 +590,15 @@ public final class SourcesView implements View {
             feedback.success("Abgleich von " + spaceKey + " gestartet");
             context.navigator().showJob(status.id());
         }, feedback::problem);
+    }
+
+    private void openSelectedSpace() {
+        selectedSpace().ifPresent(space -> context.navigator().openSpace(selectedId(), space.key()));
+    }
+
+    /** Für Tests: zeigt einen Reiter (Spaces, Einstellungen, Fähigkeiten). */
+    String selectedTab() {
+        return tabs.selected();
     }
 
     private String selectedId() {
@@ -720,9 +686,9 @@ public final class SourcesView implements View {
         private final JTextArea name = Comic.note("");
         private final JTextArea where = Comic.note("");
         private final JTextArea state = Comic.note("");
-        private final IconButton check = new IconButton(Glyph.REFRESH, "Verbindung prüfen (lädt die Spaces live)");
-        private final IconButton edit = new IconButton(Glyph.PENCIL,
-                "Anzeigenamen ändern; die übrigen Einstellungen rechts mit dem Stift am Feld");
+        private final IconButton sync = new IconButton(Glyph.REFRESH,
+                "Gewählten Space vollständig mit der Quelle abgleichen");
+        private final IconButton edit = new IconButton(Glyph.PENCIL, "Einstellungen der Quelle öffnen");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
@@ -747,22 +713,19 @@ public final class SourcesView implements View {
             add(where);
             add(state);
             actions.setOpaque(false);
-            actions.add(check);
+            actions.add(sync);
             actions.add(edit);
             actions.add(remove);
             actions.add(more);
             add(actions);
 
-            check.addActionListener(e -> {
+            sync.addActionListener(e -> {
                 select(entry.id());
-                check(entry);
+                syncSelected();
             });
             edit.addActionListener(e -> {
                 select(entry.id());
-                EditableProperty name = rows.get("Anzeigename");
-                if (name != null && !name.editing()) {
-                    name.edit();
-                }
+                tabs.select(SETTINGS);
             });
             remove.addActionListener(e -> {
                 select(entry.id());
@@ -789,6 +752,19 @@ public final class SourcesView implements View {
             JMenuItem wizard = new JMenuItem("Assistent erneut öffnen …");
             wizard.addActionListener(e -> SourcesView.this.edit(entry));
             menu.add(wizard);
+            boolean running = context.runtime() != null
+                    && !context.runtime().waitingForSecret().contains(entry.id());
+            JMenuItem check = new JMenuItem("Verbindung prüfen");
+            check.setToolTipText("Meldet sich an und lädt die Spaces live");
+            check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
+            check.addActionListener(e -> SourcesView.this.check(entry));
+            menu.add(check);
+            JMenuItem export = new JMenuItem("Exportieren …");
+            export.setToolTipText("Export vorbereiten, mit dem gewählten Space");
+            export.setEnabled(running);
+            export.addActionListener(e -> context.navigator().prepareExport(entry.id(),
+                    selectedSpace().map(Partition::key).orElse(null)));
+            menu.add(export);
             if (entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE) {
                 JMenuItem secret = new JMenuItem("Zugangsdaten für diese Sitzung eingeben …");
                 secret.setToolTipText("Passwort oder Token nur für diese Sitzung; es wird nicht gespeichert");
@@ -841,7 +817,7 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
-            check.setEnabled(!waiting && context.runtime() != null && mode != StatusMark.State.CHECKING);
+            sync.setEnabled(!waiting && context.runtime() != null);
             revalidate();
             repaint();
         }
@@ -888,6 +864,13 @@ public final class SourcesView implements View {
             int width = getWidth() > 0 ? getWidth() : 220;
             return new Dimension(width, heightFor(width));
         }
+    }
+
+    /** Eine Spalte ohne eigenen Rand, bündig mit der Space-Tabelle im Nachbarreiter. */
+    private static JScrollPane flush(JScrollPane column) {
+        ((JComponent) column.getViewport().getView()).setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
+        column.setBorder(BorderFactory.createEmptyBorder());
+        return column;
     }
 
     /** Nur der letzte Ordnername; der volle Pfad steht rechts unter Einstellungen. */
