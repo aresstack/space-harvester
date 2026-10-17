@@ -1,0 +1,779 @@
+{
+ "components": {
+  "#/components/schemas/Container": {},
+  "#/components/schemas/Content": {
+   "properties": {
+    "ancestors": {
+     "items": {
+      "$ref": "#/components/schemas/Content"
+     },
+     "type": "array"
+    },
+    "body": {
+     "type": "object"
+    },
+    "children": {
+     "type": "object"
+    },
+    "container": {
+     "$ref": "#/components/schemas/Container"
+    },
+    "containerRef": {
+     "$ref": "#/components/schemas/ReferenceContainer"
+    },
+    "descendants": {
+     "type": "object"
+    },
+    "extensions": {
+     "example": {
+      "key": "value"
+     },
+     "type": "object"
+    },
+    "extractedTextLink": {
+     "example": "/rest/api/content/98323/child/attachment/98329/extractedtext",
+     "type": "string"
+    },
+    "history": {
+     "$ref": "#/components/schemas/History"
+    },
+    "historyRef": {
+     "$ref": "#/components/schemas/ReferenceHistory"
+    },
+    "id": {
+     "example": "123456",
+     "type": "string"
+    },
+    "links": {
+     "type": "object"
+    },
+    "metadata": {
+     "example": {
+      "key": "value"
+     },
+     "type": "object"
+    },
+    "operations": {
+     "items": {
+      "$ref": "#/components/schemas/OperationCheckResult"
+     },
+     "type": "array"
+    },
+    "position": {
+     "example": 1,
+     "format": "int32",
+     "type": "integer"
+    },
+    "relevantViewRestrictions": {
+     "$ref": "#/components/schemas/ReferenceRelevantViewRestrictions"
+    },
+    "restrictions": {
+     "example": {
+      "use": {
+       "operation": "use",
+       "restrictions": []
+      }
+     },
+     "type": "object"
+    },
+    "space": {
+     "$ref": "#/components/schemas/Space"
+    },
+    "spaceRef": {
+     "$ref": "#/components/schemas/ReferenceSpace"
+    },
+    "status": {
+     "example": "current",
+     "type": "string"
+    },
+    "title": {
+     "example": "My Page",
+     "type": "string"
+    },
+    "type": {
+     "example": "page",
+     "type": "string"
+    },
+    "version": {
+     "$ref": "#/components/schemas/Version"
+    },
+    "versionRef": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    }
+   }
+  },
+  "#/components/schemas/History": {
+   "properties": {
+    "contentParentRef": {
+     "$ref": "#/components/schemas/ReferenceContent"
+    },
+    "contributors": {
+     "$ref": "#/components/schemas/ReferenceContributors"
+    },
+    "createdBy": {
+     "$ref": "#/components/schemas/Person"
+    },
+    "createdDate": {
+     "example": "2020-01-01T00:00:00Z",
+     "format": "date-time",
+     "type": "string"
+    },
+    "lastUpdated": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    },
+    "lastUpdatedRef": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    },
+    "latest": {
+     "example": true,
+     "type": "boolean"
+    },
+    "nextVersion": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    },
+    "nextVersionRef": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    },
+    "previousVersion": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    },
+    "previousVersionRef": {
+     "$ref": "#/components/schemas/ReferenceVersion"
+    }
+   }
+  },
+  "#/components/schemas/Icon": {
+   "properties": {
+    "height": {
+     "example": 16,
+     "format": "int32",
+     "type": "integer"
+    },
+    "isDefault": {
+     "example": true,
+     "type": "boolean"
+    },
+    "path": {
+     "example": "http://www.example.com/path/to/image.png",
+     "type": "string"
+    },
+    "width": {
+     "example": 16,
+     "format": "int32",
+     "type": "integer"
+    }
+   }
+  },
+  "#/components/schemas/OperationCheckResult": {
+   "properties": {
+    "operation": {
+     "example": "read",
+     "type": "string"
+    },
+    "targetType": {
+     "example": "page",
+     "type": "string"
+    }
+   }
+  },
+  "#/components/schemas/Person": {
+   "properties": {
+    "displayName": {
+     "example": "Joe Smith",
+     "type": "string"
+    },
+    "profilePicture": {
+     "$ref": "#/components/schemas/Icon"
+    },
+    "type": {
+     "type": "string"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceContainer": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceContent": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceContributors": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceHistory": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceIcon": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceRelevantViewRestrictions": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceSpace": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceSpacePermissionContainer": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceSpaceRetentionPolicy": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/ReferenceVersion": {
+   "properties": {
+    "expanded": {
+     "type": "boolean"
+    },
+    "idProperties": {
+     "type": "object"
+    }
+   }
+  },
+  "#/components/schemas/RestError": {
+   "properties": {
+    "data": {
+     "$ref": "#/components/schemas/ValidationResult"
+    },
+    "message": {
+     "type": "string"
+    },
+    "reason": {
+     "type": "string"
+    },
+    "statusCode": {
+     "format": "int32",
+     "type": "integer"
+    }
+   }
+  },
+  "#/components/schemas/Space": {
+   "properties": {
+    "creationDate": {
+     "example": "2024-01-01T00:00:00Z",
+     "format": "date-time",
+     "type": "string"
+    },
+    "creator": {
+     "$ref": "#/components/schemas/Person"
+    },
+    "homepage": {
+     "$ref": "#/components/schemas/ReferenceContent"
+    },
+    "icon": {
+     "$ref": "#/components/schemas/ReferenceIcon"
+    },
+    "id": {
+     "example": 123456,
+     "format": "int64",
+     "type": "integer"
+    },
+    "key": {
+     "example": "TEST",
+     "type": "string"
+    },
+    "lastModificationDate": {
+     "example": "2024-01-01T00:00:00Z",
+     "format": "date-time",
+     "type": "string"
+    },
+    "lastModifier": {
+     "$ref": "#/components/schemas/Person"
+    },
+    "links": {
+     "type": "object"
+    },
+    "metadata": {
+     "example": {
+      "labels": [
+       "label1",
+       "label2"
+      ]
+     },
+     "type": "object"
+    },
+    "name": {
+     "example": "Test Space",
+     "type": "string"
+    },
+    "permissions": {
+     "$ref": "#/components/schemas/ReferenceSpacePermissionContainer"
+    },
+    "retentionPolicy": {
+     "$ref": "#/components/schemas/ReferenceSpaceRetentionPolicy"
+    },
+    "status": {
+     "example": "current",
+     "type": "string"
+    },
+    "type": {
+     "example": "global",
+     "type": "string"
+    }
+   }
+  },
+  "#/components/schemas/ValidationResult": {
+   "properties": {
+    "allowedInReadOnlyMode": {
+     "type": "boolean"
+    },
+    "authorized": {
+     "type": "boolean"
+    },
+    "errors": {
+     "type": "object"
+    },
+    "successful": {
+     "type": "boolean"
+    },
+    "valid": {
+     "type": "boolean"
+    }
+   }
+  },
+  "#/components/schemas/Version": {
+   "properties": {
+    "by": {
+     "$ref": "#/components/schemas/Person"
+    },
+    "content": {
+     "$ref": "#/components/schemas/ReferenceContent"
+    },
+    "contentRef": {
+     "$ref": "#/components/schemas/ReferenceContent"
+    },
+    "hidden": {
+     "example": true,
+     "type": "boolean"
+    },
+    "message": {
+     "example": "A message",
+     "type": "string"
+    },
+    "minorEdit": {
+     "example": true,
+     "type": "boolean"
+    },
+    "number": {
+     "example": 1,
+     "format": "int32",
+     "type": "integer"
+    },
+    "syncRev": {
+     "example": "123456",
+     "type": "string"
+    },
+    "when": {
+     "example": "2020-01-01T00:00:00Z",
+     "format": "date-time",
+     "type": "string"
+    }
+   }
+  }
+ },
+ "info": {
+  "title": "Confluence Data Center",
+  "version": "10.2.0"
+ },
+ "openapi": "3.0.1",
+ "paths": {
+  "/rest/api/content": {
+   "parameters": [
+    {
+     "in": "query",
+     "name": "spaceKey",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "xoauth_requestor_id",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "expand",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "limit",
+     "schema": {
+      "default": 25,
+      "format": "int32",
+      "type": "integer"
+     }
+    },
+    {
+     "in": "query",
+     "name": "start",
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
+    },
+    {
+     "in": "query",
+     "name": "postingDay",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "ids",
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    },
+    {
+     "in": "query",
+     "name": "title",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "type",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "status",
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "_links": {
+          "properties": {
+           "base": {
+            "example": "http://localhost:8085/confluence",
+            "type": "string"
+           },
+           "context": {
+            "example": "confluence",
+            "type": "string"
+           },
+           "next": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=50",
+            "type": "string"
+           },
+           "prev": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=0",
+            "type": "string"
+           },
+           "self": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=25",
+            "type": "string"
+           }
+          },
+          "type": "object"
+         },
+         "limit": {
+          "example": 25,
+          "type": "number"
+         },
+         "results": {
+          "items": {
+           "$ref": "#/components/schemas/Content"
+          },
+          "type": "array"
+         },
+         "size": {
+          "example": 25,
+          "type": "number"
+         },
+         "start": {
+          "example": 25,
+          "type": "number"
+         },
+         "totalCount": {
+          "format": "int64",
+          "type": "integer"
+         }
+        },
+        "type": "object"
+       }
+      }
+     }
+    },
+    "404": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RestError"
+       }
+      }
+     }
+    }
+   }
+  },
+  "/rest/api/content/{id}": {
+   "parameters": [
+    {
+     "in": "query",
+     "name": "xoauth_requestor_id",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "expand",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "version",
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
+    },
+    {
+     "in": "query",
+     "name": "status",
+     "schema": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Content"
+       }
+      }
+     }
+    },
+    "404": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RestError"
+       }
+      }
+     }
+    }
+   }
+  },
+  "/rest/api/content/{id}/child/{type}": {
+   "parameters": [
+    {
+     "in": "query",
+     "name": "expand",
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "limit",
+     "schema": {
+      "default": 25,
+      "format": "int32",
+      "type": "integer"
+     }
+    },
+    {
+     "in": "query",
+     "name": "start",
+     "schema": {
+      "format": "int32",
+      "type": "integer"
+     }
+    },
+    {
+     "in": "path",
+     "name": "id",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "path",
+     "name": "type",
+     "required": true,
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "in": "query",
+     "name": "parentVersion",
+     "schema": {
+      "default": 0,
+      "format": "int32",
+      "type": "integer"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "_links": {
+          "properties": {
+           "base": {
+            "example": "http://localhost:8085/confluence",
+            "type": "string"
+           },
+           "context": {
+            "example": "confluence",
+            "type": "string"
+           },
+           "next": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=50",
+            "type": "string"
+           },
+           "prev": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=0",
+            "type": "string"
+           },
+           "self": {
+            "example": "http://localhost:8085/rest/api/latest/..?limit=25&start=25",
+            "type": "string"
+           }
+          },
+          "type": "object"
+         },
+         "limit": {
+          "example": 25,
+          "type": "number"
+         },
+         "results": {
+          "items": {
+           "$ref": "#/components/schemas/Content"
+          },
+          "type": "array"
+         },
+         "size": {
+          "example": 25,
+          "type": "number"
+         },
+         "start": {
+          "example": 25,
+          "type": "number"
+         },
+         "totalCount": {
+          "format": "int64",
+          "type": "integer"
+         }
+        },
+        "type": "object"
+       }
+      }
+     }
+    },
+    "404": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/RestError"
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

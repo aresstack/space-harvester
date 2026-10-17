@@ -25,13 +25,8 @@ jobs:
       - name: Erreichbarkeit
         run: |
           for url in \
-            https://developer.atlassian.com/server/confluence/rest/v1000/ \
-            https://developer.atlassian.com/server/confluence/rest/v920/ \
-            https://dac-static.atlassian.com/server/confluence/10.2.0.swagger.v3.json \
-            https://dac-static.atlassian.com/server/confluence/10.1.0.swagger.v3.json \
-            https://dac-static.atlassian.com/server/confluence/10.0.0.swagger.v3.json \
-            https://dac-static.atlassian.com/server/confluence/9.2.0.swagger.v3.json \
-            https://dac-static.atlassian.com/server/confluence/8.5.0.swagger.v3.json; do
+            https://developer.atlassian.com/server/confluence/rest/v1020/ \
+            https://dac-static.atlassian.com/server/confluence/10.2.0.swagger.v3.json; do
             echo "$url $(curl -sS -o /dev/null -w '%{http_code} %{size_download}' --max-time 60 "$url" 2>&1)"
           done
       - name: Auszug mit dem Repository vergleichen
@@ -53,13 +48,6 @@ jobs:
             fi
           done
           if [ "$found" = 0 ]; then
-            for version in 10.2.0; do
-              if curl -sSf --max-time 120 -o "$RUNNER_TEMP/$version.json" \
-                  "https://dac-static.atlassian.com/server/confluence/$version.swagger.v3.json"; then
-                python3 -c "import json,sys; print([p for p in json.load(open(sys.argv[1]))['paths'] if '/content/{' in p and 'child' in p])" "$RUNNER_TEMP/$version.json"
-                echo "----- Auszug $version -----"
-                python3 tools/confluence-contract/extract.py "$RUNNER_TEMP/$version.json"
-                echo "----- Ende $version -----"
-              fi
-            done
+            echo "::error::Kein Auszug unter src/test/resources/confluence-contract/"
+            exit 1
           fi
