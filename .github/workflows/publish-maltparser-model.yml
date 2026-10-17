@@ -101,6 +101,16 @@ jobs:
           subject-path: |
             nlp-model-training/build/maltparser-de-gsd/dist/${{ steps.recipe.outputs.tag }}.zip
             nlp-model-training/build/maltparser-de-gsd/dist/${{ steps.recipe.outputs.tag }}.manifest.json
+      # --clobber löscht die alten Assets vor dem Hochladen; nach Ablauf des Trainingsartefakts sind sie die einzige
+      # Kopie des Modells. Sie bleiben deshalb als Artefakt erhalten und werden bei einem Fehler zurückgeschrieben.
+      - name: Bisherige Entwurfs-Assets sichern
+        if: steps.source.outputs.draft == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.recipe.outputs.tag }}-previous-draft
+          retention-days: 90
+          if-no-files-found: error
+          path: ${{ runner.temp }}/source/dist/
       - name: Entwurfs-Release anlegen oder aktualisieren
         id: release
         working-directory: nlp-model-training/build/maltparser-de-gsd/dist
@@ -121,6 +131,14 @@ jobs:
               --title "$title" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
               "$TAG.zip" "$TAG.manifest.json" SHA256SUMS
           fi
+      - name: Bisherige Entwurfs-Assets zurückschreiben
+        if: failure() && steps.source.outputs.draft == 'true'
+        working-directory: ${{ runner.temp }}/source/dist
+        env:
+          TAG: ${{ steps.recipe.outputs.tag }}
+        run: |
+          sha256sum -c SHA256SUMS
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$TAG.zip" "$TAG.manifest.json" SHA256SUMS
       - name: Unvollständigen neuen Entwurf entfernen
         if: failure() && steps.release.outputs.created == 'true'
         env:

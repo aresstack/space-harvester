@@ -111,6 +111,8 @@ Training und Bereitstellung sind getrennte Workflows, beide nur von Hand (Action
   Modell beschreibt, wird abgelehnt), lädt das Ergebnis wie ein Verbraucher (`verifyGermanModel`) und legt einen
   **Entwurf** an oder aktualisiert ihn. Eigener Job mit `contents: write`, Environment `maltparser-model-release`,
   Herkunftsnachweis per `attest-build-provenance`. Ein veröffentlichtes Release verändert er nie.
+  Beim Aktualisieren eines Entwurfs sichert er dessen bisherige Assets vorher als Artefakt `<tag>-previous-draft`
+  (90 Tage) und schreibt sie zurück, wenn das Hochladen scheitert.
 - Ein Entwurf läuft nicht ab. Deshalb wird ein geprüftes Artefakt am besten gleich als Entwurf gesichert, auch vor der
   Lizenzfreigabe; der Entwurf ist nicht öffentlich und trägt bis zur Freigabe einen Warnhinweis im Titel und in den
   Notizen.
