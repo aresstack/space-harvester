@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.output.export;
 
+import com.aresstack.spaceharvester.application.export.Conversion;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportScope;
@@ -8,8 +9,8 @@ import com.aresstack.spaceharvester.application.export.PageFailure;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
-import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import com.aresstack.spaceharvester.output.convert.PageJson;
 import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -37,12 +38,10 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
-import tools.jackson.core.JsonParser;
-import tools.jackson.core.JsonToken;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -55,7 +54,9 @@ import tools.jackson.databind.json.JsonMapper;
  *       JSON-Antwort inhaltlich gleich, nicht bytegleich)</li>
  *   <li>{@code raw/}: die Payload jeder Seite Byte für Byte, Dateiname aus der Seiten-ID</li>
  *   <li>{@code tree.json}: Hierarchie nur aus Verweisen ({@code roots}, je Knoten {@code id} und {@code url})</li>
- *   <li>{@code manifest.json}: Vollständigkeit, Generation, Zähler, Fehler, Warnungen, Dateien mit {@code sha256}</li>
+ *   <li>{@code manifest.json}: Vollständigkeit, Generation, Zähler, Fehler, Warnungen, Dateien mit {@code sha256},
+ *       Herkunft konvertierter Dateien ({@code conversions})</li>
+ *   <li>konvertierte Dateien der angefragten Formate (#30), etwa {@code pages.json} oder {@code pages.md}</li>
  * </ul>
  *
  * <p>Ein Export entsteht unter {@code <root>/.incomplete/<exportId>/} und wird erst nach dem Manifest in einem Schritt
@@ -70,9 +71,13 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String INCOMPLETE = ".incomplete";
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
+    /** Dateinamen konvertierter Dateien. */
+    private static final String CONVERTED_NAME = "[a-z][a-z0-9-]{0,40}\\.(json|md|docx|pdf)";
+    private static final Pattern SAFE_CONVERTED = Pattern.compile(CONVERTED_NAME);
     // Nur Kleinbuchstaben: Dateisysteme ohne Groß-/Kleinschreibung dürfen keine zwei Seiten zusammenlegen.
     private static final Pattern SAFE_FILE = Pattern.compile(
-            "(pages\\.ndjson|tree\\.json|manifest\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin))");
+            "(pages\\.ndjson|tree\\.json|manifest\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin)"
+                    + "|" + CONVERTED_NAME + ")");
     private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
     private final Path root;
@@ -206,6 +211,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final List<String> warnings = new ArrayList<>();
         /** Adresse je geschriebener Seite für die Verweise im Baum; nur Seiten mit bekannter Adresse. */
         private final Map<String, String> urls = new HashMap<>();
+        private final List<ExportArtifact.File> convertedFiles = new ArrayList<>();
+        private final List<Conversion> conversions = new ArrayList<>();
         private boolean published;
 
         FileSession(String exportId, ExportScope scope, Path work, Path target) throws IOException {
@@ -231,14 +238,14 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             try {
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
                 Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
-                boolean parseable = isJson(payload.mediaType(), bytes);
+                boolean parseable = PageJson.isJson(payload.mediaType(), bytes);
                 if (!parseable) {
                     warnings.add("Payload von Seite " + pageId + " ist kein lesbares JSON; nur unter " + rawName
                             + " abgelegt");
                 }
                 try (JsonGenerator line = json.createGenerator(new NonClosingOutputStream(pages))) {
                     line.writeStartObject();
-                    writeHeader(line, header);
+                    PageJson.writeHeader(line, header);
                     line.writeName("raw");
                     line.writeStartObject();
                     line.writeStringProperty("file", rawName);
@@ -250,20 +257,31 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                     line.writeStringProperty("retrievedAt", text(snapshot.retrievedAt()));
                     line.writeEndObject();
                     line.writeName("content");
-                    if (parseable) {
-                        try (JsonParser parser = json.createParser(bytes)) {
-                            parser.nextToken();
-                            line.copyCurrentStructureExact(parser);
-                        }
-                    } else {
-                        line.writeNull();
-                    }
+                    PageJson.writeContent(line, payload.mediaType(), bytes);
                     line.writeEndObject();
                 }
                 pages.write('\n');
             } catch (IOException e) {
                 throw new UncheckedIOException("Seite " + pageId + " nicht schreibbar", e);
             }
+        }
+
+        @Override
+        public ExportArtifact.File converted(Conversion conversion, Content content) throws IOException {
+            String name = conversion.fileName();
+            if (!SAFE_CONVERTED.matcher(name).matches() || List.of(PAGES, TREE, MANIFEST).contains(name)
+                    || conversions.stream().anyMatch(done -> done.fileName().equals(name))) {
+                throw new IllegalArgumentException("Ungültiger oder doppelter Dateiname " + name);
+            }
+            HashingOutputStream out = new HashingOutputStream(
+                    Files.newOutputStream(work.resolve(name), StandardOpenOption.CREATE_NEW));
+            try (out) {
+                content.write(new NonClosingOutputStream(out));
+            }
+            ExportArtifact.File file = new ExportArtifact.File(name, out.count, out.sha256());
+            convertedFiles.add(file);
+            conversions.add(conversion);
+            return file;
         }
 
         @Override
@@ -276,9 +294,10 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 List<ExportArtifact.File> files = new ArrayList<>();
                 files.add(new ExportArtifact.File(PAGES, pages.count, pages.sha256()));
                 files.add(writeJson(TREE, generator -> writeTree(generator, tree, urls)));
+                files.addAll(convertedFiles);
                 List<String> allWarnings = new ArrayList<>(summary.warnings());
                 allWarnings.addAll(warnings);
-                writeJson(MANIFEST, generator -> writeManifest(generator, summary, allWarnings, files));
+                writeJson(MANIFEST, generator -> writeManifest(generator, summary, allWarnings, files, conversions));
                 Files.createDirectories(root);
                 try {
                     Files.move(work, target, StandardCopyOption.ATOMIC_MOVE);
@@ -316,30 +335,6 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
     }
 
-    private static void writeHeader(JsonGenerator line, PageHeader header) {
-        PageMetadata metadata = header.metadata();
-        line.writeName("header");
-        line.writeStartObject();
-        line.writeStringProperty("sourceId", header.key().sourceId());
-        line.writeStringProperty("pageId", header.key().pageId());
-        line.writeStringProperty("spaceKey", metadata.partitionKey());
-        line.writeStringProperty("title", metadata.title());
-        line.writeStringProperty("url", metadata.url() == null ? null : metadata.url().toString());
-        line.writeStringProperty("parentPageId", metadata.parentPageId());
-        line.writeStringProperty("version", metadata.version());
-        line.writeStringProperty("modifiedAt", text(metadata.modifiedAt()));
-        line.writeName("attributes");
-        line.writeStartObject();
-        for (Map.Entry<String, String> attribute : metadata.attributes().entrySet()) {
-            line.writeStringProperty(attribute.getKey(), attribute.getValue());
-        }
-        line.writeEndObject();
-        line.writeStringProperty("metadataHash", header.metadataHash());
-        line.writeStringProperty("attributesHash", header.attributesHash());
-        line.writeStringProperty("observedAt", text(header.observedAt()));
-        line.writeEndObject();
-    }
-
     private static void writeTree(JsonGenerator generator, PageTree tree, Map<String, String> urls) {
         generator.writeStartObject();
         generator.writeName("roots");
@@ -361,7 +356,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     }
 
     private static void writeManifest(JsonGenerator generator, ExportSummary summary, List<String> warnings,
-                                      List<ExportArtifact.File> files) {
+                                      List<ExportArtifact.File> files, List<Conversion> conversions) {
         ExportScope scope = summary.scope();
         generator.writeStartObject();
         generator.writeStringProperty("schemaVersion", ExportSummary.SCHEMA_VERSION);
@@ -394,6 +389,28 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
         generator.writeEndArray();
         generator.writeStringProperty("rawDirectory", RAW + "/");
+        generator.writeName("conversions");
+        generator.writeStartArray();
+        for (Conversion conversion : conversions) {
+            generator.writeStartObject();
+            generator.writeStringProperty("format", conversion.format());
+            generator.writeStringProperty("file", conversion.fileName());
+            generator.writeStringProperty("mediaType", conversion.mediaType());
+            generator.writeStringProperty("converter", conversion.converter());
+            generator.writeName("input");
+            generator.writeStartObject();
+            generator.writeStringProperty("hashVersion", Conversion.INPUT_HASH_VERSION);
+            generator.writeStringProperty("sha256", conversion.inputSha256());
+            generator.writeEndObject();
+            generator.writeName("parameters");
+            generator.writeStartObject();
+            for (Map.Entry<String, String> parameter : new TreeMap<>(conversion.parameters()).entrySet()) {
+                generator.writeStringProperty(parameter.getKey(), parameter.getValue());
+            }
+            generator.writeEndObject();
+            generator.writeEndObject();
+        }
+        generator.writeEndArray();
         generator.writeName("failures");
         generator.writeStartArray();
         for (PageFailure failure : summary.failures()) {
@@ -413,24 +430,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         generator.writeEndObject();
     }
 
-    /** Vollständig lesbares JSON mit genau einem Wert; nur dann wird es als {@code content} eingebettet. */
-    private boolean isJson(String mediaType, byte[] payload) {
-        if (!"application/json".equals(mediaType)) {
-            return false;
-        }
-        try (JsonParser parser = json.createParser(payload)) {
-            if (parser.nextToken() == null) {
-                return false;
-            }
-            parser.skipChildren();
-            return parser.nextToken() == null;
-        } catch (JacksonException e) {
-            return false;
-        }
-    }
-
     private static String text(Instant instant) {
-        return instant == null ? null : instant.toString();
+        return PageJson.text(instant);
     }
 
     private static void deleteRecursively(Path path) throws IOException {

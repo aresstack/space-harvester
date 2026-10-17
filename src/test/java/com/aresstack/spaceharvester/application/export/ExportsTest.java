@@ -295,7 +295,7 @@ class ExportsTest {
     void leftoversWithoutRunningJobAreRemovedOnStartup() {
         writer.unpublished.add("crashed-run");
         writer.published.put("lost-job", new RecordingExportArtifactWriter.Published(List.of(), null,
-                null));
+                null, java.util.Map.of()));
 
         exports(cache);
 
@@ -322,7 +322,8 @@ class ExportsTest {
     void artifactOfAnotherJobTypeIsNotAnExport() {
         JobStatus sync = jobs.submit(com.aresstack.spaceharvester.application.jobs.JobType.SYNC, "confluence", "DEV",
                 null, context -> java.util.concurrent.CompletableFuture.completedFuture(null));
-        writer.published.put(sync.id(), new RecordingExportArtifactWriter.Published(List.of(), null, null));
+        writer.published.put(sync.id(), new RecordingExportArtifactWriter.Published(List.of(), null, null,
+                java.util.Map.of()));
 
         exports(cache).purge();
 

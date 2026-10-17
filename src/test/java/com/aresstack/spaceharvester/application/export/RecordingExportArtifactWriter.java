@@ -3,9 +3,12 @@ package com.aresstack.spaceharvester.application.export;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -19,12 +22,13 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
     /** Artefakte im Entstehen, auch Reste, die ein Test als „vom letzten Lauf liegen geblieben“ vorgibt. */
     final Set<String> unpublished = new HashSet<>();
 
-    record Published(List<String> pageIds, PageTree tree, ExportSummary summary) {
+    record Published(List<String> pageIds, PageTree tree, ExportSummary summary, Map<Conversion, byte[]> converted) {
     }
 
     @Override
     public Session begin(String exportId, ExportScope scope) {
         List<String> pageIds = new ArrayList<>();
+        Map<Conversion, byte[]> converted = new LinkedHashMap<>();
         unpublished.add(exportId);
         return new Session() {
             private boolean done;
@@ -35,10 +39,18 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
             }
 
             @Override
+            public ExportArtifact.File converted(Conversion conversion, Content content) throws IOException {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                content.write(out);
+                converted.put(conversion, out.toByteArray());
+                return new ExportArtifact.File(conversion.fileName(), out.size(), "sha256:test");
+            }
+
+            @Override
             public ExportArtifact publish(PageTree tree, ExportSummary summary) {
                 done = true;
                 unpublished.remove(exportId);
-                published.put(exportId, new Published(pageIds, tree, summary));
+                published.put(exportId, new Published(pageIds, tree, summary, converted));
                 return new ExportArtifact(exportId, summary.complete(), List.of());
             }
 
