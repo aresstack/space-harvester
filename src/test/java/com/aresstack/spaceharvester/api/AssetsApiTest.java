@@ -262,6 +262,8 @@ class AssetsApiTest {
         assertThat(AssetsController.filename(named(".."))).isEqualTo("att9");
         assertThat(AssetsController.filename(named(""))).isEqualTo("att9");
         assertThat(AssetsController.filename(named("Übersicht.png"))).isEqualTo("Übersicht.png");
+        assertThat(AssetsController.filename(named("rechnung\u202Egnp.exe"))).isEqualTo("rechnung_gnp.exe");
+        assertThat(AssetsController.filename(named("a\u2028b\u200Bc"))).isEqualTo("a_b_c");
     }
 
     private static com.aresstack.spaceharvester.application.assets.Asset named(String title) {

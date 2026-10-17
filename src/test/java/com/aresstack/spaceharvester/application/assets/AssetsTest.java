@@ -79,6 +79,18 @@ class AssetsTest {
     }
 
     @Test
+    void readingWithoutStoreRightServesButDoesNotStore() {
+        Assets assets = assets(1000);
+        source.file("att1", "1", "v1");
+        PageAttachmentList list = list(attachment("att1", "a.png", "image/png", "1"));
+
+        assertThat(assets.content(list, "att1", false).content()).isEqualTo("v1".getBytes(StandardCharsets.UTF_8));
+        assertThat(assets.content(list, "att1", false).content()).isEqualTo("v1".getBytes(StandardCharsets.UTF_8));
+        assertThat(source.downloads).isEqualTo(2);
+        assertThat(assets.harvest(list).entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
+    }
+
+    @Test
     void withoutVersionNothingIsTrustedAsCurrent() {
         Assets assets = assets(1000);
         source.file("att1", null, "x");
