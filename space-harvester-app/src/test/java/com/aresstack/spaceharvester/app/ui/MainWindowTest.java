@@ -76,6 +76,9 @@ class MainWindowTest {
         }
         assertThat(buttonTexts(surface[0])).contains("Übersicht", "Wissensquellen", "Inhalte", "Aktivitäten",
                 "Exporte", "Suche", "Einstellungen");
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.OVERVIEW));
+        assertThat(labelTexts(surface[0])).as("„Zu erledigen“ steht im Dashboard, nicht in der Begrüßung")
+                .contains("Nichts offen.");
 
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         String job = context.runtime().workspace().startSync("handbuch", space).id();

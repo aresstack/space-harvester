@@ -34,6 +34,8 @@ public final class OverviewView implements View {
     private final ComposerButton toActivities = Comic.button("Alle Aktivitäten", "Aufträge ansehen");
     private final JComponent dashboard;
     private final JComponent welcome;
+    private final JPanel dashboardAttention = new JPanel(new BorderLayout());
+    private final JPanel welcomeAttentionHolder = new JPanel(new BorderLayout());
     private final JComponent welcomeAttention;
     private boolean welcoming;
 
@@ -48,12 +50,16 @@ public final class OverviewView implements View {
         activity.setOpaque(false);
         activity.add(recent, BorderLayout.CENTER);
         activity.add(Comic.row(toActivities), BorderLayout.SOUTH);
-        dashboard = Comic.column(
-                Comic.plate("Zu erledigen", Comic.RED, attention),
+        // Beide Ansichten haben eine eigene Platte „Zu erledigen“; die Liste selbst wandert mit der Ansicht, denn eine
+        // Swing-Komponente kann nur in einem Container liegen.
+        dashboardAttention.setOpaque(false);
+        welcomeAttentionHolder.setOpaque(false);
+        welcomeAttention = Comic.plate("Zu erledigen", Comic.RED, welcomeAttentionHolder);
+        dashboard = Comic.column(Comic.plate("Zu erledigen", Comic.RED, dashboardAttention),
                 Comic.plate("Wissensquellen", Comic.BLUE, sources),
                 Comic.plate("Zuletzt", Comic.PETROL, activity));
-        welcomeAttention = Comic.plate("Zu erledigen", Comic.RED, attention);
         welcome = Comic.column(welcomePlate(), welcomeAttention);
+        dashboardAttention.add(attention, BorderLayout.CENTER);
         root.add(dashboard, BorderLayout.CENTER);
         context.onChange(ignored -> render());
         render();
@@ -144,6 +150,7 @@ public final class OverviewView implements View {
             return;
         }
         welcoming = show;
+        (show ? welcomeAttentionHolder : dashboardAttention).add(attention, BorderLayout.CENTER);
         root.removeAll();
         root.add(show ? welcome : dashboard, BorderLayout.CENTER);
     }
