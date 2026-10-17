@@ -39,7 +39,10 @@ final class CertificateChooser {
     private CertificateChooser() {
     }
 
-    /** Alle Zertifikate aus {@code Windows-MY}; leer ohne Windows oder bei einem Lesefehler. */
+    /**
+     * Die Zertifikate aus {@code Windows-MY} mit privatem Schlüssel (nur die taugen für mTLS); leer ohne Windows oder
+     * bei einem Lesefehler.
+     */
     static List<Entry> load() {
         List<Entry> result = new ArrayList<>();
         try {
@@ -49,6 +52,9 @@ final class CertificateChooser {
             Enumeration<String> aliases = store.aliases();
             while (aliases.hasMoreElements()) {
                 String alias = aliases.nextElement();
+                if (!store.isKeyEntry(alias)) {
+                    continue;
+                }
                 Certificate certificate = store.getCertificate(alias);
                 if (certificate instanceof X509Certificate x509) {
                     String sha1 = HexFormat.ofDelimiter(":").withUpperCase()

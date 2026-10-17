@@ -169,7 +169,7 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "sitzungs-token".toCharArray());
+        context.secrets().put("wiki", "pat", "sitzungs-token".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         CountDownLatch saved = new CountDownLatch(1);
@@ -222,7 +222,7 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "sitzungs-passwort".toCharArray());
+        context.secrets().put("wiki", "basic:angelo", "sitzungs-passwort".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         assertThat(editable.plaintextSecrets()).isEmpty();
@@ -428,5 +428,21 @@ class SourceWizardTest {
         assertThat(again.await(30, TimeUnit.SECONDS)).isTrue();
         assertThat(context.runtime().waitingForSecret()).isEmpty();
         assertThat(context.secrets().has("wiki-example")).isTrue();
+
+        // Von Hand auf Benutzer und Passwort umgestellt: Das gespeicherte Token gilt nicht als Passwort.
+        String yaml = Files.readString(config);
+        Files.writeString(config, yaml.replaceFirst("type: pat\\s+token: \\$\\{WIKI_EXAMPLE_TOKEN}",
+                "type: basic\n        username: angelo\n        password: \\${WIKI_EXAMPLE_PASSWORD}"));
+        assertThat(Files.readString(config)).contains("type: basic");
+        CountDownLatch basic = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(basic::countDown));
+        assertThat(basic.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).containsExactly("wiki-example");
+        context.shutdown();
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        CountDownLatch fresh = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(fresh::countDown));
+        assertThat(fresh.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).containsExactly("wiki-example");
     }
 }

@@ -43,19 +43,20 @@ public class SecretVaultTest {
         SecretVault vault = new SecretVault(home.resolve("secrets"), shell);
         char[] token = "Tökén-123".toCharArray();
 
-        vault.store("wiki", token);
+        vault.store("wiki", "pat", token);
 
         assertThat(token).as("Eingabe überschrieben").containsOnly('\0');
         assertThat(vault.has("wiki")).isTrue();
         String stored = Files.readString(home.resolve("secrets").resolve("wiki.secret"));
-        assertThat(stored).startsWith("01000000d08c").doesNotContain("Tökén");
+        assertThat(stored).contains("\n01000000d08c").doesNotContain("Tökén");
         assertThat(shell.inputs.get(0)).as("Klartext nur als Base64 über die Eingabe")
                 .isEqualTo(Base64.getEncoder().encodeToString("Tökén-123".getBytes(StandardCharsets.UTF_8)));
-        assertThat(vault.load("wiki")).containsExactly("Tökén-123".toCharArray());
+        assertThat(vault.load("wiki", "pat")).containsExactly("Tökén-123".toCharArray());
+        assertThat(vault.load("wiki", "basic:angelo")).as("Token taugt nicht als Passwort").isNull();
 
         vault.remove("wiki");
         assertThat(vault.has("wiki")).isFalse();
-        assertThat(vault.load("wiki")).isNull();
+        assertThat(vault.load("wiki", "pat")).isNull();
     }
 
     @Test
@@ -64,8 +65,8 @@ public class SecretVaultTest {
         assertThat(none.available()).isFalse();
         assertThat(none.has("wiki")).isFalse();
         assertThat(none.describe()).contains("nur für diese Sitzung");
-        assertThatThrownBy(() -> none.store("wiki", "x".toCharArray())).hasMessageContaining("keinen Tresor");
-        assertThatThrownBy(() -> new SecretVault(home, new FakeDpapi()).store("../x", "x".toCharArray()))
+        assertThatThrownBy(() -> none.store("wiki", "pat", "x".toCharArray())).hasMessageContaining("keinen Tresor");
+        assertThatThrownBy(() -> new SecretVault(home, new FakeDpapi()).store("../x", "pat", "x".toCharArray()))
                 .hasMessageContaining("Ungültige Quellen-ID");
     }
 }

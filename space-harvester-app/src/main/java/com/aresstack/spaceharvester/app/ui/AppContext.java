@@ -211,14 +211,16 @@ public final class AppContext {
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
         for (AppSettings.SourceEntry entry : loaded.sources()) {
-            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry.id())
+            if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry.config())
                     || !vault.has(entry.id())) {
                 continue;
             }
             try {
-                char[] value = vault.load(entry.id());
+                String login = AppRuntime.SessionSecrets.login(entry.config().auth());
+                // Nur ein Wert für genau diese Anmeldung; nach einem Wechsel (Token → Passwort) fragt die App.
+                char[] value = vault.load(entry.id(), login);
                 if (value != null) {
-                    secrets.put(entry.id(), value);
+                    secrets.put(entry.id(), login, value);
                 }
             } catch (IOException | RuntimeException e) {
                 // Ohne gespeicherten Wert fragt die App wie bisher nach; der Grund steht im Log, nie der Wert.

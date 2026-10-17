@@ -36,6 +36,8 @@ public final class SecretVault {
 
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
     private static final String SUFFIX = ".secret";
+    /** Erste Zeile der Datei: die Anmeldung (Base64), für die der Wert gilt; danach der DPAPI-Text. */
+    private static final String LOGIN = "login:";
     private static final String PROTECT = """
             $ErrorActionPreference = 'Stop'
             $plain = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()))
@@ -79,8 +81,12 @@ public final class SecretVault {
         return available() && Files.isRegularFile(file(sourceId));
     }
 
-    /** Verschlüsselt und speichert den Wert; {@code secret} wird danach überschrieben. */
-    public void store(String sourceId, char[] secret) throws IOException {
+    /**
+     * Verschlüsselt und speichert den Wert; {@code secret} wird danach überschrieben.
+     *
+     * @param login wofür der Wert gilt (Anmeldeart, Benutzer); {@link #load} liefert ihn nur dafür zurück
+     */
+    public void store(String sourceId, String login, char[] secret) throws IOException {
         try {
             if (!available()) {
                 throw new IOException("Unter diesem Betriebssystem gibt es keinen Tresor für Zugangsdaten.");
@@ -93,7 +99,7 @@ public final class SecretVault {
             Path target = file(sourceId);
             Path temp = Files.createTempFile(directory, sourceId, ".tmp");
             try {
-                Files.writeString(temp, encrypted, StandardCharsets.US_ASCII);
+                Files.writeString(temp, LOGIN + encode(login) + "\n" + encrypted, StandardCharsets.US_ASCII);
                 try {
                     Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 } catch (AtomicMoveNotSupportedException e) {
@@ -107,12 +113,19 @@ public final class SecretVault {
         }
     }
 
-    /** @return der entschlüsselte Wert (der Aufrufer überschreibt ihn nach Gebrauch) oder {@code null} */
-    public char[] load(String sourceId) throws IOException {
+    /**
+     * @return der entschlüsselte Wert (der Aufrufer überschreibt ihn nach Gebrauch) oder {@code null}, auch wenn er
+     *         für eine andere Anmeldung gespeichert wurde
+     */
+    public char[] load(String sourceId, String login) throws IOException {
         if (!has(sourceId)) {
             return null;
         }
-        String encoded = shell.run(UNPROTECT, Files.readString(file(sourceId), StandardCharsets.US_ASCII)).trim();
+        String[] lines = Files.readString(file(sourceId), StandardCharsets.US_ASCII).split("\n", 2);
+        if (lines.length != 2 || !lines[0].equals(LOGIN + encode(login))) {
+            return null;
+        }
+        String encoded = shell.run(UNPROTECT, lines[1].trim()).trim();
         byte[] bytes = Base64.getDecoder().decode(encoded);
         try {
             CharBuffer chars = StandardCharsets.UTF_8.decode(ByteBuffer.wrap(bytes));
@@ -141,6 +154,10 @@ public final class SecretVault {
             throw new IllegalArgumentException("Ungültige Quellen-ID für den Tresor: " + sourceId);
         }
         return directory.resolve(sourceId + SUFFIX);
+    }
+
+    private static String encode(String login) {
+        return Base64.getEncoder().encodeToString(String.valueOf(login).getBytes(StandardCharsets.UTF_8));
     }
 
     private static String base64(char[] secret) {

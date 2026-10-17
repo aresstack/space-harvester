@@ -432,12 +432,14 @@ final class SourceWizard {
             if (typed && vault.available()) {
                 // Erst der Tresor, dann die Datei: scheitert die Datei, kommt der alte Tresorwert zurück, sodass
                 // ein zweiter Versuch auf demselben Stand beginnt.
-                char[] previous = vault.load(source.id());
-                vault.store(source.id(), Arrays.copyOf(value, value.length));
+                String previousLogin = editing == null ? null
+                        : AppRuntime.SessionSecrets.login(editing.draft().authType(), editing.draft().username());
+                char[] previous = previousLogin == null ? null : vault.load(source.id(), previousLogin);
+                vault.store(source.id(), login(source), Arrays.copyOf(value, value.length));
                 try {
                     editor.save(context.configFile(), draft, backup);
                 } catch (IOException | RuntimeException e) {
-                    restore(vault, source.id(), previous, e);
+                    restore(vault, source.id(), previousLogin, previous, e);
                     throw e;
                 }
                 if (previous != null) {
@@ -452,7 +454,7 @@ final class SourceWizard {
             return source.id();
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
-                context.secrets().put(savedId, value);
+                context.secrets().put(savedId, login(source), value);
             } else if (loginChanged(source)) {
                 // Ein Token taugt nicht als Passwort (und umgekehrt): Mit der Anmeldeart verfällt der Sitzungswert.
                 context.secrets().remove(savedId);
@@ -468,12 +470,17 @@ final class SourceWizard {
         });
     }
 
-    private static void restore(SecretVault vault, String sourceId, char[] previous, Exception failure) {
+    private static String login(SourceDraft source) {
+        return AppRuntime.SessionSecrets.login(source.authType(), source.username());
+    }
+
+    private static void restore(SecretVault vault, String sourceId, String login, char[] previous,
+                                Exception failure) {
         try {
             if (previous == null) {
                 vault.remove(sourceId);
             } else {
-                vault.store(sourceId, previous);
+                vault.store(sourceId, login, previous);
             }
         } catch (IOException | RuntimeException e) {
             failure.addSuppressed(e);
@@ -606,7 +613,7 @@ final class SourceWizard {
         String sourceId = source.id();
         char[] value = sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
-            secrets.put(sourceId, value);
+            secrets.put(sourceId, login(source), value);
         } else if (sourceId != null && context.secrets().has(sourceId) && !loginChanged(source)) {
             return context.secrets();
         }
@@ -616,7 +623,8 @@ final class SourceWizard {
     /** Ob Anmeldeart oder Variable beim Bearbeiten wechseln; dann passt ein Sitzungswert nicht mehr. */
     private boolean loginChanged(SourceDraft source) {
         return editing != null && (editing.draft().authType() != source.authType()
-                || !Objects.equals(editing.draft().secretVariable(), source.secretVariable()));
+                || !Objects.equals(editing.draft().secretVariable(), source.secretVariable())
+                || !login(editing.draft()).equals(login(source)));
     }
 
     private List<Step> steps() {

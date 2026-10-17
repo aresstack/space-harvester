@@ -281,7 +281,7 @@ public final class SourcesView implements View {
         if (value == null || value.length == 0) {
             return;
         }
-        context.secrets().put(entry.id(), value);
+        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry.config().auth()), value);
         if (!entry.secretMissing()) {
             feedback.info("Eingabe gemerkt", "Die Konfiguration liefert bereits ein Geheimnis; es bleibt in Gebrauch.");
             return;
@@ -332,10 +332,12 @@ public final class SourcesView implements View {
             return;
         }
         feedback.working("Quelle wird entfernt …");
-        Background.execute(() -> editor.save(context.configFile(), editor.remove(context.configFile(), id),
-                !plaintext), () -> {
+        Background.execute(() -> {
+            editor.save(context.configFile(), editor.remove(context.configFile(), id), !plaintext);
+            // Gehört zur Entfernung: Ein späterer Eintrag mit derselben ID erbt sonst das gespeicherte Geheimnis.
+            context.vault().remove(id);
+        }, () -> {
             context.secrets().remove(id);
-            Background.execute(() -> context.vault().remove(id), () -> { }, ignored -> { });
             context.reload(() -> feedback.success("Quelle " + id + " entfernt"));
         }, feedback::problem);
     }

@@ -80,8 +80,10 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
    `token: ${WIKI_TOKEN}`. Den Wert legt die App unter Windows mit DPAPI verschlüsselt für das angemeldete Konto ab
    (`<Konfigurationsordner>\secrets\<kennung>.secret`, nur dieses Konto auf diesem Rechner kann ihn lesen) und setzt
    ihn beim Start selbst; eine Umgebungsvariable ist nicht nötig (eine Java-Property oder Variable gleichen Namens
-   geht weiter). Ohne Windows gilt der Wert bis zum Schließen der App. Auf derselben Seite das optionale
-   **Client-Zertifikat** (mTLS): aus dem Windows-Zertifikatsspeicher mit **Wählen …** (Tabelle mit Alias, Inhaber,
+   geht weiter). Der Wert gilt nur für die Anmeldung, für die er eingegeben wurde (Anmeldeart, bei Basic der
+   Benutzer); wird die Datei von Hand umgestellt, fragt die App neu. Ohne Windows gilt der Wert bis zum Schließen der
+   App. Auf derselben Seite das optionale **Client-Zertifikat** (mTLS): aus dem Windows-Zertifikatsspeicher mit
+   **Wählen …** (nur Zertifikate mit privatem Schlüssel; Tabelle mit Alias, Inhaber,
    „Gültig bis“, Status; abgelaufene auf Wunsch) oder als PKCS#12-Datei mit Passwort-Platzhalter; Fingerabdruck
    optional zur zusätzlichen Prüfung.
 3. **Proxy und Netzwerk** (Confluence), gilt für **alle Quellen** (`space-harvester.network.proxy`): die sieben Modi
