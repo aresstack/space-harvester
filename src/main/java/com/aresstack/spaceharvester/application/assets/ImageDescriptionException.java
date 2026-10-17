@@ -11,6 +11,8 @@ public class ImageDescriptionException extends RuntimeException {
         NOT_AN_IMAGE,
         /** Noch keine Beschreibung für diesen Stand des Bildes. */
         NOT_FOUND,
+        /** Schon zu viele Beschreibungen laufen gleichzeitig, oder die desselben Bildes dauert zu lange. */
+        BUSY,
         /** Das Modell war nicht erreichbar oder hat keine verwertbare Antwort geliefert. */
         FAILED
     }

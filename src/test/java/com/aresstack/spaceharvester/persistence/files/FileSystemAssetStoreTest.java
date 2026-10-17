@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
+import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -33,6 +34,23 @@ class FileSystemAssetStoreTest {
         assertThat(store.find("wiki", "att1", "4")).isEmpty();
         assertThat(store.find("andere", "att1", "3")).isEmpty();
         assertThat(store.read(asset)).isEqualTo(content);
+    }
+
+    @Test
+    void theTotalLimitRefusesNewContentButNotKnownContentAndCountsWhatIsAlreadyThere() {
+        byte[] first = bytes("1234567890");
+        new FileSystemAssetStore(root, 15).put(asset("att1", "1", first), first);
+        FileSystemAssetStore store = new FileSystemAssetStore(root, 15);
+        byte[] second = bytes("abcdef");
+
+        assertThatThrownBy(() -> store.put(asset("att2", "1", second), second))
+                .isInstanceOf(AssetStoreFullException.class);
+        assertThat(store.find("wiki", "att2", "1")).isEmpty();
+        store.put(asset("att3", "1", first), first);
+        assertThat(store.find("wiki", "att3", "1")).isPresent();
+        byte[] small = bytes("abcde");
+        store.put(asset("att4", "1", small), small);
+        assertThat(store.read(asset("att4", "1", small))).isEqualTo(small);
     }
 
     @Test

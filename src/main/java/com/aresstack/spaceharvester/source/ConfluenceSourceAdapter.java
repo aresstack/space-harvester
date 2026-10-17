@@ -30,6 +30,12 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     /** Standard für {@code options.maxRetries}, wenn die Quelle nichts angibt. */
     static final String DEFAULT_MAX_RETRIES = "2";
 
+    /**
+     * Standard für {@code options.foreignFileRedirects}: Weiterleitungen beim Datei-Download auf einen anderen Host
+     * werden nicht verfolgt (Upstream-Standard {@code true} gilt für den Desktop-Client).
+     */
+    static final String DEFAULT_FOREIGN_FILE_REDIRECTS = "false";
+
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
 
     /** Schlüssel, die der Adapter selbst setzt und die nicht über {@code options} kommen dürfen. */
@@ -200,11 +206,14 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         return value != null && !value.isBlank();
     }
 
-    private static SourceSettings settings(SourceSettingsConfig config) {
+    static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
         // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
         // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
         values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
+        // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird dort anonym geladen; das erlaubt
+        // nur, wer es für die Quelle ausdrücklich einschaltet.
+        values.putIfAbsent("foreignFileRedirects", DEFAULT_FOREIGN_FILE_REDIRECTS);
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());

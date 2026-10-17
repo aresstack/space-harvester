@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.assets;
 
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
@@ -18,8 +19,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Anwendungsfälle der Asset-Ernte (#19). Arbeitet immer auf einer frisch gelesenen Anhangsliste ({@link
@@ -61,6 +66,16 @@ public class Assets {
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
 
+    /**
+     * Gleichzeitige Läufe des Bildbeschreibers; ein weiterer scheitert sofort mit {@code BUSY}. Dasselbe Bild für
+     * dasselbe Modell läuft nie zweimal gleichzeitig: weitere Aufrufer warten höchstens {@link #DESCRIBE_WAIT} auf den
+     * laufenden.
+     */
+    static final int MAX_CONCURRENT_DESCRIPTIONS = 2;
+    private static final java.time.Duration DESCRIBE_WAIT = java.time.Duration.ofMinutes(2);
+    private final Semaphore descriptions = new Semaphore(MAX_CONCURRENT_DESCRIPTIONS);
+    private final Map<String, CompletableFuture<ImageDescription>> describing = new ConcurrentHashMap<>();
+
     /** Alle Anhänge der Seite mit Art, Diagrammbezug und dem abgelegten Stand; lädt nichts herunter. */
     public PageAssets overview(PageAttachmentList list) {
         Map<String, String> previews = previews(list.attachments().attachments());
@@ -75,17 +90,17 @@ public class Assets {
 
     /**
      * Legt alle Anhänge der Seite ab, die noch nicht in ihrer aktuellen Version abgelegt sind. Ein Fehler bei einem
-     * Anhang hält die anderen nicht auf und wird mit festem Code protokolliert; drosselt die Quelle, werden die übrigen
-     * Anhänge nicht mehr angefragt.
+     * Anhang hält die anderen nicht auf und wird mit festem Code protokolliert; drosselt die Quelle oder ist die Ablage
+     * voll, werden die übrigen Anhänge nicht mehr angefragt.
      */
     public AssetHarvest harvest(PageAttachmentList list) {
         HarvestSource source = source(list.sourceId());
         String pageId = list.attachments().pageId();
         List<AssetHarvest.Entry> entries = new ArrayList<>();
-        boolean throttled = false;
+        String stop = null;
         for (PageAttachment attachment : list.attachments().attachments()) {
-            if (throttled) {
-                entries.add(failed(list, attachment, "source-rate-limited"));
+            if (stop != null) {
+                entries.add(failed(list, attachment, stop));
                 continue;
             }
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
@@ -100,8 +115,13 @@ public class Assets {
                         null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
+            } catch (AssetStoreFullException e) {
+                stop = "asset-store-full";
+                entries.add(failed(list, attachment, stop));
             } catch (SourceAccessException e) {
-                throttled = e.reason() == SourceAccessException.Reason.RATE_LIMITED;
+                if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
+                    stop = code(e.reason());
+                }
                 entries.add(failed(list, attachment, code(e.reason())));
             }
         }
@@ -153,9 +173,11 @@ public class Assets {
 
     /**
      * Beschreibt das Bild in seiner aktuellen Version, falls es für diese Bildbytes und dieses Modell noch keine
-     * Beschreibung gibt; lädt das Bild dafür bei Bedarf über die Quelle.
+     * Beschreibung gibt; lädt das Bild dafür bei Bedarf über die Quelle. Läuft für dasselbe Bild und Modell schon eine
+     * Beschreibung, wird auf deren Ergebnis gewartet statt das Modell erneut zu fragen.
      *
-     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_AN_IMAGE} oder {@code FAILED}
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_AN_IMAGE}, {@code BUSY} oder
+     *                                   {@code FAILED}
      */
     public DescribedImage describe(PageAttachmentList list, String attachmentId) {
         ImageDescriber model = describer();
@@ -167,22 +189,72 @@ public class Assets {
         if (existing.isPresent()) {
             return new DescribedImage(asset, existing.get(), false);
         }
+        String key = asset.sha256() + '\n' + model.id() + '\n' + model.modelVersion();
+        CompletableFuture<ImageDescription> mine = new CompletableFuture<>();
+        CompletableFuture<ImageDescription> running = describing.putIfAbsent(key, mine);
+        if (running != null) {
+            return new DescribedImage(asset, await(running), false);
+        }
+        try {
+            // Ein eben beendeter Lauf hat die Beschreibung womöglich zwischen Prüfung und Anmeldung abgelegt.
+            existing = store.description(asset.sha256(), model.id(), model.modelVersion());
+            if (existing.isPresent()) {
+                mine.complete(existing.get());
+                return new DescribedImage(asset, existing.get(), false);
+            }
+            ImageDescription description = generate(model, content);
+            mine.complete(description);
+            return new DescribedImage(asset, description, true);
+        } catch (RuntimeException e) {
+            mine.completeExceptionally(e);
+            throw e;
+        } finally {
+            describing.remove(key, mine);
+        }
+    }
+
+    private ImageDescription generate(ImageDescriber model, AssetContent content) {
+        if (!descriptions.tryAcquire()) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
+                    "Zu viele gleichzeitige Bildbeschreibungen", null);
+        }
         String text;
         try {
-            text = model.describe(content.content(), asset.mediaType());
+            text = model.describe(content.content(), content.asset().mediaType());
         } catch (ImageDescriptionException e) {
             throw e;
         } catch (RuntimeException e) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Beschreibung fehlgeschlagen",
                     e);
+        } finally {
+            descriptions.release();
         }
         if (text == null || text.isBlank()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Leere Beschreibung", null);
         }
-        ImageDescription description = new ImageDescription(asset.sha256(), model.id(), model.modelVersion(),
-                text.strip(), clock.instant());
+        ImageDescription description = new ImageDescription(content.asset().sha256(), model.id(),
+                model.modelVersion(), text.strip(), clock.instant());
         store.putDescription(description);
-        return new DescribedImage(asset, description, true);
+        return description;
+    }
+
+    /** Das Ergebnis eines laufenden Beschreibungslaufs; dessen Fehler gilt auch für den Wartenden. */
+    private static ImageDescription await(CompletableFuture<ImageDescription> running) {
+        try {
+            return running.get(DESCRIBE_WAIT.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof RuntimeException cause) {
+                throw cause;
+            }
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Beschreibung fehlgeschlagen",
+                    e.getCause());
+        } catch (TimeoutException e) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
+                    "Beschreibung desselben Bildes läuft noch", null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY, "Warten abgebrochen", null);
+        }
     }
 
     private ImageDescriber describer() {
@@ -229,7 +301,9 @@ public class Assets {
                     "Download abgebrochen", e);
         }
         try {
-            file = source.attachmentFile(attachment);
+            file = source.attachmentFile(attachment, maxBytes);
+        } catch (AttachmentTooLargeException e) {
+            throw new AssetTooLargeException(source.id(), maxBytes);
         } finally {
             downloads.release();
         }

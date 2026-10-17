@@ -68,6 +68,7 @@ space-harvester:
         pageSize: 100
         maxRetries: 2                 # Standard 2: Netzfehler, 5xx und 429 wiederholen, 401/403/404 nie
         retryBackoffMillis: 1000      # erste Wartezeit, verdoppelt je Versuch, gestreut, höchstens maxRetryBackoffMillis
+        foreignFileRedirects: false   # Standard false: Datei-Weiterleitungen auf fremde Hosts (CDN) nicht verfolgen
     - id: team-wiki
       type: confluence
       base-url: https://wiki.example.org
@@ -431,12 +432,16 @@ abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Spa
 Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
 (Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
 Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
-(Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502). Fehler je Anhang stehen mit festem Code im
+(Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
+dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
+darüber `asset-store-full` (507), ohne etwas zu verdrängen. Leitet die Quelle einen Download auf einen anderen Host um,
+wird dem nur mit `options.foreignFileRedirects: true` gefolgt, dann anonym. Fehler je Anhang stehen mit festem Code im
 Ernteergebnis und im Log; drosselt die Quelle, werden die übrigen Anhänge nicht mehr angefragt. Für Diagramme sind die
 draw.io-Daten (`DIAGRAM`) und SVG (`VECTOR`) dem Vorschaubild vorzuziehen, das erst eine KI beschreiben müsste.
 Bildbeschreibungen erzeugt ein optionaler `ImageDescriber` (z. B. ein Vision-Modell); sie hängen am Bild, nicht an der
 Seite, gelten nur für genau diese Bildbytes und diese Modellversion und werden bei geändertem Bild oder Modell neu
-erzeugt. Sie sind kein bestätigter Teil der Seite und so geschützt wie das Bild. Diagrammdaten und Dokumente werden nicht
+erzeugt. Dasselbe Bild läuft für dasselbe Modell nie zweimal gleichzeitig; höchstens zwei Beschreibungen laufen
+zugleich, eine weitere bekommt `image-description-busy` (429). Sie sind kein bestätigter Teil der Seite und so geschützt wie das Bild. Diagrammdaten und Dokumente werden nicht
 beschrieben (`asset-not-an-image`).
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache

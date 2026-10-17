@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
@@ -24,6 +25,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -128,6 +135,7 @@ class AssetsTest {
         AssetHarvest harvest = assets.harvest(list(attachment("att1", "a", "text/plain", "1")));
 
         assertThat(harvest.entries().get(0).code()).isEqualTo("asset-too-large");
+        assertThat(source.limits).as("die Grenze reist bis in den Transport").containsOnly(3L);
         assertThatThrownBy(() -> assets.content(list(attachment("att1", "a", "text/plain", "1")), "att1"))
                 .isInstanceOf(AssetTooLargeException.class);
         assertThat(assets.overview(list(attachment("att1", "a", "text/plain", "1"))).entries().get(0).stored())
@@ -177,7 +185,7 @@ class AssetsTest {
         assertThat(again.generated()).isFalse();
         assertThat(again.description().text()).isEqualTo("Bild mit 6 Bytes");
         assertThat(assets.description(v1, "att1").description()).isEqualTo(first.description());
-        assertThat(describer.calls).isEqualTo(1);
+        assertThat(describer.calls.get()).isEqualTo(1);
 
         source.file("att1", "2", "bild-zwei");
         Assets.DescribedImage changed = assets.describe(list(attachment("att1", "a.png", "image/png", "2")), "att1");
@@ -187,7 +195,7 @@ class AssetsTest {
         describer.version = "2";
         assertThat(assets.describe(list(attachment("att1", "a.png", "image/png", "2")), "att1").generated())
                 .isTrue();
-        assertThat(describer.calls).isEqualTo(3);
+        assertThat(describer.calls.get()).isEqualTo(3);
     }
 
     @Test
@@ -210,11 +218,78 @@ class AssetsTest {
         assertThat(assets.describe(list(attachment("att2", "a.png", "image/png", "1")), "att2").generated()).isTrue();
     }
 
+    @Test
+    void theSameImageIsDescribedOnceEvenWhenAskedConcurrently() throws Exception {
+        describer.gate = new CountDownLatch(1);
+        Assets assets = assets(1000, describer);
+        source.file("att1", "1", "png");
+        PageAttachmentList list = list(attachment("att1", "a.png", "image/png", "1"));
+        assets.harvest(list);
+        ExecutorService pool = Executors.newFixedThreadPool(3);
+        try {
+            List<Future<Assets.DescribedImage>> runs = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                runs.add(pool.submit(() -> assets.describe(list, "att1")));
+            }
+            assertThat(describer.started.await(5, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(100);
+            describer.gate.countDown();
+
+            List<Assets.DescribedImage> results = new ArrayList<>();
+            for (Future<Assets.DescribedImage> run : runs) {
+                results.add(run.get(5, TimeUnit.SECONDS));
+            }
+            assertThat(describer.calls.get()).isEqualTo(1);
+            assertThat(results).extracting(r -> r.description().text()).containsOnly("Bild mit 3 Bytes");
+            assertThat(results).filteredOn(Assets.DescribedImage::generated).hasSize(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void tooManyDifferentDescriptionsAtOnceAreRefusedNotQueued() throws Exception {
+        describer.gate = new CountDownLatch(1);
+        Assets assets = assets(1000, describer);
+        int running = Assets.MAX_CONCURRENT_DESCRIPTIONS;
+        List<PageAttachment> images = new ArrayList<>();
+        for (int i = 0; i <= running; i++) {
+            source.file("att" + i, "1", "bild-" + i);
+            images.add(attachment("att" + i, i + ".png", "image/png", "1"));
+        }
+        PageAttachmentList list = list(images.toArray(PageAttachment[]::new));
+        assets.harvest(list);
+        describer.started = new CountDownLatch(running);
+        ExecutorService pool = Executors.newFixedThreadPool(running);
+        try {
+            List<Future<Assets.DescribedImage>> runs = new ArrayList<>();
+            for (int i = 0; i < running; i++) {
+                String id = "att" + i;
+                runs.add(pool.submit(() -> assets.describe(list, id)));
+            }
+            assertThat(describer.started.await(5, TimeUnit.SECONDS)).isTrue();
+
+            assertThatThrownBy(() -> assets.describe(list, "att" + running))
+                    .isInstanceOfSatisfying(ImageDescriptionException.class,
+                            e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.BUSY));
+            describer.gate.countDown();
+            for (Future<Assets.DescribedImage> run : runs) {
+                assertThat(run.get(5, TimeUnit.SECONDS).generated()).isTrue();
+            }
+            assertThat(assets.describe(list, "att" + running).generated()).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     private static final class CountingDescriber implements ImageDescriber {
 
-        int calls;
-        String version = "1";
-        boolean fail;
+        final AtomicInteger calls = new AtomicInteger();
+        volatile String version = "1";
+        volatile boolean fail;
+        /** Hält jeden Lauf an, bis der Test ihn freigibt; {@code null} lässt sofort durch. */
+        volatile CountDownLatch gate;
+        volatile CountDownLatch started = new CountDownLatch(1);
 
         @Override
         public String id() {
@@ -228,7 +303,16 @@ class AssetsTest {
 
         @Override
         public String describe(byte[] image, String mediaType) {
-            calls++;
+            calls.incrementAndGet();
+            started.countDown();
+            CountDownLatch waitFor = gate;
+            if (waitFor != null) {
+                try {
+                    waitFor.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             if (fail) {
                 throw new IllegalStateException("Modell weg");
             }
@@ -249,6 +333,7 @@ class AssetsTest {
 
         private final Map<String, Object> files = new HashMap<>();
         int downloads;
+        final List<Long> limits = new ArrayList<>();
 
         void file(String id, String version, String content) {
             files.put(id + "#content", content);
@@ -260,13 +345,17 @@ class AssetsTest {
         }
 
         @Override
-        public AttachmentFile attachmentFile(PageAttachment attachment) {
+        public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
             downloads++;
+            limits.add(maxBytes);
             Object failure = files.get(attachment.attachmentId() + "#failure");
             if (failure != null) {
                 throw new SourceAccessException("wiki", (SourceAccessException.Reason) failure, "x", null);
             }
             String version = (String) files.get(attachment.attachmentId() + "#version");
+            if (((String) files.get(attachment.attachmentId() + "#content")).length() > maxBytes) {
+                throw new AttachmentTooLargeException("wiki", maxBytes);
+            }
             return new AttachmentFile(new PageAttachment(attachment.attachmentId(), attachment.resourceId(),
                     attachment.title(), attachment.mediaType(), null, version.isEmpty() ? null : version, null,
                     null), ((String) files.get(attachment.attachmentId() + "#content")).getBytes(StandardCharsets.UTF_8),

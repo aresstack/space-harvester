@@ -65,6 +65,20 @@ public interface PageViewSource {
     }
 
     /**
+     * Wie {@link #loadAttachmentFile(KnowledgeResourceId)}, aber mit einer Grenze des Aufrufers: Der Download bricht
+     * beim Lesen ab, sobald er sie überschreitet ({@link ResponseTooLargeException}), statt die Datei erst ganz zu
+     * laden. Die Grenze der Quelle gilt zusätzlich. Quellen ohne eigene Umsetzung prüfen erst nach dem Laden.
+     */
+    default SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
+            throws KnowledgeSourceException {
+        SourceFile file = loadAttachmentFile(attachment);
+        if (file.content().length > maxBytes) {
+            throw new ResponseTooLargeException("Anhang größer als " + maxBytes + " Bytes", maxBytes);
+        }
+        return file;
+    }
+
+    /**
      * Ob Dateien (Bilder, Anhänge, Vorschauen) gerade ohne Einmalcode laden. Ein Aufrufer mit eigenem Ersatz (etwa ein
      * selbst gezeichnetes Diagramm) kann damit entscheiden, ob er das Original überhaupt anfragt.
      */

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
+import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
 import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import java.net.URI;
@@ -27,6 +28,13 @@ class AssetErrorHandler {
         return problem;
     }
 
+    @ExceptionHandler(AssetStoreFullException.class)
+    ProblemDetail full(AssetStoreFullException e) {
+        LOG.warn("Asset-Ablage voll (Grenze {} Bytes)", e.maxTotalBytes());
+        return problem(HttpStatus.INSUFFICIENT_STORAGE, "asset-store-full", "Asset-Ablage voll",
+                "Die Ablage für Anhänge hat ihre konfigurierte Gesamtgrenze erreicht.");
+    }
+
     @ExceptionHandler(AssetStoreException.class)
     ProblemDetail store(AssetStoreException e) {
         LOG.error("Asset-Ablage: {} ({})", e.getMessage(),
@@ -45,6 +53,9 @@ class AssetErrorHandler {
             case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "image-description-not-found",
                     "Keine Beschreibung vorhanden",
                     "Für den aktuellen Stand des Bildes und das konfigurierte Modell gibt es noch keine Beschreibung.");
+            case BUSY -> problem(HttpStatus.TOO_MANY_REQUESTS, "image-description-busy",
+                    "Bildbeschreibung ausgelastet",
+                    "Es laufen schon zu viele Bildbeschreibungen; die Anfrage kann später wiederholt werden.");
             case FAILED -> {
                 LOG.warn("Bildbeschreibung fehlgeschlagen ({})",
                         e.getCause() == null ? "-" : e.getCause().getClass().getName());

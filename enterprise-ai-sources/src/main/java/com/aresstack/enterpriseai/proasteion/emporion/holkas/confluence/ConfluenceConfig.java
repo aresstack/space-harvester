@@ -30,6 +30,7 @@ public final class ConfluenceConfig {
     private final int maxRetries;
     private final int retryBackoffMillis;
     private final int maxRetryBackoffMillis;
+    private final boolean foreignFileRedirects;
 
     private ConfluenceConfig(Builder builder) {
         if (builder.credentialRef != null && !builder.allowInsecureHttp
@@ -49,6 +50,7 @@ public final class ConfluenceConfig {
         this.maxRetries = builder.maxRetries;
         this.retryBackoffMillis = builder.retryBackoffMillis;
         this.maxRetryBackoffMillis = Math.max(builder.maxRetryBackoffMillis, builder.retryBackoffMillis);
+        this.foreignFileRedirects = builder.foreignFileRedirects;
     }
 
     /**
@@ -121,6 +123,15 @@ public final class ConfluenceConfig {
         return maxRetryBackoffMillis;
     }
 
+    /**
+     * Ob Datei-Downloads (Bilder, Anhänge, Vorschauen) einer Weiterleitung auf einen anderen Host folgen, ohne
+     * Anmeldung, Cookie und Client-Zertifikat (etwa zu einem Download-Host). {@code false}: nur Weiterleitungen, die
+     * der Transport innerhalb der Basis-URL selbst verfolgt; eine fremde Weiterleitung ist ein Fehler.
+     */
+    public boolean foreignFileRedirects() {
+        return foreignFileRedirects;
+    }
+
     @Override
     public String toString() {
         return "ConfluenceConfig[" + baseUrl + ", credentials=" + (credentialRef == null ? "keine" : credentialRef)
@@ -142,6 +153,7 @@ public final class ConfluenceConfig {
         private final List<String> searchSpaceKeys = new ArrayList<String>();
         private boolean allowInsecureHttp;
         private java.nio.file.Path diagnosticsDirectory;
+        private boolean foreignFileRedirects = true;
         private int maxRetries;
         private int retryBackoffMillis = 1000;
         private int maxRetryBackoffMillis = 30000;
@@ -227,6 +239,12 @@ public final class ConfluenceConfig {
                 throw new IllegalArgumentException("maxRetryBackoffMillis muss zwischen 0 und 300000 liegen");
             }
             this.maxRetryBackoffMillis = value;
+            return this;
+        }
+
+        /** Siehe {@link ConfluenceConfig#foreignFileRedirects()}; Standard {@code true}. */
+        public Builder foreignFileRedirects(boolean value) {
+            this.foreignFileRedirects = value;
             return this;
         }
 

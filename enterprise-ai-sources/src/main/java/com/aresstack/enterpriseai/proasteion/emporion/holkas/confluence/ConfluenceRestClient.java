@@ -578,8 +578,8 @@ final class ConfluenceRestClient {
                 response = hop == 0 ? transport.get(uri, headers, maxBytes)
                         : transport.getAnonymous(uri, headers, maxBytes);
             } catch (ConfluenceResponseTooLargeException e) {
-                throw fileFailure(what, uri.getRawPath(), null, new KnowledgeSourceException(Kind.INVALID_RESPONSE,
-                        what + " größer als " + maxBytes + " Bytes"));
+                throw fileFailure(what, uri.getRawPath(), null, new ResponseTooLargeException(
+                        what + " größer als " + maxBytes + " Bytes", maxBytes));
             } catch (IOException e) {
                 throw fileFailure(what, uri.getRawPath(), null, new KnowledgeSourceException(Kind.UNAVAILABLE,
                         what + ": Confluence nicht erreichbar (" + cause(e) + ")", e));
@@ -587,7 +587,7 @@ final class ConfluenceRestClient {
             if (hop == 0) {
                 web.absorb(response.cookies());
             }
-            URI next = hop < 5 ? foreignRedirect(uri, response) : null;
+            URI next = hop < 5 ? followedRedirect(uri, response) : null;
             if (next == null) {
                 break;
             }
@@ -1174,7 +1174,7 @@ final class ConfluenceRestClient {
             if (hop == 0) {
                 web.absorb(response.cookies());
             }
-            URI next = hop < 5 ? foreignRedirect(uri, response) : null;
+            URI next = hop < 5 ? followedRedirect(uri, response) : null;
             if (next == null) {
                 break;
             }
@@ -1200,6 +1200,20 @@ final class ConfluenceRestClient {
                                     + body.length + " Bytes)" + pageSuffix(page))));
         }
         return body;
+    }
+
+    /**
+     * Ziel einer fremden Weiterleitung, der der Dateiweg folgt, oder {@code null}. Ist {@code foreignFileRedirects}
+     * abgeschaltet, folgt er keiner; die Weiterleitung bleibt dann als Fehlerstatus stehen.
+     */
+    private URI followedRedirect(URI from, ConfluenceHttpResponse response) {
+        URI next = foreignRedirect(from, response);
+        if (next != null && !config.foreignFileRedirects()) {
+            LOG.warning("[Confluence] Weiterleitung von " + withoutQuery(from.toString()) + " auf "
+                    + withoutQuery(next.toString()) + " nicht gefolgt (foreignFileRedirects=false)");
+            return null;
+        }
+        return next;
     }
 
     /** Ziel einer Weiterleitung, die der Transport nicht verfolgt hat (anderer Host); nie von https auf http. */

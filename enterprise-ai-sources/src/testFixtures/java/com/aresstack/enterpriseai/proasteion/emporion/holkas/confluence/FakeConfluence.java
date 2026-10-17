@@ -317,7 +317,7 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             for (FakeAttachment attachment : attachments.values()) {
                 if (path.equals(attachment.downloadPath().split("\\?")[0])) {
                     if (attachment.content.length > maxBytes) {
-                        throw new IOException("zu groß");
+                        throw new ConfluenceResponseTooLargeException(maxBytes);
                     }
                     return new ConfluenceHttpResponse(200, attachment.mediaType, attachment.content);
                 }
