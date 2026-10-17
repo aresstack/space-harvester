@@ -1,4 +1,4 @@
-# ADR 0005: Core-Bibliothek und Spring-Boot-Server als getrennte Gradle-Module
+# ADR 0006: Core-Bibliothek und Spring-Boot-Server als getrennte Gradle-Module
 
 - Status: **Angenommen** (Strang K, 17.10.2026; Auftrag und Zielbild von Angelo in #100, Java 21 von Angelo am
   17.10. bestätigt).

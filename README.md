@@ -48,7 +48,7 @@ SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 
 ## Module und Nutzung als Bibliothek
 
-Der Build hat zwei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0005](docs/adr/0005-core-bibliothek-und-server.md)):
+Der Build hat zwei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
 
 - `space-harvester-core`: Bibliothek ohne Spring Boot und ohne REST. Fachlogik, Quellenadapter (Confluence, Dateien),
   Lucene-Cache, Abgleich, Suche, Export und Embeddings.

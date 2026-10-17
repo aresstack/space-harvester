@@ -1,6 +1,6 @@
 # Module: Core-Bibliothek und Spring-Boot-Server (#100)
 
-**Stand:** 17.10.2026, Trennung umgesetzt · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100) · **Entscheidung:** [ADR 0005](adr/0005-core-bibliothek-und-server.md)
+**Stand:** 17.10.2026, Trennung umgesetzt · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100) · **Entscheidung:** [ADR 0006](adr/0006-core-bibliothek-und-server.md)
 
 Space Harvester wird in eine eigenständig nutzbare Bibliothek und einen Spring-Boot-Dienst getrennt, der die
 Bibliothek verwendet. Dieses Dokument ordnet den bestehenden Code den Modulen zu und hält die Entscheidungen fest,
@@ -150,7 +150,7 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
    `java-library` mit eigenen Abhängigkeiten, `LayeringTest` je Modul, Modulregeln.
 4. **Öffentlicher Einstieg und Veröffentlichung:** `Harvester` mit einem Test, der ohne Spring und ohne HTTP-Server
    des Dienstes einen Space gegen eine Fake-Confluence abgleicht und exportiert; `maven-publish` und POM-Prüfung;
-   ADR 0005; README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
+   ADR 0006; README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
 
 ## 7. Offene Punkte
 
