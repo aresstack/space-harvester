@@ -7,10 +7,12 @@ import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -47,12 +49,17 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     private final Map<String, HarvestSource> sources;
     private final Map<String, DelegatedConfluenceHttp> delegated;
     private final AsyncSnapshotTransports async;
+    private final ProxyRoutes routes;
+    private final Map<String, URI> baseUrls;
 
     private ConfiguredSourceCatalog(Map<String, HarvestSource> sources,
-                                    Map<String, DelegatedConfluenceHttp> delegated, AsyncSnapshotTransports async) {
+                                    Map<String, DelegatedConfluenceHttp> delegated, AsyncSnapshotTransports async,
+                                    ProxyRoutes routes, Map<String, URI> baseUrls) {
         this.sources = sources;
         this.delegated = delegated;
         this.async = async;
+        this.routes = routes;
+        this.baseUrls = baseUrls;
     }
 
     /** Ohne eigene Vertrauensquellen und ohne Proxy. */
@@ -117,6 +124,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, userAgent, trustBundles, async);
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
         Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
+        Map<String, URI> baseUrls = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
             SourceSettingsConfig config = configs.get(i);
@@ -139,6 +147,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                 SourceAdapter.OpenedSource opened = adapter.open(config, context);
                 sources.put(config.id(), new KnowledgeSourceHarvestSource(config.id(), config.type(), title,
                         opened.port(), async == null ? null : async.inFlight()));
+                URI baseUrl = config.baseUrl();
+                if (baseUrl != null && baseUrl.getScheme() != null
+                        && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT))) {
+                    baseUrls.put(config.id(), baseUrl);
+                }
                 if (opened.delegated() != null) {
                     delegated.put(config.id(), opened.delegated());
                 }
@@ -153,7 +166,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             }
             throw new InvalidSourceConfigurationException(problems);
         }
-        return new ConfiguredSourceCatalog(sources, delegated, async);
+        return new ConfiguredSourceCatalog(sources, delegated, async, routes, baseUrls);
     }
 
     private static List<String> check(SourceSettingsConfig config, Set<String> knownIds,
@@ -187,6 +200,23 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      */
     public Optional<DelegatedConfluenceHttp> delegatedHttp(String sourceId) {
         return Optional.ofNullable(delegated.get(sourceId));
+    }
+
+    /**
+     * Die Proxy-Route zur Basisadresse der Quelle in einer Zeile ({@code DIRECT}, {@code PROXY host:port …}), für die
+     * Auftragsdiagnose; leer für unbekannte Quellen und Quellen ohne HTTP-Adresse. Nutzt die gemerkte Route und wirft
+     * nicht.
+     */
+    public Optional<String> route(String sourceId) {
+        URI baseUrl = baseUrls.get(sourceId);
+        if (baseUrl == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(routes.routeFor(baseUrl).describe());
+        } catch (RuntimeException e) {
+            return Optional.of("nicht bestimmbar (" + e.getClass().getSimpleName() + ")");
+        }
     }
 
     /** Gibt die Verbindungspools der delegierten und asynchronen Aufrufe frei (Spring ruft das beim Herunterfahren). */

@@ -27,6 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@link JobContext#checkpoint()}. Nach einem Neustart gelten Aufträge, die laut {@link JobStore} noch warteten oder
  * liefen, als gescheitert ({@code INTERRUPTED}); sie werden nicht stillschweigend fortgesetzt. Beendete Aufträge
  * bleiben {@link JobLimits#retention()} lang abrufbar und werden danach beim Start und bei jeder Annahme entfernt.
+ *
+ * <p>Zu jedem Auftrag hält {@code Jobs} Diagnoseereignisse fest ({@link JobEvent}, docs/DIAGNOSTICS.md): Annahme,
+ * Start, Phasenwechsel, Meldungen des Auftrags und das Ende, beim Scheitern mit Komponente, Phase, Fehlercode,
+ * HTTP-Status, Proxy-Route, TLS-Befund und der maskierten Ausnahmekette. Die Ereignisse leben so lange wie ihr Auftrag.
  */
 public class Jobs implements AutoCloseable {
 
@@ -35,7 +39,12 @@ public class Jobs implements AutoCloseable {
     static final String UNEXPECTED = "UNEXPECTED";
     static final String SHUTDOWN = "SHUTDOWN";
 
+    private static final System.Logger LOG = System.getLogger(Jobs.class.getName());
+    private static final String COMPONENT = "Jobs";
+
     private final JobStore store;
+    private final JobEventStore events;
+    private final RouteLookup routes;
     private final Executor executor;
     private final JobLimits limits;
     private final Clock clock;
@@ -51,7 +60,18 @@ public class Jobs implements AutoCloseable {
      *                 also mindestens {@link JobLimits#maxConcurrent()} Aufgaben gleichzeitig annehmen
      */
     public Jobs(JobStore store, Executor executor, JobLimits limits, Clock clock) {
+        this(store, new InMemoryJobEventStore(), RouteLookup.NONE, executor, limits, clock);
+    }
+
+    /**
+     * @param events Ablage der Diagnoseereignisse
+     * @param routes Proxy-Route je Quelle für Ereignisse gescheiterter Aufträge
+     */
+    public Jobs(JobStore store, JobEventStore events, RouteLookup routes, Executor executor, JobLimits limits,
+                Clock clock) {
         this.store = Objects.requireNonNull(store, "store");
+        this.events = Objects.requireNonNull(events, "events");
+        this.routes = Objects.requireNonNull(routes, "routes");
         this.executor = Objects.requireNonNull(executor, "executor");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -93,6 +113,8 @@ public class Jobs implements AutoCloseable {
             status = job.snapshot();
             store.save(status);
         }
+        job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
+                null, null);
         dispatch();
         return status;
     }
@@ -128,6 +150,49 @@ public class Jobs implements AutoCloseable {
         return cancel(jobId);
     }
 
+    /**
+     * Diagnoseereignisse eines Auftrags in ihrer Reihenfolge.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID gibt
+     */
+    public List<JobEvent> events(String jobId) {
+        status(jobId);
+        return events.events(jobId);
+    }
+
+    /**
+     * Wie {@link #events(String)}, aber nur für den eigenen Auftrag.
+     *
+     * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     */
+    public List<JobEvent> events(String jobId, String owner) {
+        requireOwner(status(jobId), owner);
+        return events.events(jobId);
+    }
+
+    /** Die jüngsten Diagnoseereignisse der Aufträge dieses Clients, neueste zuerst. */
+    public List<JobEvent> recentEvents(String owner, int limit) {
+        List<JobEvent> mine = new ArrayList<>();
+        Map<String, Boolean> owned = new HashMap<>();
+        // Großzügig lesen, weil fremde Ereignisse herausfallen; die Ablage hält ohnehin nur beschränkt viele.
+        for (JobEvent event : events.recent(Math.max(limit, 1) * 4)) {
+            boolean own = owned.computeIfAbsent(event.jobId(), id -> {
+                try {
+                    return Objects.equals(status(id).owner(), owner);
+                } catch (UnknownJobException e) {
+                    return false;
+                }
+            });
+            if (own) {
+                mine.add(event);
+                if (mine.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return mine;
+    }
+
     private static JobStatus requireOwner(JobStatus status, String owner) {
         if (!Objects.equals(status.owner(), owner)) {
             throw new UnknownJobException(status.id());
@@ -147,13 +212,17 @@ public class Jobs implements AutoCloseable {
             Job job = open.get(jobId);
             if (job != null) {
                 job.cancelRequested = true;
-                if (job.state == JobState.QUEUED) {
+                boolean wasQueued = job.state == JobState.QUEUED;
+                if (wasQueued) {
                     queued.remove(job);
                     open.remove(jobId);
                     job.finish(JobState.CANCELLED, null, clock.instant());
                 }
                 JobStatus status = job.snapshot();
                 store.save(status);
+                job.emit(wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO, JobEvent.Category.JOB,
+                        COMPONENT, wasQueued ? "CANCELLED" : null, wasQueued ? "Auftrag vor dem Start abgebrochen"
+                                : "Abbruch angefordert", null, null, null, null);
                 return status;
             }
         }
@@ -194,6 +263,7 @@ public class Jobs implements AutoCloseable {
         for (JobStatus status : store.all()) {
             if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)) {
                 store.delete(status.id());
+                deleteEventsQuietly(status.id());
                 removed++;
             }
         }
@@ -209,7 +279,28 @@ public class Jobs implements AutoCloseable {
                         new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags beendet; der Auftrag wird "
                                 + "nicht fortgesetzt und muss neu gestartet werden"),
                         status.cancelRequested(), status.createdAt(), status.startedAt(), now));
+                appendQuietly(new JobEvent(status.id(), events.events(status.id()).size() + 1L, now, status.type(),
+                        status.sourceId(), status.partitionKey(), JobEvent.Severity.ERROR, JobEvent.Category.JOB,
+                        COMPONENT, null, INTERRUPTED, "Der Dienst wurde während des Auftrags beendet", null, null,
+                        null, null));
             }
+        }
+    }
+
+    private void appendQuietly(JobEvent event) {
+        try {
+            events.append(event);
+        } catch (RuntimeException e) {
+            // Diagnose darf keinen Auftrag scheitern lassen.
+            LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht abgelegt ({0})", e.getClass().getName());
+        }
+    }
+
+    private void deleteEventsQuietly(String jobId) {
+        try {
+            events.delete(jobId);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Diagnoseereignisse nicht entfernt ({0})", e.getClass().getName());
         }
     }
 
@@ -227,6 +318,8 @@ public class Jobs implements AutoCloseable {
             }
         }
         for (Job job : toStart) {
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag gestartet", null, null,
+                    null, null);
             try {
                 executor.execute(() -> run(job));
             } catch (RejectedExecutionException e) {
@@ -251,6 +344,7 @@ public class Jobs implements AutoCloseable {
 
     private void complete(Job job, Throwable failure) {
         Throwable cause = unwrap(failure);
+        JobStatus finished;
         synchronized (lock) {
             if (job.state.terminal()) {
                 return;
@@ -265,9 +359,42 @@ public class Jobs implements AutoCloseable {
             }
             running--;
             open.remove(job.id);
-            store.save(job.snapshot());
+            finished = job.snapshot();
+            // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
+            recordEnd(job, finished, cause);
+            store.save(finished);
         }
         dispatch();
+    }
+
+    private void recordEnd(Job job, JobStatus finished, Throwable cause) {
+        JobProgress progress = finished.progress();
+        switch (finished.state()) {
+            case COMPLETED -> job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+                    "Auftrag abgeschlossen: " + progress.processed() + " Seiten verarbeitet, " + progress.written()
+                            + " geschrieben, " + progress.failed() + " gescheitert", null, null, null, null);
+            case CANCELLED -> job.emit(JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED",
+                    "Auftrag abgebrochen", null, null, null, null);
+            default -> {
+                JobError error = finished.error();
+                FailureDiagnosis.Findings findings = FailureDiagnosis.of(cause, error.code());
+                String route = null;
+                if (findings.category() == JobEvent.Category.NETWORK
+                        || findings.category() == JobEvent.Category.SOURCE) {
+                    try {
+                        route = routes.routeOf(job.sourceId).orElse(null);
+                    } catch (RuntimeException e) {
+                        route = "nicht bestimmbar (" + e.getClass().getSimpleName() + ")";
+                    }
+                }
+                // Gewollte Abbrüche ohne Ursache brauchen keinen Stacktrace; alles andere bekommt die ganze Kette.
+                boolean plain = cause instanceof JobFailedException && cause.getCause() == null;
+                job.emit(JobEvent.Severity.ERROR, findings.category(),
+                        findings.component() == null ? job.component : findings.component(), error.code(),
+                        error.message(), findings.httpStatus(), route, findings.tlsFinding(),
+                        plain ? null : findings.detail());
+            }
+        }
     }
 
     private static Throwable unwrap(Throwable failure) {
@@ -312,6 +439,9 @@ public class Jobs implements AutoCloseable {
         volatile Instant deadline;
         Instant finishedAt;
         JobError error;
+        final AtomicLong sequence = new AtomicLong();
+        volatile String component = COMPONENT;
+        volatile String phase;
 
         Job(String id, JobType type, String sourceId, String partitionKey, String owner, JobTask task,
             Instant createdAt) {
@@ -376,6 +506,46 @@ public class Jobs implements AutoCloseable {
         @Override
         public void failed(long pages) {
             failedPages.addAndGet(pages);
+        }
+
+        @Override
+        public void phase(String component, String phase) {
+            Objects.requireNonNull(component, "component");
+            Objects.requireNonNull(phase, "phase");
+            boolean changed = !phase.equals(this.phase) || !component.equals(this.component);
+            this.component = component;
+            this.phase = phase;
+            if (changed) {
+                emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, component, null, "Phase: " + phase, null, null,
+                        null, null);
+            }
+        }
+
+        @Override
+        public void record(JobEvent.Draft event) {
+            Objects.requireNonNull(event, "event");
+            String detail = null;
+            Integer httpStatus = event.httpStatus();
+            String tls = event.tlsFinding();
+            if (event.cause() != null) {
+                FailureDiagnosis.Findings findings = FailureDiagnosis.of(event.cause(), event.code());
+                detail = findings.detail();
+                httpStatus = httpStatus == null ? findings.httpStatus() : httpStatus;
+                tls = tls == null ? findings.tlsFinding() : tls;
+            }
+            emit(event.severity(), event.category(), event.component(), event.code(), event.message(), httpStatus,
+                    null, tls, detail);
+        }
+
+        void emit(JobEvent.Severity severity, JobEvent.Category category, String eventComponent, String code,
+                  String message, Integer httpStatus, String proxyRoute, String tlsFinding, String detail) {
+            try {
+                appendQuietly(new JobEvent(id, sequence.incrementAndGet(), clock.instant(), type, sourceId,
+                        partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
+                        proxyRoute, tlsFinding, detail));
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Diagnoseereignis nicht erzeugt ({0})", e.getClass().getName());
+            }
         }
     }
 }

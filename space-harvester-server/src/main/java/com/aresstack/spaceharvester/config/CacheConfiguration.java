@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
@@ -18,7 +19,8 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Öffnet die eingebetteten Lucene-Indizes, wenn {@code space-harvester.cache.directory} gesetzt ist: den Seiten-Cache
- * unter {@value #PAGES}/, die Auftragsablage unter {@value #JOBS}/ und die Anreicherungen unter
+ * unter {@value #PAGES}/, die Auftragsablage unter {@value #JOBS}/, ihre Diagnoseereignisse unter {@value #JOB_EVENTS}/
+ * und die Anreicherungen unter
  * {@value #ENRICHMENTS}/. Ein gesperrter, beschädigter oder in einem anderen Schema angelegter Index verhindert den
  * Start. Beim Herunterfahren werden die Indizes geschlossen und die
  * Sperren freigegeben.
@@ -32,6 +34,8 @@ class CacheConfiguration {
     static final String PAGES = "pages";
     /** Unterverzeichnis der Auftragsablage (#12). */
     static final String JOBS = "jobs";
+    /** Unterverzeichnis der Diagnoseereignisse der Aufträge. */
+    static final String JOB_EVENTS = "job-events";
     /** Unterverzeichnis der Anreicherungen (#29). */
     static final String ENRICHMENTS = "enrichments";
 
@@ -81,6 +85,12 @@ class CacheConfiguration {
     @Bean(destroyMethod = "close")
     LuceneJobStore luceneJobStore(CacheProperties properties) {
         return LuceneJobStore.open(properties.directory().resolve(JOBS));
+    }
+
+    /** Dauerhafte Diagnoseereignisse; ersetzt die flüchtigen aus {@code JobsConfiguration}. */
+    @Bean(destroyMethod = "close")
+    LuceneJobEventStore luceneJobEventStore(CacheProperties properties) {
+        return LuceneJobEventStore.open(properties.directory().resolve(JOB_EVENTS));
     }
 
     /** Anreicherungen (#29) in einem eigenen Index, getrennt von Payload und Kopfdaten der Seiten. */

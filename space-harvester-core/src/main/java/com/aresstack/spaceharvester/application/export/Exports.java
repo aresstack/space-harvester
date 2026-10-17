@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobTask;
@@ -77,6 +78,7 @@ public class Exports {
     public static final int BATCH_SIZE = 100;
 
     private static final System.Logger LOG = System.getLogger(Exports.class.getName());
+    private static final String COMPONENT = "Exports";
 
     private final Jobs jobs;
     private final PageCacheReader cache;
@@ -292,12 +294,15 @@ public class Exports {
      * einen (unvollständigen) Export aus dem bisherigen Bestand, wenn keine Aktualität verlangt war.
      */
     private Prepared prepare(JobContext context, ExportRequest request) {
+        context.phase(COMPONENT, "Bestand prüfen");
         Instant startedAt = clock.instant();
         String sourceId = request.sourceId();
         String spaceKey = request.spaceKey();
         Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
         boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
         if (reusable && !request.refresh()) {
+            context.record(JobEvent.Draft.info(COMPONENT, "Bestätigte Generation " + current.get().id()
+                    + " wird wiederverwendet"));
             return new Prepared(startedAt, current.get(), List.of(), List.of());
         }
         if (!provisioning.available()) {
@@ -307,6 +312,11 @@ public class Exports {
             return new Prepared(startedAt, current.get(), List.of(), List.of());
         }
         List<String> warnings = new ArrayList<>();
+        context.phase(COMPONENT, "Einlesen");
+        context.record(JobEvent.Draft.info(COMPONENT, current.isEmpty() ? "Kein Bestand im Cache; der Space wird von "
+                + "der Quelle eingelesen" : request.refresh() ? "Aktueller Stand verlangt; der Space wird von der Quelle "
+                + "eingelesen" : "Bestand nicht bestätigt (" + current.get().state() + "); der Space wird von der "
+                + "Quelle eingelesen"));
         SpaceProvisioning.Provisioned provisioned = provisioning.provision(
                 new SilentContext(context), sourceId, spaceKey);
         context.checkpoint();
@@ -344,6 +354,7 @@ public class Exports {
         Set<String> failedIds = new HashSet<>();
         failedVisible.forEach(header -> failedIds.add(header.key().pageId()));
         int unrefreshed = failedVisible.size();
+        context.phase(COMPONENT, "Seiten exportieren");
         try (ExportArtifactWriter.Session session = writer.begin(context.jobId(), scope)) {
             String after = null;
             List<ListedPage> batch;
@@ -410,6 +421,16 @@ public class Exports {
                 throw new JobFailedException("ACCESS_REVOKED", "Die Freigabe für einzelne Seiten dieses Exports gilt "
                         + "nicht mehr; es entstand kein Export");
             }
+            context.phase(COMPONENT, "Ablegen");
+            for (String warning : warnings) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.STORAGE, COMPONENT, "EXPORT_WARNING",
+                        warning));
+            }
+            if (!failures.isEmpty()) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.STORAGE, COMPONENT, failures.get(0).code(),
+                        failures.size() + " Seiten fehlen im Export, etwa Seite " + failures.get(0).pageId() + ": "
+                                + failures.get(0).message()));
+            }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
             boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
@@ -449,6 +470,7 @@ public class Exports {
         ConversionInput input = new CachedConversionInput(context, scope, tree, exported);
         for (ExportConverter converter : selected) {
             context.checkpoint();
+            context.phase(COMPONENT, "Konvertieren (" + converter.format() + ")");
             Conversion conversion = new Conversion(converter.format(), converter.version(), converter.mediaType(),
                     converter.fileName(), inputSha256, Map.of());
             try {
@@ -617,6 +639,12 @@ public class Exports {
 
         @Override
         public void failed(long pages) {
+        }
+
+        /** Phasen nennen keine Seiten und dürfen durch; Meldungen des Einlesens nicht. */
+        @Override
+        public void phase(String component, String phase) {
+            context.phase(component, phase);
         }
     }
 

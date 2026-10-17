@@ -24,6 +24,7 @@ import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -45,6 +46,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
@@ -131,6 +133,8 @@ public final class Harvester implements AutoCloseable {
             opened.add(cache);
             LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
             opened.add(jobStore);
+            LuceneJobEventStore eventStore = LuceneJobEventStore.open(cacheDirectory.resolve("job-events"));
+            opened.add(eventStore);
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("harvester-job-", 0).factory());
             // Erst wenn kein Auftrag mehr läuft, dürfen Ablage, Cache und Quellen schließen.
@@ -140,7 +144,8 @@ public final class Harvester implements AutoCloseable {
                     throw new IllegalStateException("Aufträge laufen nach 30 s noch");
                 }
             });
-            this.jobs = new Jobs(jobStore, executor, builder.jobLimits, Clock.systemUTC());
+            this.jobs = new Jobs(jobStore, eventStore, catalog::route, executor, builder.jobLimits,
+                    Clock.systemUTC());
             opened.add(jobs);
 
             Clock clock = Clock.systemUTC();
@@ -324,6 +329,21 @@ public final class Harvester implements AutoCloseable {
         return jobs.status(jobId, OWNER);
     }
 
+    /**
+     * Diagnoseereignisse eines Auftrags in ihrer Reihenfolge: Phasen, Meldungen und beim Scheitern Komponente,
+     * Fehlercode, HTTP-Status, Proxy-Route, TLS-Befund und die maskierte Ausnahmekette (docs/DIAGNOSTICS.md).
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es den Auftrag nicht gibt
+     */
+    public List<JobEvent> events(String jobId) {
+        return jobs.events(jobId, OWNER);
+    }
+
+    /** Die jüngsten Diagnoseereignisse aller Aufträge dieses Einstiegs, neueste zuerst. */
+    public List<JobEvent> recentEvents(int limit) {
+        return jobs.recentEvents(OWNER, limit);
+    }
+
     /** Fordert den Abbruch an; ein laufender Auftrag endet an seinem nächsten Prüfpunkt. */
     public JobStatus cancel(String jobId) {
         return jobs.cancel(jobId, OWNER);
@@ -450,8 +470,8 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
-         * Pflicht: darunter liegen {@code cache/pages}, {@code cache/jobs}, {@code cache/enrichments} und, ohne eigene
-         * Angabe, {@code exports} und {@code assets}.
+         * Pflicht: darunter liegen {@code cache/pages}, {@code cache/jobs}, {@code cache/job-events},
+         * {@code cache/enrichments} und, ohne eigene Angabe, {@code exports} und {@code assets}.
          */
         public Builder dataDirectory(Path dataDirectory) {
             this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory");

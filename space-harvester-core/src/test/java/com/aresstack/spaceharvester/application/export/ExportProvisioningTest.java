@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -262,6 +263,35 @@ class ExportProvisioningTest {
         assertThat(artifact.summary().warnings()).isEmpty();
         assertThat(artifact.summary().failures()).isEmpty();
         assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        // Auch die Diagnose nennt Seite 2 nicht, weder als Meldung noch als Detail.
+        assertThat(jobs.events(status.id())).noneMatch(event -> event.message().contains("Seite 2")
+                || event.message().contains("ließen sich beim Einlesen nicht") || event.detail() != null);
+    }
+
+    @Test
+    void theReadInIsTraceableInTheDiagnostics() {
+        JobStatus status = run(exports(publishing("g1", twoPages(), Set.of("2"))), dev());
+
+        assertThat(jobs.events(status.id())).extracting(JobEvent::message).containsSubsequence(
+                "Auftrag gestartet", "Phase: Bestand prüfen", "Phase: Einlesen",
+                "Kein Bestand im Cache; der Space wird von der Quelle eingelesen", "Phase: Seiten exportieren",
+                "Phase: Ablegen", "1 Seiten ließen sich beim Einlesen nicht abrufen; sie fehlen oder sind auf altem "
+                        + "Stand");
+        assertThat(jobs.events(status.id())).filteredOn(event -> event.severity() == JobEvent.Severity.WARNING)
+                .extracting(JobEvent::category).containsOnly(JobEvent.Category.STORAGE);
+    }
+
+    @Test
+    void aFailedReadInNamesItsPhase() {
+        JobStatus status = run(exports(provisioning(context -> {
+            throw new SourceAccessException("confluence", SourceAccessException.Reason.UNAVAILABLE,
+                    "Zeitüberschreitung", null);
+        })), dev());
+
+        JobEvent failure = jobs.events(status.id()).getLast();
+        assertThat(failure.code()).isEqualTo("SOURCE_UNAVAILABLE");
+        assertThat(failure.phase()).isEqualTo("Einlesen");
+        assertThat(failure.category()).isEqualTo(JobEvent.Category.NETWORK);
     }
 
     @Test

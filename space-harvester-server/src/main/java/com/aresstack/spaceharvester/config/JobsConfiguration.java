@@ -1,12 +1,17 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.jobs.InMemoryJobEventStore;
 import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
+import com.aresstack.spaceharvester.application.jobs.JobEventStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.RouteLookup;
+import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import java.time.Clock;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -27,8 +32,18 @@ class JobsConfiguration {
     }
 
     @Bean
-    Jobs jobs(JobStore jobStore, JobsProperties properties) {
-        return new ExecutorOwningJobs(jobStore,
+    @ConditionalOnMissingBean(JobEventStore.class)
+    JobEventStore jobEventStore() {
+        return new InMemoryJobEventStore();
+    }
+
+    /** Proxy-Route je Quelle für die Diagnose gescheiterter Aufträge; ohne Quellenkatalog keine. */
+    @Bean
+    Jobs jobs(JobStore jobStore, JobEventStore jobEventStore, ObjectProvider<ConfiguredSourceCatalog> catalog,
+              JobsProperties properties) {
+        ConfiguredSourceCatalog sources = catalog.getIfAvailable();
+        RouteLookup routes = sources == null ? RouteLookup.NONE : sources::route;
+        return new ExecutorOwningJobs(jobStore, jobEventStore, routes,
                 new JobLimits(properties.maxConcurrent(), properties.maxQueued(), properties.maxRunTime(),
                         properties.retention(), properties.maxOpenPerOwner()));
     }
@@ -41,12 +56,14 @@ class JobsConfiguration {
 
         private final ExecutorService executor;
 
-        ExecutorOwningJobs(JobStore store, JobLimits limits) {
-            this(store, limits, Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("job-", 0).factory()));
+        ExecutorOwningJobs(JobStore store, JobEventStore events, RouteLookup routes, JobLimits limits) {
+            this(store, events, routes, limits,
+                    Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("job-", 0).factory()));
         }
 
-        private ExecutorOwningJobs(JobStore store, JobLimits limits, ExecutorService executor) {
-            super(store, executor, limits, Clock.systemUTC());
+        private ExecutorOwningJobs(JobStore store, JobEventStore events, RouteLookup routes, JobLimits limits,
+                                   ExecutorService executor) {
+            super(store, events, routes, executor, limits, Clock.systemUTC());
             this.executor = executor;
         }
 

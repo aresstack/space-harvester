@@ -110,6 +110,21 @@ public class SyncController {
         return SyncResponse.of(job, pageIdsVisible(caller, job));
     }
 
+    @GetMapping("/syncs/{syncId}/events")
+    @Operation(summary = "Diagnoseereignisse eines Abgleichs",
+            description = "Phasen und beim Scheitern Komponente, Fehlercode, HTTP-Status, Proxy-Route, TLS-Befund "
+                    + "und die maskierte Ausnahmekette, in ihrer Reihenfolge.")
+    @ApiResponse(responseCode = "200", description = "Ereignisse des Abgleichs")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public List<JobEventResponse> events(@Parameter(hidden = true) AccessContext caller,
+                                         @Parameter(description = "ID aus der Location des Starts")
+                                         @PathVariable String syncId) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        return JobEventResponse.of(syncs.events(syncId, owner(caller)));
+    }
+
     @PostMapping("/syncs/{syncId}/cancel")
     @Operation(summary = "Abgleich abbrechen",
             description = "Fordert den Abbruch an; der Lauf hält vor dem nächsten Seitenabruf an und verwirft alles "

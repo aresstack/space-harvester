@@ -124,6 +124,22 @@ public class ExportsController {
         return ExportResponse.of(job, artifact);
     }
 
+    @GetMapping(path = EXPORTS + "/{exportId}/events", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Diagnoseereignisse eines Exports",
+            description = "Phasen, Meldungen und beim Scheitern Komponente, Fehlercode, HTTP-Status, Proxy-Route, "
+                    + "TLS-Befund und die maskierte Ausnahmekette, in ihrer Reihenfolge. Nennt nur, was der "
+                    + "Auftraggeber lesen darf.")
+    @ApiResponse(responseCode = "200", description = "Ereignisse des Exports")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public List<JobEventResponse> events(@Parameter(hidden = true) AccessContext caller,
+                                         @Parameter(description = "Export-ID aus der Antwort des Starts")
+                                         @PathVariable String exportId) {
+        ownExport(caller, exportId);
+        return JobEventResponse.of(jobs.events(exportId, owner(caller)));
+    }
+
     @PostMapping(path = EXPORTS + "/{exportId}/cancel", produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Export abbrechen",
             description = "Kooperativ: ein wartender Export endet sofort, ein laufender beim nächsten Prüfpunkt "
