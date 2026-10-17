@@ -3,8 +3,13 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -21,12 +26,14 @@ import java.util.regex.Pattern;
  * @param certificatePasswordVariable Umgebungsvariable mit dem Passwort der PKCS#12-Datei
  * @param thumbprint                  Fingerabdruck des Zertifikats (kein Geheimnis) oder leer
  * @param trustBundle                 Name unter {@code spring.ssl.bundle} oder leer für die Java-Laufzeit
+ * @param extraOptions                weitere {@code options} der Quelle, die der Assistent nicht selbst abfragt
+ *                                    (z. B. Zeitgrenzen); beim Bearbeiten bleiben sie so erhalten
  */
 public record SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
                           SourceSettingsConfig.AuthType authType, String username, String secretVariable,
                           SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
                           String certificatePasswordVariable, String certificateAlias, String thumbprint,
-                          String trustBundle) {
+                          String trustBundle, Map<String, String> extraOptions) {
 
     public static final String CONFLUENCE = "confluence";
     public static final String FILES = "files";
@@ -34,6 +41,35 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
     /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
     private static final Pattern VARIABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,127}");
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(:[^}]*)?}");
+    private static final Set<String> KNOWN = Set.of("id", "type", "title", "baseurl", "auth", "clientcertificate",
+            "trustbundle", "options");
+    private static final Set<String> KNOWN_AUTH = Set.of("type", "username", "password", "token");
+    private static final Set<String> KNOWN_CERTIFICATE = Set.of("enabled", "type", "path", "alias", "password",
+            "thumbprint");
+
+    /**
+     * Ein bestehender Eintrag zum Bearbeiten.
+     *
+     * @param draft           die Angaben; Geheimnisse nur als Variablenname
+     * @param plaintextSecrets Felder, in denen die Datei ein Geheimnis im Klartext enthält; beim Speichern steht dort
+     *                        nur noch der Platzhalter
+     */
+    public record Editable(SourceDraft draft, List<String> plaintextSecrets) {
+
+        public Editable {
+            plaintextSecrets = List.copyOf(plaintextSecrets);
+        }
+    }
+
+    public SourceDraft(String id, String type, String title, String baseUrl, String directory, String include,
+                       SourceSettingsConfig.AuthType authType, String username, String secretVariable,
+                       SourceSettingsConfig.CertificateStoreType certificateType, String certificatePath,
+                       String certificatePasswordVariable, String certificateAlias, String thumbprint,
+                       String trustBundle) {
+        this(id, type, title, baseUrl, directory, include, authType, username, secretVariable, certificateType,
+                certificatePath, certificatePasswordVariable, certificateAlias, thumbprint, trustBundle, Map.of());
+    }
 
     public SourceDraft {
         id = trim(id);
@@ -50,6 +86,118 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         certificateAlias = trim(certificateAlias);
         thumbprint = trim(thumbprint);
         trustBundle = trim(trustBundle);
+        extraOptions = extraOptions == null ? Map.of() : Collections.unmodifiableMap(new TreeMap<>(extraOptions));
+    }
+
+    /**
+     * Liest einen Eintrag aus {@code space-harvester.sources} so, wie er in der Datei steht (Platzhalter
+     * unaufgelöst).
+     *
+     * @throws IllegalArgumentException wenn der Eintrag Schlüssel enthält, die der Assistent nicht kennt
+     */
+    public static Editable from(Map<?, ?> raw) {
+        List<String> unknown = new ArrayList<>(unknownKeys(raw, KNOWN, ""));
+        Map<?, ?> auth = AppSettingsLoader.map(AppSettingsLoader.get(raw, "auth"));
+        Map<?, ?> certificate = AppSettingsLoader.map(AppSettingsLoader.get(raw, "client-certificate"));
+        unknown.addAll(unknownKeys(auth, KNOWN_AUTH, "auth."));
+        unknown.addAll(unknownKeys(certificate, KNOWN_CERTIFICATE, "client-certificate."));
+        if (!unknown.isEmpty()) {
+            throw new IllegalArgumentException("Der Eintrag enthält Angaben, die der Assistent nicht kennt ("
+                    + String.join(", ", unknown) + "); bitte in der Datei bearbeiten (Einstellungen › Datei öffnen).");
+        }
+        String type = text(raw, "type");
+        boolean confluence = CONFLUENCE.equals(type);
+        Map<String, String> options = new TreeMap<>();
+        AppSettingsLoader.map(AppSettingsLoader.get(raw, "options")).forEach((key, value) -> {
+            if (value != null) {
+                options.put(String.valueOf(key), String.valueOf(value));
+            }
+        });
+        String directory = confluence ? null : options.remove("directory");
+        String include = confluence ? null : options.remove("include");
+
+        List<String> plaintext = new ArrayList<>();
+        SourceSettingsConfig.AuthType authType = SourceSettingsConfig.AuthType.NONE;
+        String authText = text(auth, "type");
+        if (authText != null) {
+            authType = SourceSettingsConfig.AuthType.valueOf(authText.toUpperCase(Locale.ROOT));
+        }
+        String id = text(raw, "id");
+        String secretVariable = null;
+        if (authType != SourceSettingsConfig.AuthType.NONE) {
+            String key = authType == SourceSettingsConfig.AuthType.PAT ? "token" : "password";
+            secretVariable = placeholderName(text(auth, key));
+            if (secretVariable == null) {
+                if (text(auth, key) != null) {
+                    plaintext.add("auth." + key);
+                }
+                secretVariable = suggestedVariable(id, authType);
+            }
+        }
+        SourceSettingsConfig.CertificateStoreType certificateType = null;
+        String certificatePasswordVariable = null;
+        boolean certificateEnabled = Boolean.parseBoolean(String.valueOf(AppSettingsLoader.get(certificate, "enabled")));
+        if (!certificate.isEmpty() && !certificateEnabled) {
+            // Der Assistent kennt kein abgeschaltetes Zertifikat; die ruhenden Angaben gingen beim Speichern verloren.
+            throw new IllegalArgumentException("Der Eintrag enthält ein abgeschaltetes Client-Zertifikat "
+                    + "(client-certificate.enabled: false); bitte in der Datei bearbeiten (Einstellungen › Datei öffnen).");
+        }
+        if (certificateEnabled) {
+            String storeType = text(certificate, "type");
+            certificateType = storeType == null ? null : SourceSettingsConfig.CertificateStoreType.valueOf(
+                    storeType.toUpperCase(Locale.ROOT).replace('-', '_'));
+            if (certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12) {
+                certificatePasswordVariable = placeholderName(text(certificate, "password"));
+                if (certificatePasswordVariable == null) {
+                    if (text(certificate, "password") != null) {
+                        plaintext.add("client-certificate.password");
+                    }
+                    certificatePasswordVariable = suggestedVariable(id, SourceSettingsConfig.AuthType.PAT)
+                            .replaceAll("_TOKEN$", "") + "_CLIENT_PASSWORD";
+                }
+            }
+        }
+        SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), text(raw, "base-url"), directory, include,
+                authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
+                certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
+                text(raw, "trust-bundle"), options);
+        return new Editable(draft, plaintext);
+    }
+
+    private static List<String> unknownKeys(Map<?, ?> map, Set<String> known, String prefix) {
+        List<String> unknown = new ArrayList<>();
+        for (Object key : map.keySet()) {
+            if (!known.contains(AppSettingsLoader.normalize(String.valueOf(key)))) {
+                unknown.add(prefix + key);
+            }
+        }
+        return unknown;
+    }
+
+    private static String text(Map<?, ?> map, String key) {
+        Object value = AppSettingsLoader.get(map, key);
+        return value == null ? null : trim(String.valueOf(value));
+    }
+
+    /**
+     * Name der Variable, wenn der Wert genau ein Platzhalter ohne Standardwert ist, sonst {@code null}. Ein
+     * Standardwert ({@code ${TOKEN:geheim}}) gilt als Klartext.
+     */
+    private static String placeholderName(String value) {
+        if (!isBarePlaceholder(value)) {
+            return null;
+        }
+        Matcher matcher = PLACEHOLDER.matcher(value.strip());
+        return matcher.matches() ? matcher.group(1) : null;
+    }
+
+    /** {@code ${NAME}} oder {@code ${NAME:}}, also ein Verweis ohne mitgeschriebenen Wert. */
+    static boolean isBarePlaceholder(String value) {
+        if (value == null) {
+            return false;
+        }
+        Matcher matcher = PLACEHOLDER.matcher(value.strip());
+        return matcher.matches() && (matcher.group(2) == null || matcher.group(2).length() == 1);
     }
 
     public boolean confluence() {
@@ -158,12 +306,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
             if (trustBundle != null) {
                 yaml.append(in).append("trust-bundle: ").append(scalar(trustBundle)).append('\n');
             }
-        } else {
+        }
+        if (!confluence() || !extraOptions.isEmpty()) {
             yaml.append(in).append("options:\n");
-            yaml.append(in).append("  directory: ").append(scalar(directory)).append('\n');
-            if (include != null) {
-                yaml.append(in).append("  include: ").append(scalar(include)).append('\n');
+            if (!confluence()) {
+                yaml.append(in).append("  directory: ").append(scalar(directory)).append('\n');
+                if (include != null) {
+                    yaml.append(in).append("  include: ").append(scalar(include)).append('\n');
+                }
             }
+            extraOptions.forEach((key, value) -> yaml.append(in).append("  ").append(key).append(": ")
+                    .append(scalar(value)).append('\n'));
         }
         return yaml.toString();
     }

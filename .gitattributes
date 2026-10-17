@@ -2,3 +2,4 @@
 *.bat text eol=crlf
 *.jar binary
 gradlew text eol=lf
+*.png binary
