@@ -71,7 +71,7 @@ public final class MainWindow implements AppContext.Navigator {
         exports = new ExportsView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        views.put(AppContext.Section.OVERVIEW, overview);
+        views.put(AppContext.Section.STATUS, overview);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
@@ -110,7 +110,7 @@ public final class MainWindow implements AppContext.Navigator {
             }
         });
         frame.setVisible(true);
-        show(AppContext.Section.OVERVIEW);
+        show(AppContext.Section.SEARCH);
         return frame;
     }
 
@@ -263,7 +263,7 @@ public final class MainWindow implements AppContext.Navigator {
 
     private static Icon icon(AppContext.Section section) {
         return switch (section) {
-            case OVERVIEW -> SidebarIcons.compass();
+            case STATUS -> SidebarIcons.compass();
             case SOURCES -> SidebarIcons.folder();
             case CONTENT -> SidebarIcons.pageTree();
             case ACTIVITIES -> ComposerIcons.refresh();

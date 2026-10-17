@@ -340,7 +340,7 @@ public final class ContentView implements View {
     /** Leert Liste, Baum und Seitenansicht und verwirft laufende Ladevorgänge. */
     private void reset(String hint) {
         epoch++;
-        // Ein laufender Abgleich des vorigen Space läuft weiter (Aktivitäten); der Knopf gilt dem neuen Space.
+        // Ein laufender Abgleich des vorigen Space läuft weiter (Aufträge); der Knopf gilt dem neuen Space.
         if (syncWatch != null) {
             syncWatch.stop();
             syncWatch = null;
@@ -568,7 +568,7 @@ public final class ContentView implements View {
                 feedback.success("Space " + spaceKey + " liegt jetzt im lokalen Bestand");
             } else {
                 feedback.warning("Synchronisierung nicht abgeschlossen: " + Texts.state(job.state()),
-                        "Einzelheiten stehen unter Aktivitäten.");
+                        "Einzelheiten stehen unter Aufträge.");
             }
         }, error -> {
             timer.stop();

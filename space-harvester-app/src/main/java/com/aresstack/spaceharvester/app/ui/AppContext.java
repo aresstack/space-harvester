@@ -28,8 +28,9 @@ public final class AppContext {
 
     /** Die Bereiche der Hauptnavigation. */
     public enum Section {
-        OVERVIEW("Übersicht"), SOURCES("Wissensquellen"), CONTENT("Inhalte"), ACTIVITIES("Aktivitäten"),
-        EXPORTS("Exporte"), SEARCH("Suche"), SETTINGS("Einstellungen");
+        // Reihenfolge der Seitenleiste; die Suche ist die Startansicht.
+        SEARCH("Suche"), SOURCES("Wissensquellen"), CONTENT("Inhalte"), EXPORTS("Exportieren"),
+        ACTIVITIES("Aufträge"), STATUS("Status"), SETTINGS("Einstellungen");
 
         private final String title;
 

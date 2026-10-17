@@ -22,8 +22,8 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Exporte: Space wählen, Formate wählen, starten. Das Raw-First-Artefakt (Originaldaten und Manifest) entsteht immer;
- * die gewählten Formate kommen dazu. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aktivitäten“.
+ * Exportieren: Space wählen, Formate wählen, starten. Das Raw-First-Artefakt (Originaldaten und Manifest) entsteht immer;
+ * die gewählten Formate kommen dazu. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
  */
 public final class ExportsView implements View {
 
@@ -75,7 +75,7 @@ public final class ExportsView implements View {
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setOpaque(false);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
-        list.add(Comic.muted("Doppelklick zeigt den Export unter Aktivitäten, dort lassen sich die Dateien speichern."),
+        list.add(Comic.muted("Doppelklick zeigt den Export unter Aufträge, dort lassen sich die Dateien speichern."),
                 BorderLayout.SOUTH);
 
         root.add(Comic.plate("Neuer Export", Comic.ORANGE, form), BorderLayout.NORTH);

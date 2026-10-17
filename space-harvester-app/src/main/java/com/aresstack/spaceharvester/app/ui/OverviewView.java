@@ -31,7 +31,7 @@ public final class OverviewView implements View {
     private final JPanel attention = new JPanel();
     private final JPanel sources = new JPanel(new GridLayout(0, 2, 12, 12));
     private final Facts recent = new Facts();
-    private final ComposerButton toActivities = Comic.button("Alle Aktivitäten", "Aufträge ansehen");
+    private final ComposerButton toActivities = Comic.button("Alle Aufträge", "Aufträge ansehen");
     private final JComponent dashboard;
     private final JComponent welcome;
     private final JPanel dashboardAttention = new JPanel(new BorderLayout());

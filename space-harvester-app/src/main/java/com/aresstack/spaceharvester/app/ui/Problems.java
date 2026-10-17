@@ -142,7 +142,7 @@ public final class Problems {
         }
         if (e instanceof SyncAlreadyRunningException) {
             return new Problem("Abgleich läuft bereits", "Für diesen Space läuft schon ein Abgleich.",
-                    "Den laufenden Abgleich unter Aktivitäten verfolgen.", technical);
+                    "Den laufenden Abgleich unter Aufträge verfolgen.", technical);
         }
         if (e instanceof SyncUnavailableException) {
             return new Problem("Abgleich nicht möglich", e.getMessage(), null, technical);

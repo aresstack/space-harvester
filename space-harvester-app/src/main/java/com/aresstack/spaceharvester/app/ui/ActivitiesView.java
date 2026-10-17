@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Aktivitäten: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
+ * Aufträge: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
  * nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte, erscheint als
  * Warnung mit Grund.
  */
@@ -69,7 +69,7 @@ public final class ActivitiesView implements View {
         left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
         left.add(Comic.caption("Aufträge dieser App"), BorderLayout.NORTH);
         left.add(Comic.scroll(table), BorderLayout.CENTER);
-        left.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exporte. Beendete "
+        left.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exportieren. Beendete "
                 + "Aufträge bleiben für die Aufbewahrungsfrist sichtbar."), BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(17f));
