@@ -27,7 +27,7 @@ class PropertyProcessorTest {
     @Test
     void findsPredicativePropertiesWithNegationAndCoordination() {
         String json = processor.process(plain("Der Dienst ist heute nicht erreichbar. Die Seite ist veraltet."
-                + " Der Export bleibt schnell und zuverlässig.")).payloadJson();
+                + " Der Export bleibt schnell und zuverlässig. Der Bericht ist danach vollständig.")).payloadJson();
 
         assertThat(json)
                 .contains("{\"subject\":\"Dienst\",\"subjectNormalized\":\"dienst\",\"property\":\"erreichbar\","
@@ -35,7 +35,8 @@ class PropertyProcessorTest {
                         + "\"negated\":true")
                 .contains("\"subject\":\"Seite\",\"subjectNormalized\":\"seite\",\"property\":\"veraltet\","
                         + "\"normalized\":\"veraltet\",\"kind\":\"state\"")
-                .contains("\"property\":\"schnell\"").contains("\"property\":\"zuverlässig\"");
+                .contains("\"property\":\"schnell\"").contains("\"property\":\"zuverlässig\"")
+                .contains("\"subject\":\"Bericht\",\"subjectNormalized\":\"bericht\",\"property\":\"vollständig\"");
     }
 
     @Test

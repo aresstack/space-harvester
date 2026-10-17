@@ -80,8 +80,8 @@ final class Lexicon {
             "zudem", "ebenfalls", "ebenso", "wieder", "bitte", "mehr", "weniger", "etwa", "gegebenenfalls", "ggf",
             "jedoch", "allerdings", "also", "nun", "mindestens", "höchstens", "ca", "usw", "etc", "eventuell",
             "evtl", "vielleicht", "wahrscheinlich", "möglichst", "ganz", "gar", "zu", "überhaupt", "eher",
-            "bisher", "inzwischen", "weiterhin", "ausschließlich", "lediglich", "vollständig", "teilweise",
-            "grundsätzlich", "normalerweise", "standardmäßig", "derzeit", "aktuell", "momentan", "dennoch",
+            "bisher", "inzwischen", "weiterhin", "ausschließlich", "lediglich", "teilweise",
+            "grundsätzlich", "normalerweise", "standardmäßig", "derzeit", "momentan", "dennoch",
             "trotzdem", "sonst", "z.b", "d.h", "u.a", "bspw", "beispielsweise", "insbesondere", "vor", "allem");
 
     /** Abkürzungen, nach deren Punkt kein Satz endet. */
@@ -108,6 +108,12 @@ final class Lexicon {
             "ab", "an", "auf", "aus", "bei", "ein", "fest", "her", "hin", "los", "mit", "nach", "vor", "weg", "weiter",
             "zu", "zurück", "zusammen", "um", "durch", "über", "frei", "hoch", "herunter", "hinzu", "heraus",
             "voran", "vorbei", "wieder", "fort", "dar", "statt", "teil");
+
+    /** Zeitangaben, die ohne Präposition stehen ({@code jede Nacht}) und darum nie Beteiligte sind. */
+    static final Set<String> TIME_NOUNS = Set.of(
+            "nacht", "tag", "woche", "monat", "jahr", "morgen", "abend", "mittag", "stunde", "minute", "sekunde",
+            "montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag", "wochenende", "mal",
+            "quartal", "zeit", "nächte", "tage", "wochen", "monate", "jahre", "stunden", "minuten", "sekunden");
 
     private Lexicon() {
     }

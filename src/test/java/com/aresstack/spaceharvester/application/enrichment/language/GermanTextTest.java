@@ -37,6 +37,18 @@ class GermanTextTest {
     }
 
     @Test
+    void treatsACapitalizedFirstWordWithAdjectiveSuffixBeforeANounAsAdjective() {
+        Sentence sentence = analyze("Fehlerhafte Seiten werden vermerkt.").sentences().get(0);
+
+        assertThat(sentence.nounGroups()).singleElement().satisfies(group -> {
+            assertThat(group.term()).isEqualTo("Seiten");
+            assertThat(group.adjectives(sentence)).extracting(Token::text).containsExactly("Fehlerhafte");
+        });
+        assertThat(analyze("Tabellen Export läuft.").sentences().get(0).nounGroups()).extracting(NounGroup::term)
+                .containsExactly("Tabellen Export");
+    }
+
+    @Test
     void findsNounGroupsWithDeterminersAdjectivesAndMultiWordTerms() {
         Sentence sentence = analyze("Die zuständige Sachbearbeitung prüft im Confluence Data Center alle eingereichten"
                 + " Belege mit neuen Regeln.").sentences().get(0);

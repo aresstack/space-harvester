@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Regelbasierte Zerlegung deutschen Texts in Sätze, Tokens mit grober Wortklasse und Nominalgruppen, ohne
@@ -17,7 +18,8 @@ import java.util.Set;
  *       {@code .}, {@code !}, {@code ?}, sofern davor keine Abkürzung, kein einzelner Buchstabe und keine Zahl steht
  *       und danach ein großgeschriebenes Wort, eine Ziffer oder das Ende folgt.</li>
  *   <li>Wortklassen kommen aus {@link Lexicon}; großgeschriebene übrige Wörter sind Nomen, außer am Satzanfang, wenn
- *       {@code Sie} folgt oder das Wort auf der Seite auch kleingeschrieben vorkommt.</li>
+ *       {@code Sie} folgt, das Wort auf der Seite auch kleingeschrieben vorkommt oder es mit Adjektivsuffix und
+ *       Flexionsendung vor einem großgeschriebenen Wort steht ({@code Fehlerhafte Seiten}).</li>
  *   <li>Eine Nominalgruppe ist {@code [Artikel] Adjektiv* Nomen+}; Adjektive (Flexionsendung {@code -e}, {@code -en},
  *       {@code -er}, {@code -es}, {@code -em}) zählen nur nach Artikel, Präposition, Zahl oder Konjunktion, damit ein
  *       Verb vor einem Nomen nicht als Eigenschaft gilt. Höchstens {@value #MAX_TERM_WORDS} Wörter je Begriff.</li>
@@ -27,6 +29,10 @@ import java.util.Set;
 final class GermanText {
 
     static final int MAX_TERM_WORDS = 6;
+
+    /** Großgeschriebenes Adjektiv am Satzanfang vor einem Nomen ({@code Fehlerhafte Seiten}). */
+    private static final Pattern ADJECTIVE_AT_START = Pattern.compile(
+            "\\p{L}{2,}(?:ig|lich|haft|bar|isch|los|sam|iert)(?:e|en|er|es|em)");
 
     private final PageText page;
     private final List<Sentence> sentences;
@@ -243,7 +249,9 @@ final class GermanText {
             return WordClass.ACRONYM;
         }
         if (Character.isUpperCase(text.charAt(0))) {
-            if (sentenceStart && (next != null && next.text.equals("Sie") || lowercaseWords.contains(lower))) {
+            if (sentenceStart && (next != null && next.text.equals("Sie") || lowercaseWords.contains(lower)
+                    || ADJECTIVE_AT_START.matcher(lower).matches() && next != null && next.word
+                    && Character.isUpperCase(next.text.charAt(0)))) {
                 return WordClass.OTHER;
             }
             return WordClass.NOUN;
@@ -313,7 +321,7 @@ final class GermanText {
 
     private static boolean adjective(List<Token> tokens, int index, boolean opened) {
         Token token = tokens.get(index);
-        return token.is(WordClass.OTHER) && Character.isLowerCase(token.text().charAt(0))
+        return token.is(WordClass.OTHER) && (Character.isLowerCase(token.text().charAt(0)) || index == 0)
                 && Terms.hasAdjectiveEnding(token.lower()) && (opened || openerBefore(tokens, index));
     }
 
