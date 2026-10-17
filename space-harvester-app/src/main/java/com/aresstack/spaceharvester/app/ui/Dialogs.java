@@ -56,16 +56,21 @@ public final class Dialogs {
     }
 
     /**
-     * Fragt Passwort oder Token für diese Sitzung ab. Der Wert wird nie gespeichert und nie angezeigt.
+     * Fragt Passwort oder Token ab. Der Dialog speichert und zeigt den Wert nie; was damit geschieht, sagt der Text.
      *
      * @return das eingegebene Geheimnis (der Aufrufer löscht es nach Gebrauch) oder {@code null}
      */
     public static char[] askSecret(Component parent, String title, String text) {
+        return askSecret(parent, title, text, "Übernehmen");
+    }
+
+    /** Wie {@link #askSecret(Component, String, String)} mit eigener Beschriftung des Bestätigungsknopfs. */
+    public static char[] askSecret(Component parent, String title, String text, String accept) {
         char[][] result = {null};
         JDialog dialog = dialog(parent, title);
         JPasswordField field = new JPasswordField(28);
         Comic.style(field);
-        ComposerButton ok = Comic.primary("Übernehmen", "Nur für diese Sitzung, wird nicht gespeichert");
+        ComposerButton ok = Comic.primary(accept, null);
         ComposerButton cancel = Comic.button("Abbrechen", null);
         ok.addActionListener(e -> {
             result[0] = field.getPassword();
