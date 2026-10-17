@@ -17,8 +17,11 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
 import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.SortedMap;
@@ -56,6 +59,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    @Override
+    public Set<SourceCapability> capabilities() {
+        Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS);
+        if (port instanceof PartitionListingSource) {
+            capabilities.add(SourceCapability.PAGE_LISTING);
+        }
+        if (port instanceof ResourceMetadataSource) {
+            capabilities.add(SourceCapability.PAGE_METADATA);
+        }
+        if (port instanceof StoredContentSource) {
+            capabilities.add(SourceCapability.STORED_PAGE);
+        }
+        if (port instanceof AsyncStoredContentSource) {
+            capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        return capabilities;
     }
 
     @Override
@@ -159,14 +180,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return pageMetadata(resource, resource.scope());
     }
 
-    private static PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
+    private PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
         String version = resource.revision().version();
         return new PageMetadata(
                 nativeId(resource.id()),
                 resource.id().value(),
                 resource.title(),
                 resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
-                resource.parentId().map(KnowledgeSourceHarvestSource::nativeId).orElse(null),
+                resource.parentId().map(this::nativeId).orElse(null),
                 version == null || version.isEmpty() ? null : version,
                 resource.revision().modifiedAt().orElse(null),
                 resource.location().orElse(null),
@@ -186,8 +207,17 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return attributes;
     }
 
-    /** Die ID der Quelle: letztes Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}). */
-    private static String nativeId(KnowledgeResourceId id) {
+    /**
+     * Die ID der Seite in der Quelle: die lokale ID des Adapters ({@link ResourceMetadataSource#localId}), sonst das
+     * letzte Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}).
+     */
+    private String nativeId(KnowledgeResourceId id) {
+        if (port instanceof ResourceMetadataSource single) {
+            String local = single.localId(id);
+            if (local != null && !local.isEmpty()) {
+                return local;
+            }
+        }
         String part = id.schemeSpecificPart();
         return part.substring(part.lastIndexOf('/') + 1);
     }

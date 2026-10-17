@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.sources;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -18,6 +20,19 @@ public interface HarvestSource {
 
     /** Anzeigename. */
     String title();
+
+    /**
+     * Was die Quelle kann (#18). Standard: Partitionen und beide Metadatenabfragen, Originale nur, wenn die Quelle
+     * {@link #storedPage} überschreibt und das hier meldet.
+     */
+    default Set<SourceCapability> capabilities() {
+        Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS, SourceCapability.PAGE_LISTING,
+                SourceCapability.PAGE_METADATA);
+        if (asyncStoredPages()) {
+            capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        return capabilities;
+    }
 
     /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
