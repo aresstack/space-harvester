@@ -251,7 +251,7 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aufträge | `WorkspaceTest.harvestsBrowses…` |
 | `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aufträge › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
-| `POST …/spaces/{key}/exports` | `Exports.start` | Exporte › Export starten | `WorkspaceTest.harvestsBrowses…` |
+| `POST …/spaces/{key}/exports` | `Exports.start` | Exportieren › Export starten | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}` | `Exports.artifact` | Aufträge › Ergebnis | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}/artifact/**` | `Exports.artifactFile` | Aufträge › Dateien speichern … | `WorkspaceTest.harvestsBrowses…` |
 | `POST /api/v1/exports/{id}/cancel` | `Jobs.cancel` | Aufträge › Abbrechen | – |

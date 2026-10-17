@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Exporte: Space wählen, Formate wählen, starten. Das Raw-First-Artefakt (Originaldaten und Manifest) entsteht immer;
+ * Exportieren: Space wählen, Formate wählen, starten. Das Raw-First-Artefakt (Originaldaten und Manifest) entsteht immer;
  * die gewählten Formate kommen dazu. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
  */
 public final class ExportsView implements View {
