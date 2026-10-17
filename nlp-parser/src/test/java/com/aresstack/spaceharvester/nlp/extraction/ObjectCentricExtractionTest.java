@@ -233,4 +233,16 @@ class ObjectCentricExtractionTest {
         assertTrue(statement.has(Finding.CASE_CONFLICT));
         assertTrue(SalienceProjection.project(analysis).core().isEmpty());
     }
+
+    @Test
+    void sharedPassiveCarriesOverToTheCoordinatedPredicate() {
+        ObjectCentricAnalysis analysis = Gold.analyze("passive-coordination.conllu");
+        Statement second = analysis.statements().get(1);
+
+        assertEquals(Voice.PASSIVE, second.voice());
+        assertTrue(second.has(Finding.PASSIVE));
+        assertTrue(second.has(Finding.SUBJECT_FROM_COORDINATION));
+        assertEquals(Role.AFFECTED_OBJECT, second.subject().role());
+        assertEquals("Die Anträge", text(analysis, second.subject()));
+    }
 }

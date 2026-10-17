@@ -1,0 +1,11 @@
+# Handgeschriebene Gold-Analyse (MIT, Teil der Tests von #98): Hilfsverb und Passivsubjekt nur am ersten Prädikat.
+# sent_id = 1
+# text = Die Anträge werden geprüft und genehmigt.
+1	Die	der	DET	ART	_	2	det	_	_
+2	Anträge	Antrag	NOUN	NN	_	4	nsubj:pass	_	_
+3	werden	werden	AUX	VAFIN	_	4	aux:pass	_	_
+4	geprüft	prüfen	VERB	VVPP	_	0	root	_	_
+5	und	und	CCONJ	KON	_	6	cc	_	_
+6	genehmigt	genehmigen	VERB	VVPP	_	4	conj	_	_
+7	.	.	PUNCT	$.	_	4	punct	_	_
+

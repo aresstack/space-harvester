@@ -20,7 +20,8 @@ import java.util.TreeSet;
  *       Grundform = Partikel + Grundform des Verbs ({@code an} + {@code rufen}).</li>
  *   <li>Passiv ({@code aux:pass} oder {@code nsubj:pass}): das Subjekt ist {@link Role#AFFECTED_OBJECT}.</li>
  *   <li>Koordiniertes Prädikat ({@code conj}) ohne eigenes Subjekt übernimmt das Subjekt des Bezugsprädikats,
- *       markiert als {@link Basis#COORDINATION} und unsicher.</li>
+ *       markiert als {@link Basis#COORDINATION} und unsicher; ist es ein {@code nsubj:pass}, gilt auch das
+ *       übernehmende Prädikat als Passiv ({@code werden geprüft und genehmigt}).</li>
  *   <li>Teilsätze ({@code advcl}, {@code ccomp}, {@code acl}, {@code xcomp}, {@code csubj}) werden erkannt und als
  *       {@link Clause#SUBORDINATE} markiert.</li>
  *   <li>Koordinierte Objekte ({@code obj} + {@code conj}) werden je eigener Beteiligter.</li>
@@ -54,8 +55,12 @@ final class PrimaryRelationExtraction {
 
     private static Statement statement(ParsedDocument document, Mentions mentions, Sentence sentence, Token verb) {
         Set<Finding> findings = EnumSet.noneOf(Finding.class);
+        Token subject = firstOf(sentence, verb.id(), "nsubj", "nsubj:pass");
+        Token inherited = subject == null ? coordinatedSubject(sentence, verb) : null;
+        // Geteiltes Passiv (werden geprüft und genehmigt): Hilfsverb und Subjekt hängen nur am ersten Prädikat.
         boolean passive = !sentence.dependents(verb.id(), "aux:pass").isEmpty()
-                || !sentence.dependents(verb.id(), "nsubj:pass").isEmpty();
+                || subject != null && "nsubj:pass".equals(subject.deprel())
+                || inherited != null && "nsubj:pass".equals(inherited.deprel());
         if (passive) {
             findings.add(Finding.PASSIVE);
         }
@@ -64,13 +69,11 @@ final class PrimaryRelationExtraction {
             findings.add(Finding.SUBORDINATE_CLAUSE);
         }
         List<Argument> arguments = new ArrayList<>();
-        Token subject = firstOf(sentence, verb.id(), "nsubj", "nsubj:pass");
         if (subject != null) {
             Mention mention = mentions.at(document, sentence, subject);
             arguments.add(new Argument(passive ? Role.AFFECTED_OBJECT : Role.ACTOR, mention.id(), subject.deprel(),
                     null, Priority.CORE, Basis.PARSER, true));
         } else {
-            Token inherited = coordinatedSubject(sentence, verb);
             if (inherited != null) {
                 Mention mention = mentions.at(document, sentence, inherited);
                 arguments.add(new Argument(passive ? Role.AFFECTED_OBJECT : Role.ACTOR, mention.id(),
