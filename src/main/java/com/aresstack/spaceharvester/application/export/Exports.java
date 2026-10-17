@@ -114,6 +114,7 @@ public class Exports {
         Objects.requireNonNull(spaceKey, "spaceKey");
         List<ExportConverter> selected = converters.select(formats);
         purgeQuietly();
+        writer.requireCapacity();
         return jobs.submit(JobType.EXPORT, sourceId, spaceKey, owner,
                 JobTask.blocking(context -> export(context, sourceId, spaceKey, selected)));
     }
@@ -206,6 +207,8 @@ public class Exports {
         } catch (CacheGenerationChangedException e) {
             throw new JobFailedException("GENERATION_CHANGED",
                     "Die Cache-Generation wurde während des Exports ersetzt; bitte neu starten", e);
+        } catch (ExportStorageFullException e) {
+            throw new JobFailedException("EXPORT_STORAGE_FULL", e.getMessage(), e);
         }
     }
 
@@ -303,9 +306,14 @@ public class Exports {
                 session.converted(conversion, out -> converter.convert(input,
                         new LimitedOutputStream(out, converter.fileName(), converters.maxBytes())));
             } catch (JobFailedException | JobCancelledException | CacheUnavailableException
-                     | CacheGenerationChangedException e) {
+                     | CacheGenerationChangedException | ExportStorageFullException e) {
                 throw e;
             } catch (IOException | RuntimeException e) {
+                for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+                    if (cause instanceof ExportStorageFullException full) {
+                        throw full;
+                    }
+                }
                 ConversionLimitExceededException tooLarge = limitExceeded(e);
                 if (tooLarge != null) {
                     throw new JobFailedException("CONVERSION_TOO_LARGE", tooLarge.getMessage(), e);

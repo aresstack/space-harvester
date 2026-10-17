@@ -16,8 +16,21 @@ import java.util.Set;
  */
 public interface ExportArtifactWriter {
 
-    /** Beginnt ein neues, noch unsichtbares Artefakt. */
+    /**
+     * Beginnt ein neues, noch unsichtbares Artefakt. Jede Schreibmethode der Sitzung kann
+     * {@link ExportStorageFullException} werfen, wenn die Ablage ihre Gesamtgrenze erreicht.
+     *
+     * @throws ExportStorageFullException wenn die Ablage schon voll ist
+     */
     Session begin(String exportId, ExportScope scope);
+
+    /**
+     * Prüft vor der Annahme eines Exports, ob die Ablage noch Platz hat.
+     *
+     * @throws ExportStorageFullException wenn nicht
+     */
+    default void requireCapacity() {
+    }
 
     /** Das veröffentlichte Artefakt oder leer, wenn es (noch) keines gibt. */
     Optional<ExportArtifact> find(String exportId);
