@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Führt die Curl-Beispiele aus docs/E2E.md der Reihe nach gegen den Dienst mit der Demo-Konfiguration (Profil
@@ -56,7 +58,7 @@ class DocumentedExamplesTest {
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern URL = Pattern.compile("\"http://localhost:8080(/[^\"]*)\"");
     private static final Pattern TOKEN = Pattern.compile("(?m)^TOKEN=(\\S+)$");
-    private static final String AUTHORIZATION = "-H \"Authorization: Bearer $TOKEN\"";
+    private static final Pattern HEADER = Pattern.compile("-H \"([A-Za-z-]+): ([^\"]*)\"");
 
     private static final DemoConfluence CONFLUENCE;
     private static final Path DATA;
@@ -100,7 +102,12 @@ class DocumentedExamplesTest {
                 "/api/v1/sources/demo/spaces/DEMO/tree",
                 "/api/v1/sources/demo/pages/1001",
                 "/api/v1/sources/demo/spaces/DEMO/exports",
-                "/api/v1/exports/$EXPORT_ID/artifact/manifest.json");
+                "/api/v1/exports/$EXPORT_ID/artifact/manifest.json",
+                "/api/v1/exports/$FORMAT_EXPORT_ID/artifact/manifest.json",
+                "/api/v1/sources/demo/pages/1001/attachments",
+                "/api/v1/sources/demo/pages/1002?view=extended",
+                "/api/v1/search?sourceId=demo&title=architektur",
+                "/api/compat/confluence/demo/rest/api/content/1001?expand=body.storage,version");
     }
 
     @TestFactory
@@ -115,13 +122,15 @@ class DocumentedExamplesTest {
                 return variables.get(match.group(1));
             });
             JsonNode expected = json.readTree(example.expected());
-            int status = expected.has("status") ? expected.get("status").asInt() : example.post() ? 202 : 200;
+            // status im Auszug ist der HTTP-Status; nicht jeder Fehlerkörper (etwa der von Confluence) wiederholt ihn.
+            JsonNode documented = expected instanceof ObjectNode object ? object.remove("status") : null;
+            int status = documented != null ? documented.asInt() : example.post() ? 202 : 200;
             Instant deadline = Instant.now().plus(POLL_TIMEOUT);
             while (true) {
                 HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getProperty("local.server.port") + path));
-                if (example.authenticated()) {
-                    request.header("Authorization", "Bearer " + token);
+                for (Map.Entry<String, String> header : example.headers().entrySet()) {
+                    request.header(header.getKey(), header.getValue().replace("$TOKEN", token));
                 }
                 request.method(example.post() ? "POST" : "GET", HttpRequest.BodyPublishers.noBody());
                 HttpResponse<String> response = http.send(request.build(), HttpResponse.BodyHandlers.ofString());
@@ -182,8 +191,10 @@ class DocumentedExamplesTest {
             } else if (!curl.startsWith("curl ")) {
                 fail("Zuweisung nur in der Form NAME=$(curl … | jq -r .id): " + curl);
             }
-            examples.add(new Example(curl, url.group(1), curl.contains(AUTHORIZATION), curl.contains(" -X POST "),
-                    variable, matcher.group(2)));
+            Map<String, String> headers = new LinkedHashMap<>();
+            HEADER.matcher(curl).results().forEach(header -> headers.put(header.group(1), header.group(2)));
+            examples.add(new Example(curl, url.group(1), headers, curl.contains(" -X POST "), variable,
+                    matcher.group(2)));
         }
         long curls = Pattern.compile("(?m)^(?:[A-Z_]+=\\$\\()?curl ").matcher(guide).results().count();
         assertThat(examples).as("jedes curl in docs/E2E.md hat einen Antwortauszug").hasSize((int) curls);
@@ -196,7 +207,7 @@ class DocumentedExamplesTest {
         return matcher.group(1);
     }
 
-    private record Example(String curl, String path, boolean authenticated, boolean post, String variable,
+    private record Example(String curl, String path, Map<String, String> headers, boolean post, String variable,
                            String expected) {
     }
 }
