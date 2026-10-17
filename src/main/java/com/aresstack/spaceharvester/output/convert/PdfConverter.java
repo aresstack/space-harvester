@@ -68,6 +68,8 @@ public final class PdfConverter implements ExportConverter {
     public static final String VERSION = "pdf/1";
 
     private static final float MARGIN = 56;
+    /** Mindestbreite für Text, auch bei tiefer Verschachtelung oder vielen Tabellenspalten. */
+    private static final float MIN_TEXT_WIDTH = 40;
     private static final float BODY = 10.5f;
     private static final float CODE = 8.5f;
     private static final float[] HEADINGS = {18, 15.5f, 13.5f, 12, 11, 10.5f};
@@ -406,7 +408,7 @@ public final class PdfConverter implements ExportConverter {
             if (columns == 0) {
                 return;
             }
-            float columnWidth = (width - indent) / columns;
+            float columnWidth = Math.max((width - indent) / columns, MIN_TEXT_WIDTH);
             float padding = 3;
             for (int r = 0; r < table.rows().size(); r++) {
                 boolean header = r == 0 && table.headerRow();
@@ -486,6 +488,8 @@ public final class PdfConverter implements ExportConverter {
 
         /** Bricht Inline-Inhalt an Leerzeichen in Zeilen der gegebenen Breite um; zu lange Wörter zeichenweise. */
         private List<Line> wrapTo(List<Inline> content, float size, Color color, float maxWidth) {
+            // Tiefe Verschachtelung oder sehr viele Spalten dürfen die Breite nicht auf null drücken.
+            maxWidth = Math.max(maxWidth, MIN_TEXT_WIDTH);
             List<Line> lines = new ArrayList<>();
             List<Segment> current = new ArrayList<>();
             float used = 0;
@@ -531,18 +535,34 @@ public final class PdfConverter implements ExportConverter {
                             continue;
                         }
                     }
-                    while (tokenWidth > maxWidth) {
-                        int fit = 1;
-                        while (fit < token.length() && width(font, size, token.substring(0, fit + 1)) <= maxWidth) {
-                            fit++;
+                    if (tokenWidth > maxWidth) {
+                        // Ein überlanges Wort Zeichen für Zeichen aufteilen, jedes Zeichen nur einmal messen: sonst
+                        // kostet ein langes Wort ohne Leerzeichen quadratisch Rechenzeit (Durchsicht, docs/SECURITY.md).
+                        int start = 0;
+                        while (start < token.length()) {
+                            int end = start;
+                            float partWidth = 0;
+                            while (end < token.length()) {
+                                int next = end + Character.charCount(token.codePointAt(end));
+                                float charWidth = width(font, size, token.substring(end, next));
+                                if (end > start && partWidth + charWidth > maxWidth) {
+                                    break;
+                                }
+                                partWidth += charWidth;
+                                end = next;
+                            }
+                            String part = token.substring(start, end);
+                            start = end;
+                            if (start < token.length()) {
+                                current.add(new Segment(part, font, size, segmentColor, link, partWidth));
+                                lines.add(new Line(current, size));
+                                current = new ArrayList<>();
+                                used = 0;
+                            } else {
+                                token = part;
+                                tokenWidth = partWidth;
+                            }
                         }
-                        String part = token.substring(0, fit);
-                        current.add(new Segment(part, font, size, segmentColor, link, width(font, size, part)));
-                        lines.add(new Line(current, size));
-                        current = new ArrayList<>();
-                        used = 0;
-                        token = token.substring(fit);
-                        tokenWidth = width(font, size, token);
                     }
                     if (!token.isEmpty()) {
                         current.add(new Segment(token, font, size, segmentColor, link, tokenWidth));
