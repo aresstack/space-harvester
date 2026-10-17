@@ -13,8 +13,11 @@ import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
+import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.SourceQuery;
+import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
@@ -102,7 +105,24 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof AttachmentListSource) {
             capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
         }
+        if (port instanceof SearchableKnowledgeSource) {
+            capabilities.add(SourceCapability.LIVE_SEARCH);
+        }
         return capabilities;
+    }
+
+    @Override
+    public List<String> searchPages(String text, int limit) {
+        if (!(port instanceof SearchableKnowledgeSource searchable)) {
+            return HarvestSource.super.searchPages(text, limit);
+        }
+        List<SourceSearchHit> hits;
+        try {
+            hits = searchable.search(new SourceQuery(text, limit));
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return hits.stream().map(hit -> nativeId(hit.resourceId())).distinct().toList();
     }
 
     @Override

@@ -100,6 +100,21 @@ public interface HarvestSource {
     }
 
     /**
+     * Volltextsuche in der Quelle selbst, über Titel und Inhalt (Confluence: CQL {@code siteSearch}, wie die
+     * Websuche), mit den Zugangsdaten der Quelle. Liefert nur Seiten-IDs in der Rangfolge der Quelle; Kopfdaten,
+     * Inhalt und Rechte je Seite klärt der Aufrufer über den Seitenabruf. Nur mit {@link SourceCapability#LIVE_SEARCH}.
+     *
+     * @param text  Suchtext, nicht leer
+     * @param limit höchstens so viele Treffer, mindestens 1
+     * @throws SourceAccessException {@code UNSUPPORTED} für eine Quelle ohne diese Fähigkeit, sonst wie
+     *                               {@link #partitions()}
+     */
+    default List<String> searchPages(String text, int limit) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann nicht selbst suchen", null);
+    }
+
+    /**
      * Alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit den nativen Listenantworten (#9). Lädt keine
      * Dateien. Eine Liste, die die Quelle nicht vollständig liefern kann, scheitert, statt kürzer zurückzukommen;
      * einzelne unbrauchbare Einträge stehen in {@link PageAttachments#warnings()}.

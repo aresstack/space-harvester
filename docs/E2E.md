@@ -502,7 +502,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 
 ## 10. Suche
 
-Die Suche über Titel und Metadaten läuft auf dem Index, nie live:
+Mit Suchtext fragt der Harvester die Quelle selbst (Confluence: CQL `siteSearch` über Titel und Inhalt), lädt fehlende
+Treffer nach und liefert sie aus dem Index (`origin: source`). Ohne Suchtext oder ohne erreichbare Quelle sucht er nur
+im Index nach Titel und Metadaten (`origin: cache`):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sourceId=demo&title=architektur"
@@ -511,7 +513,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 ```json
 {
   "sourceId": "demo",
-  "origin": "cache",
+  "origin": "source",
   "hits": [
     { "page": { "pageId": "1001", "title": "Architektur", "spaceKey": "DEMO", "parentPageId": "1000" }, "cache": { "state": "confirmed" } }
   ],

@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
+import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
@@ -36,6 +37,13 @@ class QueryConfiguration {
     @Bean
     PageSearch pageSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access) {
         return new PageSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access);
+    }
+
+    /** Die Suche der REST-API: mit Suchtext live in den Quellen, Treffer nachgeladen und indexiert (ADR 0010). */
+    @Bean
+    ProvisioningSearch provisioningSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index,
+                                          AccessGuard access, PageQueries pages) {
+        return new ProvisioningSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access, pages);
     }
 
     /**

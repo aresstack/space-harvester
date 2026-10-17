@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.api.PageQueryController.PageEntry;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchResults;
@@ -32,27 +33,35 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Titel- und Metadatensuche über den Index des Harvesters (#28, erste Ausbaustufe). Liest nur gespeicherte Kopfdaten,
- * nie live aus der Quelle und nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
+ * Suche des Harvesters (#28, ADR 0010): mit Suchtext über Titel und Inhalt live in den Quellen, deren Treffer
+ * nachgeladen und indexiert werden ({@link ProvisioningSearch}), sonst Titel- und Metadatensuche über den Index.
+ * Liefert nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
  * gespeicherten Embeddings (#89). Ohne {@code sourceId} sucht sie global über alle freigegebenen, indexierten Quellen
  * (#114, ADR 0009); Rechte, Sortierung und Cursor kommen aus demselben Core-Anwendungsfall wie in der Desktop-App.
  */
 @RestController
 @RequestMapping(path = ApiPaths.V1 + "/search", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Suche", description = "Titel- und Metadatensuche über den Cache des Harvesters")
+@Tag(name = "Suche", description = "Suche über Titel und Inhalt, live in den Quellen mit Nachladen, sonst im Index")
 public class SearchController {
 
-    private final PageSearch search;
+    private final ProvisioningSearch search;
     private final RelevanceSearch relevance;
 
-    public SearchController(PageSearch search, RelevanceSearch relevance) {
+    public SearchController(ProvisioningSearch search, RelevanceSearch relevance) {
         this.search = search;
         this.relevance = relevance;
     }
 
     @GetMapping
     @Operation(summary = "Seiten einer oder aller Quellen nach Titel und Metadaten suchen, stapelweise",
-            description = "Aus dem Index (origin=cache), nie live. Mit sourceId nur diese Quelle (scope=source), ohne "
+            description = "Mit title und ohne cursor/pageId sucht der Harvester in jeder Quelle des Umfangs, die selbst "
+                    + "suchen kann, über Titel und Inhalt (Confluence: CQL siteSearch, höchstens "
+                    + ProvisioningSearch.LIVE_LIMIT + " Treffer je Quelle), lädt fehlende Treffer über den "
+                    + "Seitenabruf nach (Rechte je Seite wie beim Lesen, bei delegierten Benutzern über die Quelle), "
+                    + "indexiert sie und liefert sie aus dem Index (origin=source, ein Stapel ohne cursor). Antwortet "
+                    + "die Quelle nicht oder fehlt content, gilt die Titelsuche im Index (origin=cache); liegt dann "
+                    + "für die einzige Quelle nichts im Index, ist es 503 (source-unavailable). Sonst aus dem Index "
+                    + "(origin=cache). Mit sourceId nur diese Quelle (scope=source), ohne "
                     + "alle Quellen, für die der Aufrufer metadata hat und die im Index liegen (scope=global): eine "
                     + "Abfrage, global sortiert und paginiert, kein Zusammenfügen je Quelle. Global gelten Filter in "
                     + "jeder Quelle (spaceKey=DEV heißt DEV in jeder freigegebenen Quelle), nicht freigegebene Quellen "
@@ -173,7 +182,8 @@ public class SearchController {
      *
      * @param scope    {@code source} mit {@code sourceId}, {@code global} ohne (#114)
      * @param sourceId die angefragte Quelle; global {@code null}, denn die Treffer stammen aus mehreren Quellen
-     * @param origin   immer {@code cache}: aus dem Index des Harvesters, nicht live aus der Quelle
+     * @param origin   {@code source}: Treffer aus der Suche der Quellen, nachgeladen und aus dem Index geliefert;
+     *                 {@code cache}: Titel- und Metadatensuche im Index
      * @param index    gelesener Indexstand; global {@code null}, wenn keine lesbare Quelle im Index liegt
      * @param reranker nur bei {@code sort=relevance}: Kennung des Rerankers, {@code none} ohne Modell
      */
@@ -185,10 +195,10 @@ public class SearchController {
                                  @JsonInclude(JsonInclude.Include.NON_NULL) String reranker) {
 
         static SearchResponse of(SearchResults results) {
-            return new SearchResponse(scope(results.sourceId()), results.sourceId(), "cache",
-                    IndexResponse.of(results.index()), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
-                    results.hits().stream().map(HitResponse::of).toList(), results.nextCursor(), results.complete(),
-                    null);
+            return new SearchResponse(scope(results.sourceId()), results.sourceId(),
+                    results.live() ? "source" : "cache", IndexResponse.of(results.index()), MetadataHash.SCHEMA,
+                    AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
+                    results.nextCursor(), results.complete(), null);
         }
 
         static SearchResponse of(RelevanceSearch.RelevanceResults results) {
