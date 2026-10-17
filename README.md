@@ -312,7 +312,7 @@ space-harvester:
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
-| `GET /api/v1/search[?sourceId=…]` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen (#114) |
+| `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
 | `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
@@ -430,10 +430,13 @@ genannten Space, sonst für die Quelle; Treffer ohne Freigabe fallen weg. Ohne I
 Treffermenge. Filter gelten in jeder Quelle (`spaceKey=DEV` heißt DEV in jeder freigegebenen Quelle); nicht
 freigegebene Quellen fallen ohne 403 und ohne Spur weg. Jeder Treffer nennt seine `sourceId`. Ändert sich eine der
 gelesenen Quellen, endet das Weiterblättern mit 409; ohne lesbare indexierte Quelle ist die Antwort leer
-(`index: null`), nie 404. Die Desktop-App nutzt denselben Core-Anwendungsfall.
+(`index: null`), nie 404. `sourceIds` (wiederholbar oder durch Komma getrennt, höchstens 50) beschränkt die globale
+Suche auf diese Quellen; unbekannte oder nicht freigegebene IDs darin fallen ebenso still weg, zusammen mit `sourceId`
+ist es 400. Die Desktop-App nutzt denselben Core-Anwendungsfall.
 
 ```sh
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?title=Architektur"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?title=Architektur&sourceIds=confluence,wiki2"
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sort=relevance&q=Softwarearchitektur"
 ```
 

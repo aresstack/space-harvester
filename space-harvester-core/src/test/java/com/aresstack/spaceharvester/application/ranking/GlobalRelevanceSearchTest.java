@@ -161,6 +161,18 @@ class GlobalRelevanceSearchTest {
     }
 
     @Test
+    void aSourceListLimitsTheRelevanceWindowToTheseSources() {
+        twoSources();
+        PageSearchQuery onlyB = PageSearchQuery.of(null, List.of("wiki-b"), List.of(), null, null, null, null, null,
+                null, SearchSort.TITLE);
+
+        RelevanceSearch.RelevanceResults results = search(ALLOW_ALL).search(CALLER, onlyB, "Betrieb", 10);
+
+        assertThat(results.global()).isTrue();
+        assertThat(keys(results)).allMatch(key -> key.startsWith("wiki-b/")).isNotEmpty();
+    }
+
+    @Test
     void withoutAModelTheGlobalTitleSearchStillWorks() {
         twoSources();
         RelevanceSearch withoutModel = new RelevanceSearch(catalog, index, new AccessGuard(ALLOW_ALL), store, store,

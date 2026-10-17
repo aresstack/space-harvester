@@ -57,7 +57,9 @@ public class SearchController {
                     + "Abfrage, global sortiert und paginiert, kein Zusammenfügen je Quelle. Global gelten Filter in "
                     + "jeder Quelle (spaceKey=DEV heißt DEV in jeder freigegebenen Quelle), nicht freigegebene Quellen "
                     + "fallen ohne Fehler und ohne Spur weg, und ohne lesbare indexierte Quelle ist die Antwort leer "
-                    + "(index=null). Jeder Treffer nennt seine sourceId und ist unter /api/v1/sources/{sourceId}/... "
+                    + "(index=null). sourceIds schränkt die globale Suche auf diese Quellen ein (wiederholbar oder durch "
+                    + "Komma getrennt); unbekannte oder nicht freigegebene IDs darin fallen ebenso ohne Fehler weg, "
+                    + "zusammen mit sourceId ist es 400. Jeder Treffer nennt seine sourceId und ist unter /api/v1/sources/{sourceId}/... "
                     + "adressierbar; gleiche Sortierwerte ordnet pageId, dann sourceId. Alle Bedingungen gelten "
                     + "zugleich. title: jedes "
                     + "Wort muss als ganzes Wort im Titel vorkommen, ohne Beachtung der Groß-/Kleinschreibung; "
@@ -73,8 +75,8 @@ public class SearchController {
                     + "der Vektorsuche nur mit content-Freigabe, Ähnlichkeiten (relevance) nur für Seiten mit "
                     + "content-Freigabe. Ohne eingerichtetes Modell nur Titeltreffer in Titelreihenfolge.")
     @ApiResponse(responseCode = "200", description = "Ein Stapel Treffer")
-    @ApiResponse(responseCode = "400", description = "Ungültige Parameter, überschrittene Grenzen oder cursor einer "
-            + "anderen Suche (invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+    @ApiResponse(responseCode = "400", description = "Ungültige Parameter, überschrittene Grenzen, sourceId zusammen "
+            + "mit sourceIds oder cursor einer anderen Suche (invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Nur mit sourceId: keine metadata-Freigabe für einen genannten "
             + "Space bzw. die Quelle, oder keine Quelle mit dieser ID (access-denied)",
@@ -96,6 +98,11 @@ public class SearchController {
             @Parameter(description = "Quellen-ID aus der Konfiguration; ohne Angabe alle freigegebenen, indexierten "
                     + "Quellen", example = "confluence")
             @RequestParam(required = false) String sourceId,
+            @Parameter(description = "Ohne sourceId: nur diese Quellen durchsuchen (wiederholbar oder durch Komma "
+                    + "getrennt, höchstens " + PageSearchQuery.MAX_SOURCE_IDS + "); ohne Angabe alle freigegebenen, "
+                    + "indexierten Quellen. Unbekannte oder nicht freigegebene IDs fallen still weg",
+                    example = "confluence,wiki2")
+            @RequestParam(required = false) List<String> sourceIds,
             @Parameter(description = "Nur diese Spaces (wiederholbar, höchstens " + PageSearchQuery.MAX_SPACE_KEYS
                     + "); ohne Angabe alle freigegebenen Spaces; global in jeder Quelle")
             @RequestParam(required = false) List<String> spaceKey,
@@ -124,7 +131,7 @@ public class SearchController {
             @Parameter(description = "Größe des Stapels, 1 bis " + PageSearch.MAX_LIMIT)
             @RequestParam(defaultValue = "50") int limit) {
         boolean byRelevance = RELEVANCE.equals(sort);
-        PageSearchQuery query = PageSearchQuery.of(sourceId, spaceKey, title, pageId, parentPageId, version,
+        PageSearchQuery query = PageSearchQuery.of(sourceId, sourceIds, spaceKey, title, pageId, parentPageId, version,
                 instant("modifiedFrom", modifiedFrom), instant("modifiedBefore", modifiedBefore),
                 byRelevance ? SearchSort.TITLE : sort(sort));
         if (!byRelevance) {

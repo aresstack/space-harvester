@@ -349,4 +349,68 @@ class GlobalPageSearchTest {
 
         assertThat(first).isEqualTo(second).hasSize(6);
     }
+
+    private static PageSearchQuery only(List<String> sourceIds, SearchSort sort) {
+        return PageSearchQuery.of(null, sourceIds, List.of(), null, null, null, null, null, null, sort);
+    }
+
+    @Test
+    void aSourceListRestrictsTheGlobalSearchToTheseSources() {
+        twoSources();
+        configured.add("wiki-c");
+        publish("wiki-c", "c1", page("wiki-c", "DEV", "1", "Architektur Drittquelle", T0));
+        PageSearch search = search(ALLOW_ALL);
+        PageSearchQuery query = only(List.of("wiki-c", "wiki-a"), SearchSort.PAGE_ID);
+
+        SearchResults first = search.search(CALLER, query, null, 2);
+        assertThat(first.global()).isTrue();
+        assertThat(keys(first)).containsExactly("wiki-a/1", "wiki-c/1");
+        // Eine Änderung außerhalb der Liste beendet die Pagination nicht; die Generation umfasst nur die Liste.
+        publish("wiki-b", "b2", page("wiki-b", "DEV", "9", "Neu", T0));
+        SearchResults rest = search.search(CALLER, query, first.nextCursor(), 10);
+        assertThat(keys(rest)).containsExactly("wiki-a/2", "wiki-a/3");
+        assertThat(rest.index().generation()).isEqualTo(first.index().generation());
+        // Ohne Liste wieder alle Quellen.
+        assertThat(pageThrough(search, global(null, SearchSort.PAGE_ID), 100)).hasSize(5);
+    }
+
+    @Test
+    void unknownAndHiddenSourcesOfTheListAreSkippedSilently() {
+        twoSources();
+        configured.add("geheim");
+        publish("geheim", "x1", page("geheim", "DEV", "1", "Geheim", T0));
+        AccessPolicy noSecret = (context, scope, kind) -> scope.sourceId().equals("geheim") ? AccessDecision.DENY
+                : AccessDecision.ALLOW;
+        PageSearch search = search(noSecret);
+
+        assertThat(keys(search.search(CALLER, only(List.of("wiki-b", "geheim", "gibt-es-nicht"), SearchSort.PAGE_ID),
+                null, 10))).containsExactly("wiki-b/1", "wiki-b/2", "wiki-b/4");
+        SearchResults none = search.search(CALLER, only(List.of("geheim", "gibt-es-nicht"), SearchSort.PAGE_ID),
+                null, 10);
+        assertThat(none.hits()).isEmpty();
+        assertThat(none.complete()).isTrue();
+        assertThat(none.index()).isNull();
+    }
+
+    @Test
+    void aSourceListIsValidatedAndBindsTheCursor() {
+        twoSources();
+        PageSearch search = search(ALLOW_ALL);
+        String listCursor = search.search(CALLER, only(List.of("wiki-a", "wiki-b"), SearchSort.TITLE), null, 1)
+                .nextCursor();
+
+        // Gleiche Quellen, aber ohne Liste: eine andere Anfrage.
+        assertThatThrownBy(() -> search.search(CALLER, global(null, SearchSort.TITLE), listCursor, 1))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThat(search.search(CALLER, only(List.of("wiki-b", "wiki-a", "wiki-a"), SearchSort.TITLE), listCursor, 10)
+                .hits()).hasSize(5);
+        assertThatThrownBy(() -> PageSearchQuery.of("wiki-a", List.of("wiki-b"), List.of(), null, null, null, null,
+                null, null, SearchSort.TITLE)).isInstanceOf(InvalidQueryException.class);
+        List<String> tooMany = new ArrayList<>();
+        for (int n = 0; n <= PageSearchQuery.MAX_SOURCE_IDS; n++) {
+            tooMany.add("q" + n);
+        }
+        assertThatThrownBy(() -> only(tooMany, SearchSort.TITLE)).isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> only(List.of(" "), SearchSort.TITLE)).isInstanceOf(InvalidQueryException.class);
+    }
 }

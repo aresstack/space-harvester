@@ -116,6 +116,35 @@ class SearchViewTest {
     }
 
     @Test
+    void allSourcesCanBeRestrictedToChosenSources() throws Exception {
+        start();
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].restrictTo(List.of("beta"));
+            view[0].search("seite");
+        });
+        JTable table = find(view[0].component(), JTable.class).get(0);
+        AbstractButton more = button(view[0].component(), "Weitere laden");
+        await(() -> table.getRowCount() == PAGES_PER_SOURCE);
+        await(() -> !more.isEnabled());
+        Set<String> sourcesSeen = new HashSet<>();
+        SwingUtilities.invokeAndWait(() -> {
+            for (int row = 0; row < table.getRowCount(); row++) {
+                sourcesSeen.add((String) table.getModel().getValueAt(row, 1));
+            }
+        });
+        assertThat(sourcesSeen).containsExactly("beta");
+        assertThat(button(view[0].component(), "Quellen: 1")).isNotNull();
+
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].restrictTo(List.of());
+            view[0].search("seite");
+        });
+        await(() -> table.getRowCount() == 100 && more.isEnabled());
+    }
+
+    @Test
     void loadMoreAfterAnIndexChangeStartsTheSameSearchAgain() throws Exception {
         start();
         SearchView[] view = new SearchView[1];

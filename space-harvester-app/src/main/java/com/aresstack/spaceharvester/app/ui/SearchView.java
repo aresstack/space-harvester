@@ -11,13 +11,16 @@ import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchResults;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.table.AbstractTableModel;
@@ -26,14 +29,18 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Globale Suche über den lokalen Bestand: Titelwörter, optional nach Quelle und Space gefiltert, sortiert nach Titel,
  * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Nur Bedienung und Darstellung: Suche, Sortierung,
  * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, {@code RelevanceSearch}, #114), ohne gewählte Quelle als
  * eine globale Suche über alle Quellen, mit gewählter Quelle mit demselben Anwendungsfall und {@code sourceId}.
+ * Unter „Alle Quellen“ beschränkt „Quellen …“ die globale Suche auf ausgewählte Quellen ({@code sourceIds}).
  * „Weitere laden“ folgt dem Cursor des Core; hat ein Abgleich den Index inzwischen geändert, beginnt dieselbe Suche von
  * vorn. Nur die jeweils letzte Anfrage darf die Liste ändern.
  */
@@ -48,6 +55,8 @@ public final class SearchView implements View {
     private final ComposerToggleButton byTitle = toggle("Titel", "Nach Titel sortieren");
     private final ComposerToggleButton byModified = toggle("Neueste", "Zuletzt geänderte zuerst");
     private final ComposerToggleButton byRelevance = toggle("Relevanz", "Nach Ähnlichkeit zur Anfrage");
+    private final ComposerButton chooser = Comic.button("Quellen: alle", "Die Suche über alle Quellen auf einzelne "
+            + "Quellen beschränken");
     private final ComposerButton run = Comic.primary("Suchen", "Im lokalen Bestand suchen");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
@@ -59,6 +68,8 @@ public final class SearchView implements View {
     private String nextCursor;
     /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
     private int request;
+    /** Quellen, auf die „Alle Quellen“ beschränkt ist; leer für alle. */
+    private final Set<String> chosen = new TreeSet<>();
 
     public SearchView(AppContext context) {
         this.context = context;
@@ -74,6 +85,8 @@ public final class SearchView implements View {
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
+        chooser.addActionListener(e -> chooseSources());
+        picker.sourceBox().addActionListener(e -> chooser.setEnabled(picker.sourceId() == null));
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -85,7 +98,7 @@ public final class SearchView implements View {
             }
         });
 
-        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Quelle"), picker.sourceBox(),
+        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Quelle"), picker.sourceBox(), chooser,
                 Comic.caption("Space"), picker.spaceBox(), byTitle, byModified, byRelevance, run);
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -122,6 +135,37 @@ public final class SearchView implements View {
         search();
     }
 
+    /** Beschränkt „Alle Quellen“ auf diese Quellen; leer hebt die Beschränkung auf. */
+    void restrictTo(Collection<String> sourceIds) {
+        chosen.clear();
+        chosen.addAll(sourceIds);
+        chooser.setText(chosen.isEmpty() ? "Quellen: alle" : "Quellen: " + chosen.size());
+    }
+
+    private void chooseSources() {
+        AppRuntime runtime = context.runtime();
+        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
+        // Entfernte Quellen fallen aus der Auswahl.
+        chosen.retainAll(sources.stream().map(HarvestSource::id).toList());
+        JPopupMenu menu = new JPopupMenu();
+        for (HarvestSource source : sources) {
+            JCheckBoxMenuItem item = new JCheckBoxMenuItem(source.title() == null || source.title().isBlank()
+                    ? source.id() : source.title(), chosen.contains(source.id()));
+            item.addActionListener(e -> {
+                Set<String> next = new TreeSet<>(chosen);
+                if (item.isSelected()) {
+                    next.add(source.id());
+                } else {
+                    next.remove(source.id());
+                }
+                restrictTo(next);
+            });
+            menu.add(item);
+        }
+        restrictTo(chosen);
+        menu.show(chooser, 0, chooser.getHeight());
+    }
+
     private void search() {
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
@@ -142,6 +186,7 @@ public final class SearchView implements View {
             return;
         }
         List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
+        List<String> only = sourceId == null ? List.copyOf(chosen) : List.of();
         int id = ++request;
         run.setEnabled(false);
         more.setEnabled(false);
@@ -150,16 +195,16 @@ public final class SearchView implements View {
             if (relevance) {
                 // Ein Block über alle gewählten Quellen; ohne Modell nur Titeltreffer.
                 boolean semantic = runtime.workspace().semanticSearch();
-                PageSearchQuery q = PageSearchQuery.of(sourceId, spaces, semantic ? null : text, null, null, null,
-                        null, null, SearchSort.TITLE);
+                PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, semantic ? null : text, null, null,
+                        null, null, null, SearchSort.TITLE);
                 RelevanceSearch.RelevanceResults results = runtime.workspace().relevance(q, text, LIMIT);
                 List<Hit> hits = results.hits().stream().map(ranked -> Hit.of(ranked.hit(), ranked.relevance()))
                         .toList();
                 return new Outcome(null, hits, null, semantic ? null
                         : "Kein Embedding-Modell eingerichtet: sortiert nach Titeltreffern.");
             }
-            PageSearchQuery q = PageSearchQuery.of(sourceId, spaces, text.isEmpty() ? null : text, null, null, null,
-                    null, null, sort);
+            PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text.isEmpty() ? null : text, null, null,
+                    null, null, null, sort);
             SearchResults results = runtime.workspace().search(q, null, LIMIT);
             return new Outcome(q, hits(results), results.nextCursor(), null);
         }, outcome -> {
