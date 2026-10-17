@@ -77,6 +77,30 @@ class HarvesterTest {
     }
 
     @Test
+    void exportsANeverSyncedSpaceToWordWithoutAPriorSync() throws Exception {
+        try (Harvester harvester = harvester()) {
+            JobStatus export = harvester.await(harvester.export("wiki", "DEV", List.of("docx")).id(),
+                    Duration.ofSeconds(30));
+
+            assertThat(export.state()).isEqualTo(JobState.COMPLETED);
+            assertThat(export.progress().written()).isEqualTo(2);
+            ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
+            assertThat(artifact.complete()).isTrue();
+            ExportArtifact.File docx = artifact.files().stream().filter(file -> file.name().endsWith(".docx"))
+                    .findFirst().orElseThrow();
+            try (java.io.InputStream in = harvester.exports().artifactFile(export.id(), Harvester.OWNER,
+                    docx.name()).orElseThrow()) {
+                byte[] bytes = in.readAllBytes();
+                // DOCX ist ein ZIP-Archiv.
+                assertThat(bytes).startsWith((byte) 'P', (byte) 'K');
+            }
+            // Der Cache ist nebenbei gefüllt: Seiten lesen geht jetzt ohne eigenen Abgleich.
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 100).pages())
+                    .extracting(page -> page.header().key().pageId()).containsExactlyInAnyOrder("100", "102");
+        }
+    }
+
+    @Test
     void reopensTheCacheOfAnEarlierRun() throws Exception {
         try (Harvester harvester = harvester()) {
             harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30));

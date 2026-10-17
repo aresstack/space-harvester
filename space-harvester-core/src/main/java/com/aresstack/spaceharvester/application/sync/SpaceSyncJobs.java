@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import com.aresstack.spaceharvester.application.export.SpaceProvisioning;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -14,6 +15,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -31,8 +33,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>Fehlen Cache-Speicher oder Inhaltsabruf (noch nicht angebunden), lehnt {@link #start} mit
  * {@link SyncUnavailableException} ab, statt einen Auftrag anzunehmen, der nur scheitern kann.
+ *
+ * <p>Als {@link SpaceProvisioning} liest derselbe Ablauf einen Space innerhalb eines Exportauftrags ein
+ * ({@link #provision}), ohne eigenen Auftrag und mit derselben Folgearbeit nach dem Bestätigen.
  */
-public class SpaceSyncJobs {
+public class SpaceSyncJobs implements SpaceProvisioning {
 
     static final String INCOMPLETE = "SYNC_INCOMPLETE";
     static final String CONFLICT = "SYNC_CONFLICT";
@@ -70,8 +75,39 @@ public class SpaceSyncJobs {
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 
+    @Override
     public boolean available() {
         return sync != null;
+    }
+
+    /**
+     * Liest den Space im laufenden Auftrag {@code context} ein, wie es ein Abgleich täte. Hat ein gleichzeitiger
+     * Abgleich zuerst bestätigt, gilt dessen Generation.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    @Override
+    public Provisioned provision(JobContext context, String sourceId, String spaceKey) {
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        SpaceSync.SyncRun run;
+        try {
+            run = sync.run(sourceId, spaceKey, applier, listener(context));
+        } catch (SyncConflictException e) {
+            return new Provisioned(true, true, Set.of());
+        }
+        if (run.confirmed() == null) {
+            LOG.log(System.Logger.Level.INFO, "Einlesen {0}/{1} für Auftrag {2}: keine Generation bestätigt ({3})",
+                    sourceId, spaceKey, context.jobId(), run.notConfirmed());
+            return Provisioned.NOT_CONFIRMED;
+        }
+        afterCommit(run, sourceId, spaceKey);
+        return new Provisioned(true, false, run.failedPageIds());
     }
 
     /**
@@ -152,6 +188,16 @@ public class SpaceSyncJobs {
                     spaceKey, run.notConfirmed());
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
         }
+        afterCommit(run, sourceId, spaceKey);
+        if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
+            throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
+                    + " bestätigt, aber " + run.failedPageIds().size() + " Seiten konnten nicht abgeglichen werden "
+                    + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
+                    + "Lauf gleicht sie erneut ab");
+        }
+    }
+
+    private void afterCommit(SpaceSync.SyncRun run, String sourceId, String spaceKey) {
         for (SyncCommitted next : afterCommit) {
             try {
                 next.committed(run);
@@ -160,12 +206,6 @@ public class SpaceSyncJobs {
                 LOG.log(System.Logger.Level.WARNING, "Folgearbeit nach Abgleich {0}/{1} scheiterte ({2})", sourceId,
                         spaceKey, e.getClass().getName());
             }
-        }
-        if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
-            throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
-                    + " bestätigt, aber " + run.failedPageIds().size() + " Seiten konnten nicht abgeglichen werden "
-                    + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
-                    + "Lauf gleicht sie erneut ab");
         }
     }
 

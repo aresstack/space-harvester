@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -66,9 +67,11 @@ public class ExportsController {
 
     @PostMapping(path = ApiPaths.V1 + "/sources/{sourceId}/spaces/{spaceKey}/exports",
             produces = MediaType.APPLICATION_JSON_VALUE)
-    @Operation(summary = "Export eines Space aus dem Cache starten",
-            description = "Antwortet sofort mit 202 und dem Auftrag; Fortschritt unter Location. Das Artefakt ist "
-                    + "nur vollständig (complete=true), wenn die Cache-Generation bestätigt ist und keine Seite fehlt. "
+    @Operation(summary = "Export eines Space starten",
+            description = "Antwortet sofort mit 202 und dem Auftrag; Fortschritt unter Location. Liegt der Space "
+                    + "noch nicht im Cache (oder mit refresh=true immer), liest der Auftrag ihn zuerst selbst von der "
+                    + "Quelle ein. Das Artefakt ist nur vollständig (complete=true), wenn die Generation bestätigt "
+                    + "ist, keine Seite fehlt und der Aufrufer jede Seite lesen darf. "
                     + "Mit format entstehen zusätzlich abgeleitete Dateien aus denselben Seiten (json: pages.json); "
                     + "ihre Herkunft steht im Manifest unter conversions.")
     @ApiResponse(responseCode = "202", description = "Export angenommen")
@@ -91,9 +94,16 @@ public class ExportsController {
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
             @Parameter(description = "Zusätzliche Formate, wiederholbar; ohne nur das Raw-First-Artefakt",
                     example = "json")
-            @RequestParam(name = "format", required = false) List<String> formats) {
+            @RequestParam(name = "format", required = false) List<String> formats,
+            @Parameter(description = "true: vor dem Export gegen die Quelle abgleichen; sonst eine bestätigte "
+                    + "Generation wiederverwenden und nur einlesen, wenn keine vorliegt")
+            @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
         requireExport(caller, sourceId, spaceKey);
-        JobStatus job = exports.start(sourceId, spaceKey, owner(caller), formats == null ? List.of() : formats);
+        JobStatus job = exports.start(ExportRequest.of(sourceId, spaceKey, owner(caller), formats)
+                .withRefresh(refresh)
+                .withVisible(header -> access.canRead(caller, header.key().sourceId(),
+                        header.metadata().partitionKey(), header.key().pageId()))
+                .withAuthorized(() -> permitsExport(caller, sourceId, spaceKey)));
         return ResponseEntity.accepted().location(URI.create(EXPORTS + "/" + job.id()))
                 .body(ExportResponse.of(job, null));
     }
@@ -178,6 +188,15 @@ public class ExportsController {
         }
         requireExport(caller, job.sourceId(), job.partitionKey());
         return job;
+    }
+
+    /**
+     * Wie {@link #requireExport}, aber ohne Ausnahme, für die Prüfungen im laufenden Auftrag. Der Aufrufer (bei
+     * delegierten Benutzern samt Token) lebt nur im Speicher dieses Auftrags und wird nie abgelegt.
+     */
+    private boolean permitsExport(AccessContext caller, String sourceId, String spaceKey) {
+        ResourceScope space = ResourceScope.space(sourceId, spaceKey);
+        return access.permits(caller, space, AccessKind.EXPORT) && access.permits(caller, space, AccessKind.CONTENT);
     }
 
     private void requireExport(AccessContext caller, String sourceId, String spaceKey) {

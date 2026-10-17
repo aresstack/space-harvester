@@ -257,13 +257,13 @@ class ExportsApiTest {
     }
 
     @Test
-    void uncachedSpaceFailsWithReason() throws Exception {
+    void uncachedSpaceThatCannotBeReadInFailsWithReason() throws Exception {
         String id = body(send("POST", "/api/v1/sources/wiki/spaces/NONE/exports", null)).path("id").asString();
 
         JsonNode done = awaitFinished(id);
 
         assertThat(done.path("state").asString()).isEqualTo("failed");
-        assertThat(done.path("error").path("code").asString()).isEqualTo("NOT_CACHED");
+        assertThat(done.path("error").path("code").asString()).isEqualTo("PROVISIONING_UNAVAILABLE");
         assertThat(done.path("artifact").isNull() || done.path("artifact").isMissingNode()).isTrue();
         assertThat(send("GET", "/api/v1/exports/" + id + "/artifact/pages.ndjson", null).statusCode())
                 .isEqualTo(404);

@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
@@ -22,7 +23,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Verdrahtet Space-Exporte (#11). Artefakte liegen unter {@code space-harvester.export.directory} (Standard
  * {@code data/exports}); sie enthalten schutzbedürftige Rohdaten, das Verzeichnis gehört nur dem Dienstkonto. Ohne
- * {@link PageCacheReader}-Bean scheitern Exporte mit {@code CACHE_UNAVAILABLE}.
+ * {@link PageCacheReader}-Bean scheitern Exporte mit {@code CACHE_UNAVAILABLE}. Einen noch nicht eingelesenen Space liest
+ * der Export über {@link SpaceSyncJobs} im eigenen Auftrag ein (ADR 0010).
  *
  * <p>Converter (#30) sind Beans vom Typ {@link ExportConverter}; jede konvertierte Datei darf höchstens
  * {@code space-harvester.export.max-converted-bytes} groß werden (Standard 512 MiB), sonst scheitert der Export.
@@ -70,8 +72,8 @@ class ExportConfiguration {
 
     @Bean
     Exports exports(Jobs jobs, ObjectProvider<PageCacheReader> cache, ExportArtifactWriter writer,
-                    ExportConverters converters) {
-        return new Exports(jobs, cache.getIfAvailable(PageCacheReader::unavailable), writer, converters,
+                    ExportConverters converters, SpaceSyncJobs syncs) {
+        return new Exports(jobs, cache.getIfAvailable(PageCacheReader::unavailable), writer, converters, syncs,
                 Clock.systemUTC());
     }
 }
