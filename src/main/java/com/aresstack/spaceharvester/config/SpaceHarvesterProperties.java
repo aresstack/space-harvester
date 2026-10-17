@@ -26,15 +26,15 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      * Ausgehende Verbindungen aller Quellen.
      *
      * @param proxy          Proxy-Route je Ziel-URL
-     * @param asyncTransport {@code disabled} (Standard): alles über den synchronen Transport; {@code web-client}:
-     *                       native Seiten-Snapshots zusätzlich nicht blockierend über Spring WebClient (#47), mit
-     *                       derselben Route, demselben Vertrauen und demselben Client-Zertifikat
+     * @param asyncTransport {@code web-client} (Standard): native Seiten-Snapshots nicht blockierend über Spring
+     *                       WebClient (#47), mit derselben Route, demselben Vertrauen und demselben Client-Zertifikat;
+     *                       {@code disabled}: Rückfall auf den synchronen Transport
      */
     public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport) {
 
         public Network {
             proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null) : proxy;
-            asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.DISABLED : asyncTransport;
+            asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT : asyncTransport;
         }
     }
 

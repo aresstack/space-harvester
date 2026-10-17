@@ -35,6 +35,9 @@ import javax.net.ssl.X509TrustManager;
  */
 public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
+    /** Standard für {@code options.maxRetries}, wenn die Quelle nichts angibt. */
+    static final String DEFAULT_MAX_RETRIES = "2";
+
     /** Quellentypen, die der Space Harvester kennt. */
     public static final Set<String> TYPES = Set.of("confluence");
 
@@ -50,9 +53,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     /** Transport für native Seiten-Snapshots ({@code space-harvester.network.async-transport}, #47). */
     public enum AsyncTransport {
-        /** Nur der synchrone Transport (Standard, Rückfallpfad). */
+        /** Nur der synchrone Transport (Rückfallpfad). */
         DISABLED,
-        /** Snapshots zusätzlich nicht blockierend über Spring WebClient auf Reactor Netty. */
+        /** Snapshots nicht blockierend über Spring WebClient auf Reactor Netty (Standard des Dienstes). */
         WEB_CLIENT
     }
 
@@ -109,7 +112,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
-        LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "zusätzlich asynchron über WebClient");
+        LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
         Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
@@ -302,6 +305,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     private static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
+        // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
+        values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());

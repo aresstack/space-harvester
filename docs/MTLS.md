@@ -127,6 +127,12 @@ Testserver geprüft (`ProxiedMutualTlsTest`); die Windows-Modi brauchen diesen m
 3. Schritte 3 und 4 aus dem Abschnitt oben ausführen (Spaces, Metadaten **ohne Body**).
 4. Gegenprobe Fail-Closed: mit absichtlich falscher `pac-url` starten; der Abruf muss mit
    `UNAVAILABLE (pac-download-failed)` scheitern und darf nicht direkt verbinden.
+5. Asynchroner Weg (#47, Standard `space-harvester.network.async-transport: web-client`): zuerst prüfen, denn
+   native Seiten-Snapshots laufen darüber. Ein Sync-Lauf (`POST /api/v1/sources/confluence/spaces/{spaceKey}/syncs`)
+   oder eine echte Prüfung (`GET /api/v1/sources/confluence/pages/{pageId}?refresh=true`) muss Seiten liefern; im Log
+   steht `Seiten-Snapshots: asynchron über WebClient` und die Proxy-Route wie in Schritt 2. Scheitert nur
+   dieser Weg (Schritte 3 und 4 laufen synchron und klappen), als Rückfall in einer Zeile
+   `space-harvester.network.async-transport: disabled` setzen und den Befund an Strang A melden.
 
 Bekannte Grenze von `win-proxy-java` 0.2.0 ([win-proxy-java#4](https://github.com/aresstack/win-proxy-java/issues/4)):
 `dnsResolve()` löst Hostnamen nicht auf, und `myIpAddress()` kann auf `127.0.0.1` zurückfallen. Nutzt das

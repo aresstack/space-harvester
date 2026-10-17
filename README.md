@@ -66,6 +66,8 @@ space-harvester:
         token: ${CONFLUENCE_TOKEN}
       options:                        # weitere Einstellungen des Confluence-Adapters
         pageSize: 100
+        maxRetries: 2                 # Standard 2: Netzfehler, 5xx und 429 wiederholen, 401/403/404 nie
+        retryBackoffMillis: 1000      # erste Wartezeit, verdoppelt je Versuch, gestreut, höchstens maxRetryBackoffMillis
     - id: team-wiki
       type: confluence
       base-url: https://wiki.example.org
@@ -116,7 +118,9 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
+- **Spring Cloud Config Server:** optional über das Profil `config-server` (`SPRING_CLOUD_CONFIG_URI`); ohne
+  erreichbaren Server startet der Dienst mit der lokalen Konfiguration. Reihenfolge der Quellen und Fallstricke:
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
@@ -175,18 +179,16 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 
-Standardmäßig nutzt der Adapter den synchronen `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Daneben gibt es den asynchronen `WebClientConfluenceTransport` (Spring WebClient auf Reactor Netty, #47) mit derselben
-Route je Ziel-URL, demselben Client-Zertifikat und denselben Grenzen. Mit
+Native Seiten-Snapshots laden standardmäßig nicht blockierend über den asynchronen `WebClientConfluenceTransport`
+(Spring WebClient auf Reactor Netty, #47) mit derselben Route je Ziel-URL, demselben Client-Zertifikat und denselben
+Grenzen wie der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters; alle anderen Abrufe
+bleiben vorerst synchron. Rückfall, falls der asynchrone Weg im Unternehmensnetz scheitert:
 
 ```yaml
 space-harvester:
   network:
-    async-transport: web-client   # Standard: disabled
-```
-
-laden native Seiten-Snapshots zusätzlich nicht blockierend darüber (`HarvestSource.storedPageAsync`); alle anderen
-Abrufe bleiben synchron. `disabled` ist der Rückfallpfad. Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+    async-transport: disabled   # Standard: web-client
+``` Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 `--fetch=async` ruft jede Ziel-URL der Diagnose zusätzlich ohne Anmeldung über diesen Transport ab und zeigt nur
 Status und Größe.
 
@@ -247,7 +249,9 @@ space-harvester:
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet, außer unter `/api/compat/confluence`, wo sie den Fehlerkörper von Confluence haben. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
-abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
+abgelehnt), `source-unavailable` (503, nicht erreichbar), `source-rate-limited` (429, die Quelle drosselt auch nach den
+Wiederholungen), `source-object-not-found` (404, auch für Seiten, die das Konto nicht sehen darf) und
+`source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
 
 **Zugriffsschutz:** Alle Pfade unter `/api/**` verlangen `Authorization: Bearer <token>` eines konfigurierten
