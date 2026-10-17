@@ -161,18 +161,26 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     }
 
     /**
-     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist; wartet nie (Nachladen beim Lesen
-     * einer Seite, ADR 0010).
+     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist und die Seite im Cache noch den Stand
+     * hat, den der Aufrufer vor seinem Abruf gesehen hat; wartet nie (Nachladen beim Lesen einer Seite, ADR 0010). So
+     * überschreibt ein spät ankommender Abruf nie einen neueren Stand, den ein Abgleich oder ein anderer Abruf
+     * inzwischen abgelegt hat.
      *
+     * @param expectedRawSha256 {@code rawSha256} der Payload des vorher gelesenen Snapshots oder {@code null}, wenn
+     *                          es keinen gab
      * @return ob gespeichert wurde
      */
-    public boolean trySave(PageSnapshot snapshot) {
+    public boolean trySave(PageSnapshot snapshot, String expectedRawSha256) {
         requireOpen();
         if (!writeLock.tryLock()) {
             return false;
         }
         try {
             if (closed) {
+                return false;
+            }
+            String current = find(snapshot.key()).map(stored -> stored.payload().rawSha256()).orElse(null);
+            if (!Objects.equals(current, expectedRawSha256)) {
                 return false;
             }
             // Die Sperre ist wiedereintrittsfähig: begin() nimmt sie ein zweites Mal, der Lauf gibt sie wieder ab.

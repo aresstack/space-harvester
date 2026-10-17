@@ -283,13 +283,17 @@ class PageQueriesTest {
     private PageSnapshot fetchAnswer;
 
     private final List<PageSnapshot> stored = new ArrayList<>();
+    private final List<String> expectedHashes = new ArrayList<>();
 
     private PageQueries refreshing(AccessPolicy policy) {
         return refreshing(policy, PageCacheFill.NONE);
     }
 
     private PageQueries filling(AccessPolicy policy) {
-        return refreshing(policy, snapshot -> stored.add(snapshot));
+        return refreshing(policy, (snapshot, expected) -> {
+            expectedHashes.add(expected);
+            return stored.add(snapshot);
+        });
     }
 
     private PageQueries refreshing(AccessPolicy policy, PageCacheFill fill) {
@@ -428,6 +432,8 @@ class PageQueriesTest {
         filling(ALLOW_ALL).page(CALLER, "wiki", "p03", true);
 
         assertThat(stored).containsExactly(fetchAnswer);
+        // Nur über den vorher gesehenen Stand, damit ein langsamer Abruf keinen neueren überschreibt.
+        assertThat(expectedHashes).containsExactly(old.payload().rawSha256());
     }
 
     @Test
@@ -435,7 +441,7 @@ class PageQueriesTest {
         PageSnapshot fresh = page("wiki", "DEV", "p77", null);
         when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
         fetchAnswer = fresh;
-        PageQueries queries = refreshing(ALLOW_ALL, snapshot -> {
+        PageQueries queries = refreshing(ALLOW_ALL, (snapshot, expected) -> {
             throw new IllegalStateException("Cache geschlossen");
         });
 

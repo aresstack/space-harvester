@@ -21,8 +21,8 @@ public final class EnrichingCacheFill implements PageCacheFill {
     }
 
     @Override
-    public boolean store(PageSnapshot snapshot) {
-        if (!store.store(snapshot)) {
+    public boolean store(PageSnapshot snapshot, String expectedRawSha256) {
+        if (!store.store(snapshot, expectedRawSha256)) {
             return false;
         }
         try {

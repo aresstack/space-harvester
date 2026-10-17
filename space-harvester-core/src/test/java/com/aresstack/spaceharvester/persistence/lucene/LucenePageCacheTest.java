@@ -124,6 +124,23 @@ class LucenePageCacheTest {
     }
 
     @Test
+    void aLateFillNeverOverwritesANewerStoredRevision() {
+        LucenePageCache cache = open();
+        PageSnapshot v3 = page("wiki", "101", "DEV", "100", "3", json("{\"v\":3}"));
+        PageSnapshot v4 = page("wiki", "101", "DEV", "100", "4", json("{\"v\":4}"));
+
+        // Zwei Abrufe sahen die Seite nicht; der erste legt v4 ab, der langsamere mit v3 kommt zu spät.
+        assertThat(cache.trySave(v4, null)).isTrue();
+        assertThat(cache.trySave(v3, null)).isFalse();
+        assertThat(cache.find(v3.key())).contains(v4);
+
+        // Wer v4 gesehen hat, darf darüber ablegen.
+        PageSnapshot v5 = page("wiki", "101", "DEV", "100", "5", json("{\"v\":5}"));
+        assertThat(cache.trySave(v5, v4.payload().rawSha256())).isTrue();
+        assertThat(cache.find(v3.key())).contains(v5);
+    }
+
+    @Test
     void parentAndSpaceChangeIndependentlyOfThePayload() {
         LucenePageCache cache = open();
         byte[] body = json("{\"id\":\"101\"}");

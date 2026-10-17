@@ -239,7 +239,8 @@ public class PageQueries {
         }
         CacheGeneration generation = cached.map(CachedPage::generation).orElse(null);
         boolean live = checked.cacheStale();
-        if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot())) {
+        String seen = cached.map(page -> page.snapshot().payload().rawSha256()).orElse(null);
+        if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot(), seen)) {
             // Jetzt im Cache: die Auslieferung ist der Cache-Stand, mit der Generation des Space.
             Optional<CachedPage> now = cachedQuietly(checked.header().key());
             if (now.isPresent() && now.get().snapshot().payload().rawSha256()
@@ -252,10 +253,13 @@ public class PageQueries {
                 checked.checkedAt());
     }
 
-    /** Ablegen darf die Auslieferung nie verhindern; misslingt es, legt der nächste Abruf oder Abgleich ab. */
-    private boolean stored(PageSnapshot snapshot) {
+    /**
+     * Ablegen darf die Auslieferung nie verhindern; misslingt es, legt der nächste Abruf oder Abgleich ab. Abgelegt
+     * wird nur über den vorher gesehenen Stand, damit ein langsamer Abruf keinen inzwischen neueren überschreibt.
+     */
+    private boolean stored(PageSnapshot snapshot, String seenRawSha256) {
         try {
-            return fill.store(snapshot);
+            return fill.store(snapshot, seenRawSha256);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Nachgeladene Seite nicht abgelegt ({0})",
                     e.getClass().getName());
