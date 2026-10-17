@@ -12,6 +12,8 @@ import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.io.StringReader;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -74,8 +76,30 @@ public final class AppSettingsLoader {
         if (file == null || !Files.isRegularFile(file)) {
             return read(file, Map.of(), new ArrayList<>());
         }
-        List<String> problems = new ArrayList<>();
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            return parse(file, reader);
+        } catch (IOException e) {
+            List<String> problems = new ArrayList<>();
+            problems.add("Die Konfigurationsdatei ist nicht lesbar: " + file + " (" + e.getClass().getSimpleName() + ")");
+            return read(file, Map.of(), problems);
+        }
+    }
+
+    /**
+     * Liest einen Konfigurationstext, der (noch) nicht in {@code file} steht, z. B. den Entwurf des
+     * Quellen-Assistenten vor dem Speichern.
+     */
+    public AppSettings read(Path file, String text) {
+        try {
+            return parse(file, new StringReader(text));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private AppSettings parse(Path file, Reader reader) throws IOException {
+        List<String> problems = new ArrayList<>();
+        try {
             Object document = yaml().load(reader);
             if (document == null) {
                 return read(file, Map.of(), problems);
@@ -85,9 +109,10 @@ public final class AppSettingsLoader {
                 return read(file, Map.of(), problems);
             }
             return read(file, map, problems);
-        } catch (IOException e) {
-            problems.add("Die Konfigurationsdatei ist nicht lesbar: " + file + " (" + e.getClass().getSimpleName() + ")");
         } catch (YAMLException e) {
+            if (e.getCause() instanceof IOException io) {
+                throw io;
+            }
             // Die Meldung von SnakeYAML zitiert Zeilen der Datei; dort könnten Geheimnisse stehen.
             problems.add("Die Konfigurationsdatei ist kein gültiges YAML: " + file + yamlPosition(e));
         }

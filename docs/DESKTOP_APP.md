@@ -22,8 +22,28 @@ Optionen:
 | `--screenshot <ordner>` | rendert jeden Bereich als PNG und beendet sich (Sichtprüfung) |
 | `--version` | Version ausgeben |
 
-Beim ersten Start ohne Datei zeigt **Einstellungen** „Beispiel anlegen“: Die App legt dann eine kommentierte
-Beispieldatei an und öffnet sie im Standardeditor. Nach dem Speichern **Neu laden** wählen.
+Beim ersten Start ohne Datei führt **Wissensquellen › Quelle hinzufügen …** durch die Einrichtung (siehe
+[Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
+Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
+
+## Quellen-Assistent
+
+**Wissensquellen › Quelle hinzufügen …** legt eine Quelle in der Konfigurationsdatei an:
+
+1. **Art:** Confluence (Data Center/Server) oder lokaler Ordner, dazu ID (Kleinbuchstaben, Ziffern, Bindestrich) und Titel.
+2. **Adresse:** Basis-URL ohne `/rest` bzw. Ordner und Dateimuster.
+3. **Anmeldung** (Confluence): Personal Access Token, Benutzer und Passwort oder ohne. In die Datei kommt nur der
+   Platzhalter der Umgebungsvariable, z. B. `token: ${WIKI_TOKEN}`. Ein hier eingegebener Wert gilt nur für den Test
+   und bis zum Schließen der App.
+4. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher oder als PKCS#12-Datei,
+   jeweils mit Alias (Fingerabdruck optional zur zusätzlichen Prüfung; PKCS#12-Passwort nur als Umgebungsvariable), Vertrauen über ein vorhandenes
+   `spring.ssl.bundle`. Der Proxy gilt für alle Quellen und bleibt in der Datei (`space-harvester.network.proxy`).
+5. **Prüfen und speichern:** Vorschau des Eintrags. **Verbindung testen** startet einen eigenen Harvester nur mit der
+   neuen Quelle in einem leeren Arbeitsordner und lädt die Spaces live; der Bestand der laufenden App bleibt
+   unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources` an, lässt Kommentare und den Rest der Datei
+   unverändert, legt die vorige Fassung als `<datei>.bak` ab und lädt neu.
+
+Ändern oder Entfernen einer Quelle geschieht weiter in der Datei (**Einstellungen › Datei öffnen**).
 
 ## Konfiguration
 
@@ -86,7 +106,7 @@ spring:
 | Bereich | Inhalt |
 |---|---|
 | Übersicht | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge |
-| Wissensquellen | Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
+| Wissensquellen | Quelle hinzufügen (Assistent), Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
 | Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
 | Aktivitäten | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
 | Exporte | Space und Formate wählen, Export starten, letzte Exporte |
@@ -135,6 +155,7 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
+| – | `Harvester.builder` mit nur der neuen Quelle, `SourceQueries.partitions` | Wissensquellen › Quelle hinzufügen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
 | – | – | Konfiguration, Platzhalter, fehlende Zugangsdaten | `AppSettingsLoaderTest`, `PlaceholdersTest`, `WorkspaceTest.aSourceWithoutToken…` |
 | – | Auftragsliste der App | Aktivitäten nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
 

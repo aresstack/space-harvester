@@ -65,8 +65,8 @@ public final class OverviewView implements View {
                     + ". Details unter Einstellungen.", AppContext.Section.SETTINGS, "Zu den Einstellungen");
         } else {
             if (context.settings().sources().isEmpty()) {
-                note("Noch keine Wissensquelle eingerichtet. Unter Einstellungen „Beispiel anlegen“ wählen, die Datei "
-                        + "anpassen und neu laden.", AppContext.Section.SETTINGS, "Zu den Einstellungen");
+                note("Noch keine Wissensquelle eingerichtet. Unter Wissensquellen führt „Quelle hinzufügen …“ durch die "
+                        + "Einrichtung.", AppContext.Section.SOURCES, "Zu den Wissensquellen");
             }
             if (!context.settings().problems().isEmpty()) {
                 note(Texts.count(context.settings().problems().size(), "Hinweis", "Hinweise")

@@ -77,6 +77,10 @@ public final class AppContext {
         this.version = version;
     }
 
+    public AppSettingsLoader loader() {
+        return loader;
+    }
+
     public Path configFile() {
         return configFile;
     }
