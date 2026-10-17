@@ -15,12 +15,18 @@ import java.util.regex.Pattern;
  * Wörter das Akronym ergeben, z. B. {@code Application Programming Interface (API)} oder
  * {@code API (Application Programming Interface)}.
  *
- * <p>Ergebnis {@code {"acronyms":[{"acronym","count","expansion","section","charStart"}]}}, aufsteigend nach
- * Akronym, höchstens {@value #MAX_ACRONYMS} Einträge.
+ * <p>Ergebnis {@code {"acronyms":[{"acronym","count","expansion","section","charStart","occurrences":[{"start",
+ * "end"}]}]}}, aufsteigend nach Akronym, höchstens {@value #MAX_ACRONYMS} Einträge. {@code charStart} ist die erste
+ * Fundstelle, {@code occurrences} (seit Version 2, #115) nennt jede Fundstelle in Textreihenfolge; {@code end} schließt
+ * ein Plural-{@code s} ein. Alle Positionen sind Zeichenpositionen (UTF-16 wie {@link String#substring}) in
+ * {@link PageText#text()} derselben Eingabe ({@code inputSha256} des Ergebnisses). Über alle Akronyme zusammen werden
+ * nur die ersten {@value #MAX_OCCURRENCES} Fundstellen im Text behalten und geschrieben; {@code count} zählt weiter
+ * alle Vorkommen, eine Warnung nennt die Kürzung. Gelesen wird das Ergebnis mit {@link PageAcronyms}.
  */
 public class AcronymProcessor implements EnrichmentProcessor {
 
     static final int MAX_ACRONYMS = 500;
+    static final int MAX_OCCURRENCES = 5000;
 
     private static final Pattern ACRONYM = Pattern.compile(
             "(?<![\\p{L}\\p{N}])(\\p{Lu}[\\p{Lu}\\p{N}]{1,9})(s?)(?![\\p{L}\\p{N}])");
@@ -34,12 +40,14 @@ public class AcronymProcessor implements EnrichmentProcessor {
 
     @Override
     public String version() {
-        return "1";
+        return "2";
     }
 
     @Override
     public EnrichmentOutput process(PageText text) {
         Map<String, Found> found = new TreeMap<>();
+        int retained = 0;
+        boolean truncated = false;
         Matcher matcher = ACRONYM.matcher(text.text());
         while (matcher.find()) {
             String acronym = matcher.group(1);
@@ -48,6 +56,13 @@ public class AcronymProcessor implements EnrichmentProcessor {
             }
             Found entry = found.computeIfAbsent(acronym, key -> new Found(matcher.start()));
             entry.count++;
+            // Nur so viele Fundstellen behalten, wie geschrieben werden; gezählt wird weiter alles.
+            if (retained < MAX_OCCURRENCES) {
+                entry.occurrences.add(new int[] {matcher.start(), matcher.end()});
+                retained++;
+            } else {
+                truncated = true;
+            }
             if (entry.expansion == null) {
                 entry.expansion = expansion(text.text(), acronym, matcher.start(), matcher.end());
             }
@@ -67,7 +82,16 @@ public class AcronymProcessor implements EnrichmentProcessor {
                     .append(",\"count\":").append(value.count)
                     .append(",\"expansion\":").append(value.expansion == null ? "null" : JsonText.quote(value.expansion))
                     .append(",\"section\":").append(section == null ? "null" : JsonText.quote(section.heading()))
-                    .append(",\"charStart\":").append(value.firstOffset).append('}');
+                    .append(",\"charStart\":").append(value.firstOffset).append(",\"occurrences\":[");
+            for (int i = 0; i < value.occurrences.size(); i++) {
+                int[] occurrence = value.occurrences.get(i);
+                json.append(i == 0 ? "" : ",").append("{\"start\":").append(occurrence[0])
+                        .append(",\"end\":").append(occurrence[1]).append('}');
+            }
+            json.append("]}");
+        }
+        if (truncated) {
+            warnings.add("Fundstellen nur für die ersten " + MAX_OCCURRENCES + " Vorkommen im Text");
         }
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
@@ -123,6 +147,7 @@ public class AcronymProcessor implements EnrichmentProcessor {
     private static final class Found {
 
         final int firstOffset;
+        final List<int[]> occurrences = new ArrayList<>();
         int count;
         String expansion;
 

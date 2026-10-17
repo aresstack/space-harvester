@@ -12,14 +12,17 @@ import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotWarning;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -28,14 +31,16 @@ import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
+import javax.swing.KeyStroke;
+import javax.swing.ToolTipManager;
 import javax.swing.table.AbstractTableModel;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.SimpleAttributeSet;
-import javax.swing.text.StyleConstants;
-import javax.swing.text.StyledDocument;
 import java.awt.BorderLayout;
 import java.awt.Desktop;
 import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.Point;
+import java.awt.event.ActionEvent;
+import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -46,7 +51,9 @@ import java.util.Optional;
 
 /**
  * Eine Seite: lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
- * Eigenschaften, Anhänge, Analyse-Ergebnisse, Originaldaten und technische Details in getrennten Reitern.
+ * Eigenschaften, Anhänge, Analyse-Ergebnisse, Originaldaten und technische Details in getrennten Reitern. Im Lesetext
+ * sind die Akronyme markiert, die die Core-Analyse {@code acronyms} für genau diesen Text liefert ({@link PageAcronyms},
+ * #115); Tooltip, Cursor und Alt+→/Alt+← zeigen ihre Ausschreibung.
  */
 public final class PageDetailPanel extends JPanel {
 
@@ -62,7 +69,16 @@ public final class PageDetailPanel extends JPanel {
     private final JLabel path = Comic.muted(" ");
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
-    private final JTextPane reader = new JTextPane();
+    private final JTextPane reader = new JTextPane() {
+        @Override
+        public String getToolTipText(MouseEvent event) {
+            return acronymTooltip(event.getPoint());
+        }
+    };
+    private final JLabel acronymHint = Comic.muted(" ");
+    private final JLabel acronymDetail = Comic.muted(" ");
+    private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
+            "Berechnet die Analysen dieser Seite neu und aktualisiert die Markierungen");
     private final Facts properties = new Facts();
     private final Facts technical = new Facts();
     private final JTextArea raw = Comic.code();
@@ -88,6 +104,9 @@ public final class PageDetailPanel extends JPanel {
     private DeliveredPage page;
     private boolean assetsLoaded;
     private List<Enrichments.View> views = List.of();
+    private ReaderDocument shown;
+    /** Zählt Lade- und Neuberechnungsaufträge; nur das Ergebnis des letzten wird angezeigt. */
+    private int request;
 
     public PageDetailPanel(AppContext context) {
         super(new BorderLayout(0, 8));
@@ -100,6 +119,22 @@ public final class PageDetailPanel extends JPanel {
         reader.setEditable(false);
         reader.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
         reader.setFont(Comic.regular(13.5f));
+        reader.getCaret().setVisible(true);
+        ToolTipManager.sharedInstance().registerComponent(reader);
+        reader.addCaretListener(e -> showAcronymAt(Math.min(e.getDot(), e.getMark())));
+        bind("alt RIGHT", "nextAcronym", true);
+        bind("alt LEFT", "previousAcronym", false);
+        acronymDetail.setForeground(Comic.INK);
+
+        JPanel readerPanel = new JPanel(new BorderLayout(0, 6));
+        readerPanel.setOpaque(false);
+        JPanel acronymBar = new JPanel(new BorderLayout(8, 0));
+        acronymBar.setOpaque(false);
+        acronymBar.add(acronymHint, BorderLayout.CENTER);
+        acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
+        readerPanel.add(acronymBar, BorderLayout.NORTH);
+        readerPanel.add(Comic.scroll(reader), BorderLayout.CENTER);
+        readerPanel.add(acronymDetail, BorderLayout.SOUTH);
 
         JPanel attachmentsPanel = new JPanel(new BorderLayout(0, 6));
         attachmentsPanel.setOpaque(false);
@@ -120,7 +155,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab("Payload", Comic.scroll(raw))
                 .tab("Storage-Format", Comic.scroll(storage));
 
-        tabs.tab(READ, Comic.scroll(reader))
+        tabs.tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ANALYSIS, analysis)
@@ -138,6 +173,7 @@ public final class PageDetailPanel extends JPanel {
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         recompute.addActionListener(e -> recompute());
+        recomputeReader.addActionListener(e -> recompute());
 
         JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
@@ -166,19 +202,25 @@ public final class PageDetailPanel extends JPanel {
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
+        int current = ++request;
+        showReader(null, false);
+        acronymHint.setText(" ");
         assetsModel.set(null);
         title.setText("Seite " + pageId);
         path.setText(sourceId);
         state.setText(" ");
         feedback.working(refresh ? "Seite wird mit der Quelle verglichen …" : "Seite wird geladen …");
         setActionsEnabled(false);
+        Font font = reader.getFont();
         Background.run(() -> {
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
-            return new Loaded(delivered, runtime.workspace().enrichments(delivered), project(delivered.snapshot()),
+            List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
+            PageText text = project(delivered.snapshot());
+            return new Loaded(delivered, enrichments, document(sourceId, pageId, enrichments, text, font),
                     Payloads.display(delivered.snapshot().payload()),
                     Payloads.storage(delivered.snapshot().payload()).orElse(null));
         }, loaded -> {
-            if (!pageId.equals(this.pageId)) {
+            if (current != request) {
                 return;
             }
             show(loaded);
@@ -186,8 +228,12 @@ public final class PageDetailPanel extends JPanel {
                 loadAssets(false);
             }
         }, error -> {
+            if (current != request) {
+                return;
+            }
             feedback.problem(error);
             page = null;
+            acronymHint.setText(" ");
         });
     }
 
@@ -228,7 +274,7 @@ public final class PageDetailPanel extends JPanel {
             }
         }
 
-        showReader(loaded.text());
+        showReader(loaded.reader(), page.live());
         raw.setText(loaded.display());
         raw.setCaretPosition(0);
         storage.setText(loaded.storage() == null ? "Diese Payload hat kein body.storage." : loaded.storage());
@@ -273,28 +319,66 @@ public final class PageDetailPanel extends JPanel {
         browse.setEnabled(metadata.url() != null && Desktop.isDesktopSupported());
     }
 
-    private void showReader(PageText text) {
-        reader.setText("");
-        StyledDocument doc = reader.getStyledDocument();
-        try {
-            if (text == null) {
-                doc.insertString(0, "Für dieses Format gibt es keine Lesevorschau. Die Originaldaten zeigen den "
-                        + "vollständigen Inhalt.", null);
-                return;
-            }
-            doc.insertString(0, text.text(), null);
-            for (PageText.Section section : text.sections()) {
-                SimpleAttributeSet heading = new SimpleAttributeSet();
-                StyleConstants.setBold(heading, true);
-                StyleConstants.setFontSize(heading, Math.max(14, 22 - 2 * section.level()));
-                StyleConstants.setForeground(heading, Comic.INK);
-                doc.setCharacterAttributes(section.start(), Math.min(section.heading().length(),
-                        doc.getLength() - section.start()), heading, false);
-            }
-        } catch (BadLocationException e) {
-            // Abschnittsgrenzen stammen aus demselben Text; tritt nicht auf.
+    /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
+    private void showReader(ReaderDocument document, boolean live) {
+        shown = document;
+        acronymDetail.setText(" ");
+        if (document == null) {
+            reader.setText("");
+            recomputeReader.setVisible(false);
+            return;
         }
+        reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
+        acronymHint.setText(document.hint(live));
+        recomputeReader.setVisible(document.text() != null && !live
+                && document.acronyms().state() != PageAcronyms.State.CURRENT);
+    }
+
+    /** Baut den Lesetext mit den Akronymen der Seite {@code sourceId}/{@code pageId}; außerhalb des EDT. */
+    private static ReaderDocument document(String sourceId, String pageId, List<Enrichments.View> views, PageText text,
+                                           Font font) {
+        return ReaderDocument.build(text, PageAcronyms.read(new PageKey(sourceId, pageId), views, text), font);
+    }
+
+    private String acronymTooltip(Point point) {
+        ReaderDocument document = shown;
+        if (document == null) {
+            return null;
+        }
+        int offset = reader.viewToModel2D(point);
+        PageAcronyms.Mark mark = offset < 0 ? null : document.markAt(offset);
+        return mark == null ? null : ReaderDocument.tooltip(mark.acronym());
+    }
+
+    private void showAcronymAt(int offset) {
+        ReaderDocument document = shown;
+        PageAcronyms.Mark mark = document == null ? null : document.markAt(offset);
+        acronymDetail.setText(mark == null ? " " : ReaderDocument.detail(mark.acronym()));
+    }
+
+    private void bind(String key, String name, boolean forward) {
+        reader.getInputMap().put(KeyStroke.getKeyStroke(key), name);
+        reader.getActionMap().put(name, new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                jumpToAcronym(forward);
+            }
+        });
+    }
+
+    /** Markiert die nächste bzw. vorige Fundstelle und zeigt ihre Ausschreibung. */
+    void jumpToAcronym(boolean forward) {
+        ReaderDocument document = shown;
+        if (document == null) {
+            return;
+        }
+        int caret = Math.min(reader.getCaret().getDot(), reader.getCaret().getMark());
+        PageAcronyms.Mark mark = forward ? document.next(caret) : document.previous(caret);
+        if (mark != null) {
+            reader.select(mark.occurrence().start(), mark.occurrence().end());
+            showAcronymAt(mark.occurrence().start());
+        }
     }
 
     private static PageText project(PageSnapshot snapshot) {
@@ -411,24 +495,34 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
-    private void recompute() {
+    void recompute() {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
             return;
         }
         String source = sourceId;
         String id = pageId;
+        PageText text = shown == null ? null : shown.text();
+        boolean live = page.live();
+        Font font = reader.getFont();
+        int current = ++request;
         feedback.working("Analysen werden berechnet …");
         Background.run(() -> {
             Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null);
-            DeliveredPage current = runtime.workspace().page(source, id, false);
-            return new Object[] {run, runtime.workspace().enrichments(current)};
+            DeliveredPage cached = runtime.workspace().page(source, id, false);
+            List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
+            return new Recomputed(run, updated, document(source, id, updated, text, font));
         }, result -> {
-            Enrichments.Run run = (Enrichments.Run) result[0];
-            @SuppressWarnings("unchecked")
-            List<Enrichments.View> updated = (List<Enrichments.View>) result[1];
-            views = updated;
-            enrichmentModel.set(updated);
+            if (current != request) {
+                return;
+            }
+            Enrichments.Run run = result.run();
+            views = result.views();
+            enrichmentModel.set(views);
+            enrichmentResult.setText("");
+            int caret = reader.getCaretPosition();
+            showReader(result.reader(), live);
+            reader.setCaretPosition(Math.min(caret, reader.getDocument().getLength()));
             if (!run.supported()) {
                 feedback.info("Keine Analysen für dieses Format", null);
             } else if (run.failed() > 0) {
@@ -437,7 +531,11 @@ public final class PageDetailPanel extends JPanel {
             } else {
                 feedback.success(run.computed() + " Analysen berechnet");
             }
-        }, feedback::problem);
+        }, error -> {
+            if (current == request) {
+                feedback.problem(error);
+            }
+        });
     }
 
     private void showEnrichment() {
@@ -465,6 +563,24 @@ public final class PageDetailPanel extends JPanel {
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         recompute.setEnabled(enabled);
+        recomputeReader.setEnabled(enabled);
+    }
+
+    /** Für Tests: der angezeigte Lesetext oder {@code null} während des Ladens. */
+    ReaderDocument readerDocument() {
+        return shown;
+    }
+
+    JTextPane reader() {
+        return reader;
+    }
+
+    String acronymHint() {
+        return acronymHint.getText();
+    }
+
+    String acronymDetail() {
+        return acronymDetail.getText();
     }
 
     private static JPanel padded(JComponent content) {
@@ -480,8 +596,11 @@ public final class PageDetailPanel extends JPanel {
         return name.isEmpty() ? "seite" : name.length() > 120 ? name.substring(0, 120) : name;
     }
 
-    private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, PageText text, String display,
-                          String storage) {
+    private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
+                          String display, String storage) {
+    }
+
+    private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {
     }
 
     private static final class AssetsModel extends AbstractTableModel {

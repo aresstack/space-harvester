@@ -93,7 +93,7 @@ class EnrichmentApiTest {
                 .containsExactly("acronyms", "activities", "entities", "outline", "properties", "relations");
         JsonNode acronyms = enrichments.get(0);
         assertThat(acronyms.get("processor").asString()).isEqualTo("acronyms");
-        assertThat(acronyms.get("processorVersion").asString()).isEqualTo("1");
+        assertThat(acronyms.get("processorVersion").asString()).isEqualTo("2");
         assertThat(acronyms.get("status").asString()).isEqualTo("ok");
         assertThat(acronyms.get("freshness").asString()).isEqualTo("current");
         assertThat(acronyms.get("inputSha256").asString()).startsWith("sha256:");
@@ -101,6 +101,10 @@ class EnrichmentApiTest {
         assertThat(acronyms.get("result").get("acronyms").get(0).get("expansion").asString())
                 .isEqualTo("Application Programming Interface");
         assertThat(acronyms.get("result").get("acronyms").get(0).get("section").asString()).isEqualTo("Ziele");
+        // Version 2 (#115): bisherige Felder unverändert, dazu jede Fundstelle
+        JsonNode api = acronyms.get("result").get("acronyms").get(0);
+        assertThat(api.get("charStart").asInt()).isEqualTo(api.get("occurrences").get(0).get("start").asInt());
+        assertThat(api.get("occurrences").get(0).get("end").asInt() - api.get("charStart").asInt()).isEqualTo(3);
         assertThat(enrichments.get(2).get("result").get("entities").get(0).get("term").asString())
                 .isEqualTo("API");
         assertThat(enrichments.get(3).get("result").get("sections").get(0).get("heading").asString())
