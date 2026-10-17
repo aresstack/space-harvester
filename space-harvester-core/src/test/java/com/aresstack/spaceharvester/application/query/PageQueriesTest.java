@@ -282,7 +282,17 @@ class PageQueriesTest {
     private final List<String> fetched = new ArrayList<>();
     private PageSnapshot fetchAnswer;
 
+    private final List<PageSnapshot> stored = new ArrayList<>();
+
     private PageQueries refreshing(AccessPolicy policy) {
+        return refreshing(policy, PageCacheFill.NONE);
+    }
+
+    private PageQueries filling(AccessPolicy policy) {
+        return refreshing(policy, snapshot -> stored.add(snapshot));
+    }
+
+    private PageQueries refreshing(AccessPolicy policy, PageCacheFill fill) {
         when(live.id()).thenReturn("wiki");
         SourceCatalog catalog = new SourceCatalog() {
             @Override
@@ -302,7 +312,7 @@ class PageQueriesTest {
             }
             return fetchAnswer;
         }, CLOCK);
-        return new PageQueries(catalog, cache, new AccessGuard(policy), freshness, 1000);
+        return new PageQueries(catalog, cache, new AccessGuard(policy), freshness, fill, 1000);
     }
 
     private static PageMetadata version(PageSnapshot page, String space, String version) {
@@ -356,6 +366,86 @@ class PageQueriesTest {
         assertThat(page.live()).isTrue();
         assertThat(page.generation()).isNull();
         assertThat(page.snapshot()).isSameAs(fresh);
+    }
+
+    @Test
+    void aPageMissingInTheCacheIsLoadedStoredAndDeliveredWithoutRefresh() {
+        PageSnapshot fresh = page("wiki", "DEV", "p77", null);
+        when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+
+        DeliveredPage page = filling(ALLOW_ALL).page(CALLER, "wiki", "p77", false);
+
+        assertThat(page.snapshot()).isSameAs(fresh);
+        assertThat(page.refresh()).isEqualTo(PageFreshness.Outcome.CONTENT_CHANGED);
+        assertThat(fetched).containsExactly("p77");
+        assertThat(stored).containsExactly(fresh);
+    }
+
+    @Test
+    void aMissingPageTheCallerMayNotReadIsNeverFetched() {
+        PageSnapshot fresh = page("wiki", "OPS", "p77", null);
+        when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+        AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY;
+
+        assertThatThrownBy(() -> filling(devOnly).page(CALLER, "wiki", "p77", false))
+                .isInstanceOf(CacheMissException.class);
+        // Rechte an den Metadaten zuerst: kein Inhaltsabruf, nichts abgelegt.
+        assertThat(fetched).isEmpty();
+        assertThat(stored).isEmpty();
+    }
+
+    @Test
+    void aCachedPageTheCallerMayNotReadIsNotFetchedEither() {
+        cache.publish("wiki", "OPS", confirmed("g1"), List.of(page("wiki", "OPS", "p90", null)));
+        AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY;
+
+        assertThatThrownBy(() -> filling(devOnly).page(CALLER, "wiki", "p90", false))
+                .isInstanceOf(CacheMissException.class);
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void anUnreachableSourceIsReportedForAMissingPageNotHiddenAsAMiss() {
+        when(live.pageMetadata("p77")).thenThrow(
+                new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "aus", null));
+
+        assertThatThrownBy(() -> filling(ALLOW_ALL).page(CALLER, "wiki", "p77", false))
+                .isInstanceOf(SourceAccessException.class);
+        assertThat(stored).isEmpty();
+    }
+
+    @Test
+    void refreshStoresANewRevision() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot old = page("wiki", "DEV", "p03", "p01");
+        when(live.pageMetadata("p03")).thenReturn(version(old, "DEV", "4"));
+        fetchAnswer = page("wiki", "DEV", "p03", "p01", "{\"v\":4}".getBytes(StandardCharsets.UTF_8));
+
+        filling(ALLOW_ALL).page(CALLER, "wiki", "p03", true);
+
+        assertThat(stored).containsExactly(fetchAnswer);
+    }
+
+    @Test
+    void aFailingStoreStillDeliversThePage() {
+        PageSnapshot fresh = page("wiki", "DEV", "p77", null);
+        when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+        PageQueries queries = refreshing(ALLOW_ALL, snapshot -> {
+            throw new IllegalStateException("Cache geschlossen");
+        });
+
+        assertThat(queries.page(CALLER, "wiki", "p77", false).snapshot()).isSameAs(fresh);
+    }
+
+    @Test
+    void withoutContentFetchAMissingPageStaysAMiss() {
+        assertThatThrownBy(() -> new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), NO_REFRESH, 1000)
+                .page(CALLER, "wiki", "p77", false)).isInstanceOf(CacheMissException.class);
     }
 
     @Test

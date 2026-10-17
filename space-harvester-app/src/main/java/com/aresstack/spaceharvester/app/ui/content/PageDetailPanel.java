@@ -8,12 +8,14 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Facts;
 import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
+import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -50,8 +52,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Eine Seite: lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
- * Eigenschaften, Anhänge, Analyse-Ergebnisse, Originaldaten und technische Details in getrennten Reitern. Im Lesetext
+ * Eine Seite: zuerst ihr lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
+ * daneben Eigenschaften und Anhänge; Analyse, Originaldaten, technische Angaben und die Aktionen dazu liegen unter
+ * „Erweitert“. Ohne gewählte Seite steht dort nur ein Hinweis. Fehlt die Seite im lokalen Bestand, lädt sie live aus
+ * der Quelle, ohne dass der Bediener etwas tun muss. Im Lesetext
  * sind die Akronyme markiert, die die Core-Analyse {@code acronyms} für genau diesen Text liefert ({@link PageAcronyms},
  * #115); Tooltip, Cursor und Alt+→/Alt+← zeigen ihre Ausschreibung.
  */
@@ -60,12 +64,18 @@ public final class PageDetailPanel extends JPanel {
     private static final String READ = "Inhalt";
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
+    private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
-    private static final String TECHNICAL = "Technik";
+    private static final String TECHNICAL = "Technische Angaben";
+    private static final String EMPTY = "empty";
+    private static final String PAGE = "page";
 
     private final AppContext context;
-    private final JLabel title = new JLabel("Keine Seite gewählt");
+    private final JLabel title = new JLabel(" ");
+    private final java.awt.CardLayout cards = new java.awt.CardLayout();
+    private final JPanel deck = new JPanel(cards);
+    private final JLabel empty = Comic.muted("Wähle links eine Seite aus, um ihren Inhalt zu lesen.");
     private final JLabel path = Comic.muted(" ");
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
@@ -93,7 +103,7 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton refresh = Comic.button("Aktualität prüfen",
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
-    private final ComposerButton browse = Comic.button("In der Quelle öffnen", "Öffnet die Seite im Browser");
+    private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
             "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
@@ -154,13 +164,19 @@ public final class PageDetailPanel extends JPanel {
         PillTabs rawTabs = new PillTabs()
                 .tab("Payload", Comic.scroll(raw))
                 .tab("Storage-Format", Comic.scroll(storage));
+        PillTabs advancedTabs = new PillTabs()
+                .tab(TECHNICAL, Comic.scroll(padded(technical)))
+                .tab(ANALYSIS, analysis)
+                .tab(RAW, rawTabs);
+        JPanel advanced = new JPanel(new BorderLayout(0, 8));
+        advanced.setOpaque(false);
+        advanced.add(Comic.row(refresh, saveRaw), BorderLayout.NORTH);
+        advanced.add(advancedTabs, BorderLayout.CENTER);
 
         tabs.tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
-                .tab(ANALYSIS, analysis)
-                .tab(RAW, rawTabs)
-                .tab(TECHNICAL, Comic.scroll(padded(technical)));
+                .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
                 loadAssets(false);
@@ -182,17 +198,61 @@ public final class PageDetailPanel extends JPanel {
         lines.add(title, BorderLayout.NORTH);
         lines.add(path, BorderLayout.CENTER);
         lines.add(state, BorderLayout.SOUTH);
-        header.add(lines, BorderLayout.NORTH);
-        header.add(Comic.row(refresh, saveRaw, browse), BorderLayout.CENTER);
+        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
+        titleRow.setOpaque(false);
+        titleRow.add(lines, BorderLayout.CENTER);
+        titleRow.add(Comic.row(browse), BorderLayout.EAST);
+        header.add(titleRow, BorderLayout.NORTH);
         header.add(feedback, BorderLayout.SOUTH);
-        add(header, BorderLayout.NORTH);
-        add(tabs, BorderLayout.CENTER);
-        setActionsEnabled(false);
+        JPanel page = new JPanel(new BorderLayout(0, 8));
+        page.setOpaque(false);
+        page.add(header, BorderLayout.NORTH);
+        page.add(tabs, BorderLayout.CENTER);
+        empty.setHorizontalAlignment(JLabel.CENTER);
+        empty.setFont(Comic.regular(14f));
+        deck.setOpaque(false);
+        deck.add(empty, EMPTY);
+        deck.add(page, PAGE);
+        add(deck, BorderLayout.CENTER);
+        clear();
     }
 
     /**
-     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; mit {@code refresh} wird sie live geprüft und, wenn sie
-     * fehlt oder neuer ist, live geladen (der Bestand ändert sich erst beim nächsten Abgleich).
+     * Keine Seite gewählt (z. B. nach dem Wechsel von Quelle oder Space): leert alles und verwirft laufende Lade- und
+     * Neuberechnungsaufträge, damit keine Seite einer anderen Quelle nachträglich erscheint.
+     */
+    public void clear() {
+        request++;
+        sourceId = null;
+        pageId = null;
+        page = null;
+        assetsLoaded = false;
+        views = List.of();
+        showReader(null, false);
+        acronymHint.setText(" ");
+        assetsModel.set(null);
+        enrichmentModel.set(List.of());
+        properties.reset();
+        technical.reset();
+        raw.setText("");
+        storage.setText("");
+        title.setText(" ");
+        path.setText(" ");
+        state.setText(" ");
+        feedback.clear();
+        setActionsEnabled(false);
+        cards.show(deck, EMPTY);
+    }
+
+    /** Ob gerade keine Seite angezeigt oder geladen wird. */
+    public boolean isEmpty() {
+        return pageId == null;
+    }
+
+    /**
+     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand und, wenn sie dort fehlt, live aus der Quelle; mit
+     * {@code refresh} wird sie live geprüft und, wenn sie fehlt oder neuer ist, live geladen. Der Bestand ändert sich
+     * dabei nicht ({@link #deliver}).
      */
     public void load(String sourceId, String pageId, boolean refresh) {
         AppRuntime runtime = context.runtime();
@@ -202,23 +262,29 @@ public final class PageDetailPanel extends JPanel {
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
+        this.page = null;
         int current = ++request;
+        cards.show(deck, PAGE);
         showReader(null, false);
         acronymHint.setText(" ");
         assetsModel.set(null);
         title.setText("Seite " + pageId);
         path.setText(sourceId);
         state.setText(" ");
+        properties.reset();
+        technical.reset();
+        raw.setText("");
+        storage.setText("");
         feedback.working(refresh ? "Seite wird mit der Quelle verglichen …" : "Seite wird geladen …");
         setActionsEnabled(false);
         Font font = reader.getFont();
         Background.run(() -> {
-            DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
+            DeliveredPage delivered = deliver(runtime, sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
             PageText text = project(delivered.snapshot());
             return new Loaded(delivered, enrichments, document(sourceId, pageId, enrichments, text, font),
                     Payloads.display(delivered.snapshot().payload()),
-                    Payloads.storage(delivered.snapshot().payload()).orElse(null));
+                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh);
         }, loaded -> {
             if (current != request) {
                 return;
@@ -231,10 +297,26 @@ public final class PageDetailPanel extends JPanel {
             if (current != request) {
                 return;
             }
-            feedback.problem(error);
+            feedback.problem(error, Problems.Step.PAGE);
             page = null;
             acronymHint.setText(" ");
         });
+    }
+
+    /**
+     * Die Seite aus dem Bestand, und fehlt sie dort, live aus der Quelle ({@code refresh}); nie eine Fehlermeldung nur
+     * weil der Bestand leer ist. Der Bestand ändert sich dabei nicht: das übernimmt der Abgleich bzw. der Core, sobald
+     * der Seitenabruf selbst nachlädt und speichert; dann genügt hier der erste Aufruf.
+     */
+    static DeliveredPage deliver(AppRuntime runtime, String sourceId, String pageId, boolean refresh) {
+        if (refresh) {
+            return runtime.workspace().page(sourceId, pageId, true);
+        }
+        try {
+            return runtime.workspace().page(sourceId, pageId, false);
+        } catch (CacheMissException e) {
+            return runtime.workspace().page(sourceId, pageId, true);
+        }
     }
 
     /** Lädt eine Seite über ihre Quell-URL (enthält die Seiten-ID). */
@@ -243,11 +325,13 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null) {
             return;
         }
+        cards.show(deck, PAGE);
         feedback.working("Seite zur Adresse wird gesucht …");
         Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, false),
                 found -> load(sourceId, found.header().key().pageId(), false),
                 error -> Background.run(() -> runtime.workspace().pageByUrl(sourceId, url, true),
-                        found -> load(sourceId, found.header().key().pageId(), true), feedback::problem));
+                        found -> load(sourceId, found.header().key().pageId(), true),
+                        e -> feedback.problem(e, Problems.Step.PAGE)));
     }
 
     private void show(Loaded loaded) {
@@ -259,9 +343,9 @@ public final class PageDetailPanel extends JPanel {
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
                 + (metadata.version() == null ? "" : " · Version " + metadata.version()));
         state.setText(origin(page));
-        state.setForeground(page.live() ? Comic.ORANGE : Comic.TEXT);
+        state.setForeground(Comic.TEXT);
         feedback.clear();
-        if (page.refresh() != null) {
+        if (page.refresh() != null && loaded.checked()) {
             switch (page.refresh()) {
                 case CURRENT -> feedback.success("Aktuell: Bestand und Quelle stimmen überein");
                 case HEADER_CHANGED -> feedback.info("Kopfdaten geändert",
@@ -391,9 +475,9 @@ public final class PageDetailPanel extends JPanel {
 
     private static String origin(DeliveredPage page) {
         if (page.live()) {
-            return "Live aus der Quelle geladen (nicht im Bestand oder neuer)";
+            return "Live aus der Quelle";
         }
-        return "Aus dem Bestand · " + Texts.generation(page.generation());
+        return "Aus dem lokalen Bestand · " + Texts.generation(page.generation());
     }
 
     private void loadAssets(boolean force) {
@@ -405,8 +489,10 @@ public final class PageDetailPanel extends JPanel {
         assetsHint.setText("Anhänge werden live geladen …");
         String source = sourceId;
         String id = pageId;
+        // Eigene Gültigkeit statt request: Eine Neuberechnung der Analysen verwirft die Anhangsliste nicht.
+        DeliveredPage shown = page;
         Background.run(() -> runtime.workspace().assets(source, id), overview -> {
-            if (!id.equals(pageId)) {
+            if (shown != page) {
                 return;
             }
             assetsModel.set(overview);
@@ -414,6 +500,9 @@ public final class PageDetailPanel extends JPanel {
                     + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
                     + Texts.time(overview.retrievedAt()));
         }, error -> {
+            if (shown != page) {
+                return;
+            }
             assetsLoaded = false;
             assetsHint.setText("Anhänge nicht geladen: " + com.aresstack.spaceharvester.app.ui.Problems
                     .describe(error).title());
@@ -566,6 +655,16 @@ public final class PageDetailPanel extends JPanel {
         recomputeReader.setEnabled(enabled);
     }
 
+    /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */
+    DeliveredPage shownPage() {
+        return page;
+    }
+
+    /** Für Tests: die Rückmeldung über der Seite. */
+    Feedback feedback() {
+        return feedback;
+    }
+
     /** Für Tests: der angezeigte Lesetext oder {@code null} während des Ladens. */
     ReaderDocument readerDocument() {
         return shown;
@@ -596,8 +695,9 @@ public final class PageDetailPanel extends JPanel {
         return name.isEmpty() ? "seite" : name.length() > 120 ? name.substring(0, 120) : name;
     }
 
+    /** @param checked ob der Bediener ausdrücklich „Aktualität prüfen“ gewählt hat */
     private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
-                          String display, String storage) {
+                          String display, String storage, boolean checked) {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {

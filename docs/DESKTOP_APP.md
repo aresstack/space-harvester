@@ -177,7 +177,7 @@ spring:
 |---|---|
 | Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Quellen …“ beschränkt sie auf ausgewählte Quellen, „Weitere laden“ blättert weiter |
 | Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten, entfernen, weitere Aktionen: Assistent, Zugangsdaten für die Sitzung); rechts die Spaces mit Filter, Öffnen, Abgleich und Export, darunter die Einstellungen ohne Geheimnisse: Anzeigename, Adresse und Ordner direkt mit dem Stift (Enter übernimmt, Escape verwirft), Token oder Passwort per Dialog (unter Windows verschlüsselt gespeichert), Anmeldung, Zertifikat, Vertrauen und Proxy im Assistenten auf der passenden Seite; eingeklappt die technischen Fähigkeiten |
-| Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
+| Inhalte | Wissensquelle → Space → Seiten → Seiteninhalt (siehe „Inhalte“ unten): Seiten sofort nach der Space-Wahl, aus dem Bestand oder ohne Bestand live, Liste oder Seitenbaum, Suchfeld; eine gewählte Seite lädt sofort; „Space synchronisieren“ übernimmt den Space in den Bestand; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen und Erweitert (Technische Angaben, Analyse, Originaldaten, Aktualität prüfen, Original speichern) |
 | Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
 | Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
 | Status | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge; ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
@@ -217,7 +217,7 @@ Textprojektion (`confluence-storage-text/v1`), aus der der Lesetext gebaut wird.
 - Der Lesetext entsteht samt Markierungen im Hintergrund; beim Seitenwechsel wird er sofort geleert, und nur das
   Ergebnis des letzten Lade- oder Neuberechnungsauftrags erscheint. Der Prozessor schreibt höchstens 5000
   Fundstellen je Seite (Warnung in der Zeile), die Zählung bleibt vollständig.
-- Der Reiter „Analyse“ zeigt das JSON unverändert; `GET …/pages/{pageId}?view=extended` liefert dasselbe Ergebnis.
+- Erweitert › „Analyse“ zeigt das JSON unverändert; `GET …/pages/{pageId}?view=extended` liefert dasselbe Ergebnis.
 
 **Sichtprüfung unter Windows:** Eine Seite mit „Die Application Programming Interface (API) nutzt REST. Jede API und
 alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhalte öffnen.
@@ -226,10 +226,34 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
    markieren und kopieren.
 2. Maus über „REST“: Tooltip „Ausschreibung unbekannt“. In den Text klicken, Alt+→ drücken: die erste Fundstelle ist
    ausgewählt, unten steht „API: Application Programming Interface · 3× auf dieser Seite“.
-3. Seite in Confluence ändern, „Aktualität prüfen“: Hinweis „Live-Fassung ist noch nicht analysiert“, keine Markierung.
+3. Seite in Confluence ändern, Erweitert › „Aktualität prüfen“: Hinweis „Live-Fassung ist noch nicht analysiert“, keine Markierung.
    Nach erneutem Abgleich und Öffnen sind die Markierungen der neuen Fassung da.
 4. Eine Seite einer zweiten Quelle mit derselben Seiten-ID öffnen: nur ihre eigenen Akronyme und Ausschreibungen.
-5. Reiter „Analyse“ › „Neu berechnen“: Markierungen bleiben bzw. erscheinen neu, keine der vorigen Seite.
+5. Erweitert › „Analyse“ › „Neu berechnen“: Markierungen bleiben bzw. erscheinen neu, keine der vorigen Seite.
+
+## Inhalte
+
+Der Ablauf folgt der Aufgabe, nicht den Schnittstellen: Wissensquelle → Space → Seiten → Seiteninhalt → optional
+synchronisieren.
+
+- **Space wählen** zeigt sofort die Seiten. Liegt der Space im lokalen Bestand, kommen sie von dort, sonst live aus
+  der Quelle. Ein leerer Bestand ist bei einer neuen Quelle der Normalfall und erzeugt keine Fehlermeldung; die Zeile
+  über der Liste sagt, woher die Seiten kommen.
+- **Space synchronisieren** übernimmt alle Seiten in den lokalen Bestand (für Suche, Seitenbaum und Export). Nach dem
+  Abschluss zeigt die Ansicht den Bestand; der Fortschritt steht zusätzlich unter Aufträge.
+- **Liste / Seitenbaum** sind zwei Darstellungen derselben Seiten. Der Seitenbaum entsteht aus dem Bestand und ist
+  bis zur Synchronisierung ausgegraut (Tooltip sagt warum).
+- **Seite wählen** lädt sie sofort, ohne eigenen Knopf. Fehlt sie im Bestand, kommt sie live. Ohne gewählte Seite
+  steht rechts nur „Wähle links eine Seite aus …“, nie die Seite eines vorigen Space.
+- **Erweitert** enthält technische Angaben (Herkunft, Hashes, Revision, Cache-Stand), Analyse, Originaldaten
+  (Payload, Storage-Format) sowie „Aktualität prüfen“ und „Original speichern …“.
+- Wechsel von Quelle oder Space leert Liste und Seite und verwirft noch laufende Ladevorgänge.
+- Fehler nennen den Schritt: „Spaces nicht abrufbar“, „Seitenliste nicht abrufbar“, „Seite nicht geladen“,
+  „Lokaler Bestand nicht lesbar“. Scheitert ein Seitenabruf, obwohl die Spaces kamen, steht die Ursache des Core
+  (z. B. Zeitüberschreitung, TLS-Fehler, HTTP-Status) direkt in der Meldung, denn die Verbindungsprüfung fragt nur
+  die Spaces ab.
+- Bis der Core eine fehlende Seite beim Abruf selbst nachlädt und speichert, holt die App sie live (`refresh=true`)
+  und legt nichts ab; das übernimmt die Synchronisierung.
 
 ## Rückverfolgbarkeit REST → Anwendungsfall → App → Test
 
@@ -237,12 +261,12 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 |---|---|---|---|
 | `GET /api/v1/sources` | `SourceQueries.sources` | Wissensquellen, Status | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/sources/{id}/spaces` | `SourceQueries.partitions` | Verbindung prüfen, Space-Auswahl | `WorkspaceTest.harvestsBrowses…`, `…onlyConfiguredSourcesAreReachable` |
-| `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Inhalte › Live | `WorkspaceTest.harvestsBrowses…` |
+| `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Inhalte › Seiten ohne Bestand (live) | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
 | `GET …/pages/{pageId}/metadata` | `SourceQueries.pageMetadata` | Seite › Eigenschaften (live) | `MainWindowTest` (Navigation) |
 | `GET …/pages/{pageId}/attachments` | `SourceQueries.attachments` | Seite › Anhänge | `WorkspaceTest.attachmentsAre…` |
-| `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…` |
-| `GET …/spaces/{key}/tree` | `PageQueries.tree` | Inhalte › Struktur | `WorkspaceTest.harvestsBrowses…` |
-| `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite öffnen, Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…` |
+| `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Seiten aus dem Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…`, `ContentViewTest` |
+| `GET …/spaces/{key}/tree` | `PageQueries.tree` | Inhalte › Seitenbaum | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
+| `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite wählen (ohne Bestand live), Erweitert › Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…`, `…aFreshSourceDeliversPagesLive…`, `ContentViewTest` |
 | `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
 | `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
 | `GET …/pages/{pageId}?view=extended` (`acronyms`) | `PageAcronyms.read` | Seite › Inhalt: Akronyme markiert, Tooltip, Alt+→ | `ReaderAcronymsTest`, `PageAcronymsTest` |

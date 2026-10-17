@@ -8,11 +8,11 @@ import java.awt.Insets;
 import java.awt.RenderingHints;
 
 /** Textfeld mit grauem Platzhalter, solange es leer ist; der Platzhalter ist nur Anzeige, nicht der Text. */
-final class PlaceholderField extends JTextField {
+public final class PlaceholderField extends JTextField {
 
     private final String placeholder;
 
-    PlaceholderField(int columns, String placeholder) {
+    public PlaceholderField(int columns, String placeholder) {
         super(columns);
         this.placeholder = placeholder;
         Comic.style(this);

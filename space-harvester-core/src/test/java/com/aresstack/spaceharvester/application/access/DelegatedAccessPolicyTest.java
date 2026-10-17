@@ -43,14 +43,24 @@ class DelegatedAccessPolicyTest {
     }
 
     @Test
-    void endUserNeverExportsAndNeverReachesAnotherSource() {
+    void endUserExportsWhatTheSourceShowsButNeverReachesAnotherSource() {
         source.visible = Set.of(ResourceScope.space("wiki", "DEV"), ResourceScope.space("other", "DEV"));
+
+        // Die Anmeldeart schränkt keine Funktion ein (ADR 0010): Export wie Lesen, geprüft über die Quelle.
+        assertThat(policy.decide(ALICE_VIA_ASSISTANT, ResourceScope.space("wiki", "DEV"), AccessKind.EXPORT))
+                .isEqualTo(AccessDecision.ALLOW);
+        int asked = source.asked.size();
+        assertThat(policy.decide(ALICE_VIA_ASSISTANT, ResourceScope.space("other", "DEV"), AccessKind.METADATA))
+                .isEqualTo(AccessDecision.DENY);
+        assertThat(source.asked).hasSize(asked);
+    }
+
+    @Test
+    void endUserExportOfASpaceTheSourceHidesIsDenied() {
+        source.visible = Set.of();
 
         assertThat(policy.decide(ALICE_VIA_ASSISTANT, ResourceScope.space("wiki", "DEV"), AccessKind.EXPORT))
                 .isEqualTo(AccessDecision.DENY);
-        assertThat(policy.decide(ALICE_VIA_ASSISTANT, ResourceScope.space("other", "DEV"), AccessKind.METADATA))
-                .isEqualTo(AccessDecision.DENY);
-        assertThat(source.asked).isEmpty();
     }
 
     @Test

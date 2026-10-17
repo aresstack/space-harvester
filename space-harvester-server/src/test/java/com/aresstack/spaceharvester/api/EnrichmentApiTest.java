@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.EmptyConfluence;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,7 +39,7 @@ class EnrichmentApiTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
-        registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
+        registry.add("space-harvester.sources[0].base-url", EmptyConfluence::baseUrl);
         TestClient.register(registry, "wiki");
         // Neu berechnen verlangt zusätzlich sync.
         registry.add("space-harvester.security.clients[0].grants[1].source", () -> "wiki");

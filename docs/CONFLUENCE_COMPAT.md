@@ -124,8 +124,8 @@ Referenz dokumentiert nur 200 und 404; 304, 400, 401, 403 und 503 sind Ergänzun
 | 400 | `expand`, `status`, `version`, `type`, fehlender `spaceKey` oder negatives `start`/`limit`, die der Cache nicht bedienen kann |
 | 401 | ohne gültiges Token (Problem Details wie überall unter `/api/**`) |
 | 403 | keine Freigabe für diese Quelle bzw. diesen Space oder unbekannte Quellen-ID |
-| 404 | Seite oder Space nicht im Cache, Seite nur mit Kopfdaten im Cache, nicht sichtbar oder in anderem Format gespeichert |
-| 503 | Cache nicht eingerichtet oder nicht lesbar, Liste nur unvollständig lieferbar |
+| 404 | Space nicht im Cache, Seite auch bei der Quelle unbekannt oder für den Aufrufer nicht sichtbar, nur mit Kopfdaten im Cache oder in anderem Format gespeichert |
+| 503 | Cache nicht eingerichtet oder nicht lesbar, Liste nur unvollständig lieferbar, Quelle beim Nachladen einer fehlenden Seite nicht erreichbar |
 
 `message` nennt nie Inhalte der Seite.
 

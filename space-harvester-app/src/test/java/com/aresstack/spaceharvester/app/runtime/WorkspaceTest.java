@@ -136,6 +136,20 @@ class WorkspaceTest {
     }
 
     @Test
+    void aFreshSourceDeliversPagesLiveWithoutStock() throws Exception {
+        Workspace workspace = start().workspace();
+
+        assertThat(workspace.liveMetadata("wiki", "DEV", null, 100).entries()).hasSize(2);
+        // Ohne Bestand lädt das Lesen die Seite nach und legt sie ab (ADR 0010); danach kommt sie aus dem Cache.
+        DeliveredPage loaded = workspace.page("wiki", "102", false);
+        assertThat(new String(loaded.snapshot().payload().bytes(), StandardCharsets.UTF_8))
+                .contains("Der Dienst läuft.");
+        DeliveredPage again = workspace.page("wiki", "102", false);
+        assertThat(again.live()).isFalse();
+        assertThat(again.refresh()).isNull();
+    }
+
+    @Test
     void readsLocalFilesWithoutNetwork() throws Exception {
         Workspace workspace = start().workspace();
 
