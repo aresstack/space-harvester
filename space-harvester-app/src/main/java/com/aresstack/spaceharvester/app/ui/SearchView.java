@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
@@ -33,7 +34,8 @@ import java.util.Locale;
  * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Nur Bedienung und Darstellung: Suche, Sortierung,
  * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, {@code RelevanceSearch}, #114), ohne gewählte Quelle als
  * eine globale Suche über alle Quellen, mit gewählter Quelle mit demselben Anwendungsfall und {@code sourceId}.
- * „Weitere laden“ folgt dem Cursor des Core.
+ * „Weitere laden“ folgt dem Cursor des Core; hat ein Abgleich den Index inzwischen geändert, beginnt dieselbe Suche von
+ * vorn. Nur die jeweils letzte Anfrage darf die Liste ändern.
  */
 public final class SearchView implements View {
 
@@ -55,6 +57,8 @@ public final class SearchView implements View {
     /** Anfrage und Cursor der zuletzt angezeigten Titelsuche, für „Weitere laden“. */
     private PageSearchQuery lastQuery;
     private String nextCursor;
+    /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
+    private int request;
 
     public SearchView(AppContext context) {
         this.context = context;
@@ -138,6 +142,7 @@ public final class SearchView implements View {
             return;
         }
         List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
+        int id = ++request;
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Suche läuft …");
@@ -158,6 +163,9 @@ public final class SearchView implements View {
             SearchResults results = runtime.workspace().search(q, null, LIMIT);
             return new Outcome(q, hits(results), results.nextCursor(), null);
         }, outcome -> {
+            if (id != request) {
+                return;
+            }
             run.setEnabled(true);
             model.set(outcome.hits());
             show(outcome);
@@ -170,6 +178,9 @@ public final class SearchView implements View {
                 feedback.clear();
             }
         }, error -> {
+            if (id != request) {
+                return;
+            }
             run.setEnabled(true);
             model.set(List.of());
             show(new Outcome(null, List.of(), null, null));
@@ -177,7 +188,10 @@ public final class SearchView implements View {
         });
     }
 
-    /** Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. */
+    /**
+     * Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. Lehnt der Core den Cursor ab, weil sich
+     * der Index geändert hat (409 {@code cache-generation-changed}), ersetzt die erste Seite derselben Anfrage die Liste.
+     */
     private void loadMore() {
         AppRuntime runtime = context.runtime();
         PageSearchQuery q = lastQuery;
@@ -185,19 +199,37 @@ public final class SearchView implements View {
         if (runtime == null || q == null || cursor == null) {
             return;
         }
+        int id = ++request;
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Weitere Treffer werden geladen …");
         Background.run(() -> {
-            SearchResults results = runtime.workspace().search(q, cursor, LIMIT);
-            return new Outcome(q, hits(results), results.nextCursor(), null);
-        }, outcome -> {
+            try {
+                SearchResults results = runtime.workspace().search(q, cursor, LIMIT);
+                return new Page(new Outcome(q, hits(results), results.nextCursor(), null), false);
+            } catch (CacheGenerationChangedException changed) {
+                SearchResults results = runtime.workspace().search(q, null, LIMIT);
+                return new Page(new Outcome(q, hits(results), results.nextCursor(), null), true);
+            }
+        }, page -> {
+            if (id != request) {
+                return;
+            }
             run.setEnabled(true);
-            model.add(outcome.hits());
-            show(outcome);
-            feedback.clear();
+            if (page.restarted()) {
+                model.set(page.outcome().hits());
+                show(page.outcome());
+                feedback.info("Bestand geändert", "Ein Abgleich hat den Index geändert; die Suche beginnt von vorn.");
+            } else {
+                model.add(page.outcome().hits());
+                show(page.outcome());
+                feedback.clear();
+            }
         }, error -> {
-            // Z. B. ein Abgleich hat den Index geändert: Die Suche beginnt neu, die bisherigen Treffer bleiben stehen.
+            if (id != request) {
+                return;
+            }
+            // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
             run.setEnabled(true);
             show(new Outcome(null, List.of(), null, null));
             feedback.problem(error);
@@ -227,6 +259,10 @@ public final class SearchView implements View {
      * @param nextCursor Cursor des Core oder {@code null}, wenn alle Treffer geladen sind
      */
     private record Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor, String semanticNote) {
+    }
+
+    /** Ein Stapel von „Weitere laden“; {@code restarted}: die erste Seite nach geändertem Index. */
+    private record Page(Outcome outcome, boolean restarted) {
     }
 
     /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */

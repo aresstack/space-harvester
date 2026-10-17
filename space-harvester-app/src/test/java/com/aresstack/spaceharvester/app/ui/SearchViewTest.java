@@ -45,35 +45,7 @@ class SearchViewTest {
 
     @Test
     void allSourcesIsOneGlobalCoreSearchWithLoadMore() throws Exception {
-        StringBuilder sources = new StringBuilder();
-        for (String id : List.of("alpha", "beta")) {
-            Path files = Files.createDirectories(home.resolve(id));
-            for (int i = 0; i < PAGES_PER_SOURCE; i++) {
-                Files.writeString(files.resolve("seite-%03d.md".formatted(i)), "# Betrieb\n\nText %03d.\n".formatted(i));
-            }
-            sources.append("""
-                        - id: %s
-                          type: files
-                          options:
-                            directory: %s
-                    """.formatted(id, files));
-        }
-        Path config = home.resolve("app.yml");
-        Files.writeString(config, """
-                space-harvester-app:
-                  data-directory: %s
-                space-harvester:
-                  sources:
-                %s""".formatted(home.resolve("data"), sources));
-        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
-        CountDownLatch started = new CountDownLatch(1);
-        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
-        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        Workspace workspace = context.runtime().workspace();
-        for (String id : List.of("alpha", "beta")) {
-            String job = workspace.startSync(id, workspace.spaces(id).get(0).key()).id();
-            await(() -> workspace.job(job).state().terminal());
-        }
+        start();
 
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> {
@@ -105,6 +77,69 @@ class SearchViewTest {
         assertThat(titles).isSortedAccordingTo(String::compareTo);
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
+    }
+
+    private void start() throws Exception {
+        StringBuilder sources = new StringBuilder();
+        for (String id : List.of("alpha", "beta")) {
+            Path files = Files.createDirectories(home.resolve(id));
+            for (int i = 0; i < PAGES_PER_SOURCE; i++) {
+                Files.writeString(files.resolve("seite-%03d.md".formatted(i)), "# Betrieb\n\nText %03d.\n".formatted(i));
+            }
+            sources.append("""
+                        - id: %s
+                          type: files
+                          options:
+                            directory: %s
+                    """.formatted(id, files));
+        }
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                %s""".formatted(home.resolve("data"), sources));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        for (String id : List.of("alpha", "beta")) {
+            sync(id);
+        }
+    }
+
+    private void sync(String sourceId) throws Exception {
+        Workspace workspace = context.runtime().workspace();
+        String job = workspace.startSync(sourceId, workspace.spaces(sourceId).get(0).key()).id();
+        await(() -> workspace.job(job).state().terminal());
+    }
+
+    @Test
+    void loadMoreAfterAnIndexChangeStartsTheSameSearchAgain() throws Exception {
+        start();
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].search("seite");
+        });
+        JTable table = find(view[0].component(), JTable.class).get(0);
+        AbstractButton more = button(view[0].component(), "Weitere laden");
+        await(() -> table.getRowCount() == 100);
+        await(more::isEnabled);
+
+        // Ein Abgleich zwischen zwei Stapeln ändert die Generation; der Cursor gilt nicht mehr.
+        Files.writeString(home.resolve("alpha").resolve("seite-999.md"), "# Neu\n");
+        sync("alpha");
+        SwingUtilities.invokeAndWait(more::doClick);
+        await(() -> table.getRowCount() == 100 && more.isEnabled());
+
+        SwingUtilities.invokeAndWait(more::doClick);
+        await(() -> table.getRowCount() == 2 * PAGES_PER_SOURCE + 1);
+        await(() -> !more.isEnabled());
+        String[] last = new String[1];
+        SwingUtilities.invokeAndWait(() -> last[0] = (String) table.getModel().getValueAt(table.getRowCount() - 1, 0));
+        assertThat(last[0]).isEqualTo("seite-999.md");
     }
 
     private static void await(BooleanSupplier condition) throws Exception {
