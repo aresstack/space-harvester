@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -90,7 +91,7 @@ final class SourceWizard {
     final JTextField certificatePasswordVariable = Comic.field(24);
     final JComboBox<String> trust = Comic.combo();
     private final JTextArea preview = Comic.code();
-    private final JTextArea checkNotes = Comic.note("");
+    final JTextArea checkNotes = Comic.note("");
     private final JLabel variableState = Comic.muted(" ");
     private final Form address = new Form();
     private final Form login = new Form();
@@ -347,6 +348,10 @@ final class SourceWizard {
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
                 context.secrets().put(savedId, value);
+            } else if (editing != null && (editing.draft().authType() != source.authType()
+                    || !Objects.equals(editing.draft().secretVariable(), source.secretVariable()))) {
+                // Ein Token taugt nicht als Passwort (und umgekehrt): Mit der Anmeldeart verfällt der Sitzungswert.
+                context.secrets().remove(savedId);
             }
             Arrays.fill(value, '\0');
             clearSecret();
@@ -357,6 +362,17 @@ final class SourceWizard {
             save.setEnabled(true);
             feedback.problem(error);
         });
+    }
+
+    private boolean dropsBackup() {
+        if (editing == null) {
+            return false;
+        }
+        try {
+            return editor.hasPlaintextSecret(context.configFile(), editing.draft().id());
+        } catch (IOException | RuntimeException e) {
+            return true;
+        }
     }
 
     private ConfigFileEditor.Draft write(SourceDraft source) throws IOException {
@@ -477,12 +493,18 @@ final class SourceWizard {
         StringBuilder notes = new StringBuilder(editing == null ? "Dieser Eintrag kommt in " : "Dieser Eintrag ersetzt ")
                 .append(editing == null ? "" : "den bisherigen der Quelle " + source.id() + " in ")
                 .append(context.configFile().toAbsolutePath()).append(" unter space-harvester.sources; der Rest der "
-                        + "Datei bleibt unverändert, die vorige Fassung bleibt als .bak erhalten.");
-        if (editing != null && !editing.plaintextSecrets().isEmpty()) {
-            notes.append("\n\nDie Datei enthält ").append(String.join(" und ", editing.plaintextSecrets()))
-                    .append(" im Klartext. Beim Speichern steht dort nur noch der Platzhalter, und es entsteht keine "
-                            + ".bak-Sicherung mit dem Geheimnis; den Wert als Umgebungsvariable setzen oder hier für "
-                            + "diese Sitzung eingeben.");
+                        + "Datei bleibt unverändert");
+        // Dieselbe Entscheidung wie beim Speichern: Steht im bisherigen Eintrag irgendein Geheimnis im Klartext,
+        // entsteht keine .bak (eine vorhandene wird gelöscht).
+        if (!dropsBackup()) {
+            notes.append(", die vorige Fassung bleibt als .bak erhalten.");
+        } else {
+            notes.append(". Weil der bisherige Eintrag ")
+                    .append(editing.plaintextSecrets().isEmpty() ? "ein Passwort oder Token"
+                            : String.join(" und ", editing.plaintextSecrets()))
+                    .append(" im Klartext enthält, entsteht KEINE .bak-Sicherung, und eine vorhandene wird gelöscht; "
+                            + "dort steht künftig nur der Platzhalter. Den Wert als Umgebungsvariable setzen oder hier "
+                            + "für diese Sitzung eingeben.");
         }
         if (source.secretVariable() != null && System.getenv(source.secretVariable()) == null
                 && System.getProperty(source.secretVariable()) == null) {
