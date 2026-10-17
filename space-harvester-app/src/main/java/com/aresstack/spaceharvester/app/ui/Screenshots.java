@@ -58,6 +58,8 @@ public final class Screenshots {
     }
 
     static void write(JComponent component, Path file) {
+        // Zweimal: umbrechende Texte kennen ihre Höhe erst, wenn sie ihre Breite haben.
+        layout(component);
         layout(component);
         BufferedImage image = new BufferedImage(component.getWidth(), component.getHeight(), BufferedImage.TYPE_INT_RGB);
         Graphics2D g = image.createGraphics();
