@@ -26,3 +26,6 @@ include 'space-harvester-server'
 // Deutsches Dependency Parsing nach Universal Dependencies (#98, ADR 0005): Laufzeitmodul mit MaltParser und
 // objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
 include 'nlp-parser'
+
+// Eigenständige Trainingswerkzeuge für das deutsche MaltParser-Modell (#99); weder Anwendung noch Parser hängen davon ab.
+include 'nlp-model-training'
