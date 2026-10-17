@@ -21,6 +21,8 @@ von den Tasks unten geladen. Kein anderes Projekt hängt von diesem Modul ab (`M
 | `MaltModelTrainer` | Lernlauf in eigener JVM (Heap, Zeitlimit, Spitzenspeicher) |
 | `MaltModel`, `ModelEvaluator`, `DependencyEvaluation`, `AdjacencyBaseline`, `OpenNlpPosTagger`, `ReferenceSentences` | Evaluation |
 | `ModelManifest`, `ModelPackager`, `ModelConsumerCheck` | Verpacken und Verbraucherprüfung |
+| `tools/evaluation-summary.py` | Bericht und Release-Notizen aus `evaluation.json` und Manifest |
+| `tools/mco-audit.py` | Zählt, was die `.mco` an Wortformen enthält (nur Zählwerte, offline); Befund für v1.0.0 in `docs/NLP_MODEL_LICENSE.md` |
 
 ## Lokal trainieren
 
