@@ -175,6 +175,7 @@ class ConfluenceCompatApiTest {
                 HttpResponse.BodyHandlers.ofByteArray());
 
         assertThat(again.statusCode()).isEqualTo(304);
+        assertThat(again.headers().firstValue("X-Cache-Generation")).contains("g1");
     }
 
     @Test

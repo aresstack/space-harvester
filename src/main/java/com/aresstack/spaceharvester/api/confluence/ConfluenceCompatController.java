@@ -28,7 +28,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 import org.springframework.web.util.UriComponents;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -90,8 +89,7 @@ public class ConfluenceCompatController {
             @Parameter(description = "Kommagetrennte Erweiterungen wie bei Confluence")
             @RequestParam(required = false) String expand,
             @Parameter(description = "Nur current") @RequestParam(required = false) String status,
-            @Parameter(description = "Nicht unterstützt") @RequestParam(required = false) String version,
-            WebRequest request) {
+            @Parameter(description = "Nicht unterstützt") @RequestParam(required = false) String version) {
         requireCurrent(status);
         if (version != null) {
             throw new UnsupportedRequestException("version wird nicht unterstützt; der Cache hält nur die aktuelle "
@@ -100,10 +98,8 @@ public class ConfluenceCompatController {
         CachedPage page = queries.page(caller, sourceId, id, false);
         NativePayload payload = page.snapshot().payload();
         requireExpand(id, payload, expand);
+        // Spring wertet If-None-Match am ETag der Antwort aus; die 304 behält so die Cache-Kopfzeilen.
         String etag = "\"" + payload.rawSha256() + "\"";
-        if (request.checkNotModified(etag)) {
-            return null;
-        }
         CacheGeneration generation = page.generation();
         return ResponseEntity.ok()
                 .eTag(etag)
