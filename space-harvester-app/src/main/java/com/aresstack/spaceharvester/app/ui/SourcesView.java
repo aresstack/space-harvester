@@ -434,6 +434,10 @@ public final class SourcesView implements View {
         c.weightx = 1;
         c.fill = GridBagConstraints.HORIZONTAL;
         c.anchor = GridBagConstraints.NORTHWEST;
+        // Eine Bearbeitung je Quelle: Eine neue schließt die offene, und solange eine Zeile speichert, beginnt keine
+        // zweite; so überschreiben sich zwei Änderungen derselben Datei nicht.
+        property.coordinate(() -> rows.values().stream().anyMatch(EditableProperty::saving),
+                () -> rows.values().stream().filter(other -> other != property).forEach(EditableProperty::cancel));
         rows.put(property.name(), property);
         properties.add(property, c);
     }

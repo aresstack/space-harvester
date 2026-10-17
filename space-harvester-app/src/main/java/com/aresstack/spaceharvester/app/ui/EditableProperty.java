@@ -16,6 +16,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
@@ -46,6 +47,9 @@ final class EditableProperty extends JPanel {
     private Saver saver;
     private Runnable action;
     private boolean editing;
+    private boolean saving;
+    private Runnable onBegin = () -> { };
+    private BooleanSupplier busy = () -> false;
 
     private EditableProperty(String name, String text, Color color, String tooltip) {
         super(new BorderLayout(10, 0));
@@ -84,13 +88,13 @@ final class EditableProperty extends JPanel {
             }
         });
         accept.addActionListener(e -> commit());
-        cancel.addActionListener(e -> end());
+        cancel.addActionListener(e -> cancel());
         field.addActionListener(e -> commit());
         field.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancelEdit");
         field.getActionMap().put("cancelEdit", new AbstractAction() {
             @Override
             public void actionPerformed(ActionEvent e) {
-                end();
+                cancel();
             }
         });
         field.getAccessibleContext().setAccessibleName(name);
@@ -125,6 +129,26 @@ final class EditableProperty extends JPanel {
         return editing;
     }
 
+    boolean saving() {
+        return saving;
+    }
+
+    /**
+     * Abstimmung mit den anderen Zeilen derselben Quelle: {@code busy} verhindert eine zweite Bearbeitung, solange
+     * eine andere speichert; {@code onBegin} läuft, bevor diese Zeile in die Bearbeitung geht (z. B. andere schließen).
+     */
+    void coordinate(BooleanSupplier busy, Runnable onBegin) {
+        this.busy = busy;
+        this.onBegin = onBegin;
+    }
+
+    /** Verwirft eine offene Bearbeitung; während des Speicherns nicht, sonst stimmte die Anzeige nicht mit der Datei. */
+    void cancel() {
+        if (editing && !saving) {
+            end();
+        }
+    }
+
     String name() {
         return label.getText();
     }
@@ -148,6 +172,10 @@ final class EditableProperty extends JPanel {
     }
 
     private void begin() {
+        if (busy.getAsBoolean()) {
+            return;
+        }
+        onBegin.run();
         editing = true;
         field.setText(current);
         field.setEnabled(true);
@@ -174,15 +202,21 @@ final class EditableProperty extends JPanel {
             end();
             return;
         }
+        saving = true;
         field.setEnabled(false);
         accept.setEnabled(false);
+        cancel.setEnabled(false);
         error.setVisible(false);
         saver.save(typed, () -> {
+            saving = false;
+            cancel.setEnabled(true);
             current = typed;
             end();
         }, failure -> {
+            saving = false;
             field.setEnabled(true);
             accept.setEnabled(true);
+            cancel.setEnabled(true);
             error.setText(Problems.describe(failure).message());
             error.setVisible(true);
             refresh();

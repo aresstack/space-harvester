@@ -84,6 +84,12 @@ class SourcesViewTest {
             name[0].edit();
         });
         assertThat(name[0].editing()).isTrue();
+        // Eine Bearbeitung je Quelle: Der Ordner schließt den offenen Anzeigenamen, der Name kommt danach wieder.
+        SwingUtilities.invokeAndWait(() -> find(root, EditableProperty.class).stream()
+                .filter(p -> p.name().equals("Ordner")).findFirst().orElseThrow().edit());
+        assertThat(name[0].editing()).isFalse();
+        SwingUtilities.invokeAndWait(name[0]::edit);
+        assertThat(find(root, EditableProperty.class)).filteredOn(EditableProperty::editing).containsExactly(name[0]);
         SwingUtilities.invokeAndWait(() -> {
             name[0].field().setText("Neuer Name");
             name[0].field().postActionEvent();
