@@ -25,4 +25,15 @@ public interface EmbeddingProvider {
      * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar oder überlastet ist
      */
     List<float[]> embed(List<String> texts);
+
+    /**
+     * Bettet Suchanfragen ein, in derselben Reihenfolge. Modelle, die Anfragen anders als Dokumente behandeln (etwa E5
+     * mit den Präfixen {@code query: } und {@code passage: }), überschreiben das; sonst wie {@link #embed}.
+     *
+     * @return je Text ein Vektor mit {@link #dimensions()} endlichen Werten
+     * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar oder überlastet ist
+     */
+    default List<float[]> embedQueries(List<String> texts) {
+        return embed(texts);
+    }
 }

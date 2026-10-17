@@ -82,6 +82,27 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
 
+    /**
+     * Bettet eine Suchanfrage mit demselben Modell ein wie die Seiten dieser {@link #version()}.
+     *
+     * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar ist oder einen unbrauchbaren Vektor liefert
+     */
+    public float[] embedQuery(String text) {
+        Objects.requireNonNull(text, "text");
+        List<float[]> vectors = provider.embedQueries(List.of(text));
+        float[] vector = vectors == null || vectors.size() != 1 ? null : vectors.get(0);
+        if (vector == null || vector.length != provider.dimensions()) {
+            throw new EmbeddingUnavailableException("Modell lieferte keinen Vektor der Dimension "
+                    + provider.dimensions());
+        }
+        for (float v : vector) {
+            if (!Float.isFinite(v)) {
+                throw new EmbeddingUnavailableException("Modell lieferte keinen endlichen Vektor");
+            }
+        }
+        return vector.clone();
+    }
+
     private void vector(StringBuilder json, float[] vector) {
         if (vector == null || vector.length != provider.dimensions()) {
             throw new IllegalStateException("Vektor hat nicht die Dimension " + provider.dimensions());

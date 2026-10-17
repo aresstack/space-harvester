@@ -86,6 +86,7 @@ public class OnnxEmbeddingProvider implements EmbeddingProvider, AutoCloseable {
     }
 
     /** Bettet Suchanfragen ein, jeweils mit dem Query-Präfix. */
+    @Override
     public List<float[]> embedQueries(List<String> texts) {
         return run(texts, settings.queryPrefix());
     }

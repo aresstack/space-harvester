@@ -121,6 +121,34 @@ class SearchApiTest {
     }
 
     @Test
+    void relevanceWithoutAModelKeepsTitleHitsInOneBatch() throws Exception {
+        HttpResponse<String> response = get("/api/v1/search?sourceId=wiki&title=seite&sort=relevance&limit=2");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("reranker").asString()).isEqualTo("none");
+        assertThat(body.get("complete").asBoolean()).isTrue();
+        assertThat(body.get("nextCursor").isNull()).isTrue();
+        assertThat(body.get("hits").valueStream().map(hit -> hit.get("page").get("pageId").asString()))
+                .containsExactly("101", "102");
+        assertThat(body.get("hits").get(0).has("relevance")).isFalse();
+
+        assertProblem(get("/api/v1/search?sourceId=wiki&sort=relevance&q=Betrieb"), 503,
+                "semantic-search-unavailable");
+        assertProblem(get("/api/v1/search?sourceId=wiki&q=Betrieb"), 400, "invalid-request");
+        assertProblem(get("/api/v1/search?sourceId=wiki&title=seite&sort=relevance&cursor=x"), 400,
+                "invalid-request");
+    }
+
+    @Test
+    void theOtherSortsKeepTheirResponseShape() throws Exception {
+        JsonNode body = json.readTree(get("/api/v1/search?sourceId=wiki&title=seite").body());
+
+        assertThat(body.has("reranker")).isFalse();
+        assertThat(body.get("hits").get(0).has("relevance")).isFalse();
+    }
+
+    @Test
     void replacedIndexGenerationGives409() throws Exception {
         String cursor = json.readTree(get("/api/v1/search?sourceId=wiki&limit=1").body()).get("nextCursor")
                 .asString();

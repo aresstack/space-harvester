@@ -386,6 +386,14 @@ Indexstand. Wie bei der Seitenliste kann ein Stapel kürzer als `limit` sein; `n
 genannten Space, sonst für die Quelle; Treffer ohne Freigabe fallen weg. Ohne Index antwortet die Suche mit
 `cache-miss` (404) bzw. ohne eingerichteten Index mit `cache-unavailable` (503).
 
+**Suche nach Relevanz (#89):** `sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
+die Wörter aus `title`) liefert genau einen Stapel (`complete=true`, kein `cursor`) aus höchstens 100 Kandidaten der
+Vektorsuche und der Titelsuche, geordnet nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
+weiter. Kandidaten der Vektorsuche brauchen `content` für ihre Seite; `relevance` (Ähnlichkeit, Abschnitt, `freshness`)
+steht nur an Treffern mit `content`-Freigabe. Ohne eingerichtetes Modell bleiben die Titeltreffer in Titelreihenfolge
+(`reranker: none`); ohne `title` antwortet die Suche dann mit `semantic-search-unavailable` (503). Einzelheiten:
+[docs/EMBEDDINGS.md](docs/EMBEDDINGS.md#suchen).
+
 **Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
 `{"schema":…,"sourceId":…,"spaceKey":…,"pages":[{"pageId":…,"metadataHash":…,"attributesHash":…},…]}` mit den Seiten
 nach `pageId` sortiert (Zeichenkettenordnung), Escaping und UTF-8 wie oben. Er entsteht nur aus einer vollständig und
