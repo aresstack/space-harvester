@@ -50,6 +50,8 @@ class SpaceKeyCheckTest {
                 case "DEV", "~jane.doe" -> new PageMetadataBatch(List.of(), null);
                 case "DOWN" -> throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE,
                         "Zeitüberschreitung", null);
+                case "LOCKED" -> throw new SourceAccessException(id(), SourceAccessException.Reason.ACCESS_DENIED,
+                        "Zugang abgelehnt", null);
                 default -> throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND,
                         "Space nicht gefunden", null);
             };
@@ -105,5 +107,12 @@ class SpaceKeyCheckTest {
     @Test
     void anUnreachableSourceDoesNotBlockTheJobWhichReportsTheFailureItself() {
         assertThatCode(() -> check.requireExisting("wiki", "DOWN")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void deniedAccessFailsTheStartInsteadOfAcceptingAJobThatCannotSucceed() {
+        assertThatThrownBy(() -> check.requireExisting("wiki", "LOCKED")).isInstanceOf(SourceAccessException.class)
+                .extracting(e -> ((SourceAccessException) e).reason())
+                .isEqualTo(SourceAccessException.Reason.ACCESS_DENIED);
     }
 }
