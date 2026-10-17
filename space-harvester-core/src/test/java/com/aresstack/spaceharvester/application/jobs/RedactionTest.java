@@ -11,6 +11,12 @@ class RedactionTest {
         assertThat(Redaction.mask("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc123"))
                 .doesNotContain("eyJ").contains("***");
         assertThat(Redaction.mask("Basic dXNlcjpwYXNzd29yZA==")).isEqualTo("Basic ***");
+        // Auch reine Buchstabenwerte: Base64 ohne Ziffern, Tokens aus Buchstaben.
+        assertThat(Redaction.mask("Basic YWJjZGVm")).isEqualTo("Basic ***");
+        assertThat(Redaction.mask("Bearer abcdefghijkl")).isEqualTo("Bearer ***");
+        assertThat(Redaction.mask("Authorization: Bearer abcdefghijkl")).isEqualTo("Authorization: ***");
+        assertThat(Redaction.mask("Proxy-Authorization: Basic YWJj")).isEqualTo("Proxy-Authorization: ***");
+        assertThat(Redaction.mask("{\"Authorization\": \"Bearer abc\"}")).doesNotContain("abc");
     }
 
     @Test

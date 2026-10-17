@@ -108,6 +108,61 @@ class JobsDiagnosticsTest {
     }
 
     @Test
+    void manyEventsOfOtherClientsNeverHideTheOwnOnes() {
+        JobStatus own = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> { }));
+        executor.runNext();
+        clock.advance(Duration.ofMinutes(1));
+        JobStatus noisy = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-b", JobTask.blocking(context -> {
+            for (int i = 0; i < 100; i++) {
+                context.record(JobEvent.Draft.info("Exports", "Meldung " + i));
+            }
+        }));
+        executor.runNext();
+
+        assertThat(jobs.recentEvents("client-a", 3)).hasSize(3)
+                .allSatisfy(event -> assertThat(event.jobId()).isEqualTo(own.id()));
+        assertThat(jobs.recentEvents("client-b", 1)).extracting(JobEvent::jobId).containsExactly(noisy.id());
+    }
+
+    @Test
+    void theEndIsRecordedEvenWhenAJobFillsItsEventLimit() {
+        JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> {
+            for (int i = 0; i < JobEventStore.MAX_EVENTS_PER_JOB + 50; i++) {
+                context.record(JobEvent.Draft.warning(JobEvent.Category.STORAGE, "Exports", "TREE", "Baumfehler " + i));
+            }
+        }));
+        executor.runNext();
+
+        assertThat(jobs.events(job.id())).hasSize(JobEventStore.MAX_EVENTS_PER_JOB);
+        assertThat(jobs.events(job.id()).getLast().message()).startsWith("Auftrag abgeschlossen");
+    }
+
+    @Test
+    void aJobWhoseEventsCannotBeDeletedStaysForTheNextPurge() {
+        java.util.concurrent.atomic.AtomicBoolean failing = new java.util.concurrent.atomic.AtomicBoolean(true);
+        InMemoryJobEventStore stubborn = new InMemoryJobEventStore() {
+            @Override
+            public void delete(String jobId) {
+                if (failing.get()) {
+                    throw new IllegalStateException("Index gesperrt");
+                }
+                super.delete(jobId);
+            }
+        };
+        Jobs purging = new Jobs(new InMemoryJobStore(), stubborn, RouteLookup.NONE, executor,
+                new JobLimits(1, 5, Duration.ofHours(1), Duration.ofHours(1)), clock);
+        JobStatus job = purging.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> { }));
+        executor.runNext();
+        clock.advance(Duration.ofHours(2));
+
+        assertThat(purging.purgeExpired()).isZero();
+        assertThat(purging.status(job.id())).isNotNull();
+        failing.set(false);
+        assertThat(purging.purgeExpired()).isEqualTo(1);
+        assertThat(stubborn.events(job.id())).isEmpty();
+    }
+
+    @Test
     void eventsExpireWithTheirJob() {
         JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DEV", "client-a", JobTask.blocking(context -> { }));
         executor.runNext();

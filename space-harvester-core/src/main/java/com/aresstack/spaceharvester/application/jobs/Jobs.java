@@ -5,11 +5,14 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -108,13 +111,14 @@ public class Jobs implements AutoCloseable {
                             >= limits.maxOpenPerOwner()) {
                 throw JobCapacityExceededException.perOwner(limits.maxOpenPerOwner());
             }
+            // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.
+            job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
+                    null, null);
             open.put(job.id, job);
             queued.addLast(job);
             status = job.snapshot();
             store.save(status);
         }
-        job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null, "Auftrag angenommen", null, null,
-                null, null);
         dispatch();
         return status;
     }
@@ -172,25 +176,19 @@ public class Jobs implements AutoCloseable {
 
     /** Die jüngsten Diagnoseereignisse der Aufträge dieses Clients, neueste zuerst. */
     public List<JobEvent> recentEvents(String owner, int limit) {
-        List<JobEvent> mine = new ArrayList<>();
-        Map<String, Boolean> owned = new HashMap<>();
-        // Großzügig lesen, weil fremde Ereignisse herausfallen; die Ablage hält ohnehin nur beschränkt viele.
-        for (JobEvent event : events.recent(Math.max(limit, 1) * 4)) {
-            boolean own = owned.computeIfAbsent(event.jobId(), id -> {
-                try {
-                    return Objects.equals(status(id).owner(), owner);
-                } catch (UnknownJobException e) {
-                    return false;
-                }
-            });
-            if (own) {
-                mine.add(event);
-                if (mine.size() >= limit) {
-                    break;
-                }
-            }
+        if (limit < 1) {
+            return List.of();
         }
-        return mine;
+        // Je eigenem Auftrag lesen statt global und dann filtern: fremde Ereignisse dürfen eigene nicht verdrängen.
+        Set<String> mine = new LinkedHashSet<>();
+        synchronized (lock) {
+            open.values().stream().filter(job -> Objects.equals(job.owner, owner)).forEach(job -> mine.add(job.id));
+        }
+        store.all().stream().filter(status -> Objects.equals(status.owner(), owner))
+                .forEach(status -> mine.add(status.id()));
+        return mine.stream().flatMap(id -> events.events(id).stream())
+                .sorted(Comparator.comparing(JobEvent::at).thenComparingLong(JobEvent::sequence).reversed())
+                .limit(limit).toList();
     }
 
     private static JobStatus requireOwner(JobStatus status, String owner) {
@@ -262,9 +260,11 @@ public class Jobs implements AutoCloseable {
         int removed = 0;
         for (JobStatus status : store.all()) {
             if (status.state().terminal() && status.finishedAt() != null && status.finishedAt().isBefore(limit)) {
-                store.delete(status.id());
-                deleteEventsQuietly(status.id());
-                removed++;
+                // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der nächste Lauf versucht es erneut.
+                if (deleteEventsQuietly(status.id())) {
+                    store.delete(status.id());
+                    removed++;
+                }
             }
         }
         return removed;
@@ -296,11 +296,13 @@ public class Jobs implements AutoCloseable {
         }
     }
 
-    private void deleteEventsQuietly(String jobId) {
+    private boolean deleteEventsQuietly(String jobId) {
         try {
             events.delete(jobId);
+            return true;
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Diagnoseereignisse nicht entfernt ({0})", e.getClass().getName());
+            return false;
         }
     }
 
@@ -370,10 +372,10 @@ public class Jobs implements AutoCloseable {
     private void recordEnd(Job job, JobStatus finished, Throwable cause) {
         JobProgress progress = finished.progress();
         switch (finished.state()) {
-            case COMPLETED -> job.emit(JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
+            case COMPLETED -> job.emit(true, JobEvent.Severity.INFO, JobEvent.Category.JOB, COMPONENT, null,
                     "Auftrag abgeschlossen: " + progress.processed() + " Seiten verarbeitet, " + progress.written()
                             + " geschrieben, " + progress.failed() + " gescheitert", null, null, null, null);
-            case CANCELLED -> job.emit(JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED",
+            case CANCELLED -> job.emit(true, JobEvent.Severity.WARNING, JobEvent.Category.JOB, COMPONENT, "CANCELLED",
                     "Auftrag abgebrochen", null, null, null, null);
             default -> {
                 JobError error = finished.error();
@@ -389,7 +391,7 @@ public class Jobs implements AutoCloseable {
                 }
                 // Gewollte Abbrüche ohne Ursache brauchen keinen Stacktrace; alles andere bekommt die ganze Kette.
                 boolean plain = cause instanceof JobFailedException && cause.getCause() == null;
-                job.emit(JobEvent.Severity.ERROR, findings.category(),
+                job.emit(true, JobEvent.Severity.ERROR, findings.category(),
                         findings.component() == null ? job.component : findings.component(), error.code(),
                         error.message(), findings.httpStatus(), route, findings.tlsFinding(),
                         plain ? null : findings.detail());
@@ -541,8 +543,26 @@ public class Jobs implements AutoCloseable {
 
         void emit(JobEvent.Severity severity, JobEvent.Category category, String eventComponent, String code,
                   String message, Integer httpStatus, String proxyRoute, String tlsFinding, String detail) {
+            emit(false, severity, category, eventComponent, code, message, httpStatus, proxyRoute, tlsFinding,
+                    detail);
+        }
+
+        /**
+         * @param end das Endereignis: es bekommt immer den letzten freien Platz der Ablage, alle anderen nur bis
+         *            {@link JobEventStore#MAX_EVENTS_PER_JOB} − 1
+         */
+        void emit(boolean end, JobEvent.Severity severity, JobEvent.Category category, String eventComponent,
+                  String code, String message, Integer httpStatus, String proxyRoute, String tlsFinding,
+                  String detail) {
+            long current;
+            do {
+                current = sequence.get();
+                if (!end && current >= JobEventStore.MAX_EVENTS_PER_JOB - 1) {
+                    return;
+                }
+            } while (!sequence.compareAndSet(current, current + 1));
             try {
-                appendQuietly(new JobEvent(id, sequence.incrementAndGet(), clock.instant(), type, sourceId,
+                appendQuietly(new JobEvent(id, current + 1, clock.instant(), type, sourceId,
                         partitionKey, severity, category, eventComponent, phase, code, message, httpStatus,
                         proxyRoute, tlsFinding, detail));
             } catch (RuntimeException e) {

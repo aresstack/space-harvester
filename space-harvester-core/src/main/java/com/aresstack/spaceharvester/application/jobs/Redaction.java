@@ -14,9 +14,16 @@ public final class Redaction {
 
     static final String MASK = "***";
 
-    /** {@code Authorization: Bearer …}, {@code Basic …}: Werte mit Ziffern oder Base64-Zeichen, keine Wörter. */
+    /** Der Wert eines Authorization-Headers, mit oder ohne Schema, ganz. */
+    private static final Pattern AUTHORIZATION = Pattern.compile(
+            "(?i)(\"?(?:proxy-)?authorization\"?\\s*[:=]\\s*\"?)(?:(?:bearer|basic|token|negotiate|ntlm)\\s+)?"
+                    + "[^\\s\",;&]+");
+    /** {@code Bearer …}, {@code Basic …}, {@code Negotiate …}, {@code NTLM …}: jeder Wert ab acht Zeichen. */
     private static final Pattern SCHEME_VALUE = Pattern.compile(
-            "(?i)\\b(bearer|basic|token|negotiate|ntlm)\\s+(?=[A-Za-z._~-]*[0-9+/=])[A-Za-z0-9._~+/=-]{8,}");
+            "(?i)\\b(bearer|basic|negotiate|ntlm)\\s+[A-Za-z0-9._~+/=-]{8,}");
+    /** {@code Token …}: nur Werte mit Ziffern oder Base64-Zeichen, damit „Token abgelaufen“ lesbar bleibt. */
+    private static final Pattern TOKEN_VALUE = Pattern.compile(
+            "(?i)\\b(token)\\s+(?=[A-Za-z._~-]*[0-9+/=])[A-Za-z0-9._~+/=-]{8,}");
     /** {@code password=…}, {@code "token": "…"}, {@code apiKey: …} bis zum nächsten Trenner. */
     private static final Pattern NAMED_VALUE = Pattern.compile(
             "(?i)(\"?(?:pass(?:word|wd)?|pwd|secret|token|api[-_]?key|access[-_]?token|client[-_]?secret|"
@@ -40,7 +47,9 @@ public final class Redaction {
         if (text == null || text.isEmpty()) {
             return text;
         }
-        String masked = SCHEME_VALUE.matcher(text).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + " " + MASK));
+        String masked = AUTHORIZATION.matcher(text).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + MASK));
+        masked = SCHEME_VALUE.matcher(masked).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + " " + MASK));
+        masked = TOKEN_VALUE.matcher(masked).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + " " + MASK));
         masked = NAMED_VALUE.matcher(masked).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + MASK));
         masked = URL.matcher(masked).replaceAll(m -> Matcher.quoteReplacement(m.group(1) + m.group(2)
                 + (m.group(3) == null ? "" : "/…")));
