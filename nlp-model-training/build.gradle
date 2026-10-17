@@ -44,6 +44,9 @@ tasks.withType(AbstractArchiveTask).configureEach {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Die Tests lesen Rezept, Featuremodell und Vorlagen aus model/; ohne diese Eingabe käme ein Testergebnis
+    // aus dem Build-Cache, obwohl sich eine Vorlage geändert hat
+    inputs.dir('model').withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // ---- Modellherstellung, nur auf ausdrücklichen Aufruf ----

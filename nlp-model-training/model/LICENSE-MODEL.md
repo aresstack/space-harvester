@@ -3,7 +3,7 @@
 **Lizenzangebot für das Modell, soweit Rechte vom Herausgeber wirksam eingeräumt werden können: {{licenseModel}}**
 (Creative Commons Attribution-ShareAlike 4.0 International,
 https://creativecommons.org/licenses/by-sa/4.0/legalcode).
-**Freigabestatus: {{licenseApproval}}.** Ein Status `pending` ist keine Veröffentlichungserlaubnis.
+Freigabestatus: **{{licenseApproval}}**. Ein Status `pending` ist keine Veröffentlichungserlaubnis.
 
 ## Was das Lizenzangebot erfasst
 
