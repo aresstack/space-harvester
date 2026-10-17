@@ -17,11 +17,17 @@ class AcronymProcessorTest {
 
         EnrichmentOutput output = processor.process(page);
 
+        int first = text.indexOf("API");
+        int second = text.indexOf("API", text.indexOf("Betrieb"));
+        int plural = text.indexOf("APIs");
         assertThat(output.payloadJson()).isEqualTo("{\"acronyms\":["
                 + "{\"acronym\":\"API\",\"count\":3,\"expansion\":\"Application Programming Interface\","
-                + "\"section\":\"Intro\",\"charStart\":" + text.indexOf("API") + "},"
+                + "\"section\":\"Intro\",\"charStart\":" + first + ",\"occurrences\":[{\"start\":" + first
+                + ",\"end\":" + (first + 3) + "},{\"start\":" + second + ",\"end\":" + (second + 3) + "},{\"start\":"
+                + plural + ",\"end\":" + (plural + 4) + "}]},"
                 + "{\"acronym\":\"REST\",\"count\":1,\"expansion\":null,\"section\":\"Intro\",\"charStart\":"
-                + text.indexOf("REST") + "}]}");
+                + text.indexOf("REST") + ",\"occurrences\":[{\"start\":" + text.indexOf("REST") + ",\"end\":"
+                + (text.indexOf("REST") + 4) + "}]}]}");
         assertThat(output.warnings()).isEmpty();
     }
 
@@ -54,6 +60,29 @@ class AcronymProcessorTest {
 
         assertThat(output.payloadJson().split("\"acronym\":")).hasSize(AcronymProcessor.MAX_ACRONYMS + 1);
         assertThat(output.warnings()).containsExactly("Nur die ersten 500 von 505 Akronymen");
+    }
+
+    @Test
+    void occurrencesPointIntoTheTextIncludingUmlautsAndSupplementaryCharacters() {
+        String text = "Grüße 😀 an ÜBV, die ÜBVs und \"ÜBV\"; nicht ÜBVX oder xÜBV. Ein HTTP-Aufruf nutzt HTTP.";
+        PageAcronyms acronyms = PageAcronyms.read(PageAcronymsTest.KEY,
+                List.of(PageAcronymsTest.current(plain(text), processor)), plain(text));
+
+        assertThat(acronyms.marks()).extracting(mark -> text.substring(mark.occurrence().start(),
+                mark.occurrence().end())).containsExactly("ÜBV", "ÜBVs", "ÜBV", "ÜBVX", "HTTP", "HTTP");
+        assertThat(acronyms.acronyms()).extracting(PageAcronyms.Acronym::acronym, PageAcronyms.Acronym::count)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("HTTP", 2),
+                        org.assertj.core.groups.Tuple.tuple("ÜBV", 3), org.assertj.core.groups.Tuple.tuple("ÜBVX", 1));
+    }
+
+    @Test
+    void limitsTheNumberOfOccurrencesButKeepsCounting() {
+        String text = "API ".repeat(AcronymProcessor.MAX_OCCURRENCES + 3);
+        EnrichmentOutput output = processor.process(plain(text));
+
+        assertThat(output.payloadJson()).contains("\"count\":" + (AcronymProcessor.MAX_OCCURRENCES + 3));
+        assertThat(output.payloadJson().split("\"start\":")).hasSize(AcronymProcessor.MAX_OCCURRENCES + 1);
+        assertThat(output.warnings()).containsExactly("Fundstellen nur für die ersten 5000 Vorkommen");
     }
 
     private static PageText plain(String text) {

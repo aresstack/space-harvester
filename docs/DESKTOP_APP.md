@@ -126,6 +126,39 @@ Abgleich heißt nur „vollständig“, wenn der Core die Generation bestätigt 
 Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seiten unbekannter Spaces) laufen in
 `Workspace` genauso; was die Quelle selbst verweigert, bleibt verweigert.
 
+## Akronyme im Lesetext (#115)
+
+Der Reiter „Inhalt“ markiert die Akronyme, die die Core-Analyse `acronyms` (`AcronymProcessor`, seit Version 2 mit
+allen Fundstellen `occurrences`) für genau diesen Text berechnet hat. Die App erkennt selbst nichts: Sie liest das
+gespeicherte Ergebnis mit der öffentlichen Core-Funktion `PageAcronyms.read(PageKey, Enrichments.View…, PageText)`, die
+auch der Enterprise AI Client nutzen kann, und markiert nur, wenn Seite und Quelle stimmen, das Ergebnis `ok` und
+aktuell ist und sein `inputSha256` zum angezeigten Text passt. Positionen sind UTF-16-Zeichenpositionen in derselben
+Textprojektion (`confluence-storage-text/v1`), aus der der Lesetext gebaut wird.
+
+- Bekannte Ausschreibung: rosa hinterlegt und unterstrichen; unbekannte: grau hinterlegt und unterstrichen. Die
+  Farbe allein trägt nichts: Tooltip und Zeile unter dem Text nennen „API: Application Programming Interface“ bzw.
+  „REST: Ausschreibung unbekannt (steht nicht auf dieser Seite)“, dazu Häufigkeit und ersten Abschnitt.
+- Tastatur: Cursor auf ein Akronym setzen zeigt die Zeile; Alt+→ / Alt+← springt zur nächsten / vorigen Fundstelle.
+- Die Zeile über dem Text nennt Quelle und Version der Analyse (z. B. „Core-Analyse „acronyms“ Version 2“) oder warum
+  nichts markiert ist: veraltet, fehlgeschlagen, noch nicht vorhanden (dann mit „Analyse neu berechnen“) oder
+  Live-Fassung, die erst der nächste Abgleich analysiert. Ein altes Ergebnis wird nie auf neuen Text gelegt.
+- Der Lesetext entsteht samt Markierungen im Hintergrund; beim Seitenwechsel wird er sofort geleert, und nur das
+  Ergebnis des letzten Lade- oder Neuberechnungsauftrags erscheint. Der Prozessor schreibt höchstens 5000
+  Fundstellen je Seite (Warnung in der Zeile), die Zählung bleibt vollständig.
+- Der Reiter „Analyse“ zeigt das JSON unverändert; `GET …/pages/{pageId}?view=extended` liefert dasselbe Ergebnis.
+
+**Sichtprüfung unter Windows:** Eine Seite mit „Die Application Programming Interface (API) nutzt REST. Jede API und
+alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhalte öffnen.
+
+1. Reiter „Inhalt“: API (3×, auch „APIs“) und SSO rosa, REST grau; die Überschriften bleiben fett, Text lässt sich
+   markieren und kopieren.
+2. Maus über „REST“: Tooltip „Ausschreibung unbekannt“. In den Text klicken, Alt+→ drücken: die erste Fundstelle ist
+   ausgewählt, unten steht „API: Application Programming Interface · 3× auf dieser Seite“.
+3. Seite in Confluence ändern, „Aktualität prüfen“: Hinweis „Live-Fassung ist noch nicht analysiert“, keine Markierung.
+   Nach erneutem Abgleich und Öffnen sind die Markierungen der neuen Fassung da.
+4. Eine Seite einer zweiten Quelle mit derselben Seiten-ID öffnen: nur ihre eigenen Akronyme und Ausschreibungen.
+5. Reiter „Analyse“ › „Neu berechnen“: Markierungen bleiben bzw. erscheinen neu, keine der vorigen Seite.
+
 ## Rückverfolgbarkeit REST → Anwendungsfall → App → Test
 
 | REST (Dienst) | Anwendungsfall (Core) | App-Aktion | Test |
@@ -140,6 +173,7 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite öffnen, Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
 | `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
+| `GET …/pages/{pageId}?view=extended` (`acronyms`) | `PageAcronyms.read` | Seite › Inhalt: Akronyme markiert, Tooltip, Alt+→ | `ReaderAcronymsTest`, `PageAcronymsTest` |
 | `GET /api/v1/search` | `PageSearch.search` | Suche (Titel, Neueste), Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `MainWindowTest` |
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |

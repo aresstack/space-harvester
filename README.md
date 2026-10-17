@@ -393,7 +393,8 @@ wie bei einer unbekannten Seite.
 
 **Anreicherungen (#29).** Deterministische Prozessoren ohne KI leiten aus einer konservativen Textprojektion des
 Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfallen, nichts wird ausgeführt oder
-aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
+aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern; seit
+Version 2 mit allen Fundstellen `occurrences`, lesbar über `PageAcronyms`) und
 `outline` (Gliederung mit Wortzahlen), für deutschen Text außerdem `entities` (Begriffe aus Nominalgruppen mit
 Häufigkeit) und `properties` (Eigenschaften, attributiv wie „die zuständige Stelle“ oder prädikativ wie „der Dienst ist
 nicht erreichbar“) sowie `activities` (Handlungen je Teilsatz mit vorgeschlagener Grundform, Aktiv oder Passiv,
