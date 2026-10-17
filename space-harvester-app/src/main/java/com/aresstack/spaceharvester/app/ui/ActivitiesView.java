@@ -44,6 +44,8 @@ public final class ActivitiesView implements View {
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
     private final JProgressBar progress = new JProgressBar();
+    /** Leiste am unteren Rand mit dem Fortschritt. */
+    private final JPanel progressBar = new JPanel(new BorderLayout());
     private final Facts facts = new Facts();
     private final Facts result = new Facts();
     private final Feedback feedback = new Feedback();
@@ -89,7 +91,6 @@ public final class ActivitiesView implements View {
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
         head.add(title, BorderLayout.NORTH);
-        head.add(progress, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
         south.add(Comic.row(diagnosis, cancel, again, files, content), BorderLayout.NORTH);
@@ -100,6 +101,13 @@ public final class ActivitiesView implements View {
         right.setBackground(Comic.SURFACE);
         right.add(Comic.column(head, Comic.plate("Auftrag", Comic.PETROL, facts),
                 Comic.plate("Ergebnis", Comic.ORANGE, result)), BorderLayout.CENTER);
+        // Der Fortschritt klebt am unteren Rand und bleibt sichtbar, während die Details darüber scrollen.
+        JPanel bottom = progressBar;
+        bottom.setBackground(Comic.SURFACE);
+        bottom.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(8, 14, 10, 14)));
+        bottom.add(progress, BorderLayout.CENTER);
+        right.add(bottom, BorderLayout.SOUTH);
         root.add(new ComicSplitPane(left, right, 320, 700), BorderLayout.CENTER);
         updateButtons();
         context.onChange(ignored -> poll());
@@ -194,14 +202,14 @@ public final class ActivitiesView implements View {
         result.reset();
         if (current.isEmpty()) {
             title.setText(model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
-            progress.setVisible(false);
+            progressBar.setVisible(false);
             updateButtons();
             return;
         }
         JobStatus status = current.get();
         title.setText(Texts.type(status.type()) + " " + status.sourceId() + " / " + status.partitionKey());
         JobProgress p = status.progress();
-        progress.setVisible(true);
+        progressBar.setVisible(true);
         if (status.state() == JobState.RUNNING && p.discovered() > 0) {
             progress.setIndeterminate(false);
             progress.setMaximum((int) Math.min(Integer.MAX_VALUE, p.discovered()));
