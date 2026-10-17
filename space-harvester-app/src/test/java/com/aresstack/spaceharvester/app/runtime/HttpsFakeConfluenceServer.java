@@ -14,11 +14,14 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 
 /**
- * Kopie von {@code HttpsFakeConfluenceServer} aus den Tests von space-harvester-core (dort nicht in den testFixtures).
+ * Kopie von {@code HttpsFakeConfluenceServer} aus den Tests von space-harvester-core (dort nicht in den testFixtures),
+ * ergänzt um {@link #hold()}/{@link #release()} für Abbruchtests.
  *
  * Liefert eine {@link FakeConfluence} über HTTPS auf 127.0.0.1 aus; auf Wunsch nur an Clients mit einem vom Server
  * akzeptierten Client-Zertifikat (mTLS).
@@ -27,6 +30,7 @@ final class HttpsFakeConfluenceServer implements AutoCloseable {
 
     private final FakeConfluence confluence;
     private final HttpsServer server;
+    private volatile CountDownLatch gate;
 
     HttpsFakeConfluenceServer(FakeConfluence confluence, SSLContext tls, boolean needClientAuth)
             throws IOException {
@@ -48,7 +52,28 @@ final class HttpsFakeConfluenceServer implements AutoCloseable {
         return URI.create("https://127.0.0.1:" + server.getAddress().getPort() + FakeConfluence.BASE.getPath());
     }
 
+    /** Hält alle folgenden Anfragen an, bis {@link #release()} sie freigibt (z. B. um einen Abbruch zu prüfen). */
+    void hold() {
+        gate = new CountDownLatch(1);
+    }
+
+    void release() {
+        CountDownLatch current = gate;
+        gate = null;
+        if (current != null) {
+            current.countDown();
+        }
+    }
+
     private void serve(HttpExchange exchange) throws IOException {
+        CountDownLatch current = gate;
+        if (current != null) {
+            try {
+                current.await(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         URI incoming = exchange.getRequestURI();
         String query = incoming.getRawQuery();
         URI mapped = URI.create(FakeConfluence.BASE.getScheme() + "://" + FakeConfluence.BASE.getHost()

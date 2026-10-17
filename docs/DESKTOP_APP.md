@@ -134,7 +134,7 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET …/sources/{id}/spaces` | `SourceQueries.partitions` | Verbindung prüfen, Space-Auswahl | `WorkspaceTest.harvestsBrowses…`, `…onlyConfiguredSourcesAreReachable` |
 | `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Inhalte › Live | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/pages/{pageId}/metadata` | `SourceQueries.pageMetadata` | Seite › Eigenschaften (live) | `MainWindowTest` (Navigation) |
-| `GET …/pages/{pageId}/attachments` | `SourceQueries.attachments` | Seite › Anhänge | – (Fake-Dateiquelle ohne Anhänge) |
+| `GET …/pages/{pageId}/attachments` | `SourceQueries.attachments` | Seite › Anhänge | `WorkspaceTest.attachmentsAre…` |
 | `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…` |
 | `GET …/spaces/{key}/tree` | `PageQueries.tree` | Inhalte › Struktur | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite öffnen, Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…` |
@@ -144,14 +144,14 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aktivitäten | `WorkspaceTest.harvestsBrowses…` |
-| `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aktivitäten › Abbrechen | – |
+| `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aktivitäten › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
 | `POST …/spaces/{key}/exports` | `Exports.start` | Exporte › Export starten | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}` | `Exports.artifact` | Aktivitäten › Ergebnis | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}/artifact/**` | `Exports.artifactFile` | Aktivitäten › Dateien speichern … | `WorkspaceTest.harvestsBrowses…` |
 | `POST /api/v1/exports/{id}/cancel` | `Jobs.cancel` | Aktivitäten › Abbrechen | – |
-| `GET …/pages/{pageId}/assets` | `Assets.assets` | Seite › Anhänge | – |
-| `POST …/pages/{pageId}/assets/harvest` | `Assets.harvest` | Seite › Anhänge › Alle ablegen | – |
-| `GET …/assets/{id}/content` | `Assets.content` | Seite › Anhänge › Speichern … | – |
+| `GET …/pages/{pageId}/assets` | `Assets.assets` | Seite › Anhänge | `WorkspaceTest.attachmentsAre…` |
+| `POST …/pages/{pageId}/assets/harvest` | `Assets.harvest` | Seite › Anhänge › Alle ablegen | `WorkspaceTest.attachmentsAre…` |
+| `GET …/assets/{id}/content` | `Assets.content` | Seite › Anhänge › Speichern … | `WorkspaceTest.attachmentsAre…` (byte-genau) |
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
