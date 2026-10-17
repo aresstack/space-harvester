@@ -8,6 +8,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicWindowShape;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
 import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
@@ -26,6 +28,8 @@ import java.awt.FlowLayout;
 import java.awt.GridBagLayout;
 import java.awt.Window;
 import java.awt.event.KeyEvent;
+import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Modale Dialoge im Comic-Stil wie im Enterprise AI Client: rahmenlos mit eigener Kopfzeile und rundem ✕; dazu
@@ -53,6 +57,25 @@ public final class Dialogs {
         no.addActionListener(e -> dialog.dispose());
         show(dialog, title, Comic.note(text), no, yes);
         return result[0];
+    }
+
+    /**
+     * Vor jedem Übernehmen, das die Quellen neu startet: Laufen Aufträge, sagt der Dialog, welche abbrechen würden, und
+     * übernimmt nur nach Bestätigung. Ohne laufende Aufträge {@code true} ohne Rückfrage.
+     */
+    static boolean restartAllowed(Component parent, AppContext context) {
+        List<JobStatus> running = context.runningJobs();
+        if (running.isEmpty()) {
+            return true;
+        }
+        String jobs = running.stream().limit(5).map(job -> (job.type() == JobType.EXPORT ? "Export " : "Abgleich ")
+                + job.sourceId() + (job.partitionKey() == null ? "" : " · " + job.partitionKey()))
+                .collect(Collectors.joining(", ")) + (running.size() > 5 ? ", …" : "");
+        return confirm(parent, "Laufende Aufträge", Texts.count(running.size(), "Auftrag läuft", "Aufträge laufen")
+                + " noch: " + jobs + ". Zum Übernehmen startet die App die Quellen neu; "
+                + (running.size() == 1 ? "dieser Auftrag bricht" : "diese Aufträge brechen") + " dabei ab. "
+                + "Wer das nicht will, wartet, bis sie unter „Aufträge“ fertig sind, und übernimmt dann.",
+                "Trotzdem übernehmen");
     }
 
     /**

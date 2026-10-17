@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import org.slf4j.Logger;
@@ -179,7 +180,26 @@ public final class AppContext {
                 });
     }
 
-    /** Liest die Konfiguration neu und startet die Laufzeit neu; laufende Aufträge werden dabei beendet. */
+    /**
+     * Die Aufträge, die {@link #reload} abbrechen würde (wartend oder laufend); leer ohne Laufzeit oder wenn die
+     * Auftragsablage nicht lesbar ist.
+     */
+    public List<JobStatus> runningJobs() {
+        if (runtime == null) {
+            return List.of();
+        }
+        try {
+            return runtime.workspace().jobs().stream().filter(job -> !job.state().terminal()).toList();
+        } catch (RuntimeException e) {
+            LOG.warn("Laufende Aufträge ließen sich nicht lesen: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /**
+     * Liest die Konfiguration neu und startet die Laufzeit neu; laufende Aufträge werden dabei beendet. Wer neu lädt,
+     * fragt vorher mit {@link Dialogs#restartAllowed} nach, damit kein Export still abbricht.
+     */
     public void reload(Runnable done) {
         AppRuntime previous = runtime;
         Background.run(() -> {

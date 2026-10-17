@@ -55,6 +55,7 @@ public final class Screenshots {
             SwingUtilities.invokeAndWait(() -> write(surface[0], directory.resolve(String.format(Locale.ROOT,
                     "%d-%s.png", section.ordinal() + 1, section.name().toLowerCase(Locale.ROOT)))));
         }
+        SwingUtilities.invokeAndWait(() -> SettingDialogs.screenshots(context, directory));
     }
 
     static void write(JComponent component, Path file) {

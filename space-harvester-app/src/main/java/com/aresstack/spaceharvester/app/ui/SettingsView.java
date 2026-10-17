@@ -40,6 +40,7 @@ public final class SettingsView implements View {
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Datenordner öffnen", "Ordner des lokalen Bestands öffnen");
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
+    private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
 
     public SettingsView(AppContext context) {
         this.context = context;
@@ -55,6 +56,8 @@ public final class SettingsView implements View {
             }
         });
         about.addActionListener(e -> AboutDialog.open(root, context));
+        proxy.addActionListener(e -> SettingDialogs.proxy(root, context, null,
+                () -> feedback.success("Proxy übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -75,7 +78,7 @@ public final class SettingsView implements View {
         root.add(Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ablage", Comic.PETROL, data),
-                Comic.plate("Netz und Zertifikate", Comic.ORANGE, network),
+                Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy)),
                 Comic.plate("Embedding-Modell", Comic.YELLOW, embedding),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)), BorderLayout.CENTER);
         context.onChange(ignored -> render());
@@ -190,6 +193,14 @@ public final class SettingsView implements View {
         root.repaint();
     }
 
+    private static JComponent withButtons(JComponent content, ComposerButton... buttons) {
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setOpaque(false);
+        panel.add(content, BorderLayout.CENTER);
+        panel.add(Comic.row(buttons), BorderLayout.SOUTH);
+        return panel;
+    }
+
     /** Wie logback.xml: {@code SPACE_HARVESTER_LOG_DIR} oder {@code <Benutzerordner>/.space-harvester/logs}. */
     static Path logDirectory() {
         String configured = System.getenv("SPACE_HARVESTER_LOG_DIR");
@@ -198,6 +209,9 @@ public final class SettingsView implements View {
     }
 
     private void reload() {
+        if (!Dialogs.restartAllowed(root, context)) {
+            return;
+        }
         reload.setEnabled(false);
         feedback.working("Konfiguration wird neu geladen …");
         context.reload(() -> {

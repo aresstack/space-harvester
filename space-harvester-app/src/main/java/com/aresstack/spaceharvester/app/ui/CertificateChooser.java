@@ -77,12 +77,69 @@ final class CertificateChooser {
     static String choose(Component parent, String currentAlias, List<Entry> all) {
         String[] result = {null};
         JDialog dialog = Dialogs.dialog(parent, "Zertifikat auswählen");
-        JTable table = Comic.table(new JTable());
-        JCheckBox expired = new JCheckBox("Auch abgelaufene Zertifikate anzeigen");
-        expired.setOpaque(false);
-        expired.setFont(Comic.regular(12.5f));
-        List<Entry> shown = new ArrayList<>();
-        Runnable fill = () -> {
+        Picker picker = new Picker(currentAlias, all);
+        ComposerButton ok = Comic.primary("Übernehmen", null);
+        ComposerButton cancel = Comic.button("Abbrechen", null);
+        ok.addActionListener(e -> {
+            Entry chosen = picker.selected();
+            if (chosen != null) {
+                result[0] = chosen.alias();
+            }
+            dialog.dispose();
+        });
+        cancel.addActionListener(e -> dialog.dispose());
+        Dialogs.show(dialog, "Zertifikat auswählen", picker.component(), cancel, ok);
+        return result[0];
+    }
+
+    /**
+     * Die Auswahl selbst (Tabelle und Häkchen „auch abgelaufene“), auch eingebettet in andere Dialoge, z. B. den
+     * Dialog „Client-Zertifikat“ an den Einstellungen einer Quelle.
+     */
+    static final class Picker {
+
+        final JTable table = Comic.table(new JTable());
+        final JCheckBox expired = new JCheckBox("Auch abgelaufene Zertifikate anzeigen");
+        private final List<Entry> all;
+        private final List<Entry> shown = new ArrayList<>();
+        private final JComponent component;
+        private Runnable onSelect = () -> { };
+
+        Picker(String currentAlias, List<Entry> all) {
+            this.all = all;
+            expired.setOpaque(false);
+            expired.setFont(Comic.regular(12.5f));
+            // Ein abgelaufenes, aber eingetragenes Zertifikat bleibt sichtbar, damit es nicht still verschwindet.
+            expired.setSelected(all.stream().anyMatch(entry -> !entry.valid() && entry.alias().equals(currentAlias)));
+            expired.addActionListener(e -> fill(selected() == null ? currentAlias : selected().alias()));
+            table.getSelectionModel().addListSelectionListener(e -> {
+                if (!e.getValueIsAdjusting()) {
+                    onSelect.run();
+                }
+            });
+            fill(currentAlias);
+            component = body(table, expired, all.isEmpty());
+        }
+
+        JComponent component() {
+            return component;
+        }
+
+        /** Das markierte Zertifikat oder {@code null}. */
+        Entry selected() {
+            int row = table.getSelectedRow();
+            return row >= 0 && row < shown.size() ? shown.get(row) : null;
+        }
+
+        boolean empty() {
+            return all.isEmpty();
+        }
+
+        void onSelect(Runnable listener) {
+            this.onSelect = listener;
+        }
+
+        private void fill(String alias) {
             shown.clear();
             all.stream().filter(entry -> expired.isSelected() || entry.valid()).forEach(shown::add);
             table.setModel(model(shown));
@@ -91,25 +148,12 @@ final class CertificateChooser {
             table.getColumnModel().getColumn(2).setPreferredWidth(140);
             table.getColumnModel().getColumn(3).setPreferredWidth(90);
             for (int i = 0; i < shown.size(); i++) {
-                if (shown.get(i).alias().equals(currentAlias)) {
+                if (shown.get(i).alias().equals(alias)) {
                     table.setRowSelectionInterval(i, i);
                 }
             }
-        };
-        expired.addActionListener(e -> fill.run());
-        fill.run();
-        ComposerButton ok = Comic.primary("Übernehmen", null);
-        ComposerButton cancel = Comic.button("Abbrechen", null);
-        ok.addActionListener(e -> {
-            int row = table.getSelectedRow();
-            if (row >= 0 && row < shown.size()) {
-                result[0] = shown.get(row).alias();
-            }
-            dialog.dispose();
-        });
-        cancel.addActionListener(e -> dialog.dispose());
-        Dialogs.show(dialog, "Zertifikat auswählen", body(table, expired, all.isEmpty()), cancel, ok);
-        return result[0];
+            onSelect.run();
+        }
     }
 
     static JComponent body(JTable table, JCheckBox expired, boolean empty) {
