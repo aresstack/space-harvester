@@ -32,6 +32,7 @@ import tools.jackson.databind.ObjectMapper;
 class EnrichmentApiTest {
 
     private static final String METADATA_TOKEN = "metadata-only-token-51c2";
+    private static final String READER_TOKEN = "reader-token-7d10e4";
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -39,6 +40,15 @@ class EnrichmentApiTest {
         registry.add("space-harvester.sources[0].type", () -> "confluence");
         registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
         TestClient.register(registry, "wiki");
+        // Neu berechnen verlangt zusätzlich sync.
+        registry.add("space-harvester.security.clients[0].grants[1].source", () -> "wiki");
+        registry.add("space-harvester.security.clients[0].grants[1].spaces[0]", () -> "*");
+        registry.add("space-harvester.security.clients[0].grants[1].access", () -> "sync");
+        registry.add("space-harvester.security.clients[2].id", () -> "reader");
+        registry.add("space-harvester.security.clients[2].token-sha256", () -> "sha256:" + sha256(READER_TOKEN));
+        registry.add("space-harvester.security.clients[2].grants[0].source", () -> "wiki");
+        registry.add("space-harvester.security.clients[2].grants[0].spaces[0]", () -> "*");
+        registry.add("space-harvester.security.clients[2].grants[0].access", () -> "metadata,content");
         registry.add("space-harvester.security.clients[1].id", () -> "metadata-only");
         registry.add("space-harvester.security.clients[1].token-sha256", () -> "sha256:" + sha256(METADATA_TOKEN));
         registry.add("space-harvester.security.clients[1].grants[0].source", () -> "wiki");
@@ -133,6 +143,7 @@ class EnrichmentApiTest {
         post("/api/v1/sources/wiki/pages/504/enrichments", TestClient.TOKEN);
 
         assertProblem(post("/api/v1/sources/wiki/pages/504/enrichments", METADATA_TOKEN), 403, "access-denied");
+        assertProblem(post("/api/v1/sources/wiki/pages/504/enrichments", READER_TOKEN), 403, "access-denied");
         HttpResponse<String> extended = http.send(HttpRequest.newBuilder(
                 uri("/api/v1/sources/wiki/pages/504?view=extended"))
                 .header("Authorization", "Bearer " + METADATA_TOKEN).build(), HttpResponse.BodyHandlers.ofString());

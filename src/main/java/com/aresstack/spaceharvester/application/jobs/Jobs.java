@@ -83,6 +83,11 @@ public class Jobs implements AutoCloseable {
             if (open.size() >= capacity) {
                 throw new JobCapacityExceededException(capacity);
             }
+            if (owner != null
+                    && open.values().stream().filter(other -> owner.equals(other.owner)).count()
+                            >= limits.maxOpenPerOwner()) {
+                throw JobCapacityExceededException.perOwner(limits.maxOpenPerOwner());
+            }
             open.put(job.id, job);
             queued.addLast(job);
             status = job.snapshot();
@@ -280,8 +285,9 @@ public class Jobs implements AutoCloseable {
             return new JobError(failed.code(), failed.getMessage());
         }
         if (cause instanceof SourceAccessException source) {
+            // Fester Text: Meldungen des Transports können interne URLs, Hosts und Proxy-Routen enthalten.
             return new JobError("SOURCE_" + source.reason().name(),
-                    source.getMessage() == null ? source.reason().name() : source.getMessage());
+                    "Die Quelle ist nicht erreichbar oder hat den Abruf abgelehnt (" + source.reason().name() + ")");
         }
         return new JobError(UNEXPECTED, "Unerwarteter Fehler im Auftrag (" + cause.getClass().getSimpleName() + ")");
     }

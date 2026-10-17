@@ -1,6 +1,9 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.CachedPage;
@@ -38,11 +41,13 @@ public class EnrichmentController {
     private final PageQueries queries;
     private final Enrichments enrichments;
     private final ObjectMapper json;
+    private final AccessGuard access;
 
-    public EnrichmentController(PageQueries queries, Enrichments enrichments, ObjectMapper json) {
+    public EnrichmentController(PageQueries queries, Enrichments enrichments, ObjectMapper json, AccessGuard access) {
         this.queries = queries;
         this.enrichments = enrichments;
         this.json = json;
+        this.access = access;
     }
 
     @PostMapping("/{sourceId}/pages/{pageId}/enrichments")
@@ -56,8 +61,8 @@ public class EnrichmentController {
     @ApiResponse(responseCode = "400", description = "Unbekannter Prozessor (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle oder "
-            + "keine Quelle mit dieser ID (access-denied)",
+    @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle, "
+            + "keine sync-Freigabe für den Space der Seite oder keine Quelle mit dieser ID (access-denied)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Seite nicht im "
@@ -79,6 +84,9 @@ public class EnrichmentController {
             throw new InvalidQueryException("processor kennt nur " + String.join(", ", enrichments.processorIds()));
         }
         CachedPage page = queries.page(caller, sourceId, pageId, false);
+        // Neu berechnen schreibt in den Index und kostet Rechenzeit: wie ein Abgleich nur mit sync-Freigabe, also nie
+        // für reine Leser oder durchgereichte Endnutzer.
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
         Enrichments.Run run = enrichments.recompute(page.snapshot(), processor);
         enrichments.flush();
         return new RecomputeResponse(sourceId, pageId, run.supported(), run.computed(), run.failed(),
