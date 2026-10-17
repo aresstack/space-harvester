@@ -126,7 +126,7 @@ public final class Problems {
         if (e instanceof CacheMissException) {
             return new Problem("Nicht im Bestand",
                     "Die Seite bzw. der Space liegt noch nicht im lokalen Bestand.",
-                    "Den Space synchronisieren; die Inhalte-Ansicht zeigt Seiten bis dahin live aus der Quelle.",
+                    "Erneut öffnen; fehlende Seiten holt die Inhalte-Ansicht aus der Quelle.",
                     technical);
         }
         if (e instanceof CacheUnavailableException) {
