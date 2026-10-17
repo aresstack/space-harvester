@@ -38,7 +38,7 @@ import org.apache.lucene.store.LockObtainFailedException;
  * Kopfdaten der Seiten bleiben davon unberührt.
  *
  * <p>Ergebnisse lassen sich jederzeit neu berechnen. Darum wird nicht jedes {@link #save} einzeln dauerhaft gemacht,
- * sondern spätestens alle {@value #COMMIT_EVERY} Änderungen, bei {@link #commit()} und beim Schließen; Lesen sieht
+ * sondern spätestens alle {@value #COMMIT_EVERY} Änderungen, bei {@link #flush()} und beim Schließen; Lesen sieht
  * jede Änderung sofort. Was ein Absturz verliert, fehlt danach und wird beim nächsten Lauf neu berechnet.
  */
 public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseable {
@@ -180,7 +180,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, AutoCloseab
     }
 
     /** Macht alle bisherigen Änderungen dauerhaft. */
-    public synchronized void commit() {
+    @Override
+    public synchronized void flush() {
         requireOpen();
         try {
             writer.commit();

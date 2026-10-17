@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Test-Fake der Ablage. */
+/** Flüchtige Ablage, solange kein Cache-Verzeichnis eingerichtet ist; auch Test-Fake. */
 public final class InMemoryEnrichmentStore implements EnrichmentStore {
 
     private final Map<PageKey, TreeMap<String, Enrichment>> results = new ConcurrentHashMap<>();

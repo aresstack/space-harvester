@@ -17,4 +17,8 @@ public interface EnrichmentStore {
 
     /** Entfernt alle Ergebnisse einer Seite, z. B. wenn die Seite aus dem Cache entfernt wurde. */
     void removeAll(PageKey key);
+
+    /** Macht die bisherigen Änderungen dauerhaft, wenn die Ablage sie bündelt. */
+    default void flush() {
+    }
 }
