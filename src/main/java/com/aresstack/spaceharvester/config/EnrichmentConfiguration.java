@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
@@ -15,9 +17,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms}
- * und {@code outline} und die Ablage (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem
- * bestätigten Abgleich werden sie nachgezogen.
+ * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
+ * {@code outline}, {@code entities} und {@code properties} und die Ablage (Lucene unter {@code enrichments/}, ohne
+ * Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie nachgezogen.
  */
 @Configuration(proxyBeanMethods = false)
 class EnrichmentConfiguration {
@@ -25,7 +27,8 @@ class EnrichmentConfiguration {
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store) {
         return new Enrichments(new ConfluenceStorageTextProjector(),
-                List.of(new AcronymProcessor(), new OutlineProcessor()),
+                List.of(new AcronymProcessor(), new OutlineProcessor(), new EntityProcessor(),
+                        new PropertyProcessor()),
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC());
     }
 

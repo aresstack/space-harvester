@@ -357,7 +357,10 @@ wie bei einer unbekannten Seite.
 **Anreicherungen (#29).** Deterministische Prozessoren ohne KI leiten aus einer konservativen Textprojektion des
 Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfallen, nichts wird ausgeführt oder
 aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
-`outline` (Gliederung mit Wortzahlen). Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
+`outline` (Gliederung mit Wortzahlen), für deutschen Text außerdem `entities` (Begriffe aus Nominalgruppen mit
+Häufigkeit) und `properties` (Eigenschaften, attributiv wie „die zuständige Stelle“ oder prädikativ wie „der Dienst ist
+nicht erreichbar“). Die Sprachprozessoren arbeiten mit festen Regeln und einem Lexikon der Funktionswörter, ohne
+Sprachmodell; Grundformen sind ungeprüfte Vorschläge, Pronomen werden nicht aufgelöst. Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
 und Warnungen und liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten
 Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten
 gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In

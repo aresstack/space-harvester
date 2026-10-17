@@ -430,7 +430,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 ## 9. Anreicherungen
 
 Nach jedem bestätigten Abgleich berechnet der Dienst Anreicherungen aus der Payload im Cache, als eigene Ergebnisse mit
-Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier Akronyme und Gliederung von 1002:
+Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier Akronyme, Gliederung, Begriffe und
+Eigenschaften von 1002 (die Seite nennt keine Eigenschaft, darum ist die Liste leer):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1002?view=extended"
@@ -452,10 +453,27 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
       ] }
     },
     {
+      "processor": "entities",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "entities": [
+        { "term": "API", "kind": "acronym", "count": 1 },
+        { "term": "Application Programming Interface", "kind": "noun", "count": 1 },
+        { "term": "JSON", "kind": "acronym", "count": 1 },
+        { "term": "REST-Schnittstelle", "kind": "noun", "count": 1, "section": "REST-Schnittstelle" }
+      ] }
+    },
+    {
       "processor": "outline",
       "status": "ok",
       "freshness": "current",
       "result": { "words": 9, "sections": [{ "heading": "REST-Schnittstelle", "level": 2, "words": 9 }] }
+    },
+    {
+      "processor": "properties",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "properties": [] }
     }
   ]
 }
