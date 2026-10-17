@@ -82,13 +82,69 @@ ausschließlich über `application.access.AccessGuard`:
 - Tests mit Fakes: `new AccessGuard((context, scope, kind) -> AccessDecision.ALLOW)` bzw. `DENY`; für
   HTTP-Tests `TestClient.register(registry, "<sourceId>")` und `TestClient.authenticated(request)`.
 
-## Delegierter Zielmodus (#24, Teil C)
+## Durchgereichte Endnutzer-Anmeldung (#24, Teil C)
 
-Später prüft eine weitere `AccessPolicy` mit Aufrufern der Art `END_USER` die aktuelle Leseberechtigung bei
-Confluence mit dem delegierten Token dieses Benutzers (etwa `GET /rest/api/content/{id}?expand=version` ohne Body).
-Nur bestätigter Erfolg gibt frei; 401/403/404, Login-Redirect, Timeout und unklare Antworten ergeben `UNDETERMINED`
-bzw. `DENY`, und der `AccessGuard` verweigert. Controller und Anwendungsfälle ändern sich dafür nicht. Die heutige
-`CorpusReleasePolicy` verweigert `END_USER` grundsätzlich.
+Ein vorgelagerter Dienst (Wissens- oder MCP-Dienst) kann die Anmeldung eines Endnutzers bei der Quelle durchreichen.
+Die Anfrage läuft dann mit den Rechten dieses Endnutzers, begrenzt durch die Korpusfreigabe des Clients. Der
+Harvester braucht dafür kein Login-UI.
+
+```http
+GET /api/v1/sources/confluence/spaces/DEV/pages HTTP/1.1
+Authorization: Bearer <Token des technischen Clients>
+X-Delegated-Source: confluence
+X-Delegated-Authorization: Bearer <Confluence-Token des Endnutzers>
+```
+
+```yaml
+space-harvester:
+  security:
+    clients:
+      - id: assistant
+        token-sha256: "sha256:…"
+        grants:
+          - source: confluence
+            spaces: ["*"]
+            access: [metadata, content]
+        delegation: [confluence]      # darf für diese Quelle Endnutzer durchreichen
+    delegation:                       # optional, Standardwerte
+      identity-ttl: 5m                # Benutzerkennung je Token
+      decision-ttl: 60s               # Sichtbarkeit je Token und Space bzw. Seite
+      max-entries: 100000
+```
+
+- **Anmeldung:** Der Client meldet sich wie immer an. Ist er für die genannte Quelle zur Durchreichung freigegeben,
+  fragt der Harvester die Quelle mit dem Endnutzer-Token, wer er ist (`DelegatedSourceAccess.identify`). Der
+  Aufrufer ist dann `AccessContext.endUser(userId, clientId, credential)` der Art `END_USER`.
+- **Rechte:** `DelegatedAccessPolicy` gibt nur frei, was die Korpusfreigabe des Clients **und** die Quelle mit dem
+  Endnutzer-Token erlauben (`DelegatedSourceAccess.canSee` je Space bzw. Seite). Die Lesbarkeit für das Erntekonto
+  oder ein Cache-Treffer ersetzen diese Prüfung nie. Listen und Bäume werden je Seite beschnitten, auch die
+  Live-Metadatenliste eines Space. Eine nicht sichtbare Seite antwortet wie eine unbekannte.
+- **Nur Lesen:** Endnutzer bekommen nur `metadata` und `content`. Exporte und andere Aufträge laufen ohne Anfrage
+  weiter, können kein Endnutzer-Token tragen und bleiben technischen Clients vorbehalten.
+- **Token:** gilt nur für die genannte Quelle und geht nur an sie. Es wird nicht gespeichert, nicht geloggt und nie
+  als Erntezugang verwendet. Zwischengespeichert werden nur die Benutzerkennung und Entscheidungen, jeweils unter
+  einem SHA-256-Fingerprint aus Quelle und Token.
+- **Entzug:** Entzogene Rechte wirken spätestens nach `decision-ttl`; `0s` fragt die Quelle jedes Mal. Abgelehnte
+  Tokens und unklare Antworten werden nicht zwischengespeichert.
+- **Fail closed:**
+
+  | Fall | Antwort |
+  |---|---|
+  | Client nicht zur Durchreichung freigegeben, Quelle fremd, ein Header fehlt | 403 `delegation-not-allowed` |
+  | Quelle lehnt das Endnutzer-Token ab | 401 `delegated-token-rejected` |
+  | Quelle antwortet unklar oder nicht | 503 `delegation-unavailable` |
+  | Space oder Seite für den Endnutzer nicht sichtbar | wie ohne Freigabe (403 bzw. 404) |
+
+  In keinem Fall läuft die Anfrage stattdessen mit den Rechten des Clients weiter.
+- **Start:** Nennt ein Client unter `delegation` eine Quelle ohne passende `DelegatedSourceAccess`-Implementierung,
+  startet der Dienst nicht.
+- **Confluence:** `ConfluenceDelegatedAccess` fragt mit dem Endnutzer-Token `GET /rest/api/user/current`
+  (Kennung `userKey`, sonst `username`), `GET /rest/api/content/{id}?expand=space` und `GET /rest/api/space/{key}`,
+  über den Transport der Quelle mit derselben Proxy-Route und demselben mTLS wie beim Ernten (#47). Der PAT der
+  Quelle wird dabei nicht gesendet. Gesendet werden nur `Authorization` und `Accept`, ohne Body, Cookies und
+  Weiterleitungen, mit höchstens 10 s je Anfrage. IDs und Keys mit anderen Zeichen als Buchstaben, Ziffern, `_`,
+  `-` und führendem `~` werden nicht angefragt. Ein Browser-Login am Harvester ist nicht vorgesehen (Entscheidung
+  zu #24: Variante A).
 
 ## Abdeckung von #14
 
@@ -112,7 +168,6 @@ Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API
 
 ## Noch offen
 
-- Schutz der Export- und Sync-Endpunkte samt Eigentümerprüfung: kommt mit #43/#49 (Strang E) und #54 (Strang D).
-
-- OAuth-2.0-Delegation (#24, Teil C).
+- Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; Live-Test gegen Confluence (#24). Ein
+  Browser-Login am Harvester ist bewusst nicht vorgesehen (Variante A).
 - Artefakte bleiben nach Ablauf der Auftragsaufbewahrung auf der Platte, sind dann aber über die API nicht mehr erreichbar; Aufräumen gehört zu #11/#12.
