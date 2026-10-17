@@ -283,17 +283,18 @@ class PageQueriesTest {
     private PageSnapshot fetchAnswer;
 
     private final List<PageSnapshot> stored = new ArrayList<>();
-    private final List<String> expectedHashes = new ArrayList<>();
+    private final List<String> expectedStates = new ArrayList<>();
 
     private PageQueries refreshing(AccessPolicy policy) {
         return refreshing(policy, PageCacheFill.NONE);
     }
 
     private PageQueries filling(AccessPolicy policy) {
-        return refreshing(policy, (snapshot, expected) -> {
-            expectedHashes.add(expected);
-            return stored.add(snapshot);
-        });
+        return refreshing(policy, PageCacheFill.of(key -> cache.page(key)
+                .map(page -> page.snapshot().payload().rawSha256()).orElse(null), (snapshot, expected) -> {
+                    expectedStates.add(expected);
+                    return stored.add(snapshot);
+                }));
     }
 
     private PageQueries refreshing(AccessPolicy policy, PageCacheFill fill) {
@@ -432,8 +433,8 @@ class PageQueriesTest {
         filling(ALLOW_ALL).page(CALLER, "wiki", "p03", true);
 
         assertThat(stored).containsExactly(fetchAnswer);
-        // Nur über den vorher gesehenen Stand, damit ein langsamer Abruf keinen neueren überschreibt.
-        assertThat(expectedHashes).containsExactly(old.payload().rawSha256());
+        // Nur über den vor dem Abruf gelesenen Stand, damit ein langsamer Abruf keinen neueren überschreibt.
+        assertThat(expectedStates).containsExactly(old.payload().rawSha256());
     }
 
     @Test
@@ -441,9 +442,9 @@ class PageQueriesTest {
         PageSnapshot fresh = page("wiki", "DEV", "p77", null);
         when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
         fetchAnswer = fresh;
-        PageQueries queries = refreshing(ALLOW_ALL, (snapshot, expected) -> {
+        PageQueries queries = refreshing(ALLOW_ALL, PageCacheFill.of(key -> null, (snapshot, expected) -> {
             throw new IllegalStateException("Cache geschlossen");
-        });
+        }));
 
         assertThat(queries.page(CALLER, "wiki", "p77", false).snapshot()).isSameAs(fresh);
     }

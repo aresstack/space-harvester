@@ -130,14 +130,28 @@ class LucenePageCacheTest {
         PageSnapshot v4 = page("wiki", "101", "DEV", "100", "4", json("{\"v\":4}"));
 
         // Zwei Abrufe sahen die Seite nicht; der erste legt v4 ab, der langsamere mit v3 kommt zu spät.
+        assertThat(cache.state(v3.key())).isNull();
         assertThat(cache.trySave(v4, null)).isTrue();
         assertThat(cache.trySave(v3, null)).isFalse();
         assertThat(cache.find(v3.key())).contains(v4);
 
         // Wer v4 gesehen hat, darf darüber ablegen.
         PageSnapshot v5 = page("wiki", "101", "DEV", "100", "5", json("{\"v\":5}"));
-        assertThat(cache.trySave(v5, v4.payload().rawSha256())).isTrue();
+        assertThat(cache.trySave(v5, cache.state(v3.key()))).isTrue();
         assertThat(cache.find(v3.key())).contains(v5);
+    }
+
+    @Test
+    void aLateFillNeverOverwritesNewerHeadersOfASync() {
+        LucenePageCache cache = open();
+        PageSnapshot fetched = page("wiki", "105", "DEV", null, "1", json("{}"));
+        String seen = cache.state(fetched.key());
+        // Während des Abrufs kennt ein Abgleich die Seite nur mit Kopfdaten, inzwischen in OPS.
+        cache.saveHeader(page("wiki", "105", "OPS", null, "2", json("{}")).header());
+
+        assertThat(cache.trySave(fetched, seen)).isFalse();
+        assertThat(cache.findHeader(fetched.key())).hasValueSatisfying(header ->
+                assertThat(header.metadata().partitionKey()).isEqualTo("OPS"));
     }
 
     @Test

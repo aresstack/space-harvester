@@ -57,7 +57,7 @@ class CacheConfiguration {
      */
     @Bean
     PageCacheFill pageCacheFill(LucenePageCache pageCache, ObjectProvider<Enrichments> enrichments) {
-        PageCacheFill store = pageCache::trySave;
+        PageCacheFill store = PageCacheFill.of(pageCache::state, pageCache::trySave);
         Enrichments available = enrichments.getIfAvailable();
         return available == null ? store : new EnrichingCacheFill(store, available);
     }

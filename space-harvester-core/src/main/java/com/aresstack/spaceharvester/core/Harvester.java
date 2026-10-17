@@ -28,6 +28,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -168,7 +169,8 @@ public final class Harvester implements AutoCloseable {
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
-                    new EnrichingCacheFill(cache::trySave, enrichments), builder.maxTreeNodes);
+                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
+                    builder.maxTreeNodes);
             this.search = new PageSearch(catalog, index, access);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,

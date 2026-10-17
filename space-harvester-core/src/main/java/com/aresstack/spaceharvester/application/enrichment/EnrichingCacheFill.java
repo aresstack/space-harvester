@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.util.Objects;
 
@@ -21,8 +22,13 @@ public final class EnrichingCacheFill implements PageCacheFill {
     }
 
     @Override
-    public boolean store(PageSnapshot snapshot, String expectedRawSha256) {
-        if (!store.store(snapshot, expectedRawSha256)) {
+    public String state(PageKey key) {
+        return store.state(key);
+    }
+
+    @Override
+    public boolean store(PageSnapshot snapshot, String expectedState) {
+        if (!store.store(snapshot, expectedState)) {
             return false;
         }
         try {

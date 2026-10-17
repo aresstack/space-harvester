@@ -221,6 +221,8 @@ public class PageQueries {
     /** Prüft bzw. lädt die Seite bei der Quelle, legt einen neuen Inhalt ab und liefert ihn aus. */
     private DeliveredPage fromSource(AccessContext caller, String sourceId, String pageId,
                                      Optional<CachedPage> cached) {
+        // Vor dem Abruf, damit eine inzwischen abgelegte neuere Fassung nicht überschrieben wird.
+        String seen = stateQuietly(new PageKey(sourceId, pageId));
         PageFreshness.Refreshed checked;
         try {
             checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header),
@@ -239,7 +241,6 @@ public class PageQueries {
         }
         CacheGeneration generation = cached.map(CachedPage::generation).orElse(null);
         boolean live = checked.cacheStale();
-        String seen = cached.map(page -> page.snapshot().payload().rawSha256()).orElse(null);
         if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot(), seen)) {
             // Jetzt im Cache: die Auslieferung ist der Cache-Stand, mit der Generation des Space.
             Optional<CachedPage> now = cachedQuietly(checked.header().key());
@@ -257,13 +258,22 @@ public class PageQueries {
      * Ablegen darf die Auslieferung nie verhindern; misslingt es, legt der nächste Abruf oder Abgleich ab. Abgelegt
      * wird nur über den vorher gesehenen Stand, damit ein langsamer Abruf keinen inzwischen neueren überschreibt.
      */
-    private boolean stored(PageSnapshot snapshot, String seenRawSha256) {
+    private boolean stored(PageSnapshot snapshot, String seenState) {
         try {
-            return fill.store(snapshot, seenRawSha256);
+            return fill.store(snapshot, seenState);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Nachgeladene Seite nicht abgelegt ({0})",
                     e.getClass().getName());
             return false;
+        }
+    }
+
+    private String stateQuietly(PageKey key) {
+        try {
+            return fill.state(key);
+        } catch (RuntimeException e) {
+            // Unbekannt: ein Vergleichswert, den kein gespeicherter Stand hat, verhindert das Ablegen.
+            return "unbekannt";
         }
     }
 
