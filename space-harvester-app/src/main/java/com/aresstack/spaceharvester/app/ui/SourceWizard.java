@@ -315,7 +315,7 @@ final class SourceWizard {
             done.run();
             return;
         }
-        AppRuntime.SessionSecrets secrets = sessionSecrets(source.id());
+        AppRuntime.SessionSecrets secrets = sessionSecrets(source);
         feedback.working("Verbindung wird geprüft …");
         test.setEnabled(false);
         Background.run(() -> AppRuntime.probe(draft.settings(), source.id(), secrets, context.version(),
@@ -348,8 +348,7 @@ final class SourceWizard {
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
                 context.secrets().put(savedId, value);
-            } else if (editing != null && (editing.draft().authType() != source.authType()
-                    || !Objects.equals(editing.draft().secretVariable(), source.secretVariable()))) {
+            } else if (loginChanged(source)) {
                 // Ein Token taugt nicht als Passwort (und umgekehrt): Mit der Anmeldeart verfällt der Sitzungswert.
                 context.secrets().remove(savedId);
             }
@@ -420,15 +419,22 @@ final class SourceWizard {
         sessionValue.setText("");
     }
 
-    private AppRuntime.SessionSecrets sessionSecrets(String sourceId) {
+    AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        String sourceId = source.id();
         char[] value = sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
             secrets.put(sourceId, value);
-        } else if (sourceId != null && context.secrets().has(sourceId)) {
+        } else if (sourceId != null && context.secrets().has(sourceId) && !loginChanged(source)) {
             return context.secrets();
         }
         return secrets;
+    }
+
+    /** Ob Anmeldeart oder Variable beim Bearbeiten wechseln; dann passt ein Sitzungswert nicht mehr. */
+    private boolean loginChanged(SourceDraft source) {
+        return editing != null && (editing.draft().authType() != source.authType()
+                || !Objects.equals(editing.draft().secretVariable(), source.secretVariable()));
     }
 
     private List<Step> steps() {

@@ -174,6 +174,7 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.checkNotes.getText()).contains("KEINE .bak").doesNotContain("bleibt als .bak");
+            assertThat(w.sessionSecrets(w.draft()).has("wiki")).as("Verbindungstest ohne altes Token").isFalse();
             w.save();
         });
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
