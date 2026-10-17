@@ -42,6 +42,49 @@ public final class Problems {
     public record Problem(String title, String message, String hint, String technical) {
     }
 
+    /**
+     * Welcher Schritt gescheitert ist. Die Spaces-Liste, die Seitenliste aus der Quelle, der Abruf einer einzelnen
+     * Seite und der lokale Bestand sind getrennte Abrufe; dass einer klappt, sagt über die anderen nichts.
+     */
+    public enum Step {
+        SPACES("Spaces nicht abrufbar"),
+        PAGE_LIST("Seitenliste nicht abrufbar"),
+        PAGE("Seite nicht geladen"),
+        STOCK("Lokaler Bestand nicht lesbar");
+
+        private final String heading;
+
+        Step(String heading) {
+            this.heading = heading;
+        }
+
+        public String heading() {
+            return heading;
+        }
+    }
+
+    /**
+     * Wie {@link #describe(Throwable)}, mit dem gescheiterten Schritt in der Überschrift. Ist die Quelle bei einer
+     * Seite oder Seitenliste nicht erreichbar, sagt der Hinweis, dass die Verbindungsprüfung (Spaces) etwas anderes
+     * abfragt, und wo die genaue Ursache steht; die Meldung des Core (Zeitüberschreitung, TLS, HTTP-Status) erscheint
+     * dann schon im Text, weil sie die eigentliche Auskunft ist.
+     */
+    public static Problem describe(Throwable error, Step step) {
+        Problem base = describe(error);
+        Throwable e = unwrap(error);
+        String hint = base.hint();
+        String message = base.message();
+        if (e instanceof SourceAccessException source && (step == Step.PAGE || step == Step.PAGE_LIST)
+                && source.reason() == SourceAccessException.Reason.UNAVAILABLE) {
+            message = (step == Step.PAGE ? "Der Abruf dieser Seite aus " : "Der Abruf der Seitenliste aus ")
+                    + source.sourceId() + " ist gescheitert"
+                    + (e.getMessage() == null || e.getMessage().isBlank() ? "." : ": " + e.getMessage());
+            hint = "Die Verbindungsprüfung fragt nur die Spaces ab; dieser Abruf geht an eine andere Adresse der "
+                    + "Quelle. Erneut versuchen; bleibt es dabei, Proxy/PAC und Zertifikate prüfen.";
+        }
+        return new Problem(step.heading() + ": " + base.title(), message, hint, base.technical());
+    }
+
     public static Problem describe(Throwable error) {
         Throwable e = unwrap(error);
         String technical = e.getClass().getName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
@@ -77,7 +120,7 @@ public final class Problems {
         if (e instanceof CacheMissException) {
             return new Problem("Nicht im Bestand",
                     "Die Seite bzw. der Space liegt noch nicht im lokalen Bestand.",
-                    "Den Space synchronisieren oder „Aktualität prüfen“ wählen, um die Seite live zu laden.",
+                    "Den Space synchronisieren; die Inhalte-Ansicht zeigt Seiten bis dahin live aus der Quelle.",
                     technical);
         }
         if (e instanceof CacheUnavailableException) {
