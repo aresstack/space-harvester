@@ -45,6 +45,8 @@ public final class AppSettingsLoader {
     /** Wurzel der App-eigenen Schlüssel. */
     static final String APP_ROOT = "space-harvester-app";
 
+    /** Ein ganzer Wert {@code ${NAME}} oder {@code ${NAME:Standard}}; Gruppe 1 ist der Name. */
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([^}:]+)(?::[^}]*)?}");
     private static final Pattern SIZE = Pattern.compile("(\\d+)\\s*(B|KB|MB|GB|TB)?", Pattern.CASE_INSENSITIVE);
     private static final Pattern SIMPLE_DURATION = Pattern.compile("(\\d+)\\s*(ms|s|m|h|d)", Pattern.CASE_INSENSITIVE);
 
@@ -239,7 +241,7 @@ public final class AppSettingsLoader {
                     SourceSettingsConfig.CertificateStoreType.class, text(get(certificate, "type"), problems), null,
                     label + ": client-certificate.type", problems);
             Secret password = secret(get(certificate, "password"));
-            if (password.variable() != null) {
+            if (password.missing() && password.variable() != null) {
                 problems.add(label + ": Das Passwort des Client-Zertifikats fehlt (Umgebungsvariable "
                         + password.variable() + ")");
             }
@@ -368,7 +370,10 @@ public final class AppSettingsLoader {
 
     // ------------------------------------------------------------------ Werte
 
-    /** Ein Geheimnis: aufgelöst, leer oder mit fehlender Umgebungsvariable. */
+    /**
+     * Ein Geheimnis: aufgelöst, leer oder mit fehlender Umgebungsvariable; {@code variable} ist der Platzhaltername
+     * (auch wenn er aufgelöst wurde), damit Sitzung und Tresor einen Wert an genau diesen Platzhalter binden.
+     */
     private record Secret(String value, boolean missing, String variable) {
 
         static final Secret NONE = new Secret(null, false, null);
@@ -380,7 +385,10 @@ public final class AppSettingsLoader {
         }
         try {
             String value = placeholders.resolve(String.valueOf(raw));
-            return value == null || value.isEmpty() ? new Secret(null, true, null) : new Secret(value, false, null);
+            Matcher placeholder = PLACEHOLDER.matcher(String.valueOf(raw).strip());
+            String variable = placeholder.matches() ? placeholder.group(1) : null;
+            return value == null || value.isEmpty() ? new Secret(null, true, variable)
+                    : new Secret(value, false, variable);
         } catch (Placeholders.UnresolvedPlaceholderException e) {
             return new Secret(null, true, e.name());
         }

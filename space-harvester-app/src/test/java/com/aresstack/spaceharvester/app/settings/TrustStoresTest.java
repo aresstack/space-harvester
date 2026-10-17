@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.source.TrustBundles;
 import org.junit.jupiter.api.Test;
 
 import javax.net.ssl.X509TrustManager;
@@ -17,15 +18,17 @@ class TrustStoresTest {
     void theWindowsBundleIsBuiltOnFirstUseAndKept() throws Exception {
         AtomicInteger built = new AtomicInteger();
         X509TrustManager system = new Accepting();
-        X509TrustManager manager = TrustStores.of(Map.of(), () -> {
+        TrustBundles bundles = TrustStores.of(Map.of(), () -> {
             built.incrementAndGet();
             return system;
-        }).trustManager(TrustStores.WINDOWS);
+        });
+        X509TrustManager manager = bundles.trustManager(TrustStores.WINDOWS);
+        X509TrustManager other = bundles.trustManager(TrustStores.WINDOWS);
 
         assertThat(built).hasValue(0);
         manager.checkServerTrusted(new X509Certificate[0], "RSA");
-        manager.checkServerTrusted(new X509Certificate[0], "RSA");
-        assertThat(built).hasValue(1);
+        other.checkServerTrusted(new X509Certificate[0], "RSA");
+        assertThat(built).as("einmal für alle Quellen").hasValue(1);
     }
 
     @Test

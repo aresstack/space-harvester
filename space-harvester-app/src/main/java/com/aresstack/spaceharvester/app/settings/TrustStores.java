@@ -51,10 +51,12 @@ public final class TrustStores {
     }
 
     static TrustBundles of(Map<String, AppSettings.TrustStoreSettings> stores, Supplier<X509TrustManager> system) {
+        // Ein Trust-Manager für alle Quellen mit "windows": Der Export der Windows-Speicher läuft einmal, nicht je Quelle.
+        Deferred shared = new Deferred(system);
         return name -> {
             AppSettings.TrustStoreSettings settings = stores.get(name);
             if (settings == null && WINDOWS.equals(name)) {
-                return new Deferred(system);
+                return shared;
             }
             if (settings == null) {
                 throw new IllegalArgumentException("SSL-Bundle '" + name + "' ist nicht konfiguriert");
