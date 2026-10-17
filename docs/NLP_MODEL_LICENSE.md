@@ -88,7 +88,7 @@ Symboltabellen mit Wortformen:
 | Tabelle | Einträge | Inhalt |
 |---|---:|---|
 | `FORM` | 49.498 | einzelne Wortformen, höchstens 35 Zeichen |
-| `MERGE2_FORM_FORM` | 293.583 | Paar aus den Wortformen der beiden obersten Stack-Elemente (`Stack[0]`, `Stack[1]`) |
+| `MERGE2_FORM_FORM` | 293.583 | Paar aus den Wortformen der beiden obersten Stack-Elemente (`Stack[0]`, `Stack[1]`); davon 282.265 Paare aus zwei Wortformen, 11.318 mit dem Platzhalter `#null#` für eine leere Stack-Position |
 | `MERGE2_FORM_UPOSTAG` | 226.185 | Wortform mit einer Wortart |
 | `MERGE2_UPOSTAG_FORM` | 98.816 | Wortart mit einer Wortform |
 | `MERGE3_FORM_UPOSTAG_UPOSTAG` | 42.001 | Wortform eines linken Abhängigen mit zwei Wortarten |
@@ -102,11 +102,11 @@ aber, wie viel der Wortfolge sie trotzdem abbilden:
 
 | Messung | Wert |
 |---|---:|
-| FORM/FORM-Paare, die im Train-Teil als direkt benachbarte Wörter vorkommen | 139.406 von 293.583 (47 %) |
+| FORM/FORM-Paare, die im Train-Teil als direkt benachbarte Wörter vorkommen | 139.406 von 282.265 (49 %) |
 | Benachbarte Wortpaare des Train-Teils, die als Paar in der Tabelle stehen | 215.277 von 249.964 (86 %) |
 | Train-Sätze, deren benachbarte Wortpaare alle in der Tabelle stehen | 1.582 von 13.813 (11 %) |
 | Längste lückenlos abgedeckte Wortfolge je Satz | Median 10, 90 % bis 17, höchstens 41 Wörter |
-| Partner je Wortform in der Paartabelle | Median 4, Mittel 11,9 |
+| Partner je Wortform in der Paartabelle | Median 4, Mittel 11,4 |
 
 Das korrigiert die frühere Annahme „einzelne Wörter, keine zusammenhängenden Sätze“: Das Modell speichert keine Sätze,
 aber die meisten Nachbarschaften des Train-Textes als ungeordnete Wortpaare. Einen Satz daraus zurückzugewinnen hieße,

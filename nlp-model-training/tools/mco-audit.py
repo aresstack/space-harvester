@@ -18,6 +18,7 @@ from collections import Counter
 
 CORPUS_SUFFIXES = (".conllu", ".conll", ".conllx", ".tab", ".txt")
 TEXT_TABLES = ("FORM", "LEMMA")
+SENTINEL = re.compile(r"^#[a-z]+#$")
 
 
 def open_mco(path):
@@ -111,10 +112,13 @@ def main():
     }
     for t in TEXT_TABLES:
         report[f"max{t.title()}Length"] = max((len(s) for s in tables.get(t, [])), default=0)
-    pairs = [tuple(s.split("~", 1)) for s in tables.get("MERGE2_FORM_FORM", []) if "~" in s]
+    entries = [tuple(s.split("~", 1)) for s in tables.get("MERGE2_FORM_FORM", []) if "~" in s]
+    # MaltParser trägt für eine leere Stack-Position Platzhalter wie #null# ein; das sind keine Wortformen
+    pairs = [p for p in entries if not any(SENTINEL.match(w) for w in p)]
+    report["formFormEntries"] = len(entries)
     report["formFormPairs"] = len(pairs)
     partners = Counter(w for pair in pairs for w in pair)
-    report["formFormPartners"] = {"median": statistics.median(partners.values()) if partners else 0,
+    report["formFormPartners"] = {"median": sorted(partners.values())[len(partners) // 2] if partners else 0,
                                   "mean": round(statistics.mean(partners.values()), 1) if partners else 0}
     forms = {f for f in tables.get("FORM", []) if len(f) >= 6}
     report["formsCheckedInSerializedFiles"] = len(forms)
@@ -134,6 +138,8 @@ def main():
     for t, n in report["symbolTables"].items():
         print(f"  {n:>8}  {t}")
     print(f"Längste Wortform: {report['maxFormLength']} Zeichen, längstes Lemma: {report['maxLemmaLength']}")
+    print(f"MERGE2_FORM_FORM: {report['formFormEntries']} Einträge, davon {report['formFormPairs']} Paare aus zwei "
+          f"Wortformen (Rest mit Platzhalter für eine leere Stack-Position)")
     print(f"Partner je Wortform in MERGE2_FORM_FORM: Median {report['formFormPartners']['median']}, "
           f"Mittel {report['formFormPartners']['mean']}")
     for name, found in report["formsFoundInSerializedFiles"].items():
