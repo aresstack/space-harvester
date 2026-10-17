@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
@@ -26,10 +27,10 @@ class QueryConfiguration {
 
     @Bean
     PageQueries pageQueries(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
-                            PageFreshness freshness,
+                            PageFreshness freshness, ObjectProvider<PageCacheFill> fill,
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
         return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
-                maxTreeNodes);
+                fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes);
     }
 
     @Bean

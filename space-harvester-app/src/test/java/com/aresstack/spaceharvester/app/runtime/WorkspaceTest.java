@@ -140,10 +140,13 @@ class WorkspaceTest {
         Workspace workspace = start().workspace();
 
         assertThat(workspace.liveMetadata("wiki", "DEV", null, 100).entries()).hasSize(2);
-        assertThatThrownBy(() -> workspace.page("wiki", "102", false)).isInstanceOf(CacheMissException.class);
-        DeliveredPage live = workspace.page("wiki", "102", true);
-        assertThat(live.live()).isTrue();
-        assertThat(new String(live.snapshot().payload().bytes(), StandardCharsets.UTF_8)).contains("Der Dienst läuft.");
+        // Ohne Bestand lädt das Lesen die Seite nach und legt sie ab (ADR 0010); danach kommt sie aus dem Cache.
+        DeliveredPage loaded = workspace.page("wiki", "102", false);
+        assertThat(new String(loaded.snapshot().payload().bytes(), StandardCharsets.UTF_8))
+                .contains("Der Dienst läuft.");
+        DeliveredPage again = workspace.page("wiki", "102", false);
+        assertThat(again.live()).isFalse();
+        assertThat(again.refresh()).isNull();
     }
 
     @Test

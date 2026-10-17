@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -97,6 +98,19 @@ class HarvesterTest {
             // Der Cache ist nebenbei gefüllt: Seiten lesen geht jetzt ohne eigenen Abgleich.
             assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 100).pages())
                     .extracting(page -> page.header().key().pageId()).containsExactlyInAnyOrder("100", "102");
+        }
+    }
+
+    @Test
+    void readsANeverSyncedPageFromTheSourceAndKeepsItInTheCache() throws Exception {
+        try (Harvester harvester = harvester()) {
+            DeliveredPage first = harvester.pages().page(harvester.caller(), "wiki", "102", false);
+            assertThat(first.snapshot().payload().bytes()).isNotEmpty();
+
+            DeliveredPage second = harvester.pages().page(harvester.caller(), "wiki", "102", false);
+            assertThat(second.live()).isFalse();
+            assertThat(second.refresh()).isNull();
+            assertThat(second.snapshot().payload().rawSha256()).isEqualTo(first.snapshot().payload().rawSha256());
         }
     }
 

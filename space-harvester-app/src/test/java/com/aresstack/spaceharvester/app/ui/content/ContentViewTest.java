@@ -93,7 +93,7 @@ class ContentViewTest {
         });
 
         await(() -> view.detail().shownPage() != null);
-        assertThat(onEdt(() -> view.detail().shownPage().live())).isTrue();
+        // Nachgeladen und sofort abgelegt (ADR 0010): die Anzeige kommt bereits aus dem Cache.
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
                 StandardCharsets.UTF_8)).contains("Text der Seite");
         assertThat(onEdt(() -> view.detail().feedback().isVisible())).as("keine Cache-Meldung").isFalse();

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api.confluence;
 
+import com.aresstack.spaceharvester.EmptyConfluence;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -97,7 +98,7 @@ class ConfluenceCompatContractTest {
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
-        registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
+        registry.add("space-harvester.sources[0].base-url", EmptyConfluence::baseUrl);
         TestClient.register(registry, "wiki");
     }
 

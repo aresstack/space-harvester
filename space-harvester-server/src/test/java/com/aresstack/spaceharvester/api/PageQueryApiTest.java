@@ -316,7 +316,8 @@ class PageQueryApiTest {
     void extendedViewFollowsTheSameRulesAsTheNativeView() throws Exception {
         assertProblem(get("/api/v1/sources/wiki/pages/101?view=html"), 400, "invalid-request");
         assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 503, "source-unavailable");
-        assertProblem(get("/api/v1/sources/wiki/pages/4711?view=extended"), 404, "cache-miss");
+        // Nicht im Cache: wird nachgeladen (ADR 0010); die Quelle ist hier nicht erreichbar, nie ein stiller Fehlschlag.
+        assertProblem(get("/api/v1/sources/wiki/pages/4711?view=extended"), 503, "source-unavailable");
         HttpResponse<String> denied = getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages/100?view=extended");
         assertProblem(denied, 403, "access-denied");
         assertThat(denied.body()).doesNotContain("Seite 100");
@@ -359,7 +360,8 @@ class PageQueryApiTest {
 
     @Test
     void missingObjectsAreDistinguishedFromUnknownSources() throws Exception {
-        assertProblem(get("/api/v1/sources/wiki/pages/4711"), 404, "cache-miss");
+        // Eine Seite außerhalb des Cache wird nachgeladen; ist die Quelle nicht erreichbar, sagt die Antwort das.
+        assertProblem(get("/api/v1/sources/wiki/pages/4711"), 503, "source-unavailable");
         assertProblem(get("/api/v1/sources/wiki/spaces/OPS/pages"), 404, "cache-miss");
         assertProblem(get("/api/v1/sources/wiki/spaces/OPS/tree"), 404, "cache-miss");
         // Eine nicht konfigurierte Quelle ist für den Client nicht freigegeben, wie jede andere fremde Quelle.

@@ -1,12 +1,16 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
+import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -45,6 +49,17 @@ class CacheConfiguration {
     @Bean
     LucenePageCacheReader pageCacheReader(LucenePageCache pageCache) {
         return new LucenePageCacheReader(pageCache);
+    }
+
+    /**
+     * Nachgeladene Einzelseiten landen samt Anreicherungen im gemeinsamen Cache (ADR 0010); wartet nie auf einen
+     * Abgleich.
+     */
+    @Bean
+    PageCacheFill pageCacheFill(LucenePageCache pageCache, ObjectProvider<Enrichments> enrichments) {
+        PageCacheFill store = pageCache::trySave;
+        Enrichments available = enrichments.getIfAvailable();
+        return available == null ? store : new EnrichingCacheFill(store, available);
     }
 
     /** Titel- und Metadatensuche (#28) auf demselben Index. */

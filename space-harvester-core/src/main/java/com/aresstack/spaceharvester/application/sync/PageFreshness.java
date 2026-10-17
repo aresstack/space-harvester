@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,8 +23,8 @@ import java.util.concurrent.TimeoutException;
  * Explizite Aktualitätsprüfung einer einzelnen Seite gegen die Quelle ({@code ?refresh=true}, #27). Liest die
  * Einzelmetadaten live und lädt den Inhalt nur, wenn die Revision nicht mehr zum Cache passt.
  *
- * <p>Schreibt nicht in den Cache: Änderungen am Cache werden nur mit einer bestätigten Generation sichtbar (#16).
- * Eine neuere Seite liefert die Prüfung deshalb live, und der Cache-Stand gilt bis zum nächsten Abgleich als veraltet.
+ * <p>Schreibt selbst nicht in den Cache; das Ablegen nachgeladener Seiten übernimmt der Aufrufer
+ * ({@code PageQueries} mit {@code PageCacheFill}, ADR 0010).
  * Ein Fehler der Quelle wird als {@link SourceAccessException} weitergereicht, nie durch den Cache-Stand ersetzt;
  * Rechte prüft der Aufrufer, vor dem Aufruf für die Quelle und danach am gelieferten {@link Refreshed#header()}
  * (aktueller Space).
@@ -113,12 +114,24 @@ public class PageFreshness {
      */
     public Refreshed check(String sourceId, String pageId, Optional<PageHeader> cachedHeader,
                            Optional<PageSnapshot> cachedSnapshot) {
+        return check(sourceId, pageId, cachedHeader, cachedSnapshot, header -> true);
+    }
+
+    /**
+     * Wie {@link #check(String, String, Optional, Optional)}, mit Rechteprüfung an den live gelesenen Kopfdaten,
+     * bevor ein Inhalt geladen wird: Ist die Seite für den Aufrufer nicht lesbar, endet die Prüfung als
+     * {@link Outcome#GONE}, ohne Inhaltsabruf.
+     */
+    public Refreshed check(String sourceId, String pageId, Optional<PageHeader> cachedHeader,
+                           Optional<PageSnapshot> cachedSnapshot, Predicate<PageHeader> permitted) {
+        Objects.requireNonNull(permitted, "permitted");
         if (!available()) {
             throw new SyncUnavailableException("Kein Inhaltsabruf angebunden");
         }
         // Eigener virtueller Thread, damit der Request-Thread nach der Frist zurückkehrt, auch wenn ein Abruf
         // Unterbrechungen ignoriert; der abgebrochene Abruf endet dann mit den Zeitgrenzen der Quelle.
-        Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot));
+        Future<Refreshed> check = CHECKS.submit(() -> checkNow(sourceId, pageId, cachedHeader, cachedSnapshot,
+                permitted));
         try {
             return check.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -139,7 +152,7 @@ public class PageFreshness {
     }
 
     private Refreshed checkNow(String sourceId, String pageId, Optional<PageHeader> cachedHeader,
-                               Optional<PageSnapshot> cachedSnapshot) {
+                               Optional<PageSnapshot> cachedSnapshot, Predicate<PageHeader> permitted) {
         PageKey key = new PageKey(sourceId, pageId);
         PageMetadataListing.Entry live;
         try {
@@ -149,6 +162,12 @@ public class PageFreshness {
                 return new Refreshed(Outcome.GONE, null, null, clock.instant());
             }
             throw e;
+        }
+        PageHeader liveHeader = new PageHeader(key, live.page(), live.metadataHash(), live.attributesHash(),
+                clock.instant());
+        if (!permitted.test(liveHeader)) {
+            // Erst die Rechte, dann der Inhalt: eine nicht lesbare Seite wird gar nicht geladen.
+            return new Refreshed(Outcome.GONE, null, null, clock.instant());
         }
         String version = live.page().version();
         Optional<PageSnapshot> sameRevision = cachedSnapshot
