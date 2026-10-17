@@ -93,7 +93,7 @@ Grob, auf einem aktuellen x86-Server, zu messen auf eigenen Daten (#89 Punkt 4):
   `.github/workflows/embedding-model.yml`, der die gepinnte Revision lädt und die Prüfsummen prüft, oder lokal:
 
   ```bash
-  SPACE_HARVESTER_E5_DIR=/opt/space-harvester/models/e5 ./gradlew test --tests '*E5ReferenceTest'
+  SPACE_HARVESTER_E5_DIR=/opt/space-harvester/models/e5 ./gradlew :test --tests '*E5ReferenceTest'
   ```
 
 Eine neue Revision des Modells verlangt neue Werte in `E5Defaults`, neue Referenzvektoren und einen Eintrag in
