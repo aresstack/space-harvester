@@ -1,0 +1,138 @@
+name: Desktop-App-Release
+
+# Baut die Desktop-App (:space-harvester-app, #103) als ausführbares JAR. Ein Push auf main prüft die App und legt
+# das SNAPSHOT-JAR als Workflow-Artefakt ab. Ein Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand
+# baut dasselbe mit der Version aus dem Tag und erzeugt ein GitHub-Release mit JAR, SHA256SUMS und Release-Notizen;
+# Tags mit Vorabkennung (z. B. v0.1.0-alpha.1) werden als Pre-Release markiert. Ein vorhandenes Release wird nie
+# überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-app-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Version bestimmen
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
+              || { echo "::error::Tag $tag folgt nicht v<Major>.<Minor>.<Patch>[-<Vorabkennung>]"; exit 1; }
+            git fetch --no-tags origin main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+              || { echo "::error::Tag $tag zeigt nicht auf einen Stand von main"; exit 1; }
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::error::Release $tag gibt es schon und wird nie überschrieben"; exit 1
+            fi
+            version="${tag#v}"
+            prerelease=false
+            [[ "$version" == *-* ]] && prerelease=true
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "args=-PappVersion=$version" >> "$GITHUB_OUTPUT"
+          else
+            version=$(sed -n "s/^ *version = '\(.*\)'$/\1/p" build.gradle)
+            prerelease=false
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "jar=space-harvester-app-$version.jar" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      # check umfasst die App-Tests und appJarCheck (startet das fertige JAR mit --version und rendert alle Bereiche)
+      - name: App testen und JAR bauen
+        run: ./gradlew :space-harvester-app:check :space-harvester-app:bootJar ${{ steps.version.outputs.args }} --console=plain
+      - name: JAR prüfen
+        id: dist
+        env:
+          JAR: ${{ steps.version.outputs.jar }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist"
+          cp "space-harvester-app/build/libs/$JAR" "$dist/"
+          out=$(java -jar "$dist/$JAR" --version)
+          echo "$out"
+          [[ "$out" == *"$VERSION"* ]] || { echo "::error::--version nennt nicht $VERSION"; exit 1; }
+          (cd "$dist" && sha256sum "$JAR" > SHA256SUMS && cat SHA256SUMS)
+          echo "dir=$dist" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Space Harvester Desktop $VERSION"
+            echo
+            echo '```'
+            cat "$dist/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Testübersicht
+        if: always()
+        run: python3 .github/scripts/test-summary.py space-harvester-app/build/test-results >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: space-harvester-app-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: ${{ steps.dist.outputs.dir }}/
+          if-no-files-found: error
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-test-reports
+          path: |
+            space-harvester-app/build/reports/tests/
+            space-harvester-app/build/test-results/
+            space-harvester-app/build/app-jar-check/
+          if-no-files-found: ignore
+      - if: steps.version.outputs.release == 'true'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.dist.outputs.dir }}/${{ steps.version.outputs.jar }}
+      - name: Release anlegen
+        if: steps.version.outputs.release == 'true'
+        working-directory: ${{ steps.dist.outputs.dir }}
+        env:
+          TAG: ${{ github.ref_name }}
+          JAR: ${{ steps.version.outputs.jar }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          sum=$(cut -d' ' -f1 SHA256SUMS)
+          kind="Release"
+          [ "$PRERELEASE" = "true" ] && kind="Vorabversion (nicht für den produktiven Einsatz)"
+          cat > "$RUNNER_TEMP/RELEASE_NOTES.md" <<NOTES
+          Space Harvester Desktop $VERSION – $kind, gebaut aus \`${GITHUB_SHA:0:12}\` auf main.
+
+          **Start unter Windows** (Java 21, z. B. Eclipse Temurin 21):
+
+          1. \`$JAR\` herunterladen.
+          2. Optional prüfen: \`certutil -hashfile $JAR SHA256\` muss \`$sum\` ergeben.
+          3. \`java -jar $JAR\` starten; beim ersten Start **Wissensquellen › Quelle hinzufügen …** wählen.
+
+          Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
+          Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/DESKTOP_APP.md).
+          NOTES
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Space Harvester Desktop $VERSION" \
+            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" \
+            "$JAR" SHA256SUMS

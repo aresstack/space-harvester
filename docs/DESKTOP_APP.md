@@ -10,6 +10,13 @@ Entscheidung und Alternativen: [ADR 0008](adr/0008-desktop-app.md).
 
 Voraussetzung ist Java 21 (z. B. Eclipse Temurin 21, `java -version` zeigt 21).
 
+1. Unter [Releases](https://github.com/aresstack/space-harvester/releases) die gewünschte Version öffnen
+   (Vorabversionen wie `v0.1.0-alpha.1` sind als *Pre-release* markiert) und `space-harvester-app-<version>.jar`
+   sowie `SHA256SUMS` herunterladen.
+2. Optional die Prüfsumme vergleichen: `certutil -hashfile space-harvester-app-<version>.jar SHA256` muss den Wert aus
+   `SHA256SUMS` ergeben.
+3. Starten:
+
 ```bat
 java -jar space-harvester-app-<version>.jar
 ```
@@ -204,3 +211,26 @@ xvfb-run -a java -jar space-harvester-app/build/libs/space-harvester-app-<versio
 ```
 
 Die CI baut das JAR, startet `--version` und rendert die Bereiche unter Xvfb (`appJarCheck`).
+
+## Releases
+
+Der Workflow **Desktop-App-Release** (`.github/workflows/desktop-app-release.yml`) läuft bei jedem Push auf `main` und
+bei jedem Tag `v*`:
+
+- **Push auf `main`:** App-Tests und `appJarCheck`, danach liegt `space-harvester-app-0.1.0-SNAPSHOT.jar` mit
+  `SHA256SUMS` als Workflow-Artefakt am Lauf (Actions › Lauf › Artifacts).
+- **Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]`:** derselbe Build mit der Version aus dem Tag
+  (`-PappVersion=0.1.0-alpha.1`, nur für `:space-harvester-app`), danach ein GitHub-Release mit JAR, `SHA256SUMS`,
+  Herkunftsnachweis (Build-Provenance-Attestierung) und kurzen Release-Notizen. Tags mit Vorabkennung (`alpha`, `beta`,
+  `rc`, …) werden als Pre-Release markiert und nie als „Latest“. Der Tag muss auf einem Commit von `main` liegen; ein
+  vorhandenes Release wird nie überschrieben, eine korrigierte Fassung bekommt einen neuen Tag (`-alpha.2`).
+
+Neue Version veröffentlichen:
+
+```bash
+git checkout main && git pull
+git tag -a v0.1.0-alpha.2 -m "Space Harvester Desktop 0.1.0-alpha.2"
+git push origin v0.1.0-alpha.2
+```
+
+Lokal mit Release-Version bauen: `./gradlew :space-harvester-app:bootJar -PappVersion=0.1.0-alpha.2`.
