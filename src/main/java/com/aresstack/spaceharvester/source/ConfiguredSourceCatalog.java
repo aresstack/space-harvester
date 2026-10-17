@@ -53,9 +53,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     /** Transport für native Seiten-Snapshots ({@code space-harvester.network.async-transport}, #47). */
     public enum AsyncTransport {
-        /** Nur der synchrone Transport (Standard, Rückfallpfad). */
+        /** Nur der synchrone Transport (Rückfallpfad). */
         DISABLED,
-        /** Snapshots zusätzlich nicht blockierend über Spring WebClient auf Reactor Netty. */
+        /** Snapshots nicht blockierend über Spring WebClient auf Reactor Netty (Standard des Dienstes). */
         WEB_CLIENT
     }
 
@@ -112,7 +112,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         ConfiguredSecrets secrets = new ConfiguredSecrets();
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
-        LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "zusätzlich asynchron über WebClient");
+        LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
         Map<String, HarvestSource> sources = new LinkedHashMap<>();
         Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
