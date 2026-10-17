@@ -72,6 +72,13 @@ public final class Feedback extends JPanel {
                 problem.technical());
     }
 
+    /** Wie {@link #problem(Throwable)}, mit dem gescheiterten Schritt in der Überschrift. */
+    public void problem(Throwable error, Problems.Step step) {
+        Problems.Problem problem = Problems.describe(error, step);
+        show(Comic.RED, problem.title(), problem.message() + (problem.hint() == null ? "" : "\n" + problem.hint()),
+                problem.technical());
+    }
+
     public void clear() {
         setVisible(false);
     }
