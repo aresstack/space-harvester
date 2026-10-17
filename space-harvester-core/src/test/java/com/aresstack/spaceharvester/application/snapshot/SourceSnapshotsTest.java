@@ -17,6 +17,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /** Aufbau des Snapshots aus der Antwort der Quelle, unabhängig vom Quellentyp. */
@@ -82,6 +84,35 @@ class SourceSnapshotsTest {
 
         snapshots(null, pending).fetchAsync("wiki", "7").toCompletableFuture().cancel(true);
 
+        assertThat(pending).isCancelled();
+    }
+
+    @Test
+    void aBlockingCallerCanBeInterruptedAndCancelsTheRequest() throws Exception {
+        CompletableFuture<StoredPage> pending = new CompletableFuture<>();
+        SourceSnapshots snapshots = snapshots(null, pending);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicBoolean stillInterrupted = new AtomicBoolean();
+        Thread caller = new Thread(() -> {
+            try {
+                snapshots.fetch("wiki", "7");
+            } catch (RuntimeException e) {
+                failure.set(e);
+                stillInterrupted.set(Thread.currentThread().isInterrupted());
+            }
+        });
+        caller.start();
+        while (caller.getState() != Thread.State.WAITING && caller.isAlive()) {
+            Thread.onSpinWait();
+        }
+
+        caller.interrupt();
+        caller.join(5_000);
+
+        assertThat(caller.isAlive()).isFalse();
+        assertThat(failure.get()).isInstanceOfSatisfying(SourceAccessException.class,
+                e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE));
+        assertThat(stillInterrupted).isTrue();
         assertThat(pending).isCancelled();
     }
 

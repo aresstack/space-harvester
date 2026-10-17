@@ -15,12 +15,16 @@ import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -437,6 +441,35 @@ class LucenePageCacheTest {
 
         assertThatThrownBy(() -> cache.find(snapshot.key())).isInstanceOf(PageCacheException.class)
                 .hasMessageContaining("beschädigt").hasMessageNotContaining("\"v\"");
+    }
+
+    @Test
+    void closeDoesNotWaitForeverForAHangingBatchOfAnotherThread() throws Exception {
+        LucenePageCache cache = open();
+        CountDownLatch begun = new CountDownLatch(1);
+        CountDownLatch finish = new CountDownLatch(1);
+        AtomicReference<Throwable> batchFailure = new AtomicReference<>();
+        Thread run = new Thread(() -> {
+            try (LucenePageCache.Batch batch = cache.begin()) {
+                begun.countDown();
+                finish.await();
+                batch.save(page("wiki", "101", "DEV", null, "1", json("{}")));
+            } catch (Throwable e) {
+                batchFailure.set(e);
+            }
+        });
+        run.start();
+        assertThat(begun.await(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThatThrownBy(() -> cache.close(Duration.ofMillis(100))).isInstanceOf(PageCacheException.class)
+                .hasMessageContaining("Schreiblauf");
+        assertThatThrownBy(() -> cache.find(new PageKey("wiki", "101"))).isInstanceOf(IllegalStateException.class);
+
+        finish.countDown();
+        run.join(5_000);
+        assertThat(batchFailure.get()).isInstanceOf(IllegalStateException.class);
+        // Der Lauf hat beim Ende Writer und Sperrdatei freigegeben.
+        assertThat(open().find(new PageKey("wiki", "101"))).isEmpty();
     }
 
     @Test

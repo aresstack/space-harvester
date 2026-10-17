@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -20,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -86,6 +88,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     private final ReentrantLock writeLock = new ReentrantLock();
     private IndexWriter writer;
     private volatile boolean closed;
+    /** Writer und Verzeichnis sind freigegeben; nur unter {@link #writeLock}. */
+    private boolean released;
 
     private LucenePageCache(Path path, Directory directory, IndexWriter writer, int maxPayloadBytes)
             throws IOException {
@@ -496,32 +500,70 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 // Nur ein Lesezugriff auf den eigenen Lauf; der Lauf selbst ist bereits entschieden.
             } finally {
                 uncommitted = null;
-                writeLock.unlock();
+                try {
+                    if (closed) {
+                        // close() hat aufgegeben, auf diesen Lauf zu warten.
+                        release();
+                    }
+                } finally {
+                    writeLock.unlock();
+                }
             }
         }
     }
 
     // --- Lebenszyklus ---------------------------------------------------------------------------------------------
 
-    /** Schließt den Cache und gibt die Sperre frei. Ein offener, nicht bestätigter Schreiblauf wird verworfen. */
+    /** Wie lange {@link #close()} auf einen offenen Schreiblauf wartet. */
+    static final Duration CLOSE_WAIT = Duration.ofSeconds(10);
+
+    /**
+     * Schließt den Cache und gibt die Sperre frei. Ein offener, nicht bestätigter Schreiblauf wird verworfen.
+     *
+     * @throws PageCacheException wenn ein Schreiblauf eines anderen Threads nicht innerhalb von {@link #CLOSE_WAIT}
+     *                            endet; der Cache ist dann geschlossen, und der Lauf gibt Writer und Verzeichnis frei,
+     *                            sobald er endet
+     */
     @Override
     public void close() {
-        writeLock.lock();
+        close(CLOSE_WAIT);
+    }
+
+    void close(Duration wait) {
+        boolean locked;
         try {
-            if (closed) {
-                return;
-            }
+            locked = writeLock.tryLock(wait.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            locked = false;
+        }
+        if (!locked) {
+            // Ein hängender Lauf darf das Herunterfahren nicht aufhalten: Er scheitert an seinem nächsten Schritt, und
+            // Batch.finish gibt danach frei.
             closed = true;
-            try {
-                searchers.close();
-                writer.rollback();
-            } catch (IOException e) {
-                throw new PageCacheException("Cache " + path + " kann nicht geschlossen werden", e);
-            } finally {
-                closeQuietly(null, directory);
-            }
+            throw new PageCacheException("Cache " + path + ": ein Schreiblauf endet nicht; er wird beim Ende verworfen");
+        }
+        try {
+            closed = true;
+            release();
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    /** Gibt Writer und Verzeichnis frei; nur unter {@link #writeLock}. */
+    private void release() {
+        if (released) {
+            return;
+        }
+        released = true;
+        try {
+            searchers.close();
+            writer.rollback();
+        } catch (IOException e) {
+            throw new PageCacheException("Cache " + path + " kann nicht geschlossen werden", e);
+        } finally {
+            closeQuietly(null, directory);
         }
     }
 
