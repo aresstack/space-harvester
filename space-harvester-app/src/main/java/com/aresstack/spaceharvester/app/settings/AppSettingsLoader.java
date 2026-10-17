@@ -60,7 +60,7 @@ public final class AppSettingsLoader {
     }
 
     /** @param windows ob die App unter Windows läuft; bestimmt den Proxy ohne Angabe in der Datei */
-    AppSettingsLoader(Placeholders placeholders, Path home, boolean windows) {
+    public AppSettingsLoader(Placeholders placeholders, Path home, boolean windows) {
         this.placeholders = placeholders;
         this.home = home;
         this.windows = windows;
@@ -72,6 +72,11 @@ public final class AppSettingsLoader {
      */
     public ProxySettings defaultProxy() {
         return defaultProxy(windows);
+    }
+
+    /** Ob die App unter Windows läuft (Vorgaben für Proxy und Vertrauen neuer Quellen). */
+    public boolean windows() {
+        return windows;
     }
 
     static ProxySettings defaultProxy(boolean windows) {

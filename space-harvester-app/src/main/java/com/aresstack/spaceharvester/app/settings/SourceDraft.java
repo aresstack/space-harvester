@@ -25,7 +25,8 @@ import java.util.regex.Pattern;
  * @param certificateType             Client-Zertifikat oder {@code null} ohne mTLS
  * @param certificatePasswordVariable Umgebungsvariable mit dem Passwort der PKCS#12-Datei
  * @param thumbprint                  Fingerabdruck des Zertifikats (kein Geheimnis) oder leer
- * @param trustBundle                 Name unter {@code spring.ssl.bundle} oder leer für die Java-Laufzeit
+ * @param trustBundle                 Name unter {@code spring.ssl.bundle}, {@link TrustStores#WINDOWS} (Windows-Speicher
+ *                                    und Java-Laufzeit) oder leer für die Java-Laufzeit
  * @param extraOptions                weitere {@code options} der Quelle, die der Assistent nicht selbst abfragt
  *                                    (z. B. Zeitgrenzen); beim Bearbeiten bleiben sie so erhalten
  */

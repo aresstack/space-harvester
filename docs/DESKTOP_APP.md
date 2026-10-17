@@ -89,7 +89,9 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
 3. **Proxy und Netzwerk** (Confluence), gilt für **alle Quellen** (`space-harvester.network.proxy`): die sieben Modi
    des Cores (win-proxy-java), Standard unter Windows `pac-url-powershell` (PAC-Adresse der Interneteinstellungen per
    PowerShell, wie im Enterprise AI Client; gilt auch ohne Abschnitt in der Datei), dazu PAC-Adresse, fester Proxy
-   (Host und Port) und Hosts ohne Proxy; Vertrauen über ein vorhandenes `spring.ssl.bundle`. **Proxy auflösen** zeigt
+   (Host und Port) und Hosts ohne Proxy. **Vertrauen** (je Quelle): Java-Laufzeit, `windows` (Java-Truststore plus
+   Windows-Zertifikatspeicher Root und CA über win-trust-java wie im Enterprise AI Client, Standard für neue Quellen
+   unter Windows; der Export läuft erst beim ersten TLS-Handshake) oder ein vorhandenes `spring.ssl.bundle`. **Proxy auflösen** zeigt
    mit den gewählten Einstellungen jeden Schritt der Auflösung zur Adresse aus Schritt 1, ohne etwas zu speichern.
 4. **Prüfen und speichern:** Vorschau des Eintrags (und des Proxys, wenn er sich ändert; die Prüfseite sagt dann,
    dass das alle Quellen betrifft). **Verbindung testen** startet einen eigenen Harvester nur mit der neuen Quelle in
@@ -135,7 +137,7 @@ space-harvester:
         enabled: true
         type: windows-my                        # pkcs12 | windows-my
         thumbprint: ${CONFLUENCE_CLIENT_THUMBPRINT}
-      trust-bundle: firma                       # optional, Name unter spring.ssl.bundle
+      trust-bundle: windows                     # optional: windows oder Name unter spring.ssl.bundle
   network:
     proxy:
       mode: pac-url-powershell                  # Standard unter Windows; PAC-Fehler fallen nie auf DIRECT zurück

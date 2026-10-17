@@ -23,7 +23,7 @@ space-harvester:
       #   enabled: true
       #   type: windows-my                         # pkcs12 | windows-my
       #   thumbprint: ${CONFLUENCE_CLIENT_THUMBPRINT}
-      # trust-bundle: firma                        # Name unter spring.ssl.bundle, siehe unten
+      # trust-bundle: windows                      # Windows-Zertifikatspeicher + Java, oder Name unter spring.ssl.bundle (unten)
     # - id: handbuch
     #   type: files
     #   title: Betriebshandbuch

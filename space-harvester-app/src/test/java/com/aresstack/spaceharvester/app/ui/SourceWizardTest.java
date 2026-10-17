@@ -290,6 +290,25 @@ class SourceWizardTest {
     }
 
     @Test
+    void underWindowsNewSourcesTrustTheWindowsCertificateStore() throws Exception {
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home, true),
+                home.resolve("app.yml"), "test");
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            assertThat(w.trust.getSelectedItem()).isEqualTo(SourceWizard.WINDOWS_TRUST);
+            assertThat(w.draft().trustBundle()).isEqualTo("windows");
+            assertThat(w.draft().yaml("")).contains("trust-bundle: \"windows\"");
+
+            w.trust.setSelectedItem("Zertifikate der Java-Laufzeit");
+            assertThat(w.draft().trustBundle()).isNull();
+        });
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home, false),
+                home.resolve("app.yml"), "test");
+        SwingUtilities.invokeAndWait(() -> assertThat(new SourceWizard(context).trust.getSelectedItem())
+                .isEqualTo("Zertifikate der Java-Laufzeit"));
+    }
+
+    @Test
     void anEmptyAddressMeansThePublicConfluenceHelpWithoutLogin() throws Exception {
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), home.resolve("app.yml"),
                 "test");

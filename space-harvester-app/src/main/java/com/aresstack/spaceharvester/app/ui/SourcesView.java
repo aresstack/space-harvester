@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -209,6 +210,7 @@ public final class SourcesView implements View {
                 + (certificate.alias() == null ? "" : ", Alias " + certificate.alias())
                 + (certificate.thumbprint() == null ? "" : ", Fingerabdruck " + certificate.thumbprint()));
         facts.add("Vertrauen", config.trustBundle() == null ? "Zertifikate der Java-Laufzeit"
+                : TrustStores.WINDOWS.equals(config.trustBundle()) ? SourceWizard.WINDOWS_TRUST
                 : "SSL-Bundle " + config.trustBundle());
         facts.add("Proxy", context.settings().proxy().mode().name().toLowerCase().replace('_', '-'));
 
