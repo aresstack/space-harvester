@@ -7,8 +7,12 @@ Instanz laufen.
 - **Basis-URL:** `/api/compat/confluence/{sourceId}`. Ein Client konfiguriert sie statt `https://<confluence>`; der
   Pfad `/rest/api/…` folgt dahinter wie bei Confluence.
 - **Bezug:** Confluence Data Center, REST API `/rest/api` (Version 1). Grundlage ist die Antwort, die der Harvester
-  beim Ernten selbst abgerufen hat (ADR 0002). Ein Vergleich gegen eine echte Instanz steht noch aus; bis dahin gilt
-  nur, was unten als geprüft steht.
+  beim Ernten selbst abgerufen hat (ADR 0002).
+- **Referenzversion: Confluence Data Center 10.2 LTS** (Entscheidung Angelo, 17.10.2026, #31), OpenAPI-Referenz
+  [v1020](https://developer.atlassian.com/server/confluence/rest/v1020/). Sie ist fest hinterlegt und wird nicht
+  automatisch durch eine neuere ersetzt; die Version der produktiven Instanz kommt später als zweiter Satz dazu.
+- **Stand:** kompatibel für die dokumentierte Teilmenge, gegen die Atlassian-Referenz geprüft, **noch nicht live
+  gegen eine echte Instanz verifiziert**. Die Gesamtgrößengrenze der Listen gehört zu #90 und ist hier nicht gelöst.
 - **Versionszusage:** Die Fassade ist nicht Teil der Versionszusage von `/api/v1`. Unterstützte Endpunkte werden
   ergänzt, aber nicht stillschweigend in ihrer Semantik geändert; jede Änderung steht in dieser Datei.
 
@@ -30,7 +34,7 @@ Instanz laufen.
 |---|---|---|
 | `GET /rest/api/content/{id}` | **unterstützt** | siehe unten |
 | `GET /rest/api/content?spaceKey=…&type=page` | **unterstützt** | siehe unten |
-| `GET /rest/api/content/{id}/child/page` | **unterstützt** | siehe unten |
+| `GET /rest/api/content/{id}/child/page` | **unterstützt** | siehe unten; andere `child/{type}` (`comment`, `attachment`) nicht |
 | `GET /rest/api/space`, `/rest/api/space/{key}` | nicht unterstützt | Spaces stehen nicht als Confluence-Antwort im Cache |
 | `GET /rest/api/content/search` (CQL) | nicht unterstützt | eigene Suche: `GET /api/v1/search` |
 | `GET /rest/api/content/{id}/child/attachment`, Downloads | nicht unterstützt | Anhänge folgen mit #9 |
@@ -45,8 +49,9 @@ Jeder hier nicht genannte Pfad unter der Basis-URL ergibt 404.
 |---|---|
 | ohne `expand` | gespeicherte Antwort |
 | `expand` | gespeicherte Antwort, wenn **jeder** angefragte Pfad in der gespeicherten Abrufform enthalten ist. `a` ist durch `a.b` gedeckt (wie bei Confluence erweitert `body.storage` auch `body`). Gespeichert wird beim Ernten `ancestors,body.storage,history,history.lastUpdated,metadata.labels,space,version`. Jede andere Erweiterung, z. B. `body.view`, `body.export_view`, `children.page`, `descendants`, `restrictions`, ergibt 400 und nennt die fehlenden und die verfügbaren Pfade. |
-| `status=current` | wie ohne `status` |
+| `status=current` | wie ohne `status` (auch mehrfach angegeben) |
 | `status` mit anderem Wert, `version` | 400; der Cache hält nur die aktuelle Fassung |
+| `xoauth_requestor_id` | ignoriert; es gelten immer die Rechte des angemeldeten Clients |
 | andere Parameter | ignoriert |
 
 Abweichungen, die sich aus „Original statt Nachbau“ ergeben:
@@ -74,14 +79,20 @@ Einzelseite; nur die Hülle schreibt der Harvester.
 | `start` | übersprungene sichtbare Seiten, Standard 0; negativ ergibt 400 |
 | `limit` | Standard 25, höchstens 100; größere Werte werden wie bei Confluence auf 100 gesenkt, `limit` in der Antwort nennt den verwendeten Wert; negativ ergibt 400 |
 | `expand` | wie bei der Einzelseite, für jede Seite der Antwort geprüft |
+| `ids`, `postingDay` | 400; ignoriert ergäben sie eine Liste, die nicht filtert, was der Client verlangt |
+| `parentVersion` (nur `child/page`) | nur `0` (Standard, aktuelle Fassung); jeder andere Wert ergibt 400 |
+| `xoauth_requestor_id` | ignoriert, wie bei der Einzelseite |
 | andere Parameter | ignoriert |
 
 - **Reihenfolge:** aufsteigend nach Content-ID als Zeichenkette (`"1000"` vor `"999"`). Confluence legt die
   Reihenfolge nicht fest; Clients, die sich auf eine bestimmte verlassen, sind nicht abgedeckt.
 - **Kinder:** direkte Kinder im aktuellen Space der Elternseite. Die Elternseite muss mit Inhalt im Cache liegen und
   sichtbar sein, sonst 404.
-- **`_links`:** `base` ist die Basis-URL der Fassade, `context` ihr Pfad, `next` (nur wenn weitere Seiten folgen) und
-  `self` sind relativ zu `base`, wie bei Confluence.
+- **`_links`:** `base` ist die Basis-URL der Fassade, `context` ihr Pfad; `next` (nur wenn weitere Seiten folgen),
+  `prev` (nur ab `start` > 0, mit `start` − `limit`, mindestens 0) und `self` sind relativ zu `base`, wie bei
+  Confluence. Die Beispiele der Referenz zeigen absolute Links; echte Instanzen liefern relative.
+- **`totalCount`:** fehlt. Die Referenz führt das Feld optional; es zu füllen hieße, jede sichtbare Seite des Space auf
+  Rechte zu prüfen.
 - **Rechte:** Die Liste verlangt die `metadata`-Freigabe für den Space; Seiten ohne `content`-Freigabe fehlen ohne
   Hinweis und zählen bei `start` nicht mit, wie bei Confluence.
 - **Vollständigkeit:** Ist der letzte Abgleich des Space unvollständig (`incomplete`) oder liegt eine Seite der Liste
@@ -95,9 +106,12 @@ Einzelseite; nur die Hülle schreibt der Harvester.
 Fehler haben die Form, die Confluence-Clients kennen:
 
 ```json
-{"statusCode": 404, "data": {"authorized": true, "valid": true, "errors": [], "successful": false},
- "message": "No content found in the Space Harvester cache", "reason": "Not Found"}
+{"statusCode": 404, "data": {"authorized": true, "valid": true, "allowedInReadOnlyMode": true, "errors": [],
+ "successful": false}, "message": "No content found in the Space Harvester cache", "reason": "Not Found"}
 ```
+
+Die Referenz beschreibt `data.errors` als Objekt; Confluence DC liefert eine Liste, und so auch die Fassade. Die
+Referenz dokumentiert nur 200 und 404; 304, 400, 401, 403 und 503 sind Ergänzungen der Fassade.
 
 | Status | Fall |
 |---|---|
@@ -113,6 +127,11 @@ Fehler haben die Form, die Confluence-Clients kennen:
 
 ## Geprüft
 
+- `ConfluenceCompatContractTest` gegen den Auszug der Referenz 10.2.0 (siehe unten): Jeder dokumentierte
+  Query-Parameter der drei Endpunkte ist eingeordnet (unterstützt, abgelehnt, ignoriert) und verhält sich so; ein
+  Parameter, den die Referenz neu aufnimmt, lässt den Test scheitern. Einzelseite, Listenhülle und Fehlerkörper
+  passen zu den Schemas `Content`, Listenantwort und `RestError`; `limit` hat den dokumentierten Standard;
+  `start`, `limit`, `next`, `prev` und `self` blättern ohne Lücken und Dopplungen durch Liste und Kinder.
 - `ConfluenceCompatApiTest`: Bytevergleich der Antwort mit der gespeicherten Confluence-Antwort für verschiedene
   `expand`-Kombinationen, Ablehnung nicht gespeicherter Erweiterungen, Fehlerkörper, 304, Rechte und 405; Hülle der
   Listen mit unveränderten Payloads, `next`-Link, Kinder, Titelfilter und Ablehnung unvollständiger Listen.
@@ -120,4 +139,84 @@ Fehler haben die Form, die Confluence-Clients kennen:
   Freigabe, unvollständige Abgleiche und Seiten nur mit Kopfdaten.
 - `ApiRouteCoverageTest`: Die Fassade verlangt wie jede Route unter `/api` eine Anmeldung und gibt ohne Freigabe
   nichts heraus.
-- Offen: Vergleich gegen eine echte Confluence-Data-Center-Instanz (gleiche Seite direkt und über die Fassade).
+- Offen: Vergleich gegen eine echte Confluence-Data-Center-Instanz (Abschnitt „Live-Vergleich“); #31 bleibt bis zu
+  Angelos Lauf offen.
+
+## Vertragstests gegen die Atlassian-Referenz
+
+Atlassian veröffentlicht je Data-Center-Version eine OpenAPI-Referenz. Ein Auszug daraus (GET-Operationen der drei
+Endpunkte und alle über `$ref` erreichbaren Schemas, ohne Beschreibungstexte) liegt versioniert im Repository:
+
+- `src/test/resources/confluence-contract/version.txt` nennt die Version, gegen die der Build testet (`10.2.0`).
+- `src/test/resources/confluence-contract/<version>/openapi-extract.json` ist der Auszug dieser Version, erzeugt mit
+  `tools/confluence-contract/extract.py`.
+
+Der Build hängt nicht von der Atlassian-Seite ab. Der Workflow `.github/workflows/confluence-contract.yml` (wöchentlich,
+von Hand und bei Änderungen an Auszug oder Werkzeug) meldet, ob die Referenz erreichbar ist, und vergleicht jeden
+Auszug mit der veröffentlichten Fassung; ändert Atlassian die Referenz, wird er rot, ohne den Auszug zu ersetzen.
+
+In der IDE: `ConfluenceCompatContractTest` wie jeden anderen Test starten, auf der Kommandozeile
+`./gradlew test --tests '*ConfluenceCompatContractTest'`.
+
+Weitere Version (z. B. die der produktiven Instanz) hinzunehmen, ohne Code zu ändern:
+
+```bash
+v=10.2.0   # Version wie in der Atlassian-URL
+curl -sSf -o /tmp/confluence-$v.json https://dac-static.atlassian.com/server/confluence/$v.swagger.v3.json
+mkdir -p src/test/resources/confluence-contract/$v
+python3 tools/confluence-contract/extract.py /tmp/confluence-$v.json \
+    > src/test/resources/confluence-contract/$v/openapi-extract.json
+```
+
+Der Workflow vergleicht dann beide Auszüge. Gegen welche Version der Test läuft, bestimmt `version.txt`; der Wechsel
+ist eine reine Fixture-Änderung (Version in `version.txt` und `theReferenceVersionIsPinned`).
+
+## Live-Vergleich gegen die eigene Instanz
+
+Die Referenz beschreibt die API, nicht jede Instanz; Atlassian weist selbst darauf hin, dass dokumentierte
+Antworten von echten abweichen können. Der Live-Vergleich mit
+[`tools/confluence-compat-check/check.py`](../tools/confluence-compat-check/README.md) stellt dieselben Anfragen an die
+eigene Confluence-Instanz und an die Fassade und listet die Unterschiede. Er läuft im Unternehmensnetz, nach dem
+Live-Test von PAT, mTLS und PAC (#33/#34, [MTLS.md](MTLS.md)) und dem Probe-Bericht (#7).
+
+1. **Harvester vorbereiten.** Einen Space mit dem Harvester vollständig abgleichen
+   (`POST /api/v1/sources/{sourceId}/spaces/{key}/syncs`, Status `completed`). Für den Vergleich einen technischen
+   Client mit `metadata`- und `content`-Freigabe für diesen Space verwenden.
+2. **Seiten wählen.** Zwei bis fünf Seiten aus diesem Space (darunter eine mit Kindern), eine Content-ID, die es nicht
+   gibt (Standard `999999999999`), und, wenn vorhanden, eine Seite mit Leseeinschränkung, die das Konto des PAT nicht
+   sehen darf.
+3. **Zugang setzen,** nur über Umgebungsvariablen:
+
+   | Variable | Bedeutung |
+   |---|---|
+   | `CONFLUENCE_BASE` | Basis-URL mit Kontextpfad, z. B. `https://confluence.example.org/confluence` |
+   | `CONFLUENCE_PAT` | Personal Access Token (alternativ `CONFLUENCE_USER` und `CONFLUENCE_PASSWORD`) |
+   | `CONFLUENCE_CLIENT_CERT`, `CONFLUENCE_CLIENT_KEY`, `CONFLUENCE_CLIENT_KEY_PASSWORD` | Clientzertifikat für mTLS als PEM; aus PKCS#12 mit `openssl pkcs12 -in client.p12 -out client.pem` (Zertifikat und Schlüssel in einer Datei, dann nur `CONFLUENCE_CLIENT_CERT`). Ein Zertifikat aus dem Windows-Speicher vorher als PFX exportieren. |
+   | `CONFLUENCE_CA_FILE` | eigene CA als PEM, falls die Instanz kein öffentlich vertrauenswürdiges Zertifikat hat |
+   | `CONFLUENCE_PROXY` | Proxy als URL, z. B. `http://proxy.example.org:8080`. PAC wertet das Skript nicht aus: den Proxy nehmen, den die PAC-Datei für die Confluence-Adresse nennt (`space-harvester` loggt ihn auf DEBUG, MTLS.md). Ohne Variable geht die Verbindung direkt. |
+   | `HARVESTER_BASE` | Basis-URL der Fassade, z. B. `http://localhost:8080/api/compat/confluence/confluence` |
+   | `HARVESTER_TOKEN` | Bearer-Token des technischen Clients |
+
+4. **Ausführen:**
+
+   ```bash
+   python3 tools/confluence-compat-check/check.py --page 123456 --page 234567 --space DEV --parent 123456 \
+       --restricted-page 345678 > vergleich.md
+   ```
+
+   Optional `--title "<exakter Titel>"` für den Titelfilter, `--page-size` (Standard 25) und `--max-pages`
+   (Standard 500 je Liste).
+
+5. **Lesen.** Der Bericht trennt erwartete Abweichungen (dieses Dokument: `_links` und `_expandable`, zusätzliche
+   gespeicherte Erweiterungen, Reihenfolge der Listen, 400 für nicht gespeicherte Erweiterungen) von Zeilen mit
+   `UNERWARTET`. Er nennt Feldpfade, Statuscodes, Anzahlen und Content-IDs, keine Feldwerte, Titel, Texte oder
+   Zugangsdaten. Typische unerwartete Zeilen und ihre Ursache:
+   - `version.number` verschieden: Die Seite wurde seit dem Abgleich geändert; neu abgleichen und wiederholen.
+   - Seiten nur bei Confluence: nicht geerntet, ohne Freigabe für den Client oder seit dem Abgleich neu.
+   - Benutzerbezogene Felder verschieden: Die Fassade spiegelt das Dienstkonto zum Erntezeitpunkt.
+   - Eingeschränkte Seite in der Fassade sichtbar: Die Fassade prüft die Freigaben des Harvesters, nicht die
+     Confluence-Einschränkungen des aufrufenden Kontos (SECURITY.md); Freigaben des Clients prüfen.
+   - Abweichende Fehlerkörper: Form von `data` oder `reason`; hier nachtragen.
+
+6. **Ergebnis melden.** Den Bericht (nach kurzer Durchsicht) in #31 anhängen. Was sich als echte Abweichung
+   herausstellt, wird in diesem Dokument nachgetragen oder in der Fassade behoben.

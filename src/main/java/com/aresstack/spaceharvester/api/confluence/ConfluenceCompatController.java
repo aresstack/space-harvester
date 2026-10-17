@@ -137,7 +137,10 @@ public class ConfluenceCompatController {
             @Parameter(description = "Kommagetrennte Erweiterungen wie bei Confluence")
             @RequestParam(required = false) String expand,
             @RequestParam(defaultValue = "0") int start,
-            @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
+            @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
+            @Parameter(description = "Nicht unterstützt") @RequestParam(required = false) String ids,
+            @Parameter(description = "Nicht unterstützt (nur für Blogposts)")
+            @RequestParam(required = false) String postingDay) {
         listing.requireSource(caller, sourceId);
         if (spaceKey == null || spaceKey.isBlank()) {
             throw new UnsupportedRequestException("spaceKey ist Pflicht; eine Liste über alle Spaces wird nicht "
@@ -147,6 +150,9 @@ public class ConfluenceCompatController {
             throw new UnsupportedRequestException("type=" + type + " wird nicht unterstützt; nur type=page");
         }
         requireCurrent(status);
+        // Ignoriert ergäbe eine Liste, die nicht filtert, was der Client verlangt hat.
+        rejectIfPresent("ids", ids);
+        rejectIfPresent("postingDay", postingDay);
         ContentListing.Slice slice = listing.space(caller, sourceId, spaceKey, title, start, limit);
         return list(sourceId, slice, expand, "/rest/api/content");
     }
@@ -171,7 +177,13 @@ public class ConfluenceCompatController {
             @Parameter(description = "Kommagetrennte Erweiterungen wie bei Confluence")
             @RequestParam(required = false) String expand,
             @RequestParam(defaultValue = "0") int start,
-            @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
+            @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit,
+            @Parameter(description = "Nur 0, die aktuelle Fassung der Elternseite")
+            @RequestParam(defaultValue = "0") int parentVersion) {
+        if (parentVersion != 0) {
+            throw new UnsupportedRequestException("parentVersion wird nicht unterstützt; der Cache hält nur die "
+                    + "aktuelle Fassung einer Seite");
+        }
         ContentListing.Slice slice = listing.children(caller, sourceId, id, start, limit);
         return list(sourceId, slice, expand, "/rest/api/content/" + id + "/child/page");
     }
@@ -191,7 +203,7 @@ public class ConfluenceCompatController {
             body.writeBytes(payload.bytes());
             separator = ",";
         }
-        // Wie bei Confluence: base ist die Basis-URL, context ihr Pfad, next und self hängen dahinter.
+        // Wie bei Confluence: base ist die Basis-URL, context ihr Pfad, next, prev und self hängen dahinter.
         UriComponents base = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .pathSegment("api", "compat", "confluence", sourceId).build();
         String compatBase = base.toUriString();
@@ -199,11 +211,10 @@ public class ConfluenceCompatController {
         links.put("base", compatBase);
         links.put("context", base.getPath());
         if (slice.more()) {
-            links.put("next", UriComponentsBuilder.fromUriString(path)
-                    .query(ServletUriComponentsBuilder.fromCurrentRequest().build().getQuery())
-                    .replaceQueryParam("start", slice.start() + slice.pages().size())
-                    .replaceQueryParam("limit", slice.limit())
-                    .build(true).toUriString());
+            links.put("next", link(path, slice.start() + slice.pages().size(), slice.limit()));
+        }
+        if (slice.start() > 0 && slice.limit() > 0) {
+            links.put("prev", link(path, Math.max(0, slice.start() - slice.limit()), slice.limit()));
         }
         links.put("self", compatBase + path);
         Map<String, Object> envelope = new LinkedHashMap<>();
@@ -221,8 +232,23 @@ public class ConfluenceCompatController {
                 .body(body.toByteArray());
     }
 
+    private static String link(String path, int start, int limit) {
+        return UriComponentsBuilder.fromUriString(path)
+                .query(ServletUriComponentsBuilder.fromCurrentRequest().build().getQuery())
+                .replaceQueryParam("start", start)
+                .replaceQueryParam("limit", limit)
+                .build(true).toUriString();
+    }
+
+    private static void rejectIfPresent(String name, String value) {
+        if (value != null) {
+            throw new UnsupportedRequestException(name + " wird nicht unterstützt");
+        }
+    }
+
     private static void requireCurrent(String status) {
-        if (status != null && !"current".equals(status)) {
+        // status ist bei Confluence eine Liste; mehrfach angegeben fasst Spring die Werte mit Komma zusammen.
+        if (status != null && !Arrays.stream(status.split(",")).map(String::trim).allMatch("current"::equals)) {
             throw new UnsupportedRequestException("status=" + status + " wird nicht unterstützt; der Cache hält nur "
                     + "die aktuelle Fassung (status=current)");
         }

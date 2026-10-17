@@ -73,8 +73,10 @@ class ConfluenceCompatErrorHandler {
     }
 
     private static ResponseEntity<Map<String, Object>> error(HttpStatus status, String message) {
+        // Die Fassade liest nur; allowedInReadOnlyMode ist daher immer true.
         Map<String, Object> data = Map.of("authorized", status != HttpStatus.FORBIDDEN, "valid",
-                status != HttpStatus.BAD_REQUEST, "errors", List.of(), "successful", false);
+                status != HttpStatus.BAD_REQUEST, "allowedInReadOnlyMode", true, "errors", List.of(),
+                "successful", false);
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("statusCode", status.value(), "data", data, "message", message,
                         "reason", status.getReasonPhrase()));
