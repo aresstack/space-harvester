@@ -177,7 +177,7 @@ spring:
 |---|---|
 | Suche | Mit Suchtext live in den Quellen über Titel und Inhalt (Confluence-Suche, höchstens 25 Treffer je Quelle), fehlende Treffer übernimmt der Core in den Bestand ([ADR 0010](adr/0010-export-ohne-vorbereiteten-bestand.md) Punkt 9); ohne erreichbare Quelle Titelsuche im Bestand; die Zeile unter der Liste sagt, woher die Treffer stammen; sortiert nach Titel, Änderung oder Relevanz; unter der Suchzeile je Quelle ein Häkchen: „Alle“ (Vorgabe) ist die globale Suche des Core ohne `sourceIds` (ADR 0009), eine angehakte Quelle sucht mit `sourceId`, mehrere mit `sourceIds`; die Space-Auswahl zeigt die Spaces der angehakten Quellen, bei mehreren mit Quellenname, leer heißt alle Spaces; „Weitere laden“ blättert weiter |
 | Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen: Kreispfeil gleicht den rechts gewählten Space vollständig mit der Quelle ab (ohne Auswahl bittet er um eine), Stift öffnet die Einstellungen, Papierkorb entfernt nach Rückfrage, ⋯ mit Assistent, Verbindung prüfen, Exportieren und Zugangsdaten für die Sitzung. Rechts Textreiter: **Spaces** mit Filter (Doppelklick oder Enter öffnet unter Inhalte), **Einstellungen** ohne Geheimnisse (Anzeigename, Adresse und Ordner direkt mit dem Stift, Enter übernimmt, Escape verwirft; Token oder Passwort per Dialog, unter Windows verschlüsselt gespeichert; Anmeldung, Client-Zertifikat, **Serverzertifikate prüfen** und Proxy je in einem eigenen kleinen Dialog: Client-Zertifikat oben die Herkunft (keins, Windows-Zertifikatsspeicher, Datei), darunter die Auswahl aus dem Windows-Speicher, Alias und Fingerabdruck kommen aus dem gewählten Zertifikat; Serverzertifikate prüfen mit Windows und Java, nur Java oder einem konfigurierten Bundle, die bisherige Wahl bleibt; Proxy gilt für alle Quellen und ist auch unter Einstellungen erreichbar), **Fähigkeiten**. Laufen Aufträge, fragt jedes Übernehmen vorher nach, denn die Quellen starten dabei neu und laufende Aufträge brechen ab |
-| Inhalte | Wissensquelle → Space → Seiten → Seiteninhalt (siehe „Inhalte“ unten): Seiten sofort nach der Space-Wahl, aus dem Bestand oder ohne Bestand live, Liste oder Seitenbaum, Suchfeld; eine gewählte Seite lädt sofort; „Space synchronisieren“ übernimmt den Space in den Bestand; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen und Erweitert (Technische Angaben, Analyse, Originaldaten, Aktualität prüfen, Original speichern) |
+| Inhalte | Wissensquelle → Space → Seiten → Seiteninhalt (siehe „Inhalte“ unten): Seiten sofort nach der Space-Wahl, aus dem Bestand oder ohne Bestand live, Liste oder Seitenbaum (beide ohne Bestand), Suchfeld; eine gewählte Seite lädt sofort; keine Synchronisierung nötig; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen und Erweitert (Technische Angaben, Analyse, Originaldaten, Aktualität prüfen, Original speichern) |
 | Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
 | Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien; **Diagnose ansehen** (bei gescheiterten Aufträgen **Fehler diagnostizieren**) springt unter Status zu genau diesem Auftrag |
 | Status | Diagnosezentrum: oben nur, was fehlt (Konfiguration, Zugangsdaten); darunter die jüngsten 500 Diagnoseereignisse der Aufträge ([DIAGNOSTICS.md](DIAGNOSTICS.md)) und die letzte Verbindungsprüfung je Quelle, neueste zuerst, mit Zeit, Schwere, Komponente, Phase, Code, HTTP-Status, Proxy-Route, TLS-Befund, Auftrag und Meldung. Filter **Alle**, **Fehler** (Fehler und Warnungen), **Netzwerk**, **Aufträge**, Zeitraum und Freitext (auch Auftrags-ID); ein gewähltes Ereignis zeigt unten alle Befunde und die Ausnahmekette, **Kopieren** übernimmt sie. Alles ist maskiert (`Redaction`), Geheimnisse erscheinen nie. Ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
@@ -233,16 +233,14 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 
 ## Inhalte
 
-Der Ablauf folgt der Aufgabe, nicht den Schnittstellen: Wissensquelle → Space → Seiten → Seiteninhalt → optional
-synchronisieren.
+Der Ablauf folgt der Aufgabe, nicht den Schnittstellen: Wissensquelle → Space → Seiten → Seiteninhalt. Eine
+Synchronisierung ist keine Voraussetzung; fehlende Daten holt der Core selbst.
 
 - **Space wählen** zeigt sofort die Seiten. Liegt der Space im lokalen Bestand, kommen sie von dort, sonst live aus
-  der Quelle. Ein leerer Bestand ist bei einer neuen Quelle der Normalfall und erzeugt keine Fehlermeldung; die Zeile
-  über der Liste sagt, woher die Seiten kommen.
-- **Space synchronisieren** übernimmt alle Seiten in den lokalen Bestand (für Suche, Seitenbaum und Export). Nach dem
-  Abschluss zeigt die Ansicht den Bestand; der Fortschritt steht zusätzlich unter Aufträge.
-- **Liste / Seitenbaum** sind zwei Darstellungen derselben Seiten. Der Seitenbaum entsteht aus dem Bestand und ist
-  bis zur Synchronisierung ausgegraut (Tooltip sagt warum).
+  der Quelle. Ein leerer Bestand ist bei einer neuen Quelle der Normalfall und erzeugt keine Fehlermeldung.
+- **Liste / Seitenbaum** sind gleichwertige Darstellungen derselben Seiten und immer wählbar. Der Seitenbaum kommt aus
+  dem Bestand, wenn der Space dort liegt, sonst aus den Live-Metadaten des Space (jede Seite nennt ihre Elternseite;
+  höchstens 20 000 Seiten, die Statuszeile sagt es, wenn der Space größer ist).
 - **Seite wählen** lädt sie sofort, ohne eigenen Knopf. Fehlt sie im Bestand, holt der Core sie und legt sie ab. Ohne gewählte Seite
   steht rechts nur „Wähle links eine Seite aus …“, nie die Seite eines vorigen Space.
 - **Erweitert** enthält technische Angaben (Herkunft, Hashes, Revision, Cache-Stand), Analyse, Originaldaten
@@ -253,7 +251,7 @@ synchronisieren.
   (z. B. Zeitüberschreitung, TLS-Fehler, HTTP-Status) direkt in der Meldung, denn die Verbindungsprüfung fragt nur
   die Spaces ab.
 - Eine Seite, die nicht im Bestand liegt, holt der Core beim Öffnen bei der Quelle (nach Rechteprüfung an den
-  Live-Kopfdaten), legt sie im Bestand ab und liefert sie aus; „Space synchronisieren“ übernimmt den ganzen Space.
+  Live-Kopfdaten), legt sie im Bestand ab und liefert sie aus.
 
 ## Rückverfolgbarkeit REST → Anwendungsfall → App → Test
 

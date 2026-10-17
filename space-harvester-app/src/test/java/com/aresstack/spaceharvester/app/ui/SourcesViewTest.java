@@ -175,11 +175,9 @@ class SourcesViewTest {
         });
         JTable pages = find((Container) view[0].component(), JTable.class).get(0);
         await(() -> pages.getRowCount() == 3);
-        // Ohne Bestand kommt die Liste live, ohne Fehlermeldung; die Ansicht sagt es und bietet die Übernahme an.
-        assertThat(find((Container) view[0].component(), javax.swing.JLabel.class))
-                .anySatisfy(label -> assertThat(label.getText()).startsWith("Seiten werden live"));
+        // Ohne Bestand kommt die Liste live, ohne Fehlermeldung; eine Synchronisierung wird nicht verlangt.
         assertThat(find((Container) view[0].component(), AbstractButton.class))
-                .anySatisfy(button -> assertThat(button.getText()).isEqualTo("Space synchronisieren"));
+                .noneSatisfy(button -> assertThat(button.getText()).contains("synchronisieren"));
     }
 
     @Test
