@@ -125,9 +125,9 @@ public class SyncController {
         return SyncResponse.of(job, pageIdsVisible(caller, job));
     }
 
-    /** Eigentümer eines Auftrags wie bei Exporten: {@code <kind>:<principal>}. */
+    /** Eigentümer eines Auftrags ({@link AccessContext#jobOwner()}); Clients und Endnutzer fallen nie zusammen. */
     static String owner(AccessContext caller) {
-        return caller.kind().name() + ":" + caller.principal();
+        return caller.jobOwner();
     }
 
     /** Ein Abgleich, dessen Space nicht mehr freigegeben ist, gilt als unbekannt. */

@@ -161,18 +161,38 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     }
 
     /**
-     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist; wartet nie (Nachladen beim Lesen
-     * einer Seite, ADR 0010).
+     * Der gespeicherte Stand einer Seite als Vergleichswert für {@link #trySave}: Prüfsummen und Beobachtungszeit der
+     * Kopfdaten und die Payload-Prüfsumme, {@code -} ohne Payload; {@code null}, wenn die Seite unbekannt ist.
+     */
+    public String state(PageKey key) {
+        return stored(key).map(LucenePageCache::state).orElse(null);
+    }
+
+    private static String state(StoredPage page) {
+        PageHeader header = page.header();
+        return header.metadataHash() + ":" + header.attributesHash() + ":" + header.observedAt() + ":"
+                + (page.snapshot() == null ? "-" : page.snapshot().payload().rawSha256());
+    }
+
+    /**
+     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist und die Seite im Cache noch den Stand
+     * hat, den der Aufrufer vor seinem Abruf gelesen hat ({@link #state}); wartet nie (Nachladen beim Lesen einer
+     * Seite, ADR 0010). So überschreibt ein spät ankommender Abruf nie neuere Kopfdaten oder eine neuere Payload, die
+     * ein Abgleich oder ein anderer Abruf inzwischen abgelegt hat.
      *
+     * @param expectedState {@link #state} vor dem Abruf
      * @return ob gespeichert wurde
      */
-    public boolean trySave(PageSnapshot snapshot) {
+    public boolean trySave(PageSnapshot snapshot, String expectedState) {
         requireOpen();
         if (!writeLock.tryLock()) {
             return false;
         }
         try {
             if (closed) {
+                return false;
+            }
+            if (!Objects.equals(state(snapshot.key()), expectedState)) {
                 return false;
             }
             // Die Sperre ist wiedereintrittsfähig: begin() nimmt sie ein zweites Mal, der Lauf gibt sie wieder ab.

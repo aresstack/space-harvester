@@ -165,6 +165,21 @@ public class Exports {
     }
 
     /**
+     * Die Seiten-IDs des veröffentlichten Artefakts des eigenen Exports, damit vor jeder Auslieferung die Leserechte
+     * je Seite geprüft werden können.
+     *
+     * @return leer, solange es kein Artefakt gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException wenn es keinen Export mit dieser ID für
+     *                                                                           diesen Client gibt
+     */
+    public Optional<List<String>> pageIds(String exportId, String owner) {
+        if (jobs.status(exportId, owner).type() != JobType.EXPORT) {
+            return Optional.empty();
+        }
+        return writer.pageIds(exportId);
+    }
+
+    /**
      * Eine Datei des veröffentlichten Artefakts des eigenen Exports.
      *
      * @return leer, solange es kein Artefakt oder keine Datei dieses Namens gibt
@@ -267,7 +282,7 @@ public class Exports {
      *
      * @param unrefreshed Seiten, deren Abruf beim Einlesen scheiterte; nur intern, nach außen zählen nur lesbare
      */
-    private record Prepared(Instant startedAt, CacheGeneration generation, Set<String> unrefreshed,
+    private record Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed,
                             List<String> warnings) {
     }
 
@@ -283,13 +298,13 @@ public class Exports {
         Optional<CacheGeneration> current = cache.currentGeneration(sourceId, spaceKey);
         boolean reusable = current.filter(generation -> generation.state() == CacheState.CONFIRMED).isPresent();
         if (reusable && !request.refresh()) {
-            return new Prepared(startedAt, current.get(), Set.of(), List.of());
+            return new Prepared(startedAt, current.get(), List.of(), List.of());
         }
         if (!provisioning.available()) {
             if (current.isEmpty() || request.refresh()) {
                 throw new SyncUnavailableException("kein Einlesen");
             }
-            return new Prepared(startedAt, current.get(), Set.of(), List.of());
+            return new Prepared(startedAt, current.get(), List.of(), List.of());
         }
         List<String> warnings = new ArrayList<>();
         SpaceProvisioning.Provisioned provisioned = provisioning.provision(
@@ -309,7 +324,7 @@ public class Exports {
         CacheGeneration generation = cache.currentGeneration(sourceId, spaceKey).orElseThrow(() ->
                 new JobFailedException("SYNC_INCOMPLETE", "Nach dem Einlesen liegt für Space " + spaceKey
                         + " der Quelle " + sourceId + " keine Generation vor"));
-        return new Prepared(startedAt, generation, provisioned.failedPageIds(), warnings);
+        return new Prepared(startedAt, generation, provisioned.failedPages(), warnings);
     }
 
     private void exportGeneration(JobContext context, ExportRequest request, Prepared prepared,
@@ -323,7 +338,12 @@ public class Exports {
         List<PageFailure> failures = new ArrayList<>();
         Map<String, ListedPage> exported = new HashMap<>();
         Set<String> hidden = new HashSet<>();
-        int unrefreshed = 0;
+        // Nur lesbare gescheiterte Seiten zählen, auch solche, die nie in den Cache kamen und deshalb in keiner
+        // Seitenliste stehen.
+        List<PageHeader> failedVisible = prepared.unrefreshed().stream().filter(request.visible()).toList();
+        Set<String> failedIds = new HashSet<>();
+        failedVisible.forEach(header -> failedIds.add(header.key().pageId()));
+        int unrefreshed = failedVisible.size();
         try (ExportArtifactWriter.Session session = writer.begin(context.jobId(), scope)) {
             String after = null;
             List<ListedPage> batch;
@@ -344,9 +364,7 @@ public class Exports {
                         continue;
                     }
                     context.discovered(1);
-                    if (prepared.unrefreshed().contains(listed.pageId())) {
-                        unrefreshed++;
-                    }
+                    failedIds.remove(listed.pageId());
                     PageFailure failure = exportPage(session, listed, generation);
                     context.processed(1);
                     if (failure == null) {
@@ -359,6 +377,9 @@ public class Exports {
                     }
                 }
             } while (batch.size() == BATCH_SIZE);
+            // Lesbar, aber ohne Stand im Cache: fehlt im Export und zählt als gescheitert.
+            context.discovered(failedIds.size());
+            context.failed(failedIds.size());
             context.checkpoint();
             PageTree tree = PageTreeBuilder.build(entries);
             List<String> warnings = new ArrayList<>(prepared.warnings());
@@ -384,6 +405,11 @@ public class Exports {
             }
             convert(context, session, scope, tree, exported, selected);
             requireAuthorized(request);
+            // Auch je Seite: Wer eine exportierte Seite inzwischen nicht mehr lesen darf, bekommt kein Artefakt.
+            if (exported.values().stream().anyMatch(page -> !request.visible().test(page.header()))) {
+                throw new JobFailedException("ACCESS_REVOKED", "Die Freigabe für einzelne Seiten dieses Exports gilt "
+                        + "nicht mehr; es entstand kein Export");
+            }
             // Vollständig heißt: alle für den Auftraggeber lesbaren Seiten aus einer bestätigten Generation.
             boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),

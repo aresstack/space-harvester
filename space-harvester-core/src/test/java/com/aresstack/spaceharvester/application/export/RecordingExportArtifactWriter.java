@@ -70,6 +70,11 @@ final class RecordingExportArtifactWriter implements ExportArtifactWriter {
     }
 
     @Override
+    public Optional<List<String>> pageIds(String exportId) {
+        return Optional.ofNullable(published.get(exportId)).map(Published::pageIds);
+    }
+
+    @Override
     public Optional<ExportArtifact> find(String exportId) {
         Published p = published.get(exportId);
         return p == null ? Optional.empty()

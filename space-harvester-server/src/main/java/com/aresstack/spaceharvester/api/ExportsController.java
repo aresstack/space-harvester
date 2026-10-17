@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessContext.PrincipalKind;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
@@ -60,9 +61,9 @@ public class ExportsController {
         this.access = access;
     }
 
-    /** Eigentümer eines Auftrags: Art und Kennung des Aufrufers, damit Clients und Endnutzer nie zusammenfallen. */
+    /** Eigentümer eines Auftrags ({@link AccessContext#jobOwner()}); Clients und Endnutzer fallen nie zusammen. */
     static String owner(AccessContext caller) {
-        return caller.kind().name() + ":" + caller.principal();
+        return caller.jobOwner();
     }
 
     @PostMapping(path = ApiPaths.V1 + "/sources/{sourceId}/spaces/{spaceKey}/exports",
@@ -148,7 +149,8 @@ public class ExportsController {
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<InputStreamResource> download(@Parameter(hidden = true) AccessContext caller,
                                                         @PathVariable String exportId, HttpServletRequest request) {
-        ownExport(caller, exportId);
+        JobStatus job = ownExport(caller, exportId);
+        requirePagesReadable(caller, job);
         String prefix = EXPORTS + "/" + exportId + "/artifact/";
         String path = request.getRequestURI().substring(request.getContextPath().length());
         String name = path.startsWith(prefix) ? path.substring(prefix.length()) : "";
@@ -174,6 +176,24 @@ public class ExportsController {
             case "pdf" -> MediaType.APPLICATION_PDF;
             default -> MediaType.APPLICATION_OCTET_STREAM;
         };
+    }
+
+    /**
+     * Ein delegierter Nutzer bekommt das Artefakt nur, solange er jede enthaltene Seite noch lesen darf; sonst gilt es
+     * als nicht vorhanden, ohne zu sagen, welche Seite. Die Rechteentscheidungen hält die Richtlinie {@code decision-ttl}
+     * lang. Technische Clients sind durch ihre Korpusfreigabe auf Space-Ebene begrenzt.
+     */
+    private void requirePagesReadable(AccessContext caller, JobStatus job) {
+        if (caller.kind() != PrincipalKind.END_USER) {
+            return;
+        }
+        List<String> pageIds = exports.pageIds(job.id(), owner(caller))
+                .orElseThrow(() -> new ArtifactNotFoundException(job.id()));
+        for (String pageId : pageIds) {
+            if (!access.canRead(caller, job.sourceId(), job.partitionKey(), pageId)) {
+                throw new ArtifactNotFoundException(job.id());
+            }
+        }
     }
 
     /** Eigener Export, für dessen Space der Aufrufer noch export und content hat. */

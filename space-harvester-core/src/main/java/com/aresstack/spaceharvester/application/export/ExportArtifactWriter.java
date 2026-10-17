@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -34,6 +35,14 @@ public interface ExportArtifactWriter {
 
     /** Das veröffentlichte Artefakt oder leer, wenn es (noch) keines gibt. */
     Optional<ExportArtifact> find(String exportId);
+
+    /**
+     * Die Seiten-IDs eines veröffentlichten Artefakts, damit vor jeder Auslieferung geprüft werden kann, ob der
+     * Auftraggeber sie noch lesen darf.
+     *
+     * @return leer, wenn es das Artefakt nicht gibt
+     */
+    Optional<List<String>> pageIds(String exportId);
 
     /**
      * Eine Datei eines veröffentlichten Artefakts zum Lesen.

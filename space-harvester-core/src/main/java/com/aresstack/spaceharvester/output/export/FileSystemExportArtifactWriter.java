@@ -169,6 +169,27 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     }
 
     @Override
+    public Optional<List<String>> pageIds(String exportId) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return Optional.empty();
+        }
+        Path tree = root.resolve(exportId).resolve(TREE);
+        if (!Files.isRegularFile(tree) || !Files.isRegularFile(root.resolve(exportId).resolve(MANIFEST))) {
+            return Optional.empty();
+        }
+        List<String> ids = new ArrayList<>();
+        collectIds(json.readTree(tree.toFile()).path("roots"), ids);
+        return Optional.of(ids);
+    }
+
+    private static void collectIds(JsonNode nodes, List<String> ids) {
+        for (JsonNode node : nodes) {
+            ids.add(node.path("id").asString());
+            collectIds(node.path("children"), ids);
+        }
+    }
+
+    @Override
     public Optional<InputStream> open(String exportId, String name) {
         if (!SAFE_EXPORT_ID.matcher(exportId).matches() || !SAFE_FILE.matcher(name).matches()) {
             return Optional.empty();

@@ -1,7 +1,8 @@
 package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.jobs.JobContext;
-import java.util.Set;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import java.util.List;
 
 /**
  * Stellt den Bestand eines Space im laufenden Exportauftrag bereit: liest ihn von der Quelle in den Cache ein und
@@ -30,15 +31,15 @@ public interface SpaceProvisioning {
      *
      * @param confirmed     eine Generation ist bestätigt (eigene oder die eines gleichzeitigen Abgleichs)
      * @param superseded    ein gleichzeitiger Abgleich hat zuerst bestätigt; sein Stand ist der aktuelle
-     * @param failedPageIds Seiten, deren Abruf scheiterte: fehlen im Cache oder bleiben auf altem Stand; der Export
-     *                      nennt davon nur, was der Auftraggeber lesen darf
+     * @param failedPages Kopfdaten aus der Inventur der Seiten, deren Abruf scheiterte: fehlen im Cache oder bleiben
+     *                    auf altem Stand; der Export nennt und zählt davon nur, was der Auftraggeber lesen darf
      */
-    record Provisioned(boolean confirmed, boolean superseded, Set<String> failedPageIds) {
+    record Provisioned(boolean confirmed, boolean superseded, List<PageHeader> failedPages) {
 
-        public static final Provisioned NOT_CONFIRMED = new Provisioned(false, false, Set.of());
+        public static final Provisioned NOT_CONFIRMED = new Provisioned(false, false, List.of());
 
         public Provisioned {
-            failedPageIds = Set.copyOf(failedPageIds);
+            failedPages = List.copyOf(failedPages);
         }
     }
 
