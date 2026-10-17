@@ -81,7 +81,30 @@ L2-normierte Vektoren, also Kosinus) im Index `enrichments/`, Schema `enrichment
 - Lucene nimmt höchstens 1024 Dimensionen je Vektor an; größere Modelle bekommen kein Vektordokument.
 
 Die Ablage kennt keine Rechte: Die Vektorsuche liefert nur Kandidaten, die die Suche erst nach der `content`-Prüfung
-ausgibt (#89 Teil 3).
+ausgibt.
+
+## Suchen
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8080/api/v1/search?sourceId=confluence&sort=relevance&q=Wie+l%C3%A4uft+der+n%C3%A4chtliche+Betrieb%3F"
+```
+
+- Die Anfrage wird mit dem Präfix `query: ` eingebettet, die Seiten mit `passage: ` (wie in der Modellkarte).
+- Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle unter genau der aktuellen Prozessorversion, zu Seiten
+  zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
+  Filter (`spaceKey`, `title`, `parentPageId`, Zeitgrenzen …) gelten auch für Kandidaten der Vektorsuche.
+- Rechte: wie die übrige Suche `metadata` für Quelle bzw. Spaces und jeden Treffer. Ähnlichkeiten sind aus dem Inhalt
+  abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Ein
+  Titeltreffer ohne `content` bleibt sichtbar, bekommt aber keine Ähnlichkeit und steht hinter allen anderen. Der
+  Reranker sieht nur diese freigegebenen Treffer und darf sie nur umordnen.
+- Reihenfolge: Kosinusähnlichkeit der Anfrage zum ähnlichsten Abschnitt jeder Seite (`reranker:
+  embedding-cosine@<Prozessorversion>`); Treffer ohne Ähnlichkeit folgen in ihrer Reihenfolge.
+- Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
+  Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
+  Kopfdaten; es wird beim nächsten Abgleich neu berechnet.
+- Fällt das Modell bei der Anfrage aus, bleiben mit `title` die Titeltreffer in Titelreihenfolge (`reranker: none`);
+  ohne `title` antwortet die Suche mit 503 `semantic-search-unavailable`. Der Anfragetext steht nie im Log.
 
 ## Fehlerverhalten
 

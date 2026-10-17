@@ -8,9 +8,12 @@ import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchResults;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.ranking.Reranking;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.MetadataHash;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -29,7 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * Titel- und Metadatensuche über den Index des Harvesters (#28, erste Ausbaustufe). Liest nur gespeicherte Kopfdaten,
- * nie live aus der Quelle und nie Seiteninhalte.
+ * nie live aus der Quelle und nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
+ * gespeicherten Embeddings (#89).
  */
 @RestController
 @RequestMapping(path = ApiPaths.V1 + "/search", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -37,9 +41,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class SearchController {
 
     private final PageSearch search;
+    private final RelevanceSearch relevance;
 
-    public SearchController(PageSearch search) {
+    public SearchController(PageSearch search, RelevanceSearch relevance) {
         this.search = search;
+        this.relevance = relevance;
     }
 
     @GetMapping
@@ -51,7 +57,11 @@ public class SearchController {
                     + "(index.generation); ersetzt ein Commit sie, endet die Suche mit 409 und beginnt ohne cursor "
                     + "neu. Ein Stapel kann kürzer als limit oder leer sein, auch wenn noch Treffer folgen: "
                     + "nextCursor mit denselben Parametern übergeben, bis er null ist (complete=true). Jeder Treffer "
-                    + "nennt den Cache-Stand seines Space.")
+                    + "nennt den Cache-Stand seines Space. sort=relevance: ein einziger Stapel (complete=true, kein "
+                    + "cursor) aus höchstens " + Reranking.MAX_WINDOW + " Kandidaten der Vektorsuche nach q und der "
+                    + "Titelsuche, geordnet nach der Kosinusähnlichkeit zu den gespeicherten Embeddings; Kandidaten "
+                    + "der Vektorsuche nur mit content-Freigabe, Ähnlichkeiten (relevance) nur für Seiten mit "
+                    + "content-Freigabe. Ohne eingerichtetes Modell nur Titeltreffer in Titelreihenfolge.")
     @ApiResponse(responseCode = "200", description = "Ein Stapel Treffer")
     @ApiResponse(responseCode = "400", description = "Ungültige Parameter, überschrittene Grenzen oder cursor einer "
             + "anderen Suche (invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -66,7 +76,8 @@ public class SearchController {
     @ApiResponse(responseCode = "409", description = "Der cursor gehört zu einer ersetzten Indexgeneration "
             + "(cache-generation-changed)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "503", description = "Index nicht eingerichtet oder nicht lesbar (cache-unavailable)",
+    @ApiResponse(responseCode = "503", description = "Index nicht eingerichtet oder nicht lesbar (cache-unavailable); "
+            + "sort=relevance ohne title, aber ohne verfügbares Embedding-Modell (semantic-search-unavailable)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public SearchResponse search(
@@ -88,24 +99,42 @@ public class SearchController {
             @Parameter(description = "Geändert vor ausschließlich (ISO-8601, UTC)")
             @RequestParam(required = false) String modifiedBefore,
             @Parameter(description = "Sortierung, jeweils dann nach pageId: title (aufsteigend, ohne Groß-/"
-                    + "Kleinschreibung), -modifiedAt (neueste zuerst, ohne Änderungszeit zuletzt), pageId",
-                    schema = @Schema(allowableValues = {"title", "-modifiedAt", "pageId"}))
+                    + "Kleinschreibung), -modifiedAt (neueste zuerst, ohne Änderungszeit zuletzt), pageId; relevance "
+                    + "(ähnlichste zuerst, braucht q oder title, ohne cursor)",
+                    schema = @Schema(allowableValues = {"title", "-modifiedAt", "pageId", "relevance"}))
             @RequestParam(defaultValue = "title") String sort,
+            @Parameter(description = "Nur mit sort=relevance: Frage oder Stichwörter in natürlicher Sprache, höchstens "
+                    + RelevanceSearch.MAX_TEXT_LENGTH + " Zeichen; ohne Angabe die Wörter aus title",
+                    example = "Wie läuft der nächtliche Betrieb?")
+            @RequestParam(required = false) String q,
             @Parameter(description = "nextCursor der vorigen Antwort; leer für den ersten Stapel")
             @RequestParam(required = false) String cursor,
             @Parameter(description = "Größe des Stapels, 1 bis " + PageSearch.MAX_LIMIT)
             @RequestParam(defaultValue = "50") int limit) {
+        boolean byRelevance = RELEVANCE.equals(sort);
         PageSearchQuery query = PageSearchQuery.of(sourceId, spaceKey, title, pageId, parentPageId, version,
-                instant("modifiedFrom", modifiedFrom), instant("modifiedBefore", modifiedBefore), sort(sort));
-        return SearchResponse.of(search.search(caller, query, cursor, limit));
+                instant("modifiedFrom", modifiedFrom), instant("modifiedBefore", modifiedBefore),
+                byRelevance ? SearchSort.TITLE : sort(sort));
+        if (!byRelevance) {
+            if (q != null) {
+                throw new InvalidQueryException("q gibt es nur mit sort=relevance");
+            }
+            return SearchResponse.of(search.search(caller, query, cursor, limit));
+        }
+        if (cursor != null && !cursor.isEmpty()) {
+            throw new InvalidQueryException("sort=relevance liefert nur einen Stapel und kennt keinen cursor");
+        }
+        return SearchResponse.of(relevance.search(caller, query, q, limit));
     }
+
+    private static final String RELEVANCE = "relevance";
 
     private static SearchSort sort(String value) {
         return switch (value) {
             case "title" -> SearchSort.TITLE;
             case "-modifiedAt" -> SearchSort.MODIFIED_DESC;
             case "pageId" -> SearchSort.PAGE_ID;
-            default -> throw new InvalidQueryException("sort kennt nur title, -modifiedAt und pageId");
+            default -> throw new InvalidQueryException("sort kennt nur title, -modifiedAt, pageId und relevance");
         };
     }
 
@@ -123,17 +152,26 @@ public class SearchController {
     /**
      * Ein Stapel Suchtreffer.
      *
-     * @param origin immer {@code cache}: aus dem Index des Harvesters, nicht live aus der Quelle
+     * @param origin   immer {@code cache}: aus dem Index des Harvesters, nicht live aus der Quelle
+     * @param reranker nur bei {@code sort=relevance}: Kennung des Rerankers, {@code none} ohne Modell
      */
     public record SearchResponse(String sourceId, String origin, IndexResponse index, String metadataHashSchema,
                                  String attributesHashSchema, List<HitResponse> hits,
-                                 @Schema(nullable = true) String nextCursor, boolean complete) {
+                                 @Schema(nullable = true) String nextCursor, boolean complete,
+                                 @JsonInclude(JsonInclude.Include.NON_NULL) String reranker) {
 
         static SearchResponse of(SearchResults results) {
             return new SearchResponse(results.sourceId(), "cache",
                     new IndexResponse(results.index().generation(), results.index().committedAt()),
                     MetadataHash.SCHEMA, AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
-                    results.nextCursor(), results.complete());
+                    results.nextCursor(), results.complete(), null);
+        }
+
+        static SearchResponse of(RelevanceSearch.RelevanceResults results) {
+            return new SearchResponse(results.sourceId(), "cache",
+                    new IndexResponse(results.index().generation(), results.index().committedAt()),
+                    MetadataHash.SCHEMA, AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
+                    null, true, results.reranker());
         }
     }
 
@@ -144,10 +182,34 @@ public class SearchController {
     /**
      * Ein Treffer: dieselben Felder wie in der Seitenliste und der Cache-Stand seines Space.
      */
-    public record HitResponse(PageEntry page, CacheResponse cache) {
+    public record HitResponse(PageEntry page, CacheResponse cache,
+                              @JsonInclude(JsonInclude.Include.NON_NULL) RelevanceResponse relevance) {
 
         static HitResponse of(SearchHit hit) {
-            return new HitResponse(PageEntry.of(hit.page()), CacheResponse.of(hit.generation()));
+            return new HitResponse(PageEntry.of(hit.page()), CacheResponse.of(hit.generation()), null);
         }
+
+        static HitResponse of(RelevanceSearch.RankedHit ranked) {
+            RelevanceSearch.Relevance relevance = ranked.relevance();
+            return new HitResponse(PageEntry.of(ranked.hit().page()), CacheResponse.of(ranked.hit().generation()),
+                    relevance == null ? null : new RelevanceResponse(relevance.similarity(),
+                            new ChunkResponse(relevance.charStart(), relevance.charEnd()),
+                            relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale"));
+        }
+    }
+
+    /**
+     * Ähnlichkeit eines Treffers zur Anfrage, nur bei {@code sort=relevance} und {@code content}-Freigabe.
+     *
+     * @param similarity Kosinusähnlichkeit des ähnlichsten Abschnitts, -1 bis 1
+     * @param chunk      dieser Abschnitt als Zeichenbereich der Textprojektion
+     * @param freshness  {@code current} oder {@code stale}, wenn das Embedding aus einer älteren Revision stammt
+     */
+    public record RelevanceResponse(double similarity, ChunkResponse chunk,
+                                    @Schema(allowableValues = {"current", "stale"}) String freshness) {
+    }
+
+    /** Zeichenbereich {@code [charStart, charEnd)} in der Textprojektion {@code confluence-storage-text/v1}. */
+    public record ChunkResponse(int charStart, int charEnd) {
     }
 }

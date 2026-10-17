@@ -1,10 +1,14 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import org.springframework.beans.factory.ObjectProvider;
@@ -31,5 +35,17 @@ class QueryConfiguration {
     @Bean
     PageSearch pageSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access) {
         return new PageSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access);
+    }
+
+    /**
+     * {@code sort=relevance} (#89): semantisch nur, wenn ein Embedding-Modell eingerichtet ist und die Anreicherungen im
+     * Lucene-Cache liegen (der zugleich Ablage und Vektorsuche ist); sonst nur Titeltreffer.
+     */
+    @Bean
+    RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
+                                    ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
+                                    ObjectProvider<EmbeddingProcessor> embedding) {
+        return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
+                store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique());
     }
 }

@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.query.RefreshUnavailableException;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
+import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
 import java.net.URI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +58,13 @@ class QueryErrorHandler {
         return problem(HttpStatus.NOT_IMPLEMENTED, "refresh-unavailable", "Aktualitätsprüfung nicht verfügbar",
                 "Eine Prüfung gegen die Quelle ist noch nicht möglich; ohne refresh=true wird der gekennzeichnete "
                         + "Cache-Stand geliefert.");
+    }
+
+    @ExceptionHandler(SemanticSearchUnavailableException.class)
+    ProblemDetail semanticSearchUnavailable(SemanticSearchUnavailableException e) {
+        // Die Meldung stammt aus der eigenen Prüfung und nennt nie den Anfragetext.
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "semantic-search-unavailable", "Semantische Suche nicht "
+                + "verfügbar", e.getMessage() + "; mit title sucht sort=relevance in den Titeltreffern.");
     }
 
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {

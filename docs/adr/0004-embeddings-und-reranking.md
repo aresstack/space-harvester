@@ -115,3 +115,19 @@ Abweichend von Abschnitt 3 wird ein Index im Schema `enrichment-store/v1` beim �
 Grund: v2 fügt nur Vektordokumente hinzu. Ein v1-Index enthält Ergebnisse aller übrigen Prozessoren, die gültig
 bleiben; nur `embedding`-Ergebnisse haben in v1 keine Vektoren. Diese werden beim Hochstufen gelöscht und beim
 nächsten Abgleich neu berechnet. Ein Index in einem unbekannten Schema wird weiter abgelehnt.
+
+## Nachtrag 17.10.2026: `sort=relevance` (#89)
+
+- `GET /api/v1/search` bekommt `q` und `sort=relevance`. Kandidaten sind bis zu 1000 ähnlichste Stücke der aktuellen
+  Prozessorversion (zu Seiten zusammengefasst) und, mit `title`, die ersten Titeltreffer; höchstens 100 Seiten. Die
+  übrigen Filter gelten für alle Kandidaten.
+- Die Vektorsuche in Lucene (HNSW) läuft über alle Vektoren der Quelle, ihre Werte verlassen die Anwendung aber nie
+  ungeprüft: Jeder Kandidat braucht `metadata` und `content` für seine Seite, sonst fällt er ohne Spur weg. Ähnlichkeiten
+  an Titeltreffern gibt es nur mit `content`.
+- Erster Reranker: Kosinus der Anfrage zum ähnlichsten Abschnitt jeder Seite, aus den gespeicherten Embeddings
+  (`CosineReranker`, über `Reranking`). Aktualität: `stale`, wenn das Embedding aus einer anderen Revision stammt als
+  die aktuellen Kopfdaten.
+- Ohne Modell oder bei Modellausfall bleiben Titeltreffer in Titelreihenfolge; ohne `title` 503
+  `semantic-search-unavailable`.
+- Damit sind die Punkte 2 bis 4 der offenen Liste umgesetzt. Ein Cross-Encoder bleibt möglich, ist aber nicht nötig.
+
