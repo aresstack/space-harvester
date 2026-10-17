@@ -11,6 +11,7 @@ import com.aresstack.enterpriseai.astu.security.SecretRef;
 import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.CrossReferences;
 import com.aresstack.enterpriseai.source.api.DownloadAccess;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
@@ -35,6 +36,7 @@ import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredContent;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Attachment;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceRestClient.Page;
@@ -97,7 +99,7 @@ import java.util.regex.Pattern;
  */
 public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, ImageSource, PageViewSource,
         AddressableKnowledgeSource, PageNavigationSource, PartitionListingSource, ResourceMetadataSource,
-        StoredContentSource {
+        StoredContentSource, AttachmentListSource {
 
     static final String PAGE_CONTENT_TYPE = "text/html";
 
@@ -124,6 +126,9 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
 
     static final String SNAPSHOT_FORMAT = "confluence-rest-content+json;expand="
             + sortedExpand(ConfluenceRestClient.SNAPSHOT_EXPAND);
+    /** {@link StoredAttachmentList#nativeFormat()} der Anhangslisten, wie {@link #SNAPSHOT_FORMAT} gebildet. */
+    static final String ATTACHMENT_LIST_FORMAT = "confluence-rest-attachment-list+json;expand="
+            + sortedExpand(ConfluenceRestClient.ATTACHMENT_LIST_EXPAND);
     private static final String PARTITION_CURSOR_PREFIX = "p1.";
     private static final Pattern PARTITION_CURSOR = Pattern.compile("p1\\.([A-Za-z0-9_-]{1,400})\\.([0-9]{1,9})");
 
@@ -694,6 +699,37 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
         }
         return new StoredContent(pageResource(stored.page, stored.page.parentId), stored.payload,
                 mediaType(stored.contentType), SNAPSHOT_FORMAT, Instant.now());
+    }
+
+    /**
+     * Alle Anhänge einer Seite ({@code /child/attachment?expand=}{@value ConfluenceRestClient#ATTACHMENT_LIST_EXPAND}),
+     * auch die, die der Seiteninhalt nicht einbettet, mit allen Listenantworten unverändert. Lädt keine Dateien. Eine
+     * gesperrte Seite ist {@code NOT_FOUND} wie bei {@link #storedContent}; anders als der Lesebereich unterdrückt die
+     * Liste keine Fehler und hat keine Grenze von {@value #MAX_READER_ATTACHMENTS}.
+     */
+    @Override
+    public StoredAttachmentList storedAttachments(final String localId) throws KnowledgeSourceException {
+        if (!ConfluenceIds.isContentId(localId)) {
+            throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Keine Seiten-ID dieser Quelle: " + localId);
+        }
+        ConfluenceRestClient.StoredAttachments stored;
+        try {
+            stored = withSession(new Operation<ConfluenceRestClient.StoredAttachments>() {
+                @Override
+                public ConfluenceRestClient.StoredAttachments run(Session session) throws KnowledgeSourceException {
+                    return client.storedAttachments(session, localId, AttachmentListSource.MAX_ATTACHMENTS);
+                }
+            });
+        } catch (ConfluenceRestClient.Forbidden e) {
+            throw notVisible(localId, e);
+        }
+        List<KnowledgeResource> attachments = new ArrayList<KnowledgeResource>();
+        for (Attachment attachment : stored.attachments) {
+            attachments.add(attachmentResource(attachment));
+        }
+        return new StoredAttachmentList(attachments, stored.payloads,
+                stored.contentType == null ? "application/json" : mediaType(stored.contentType),
+                ATTACHMENT_LIST_FORMAT, stored.retrievedAt, stored.warnings);
     }
 
     /**

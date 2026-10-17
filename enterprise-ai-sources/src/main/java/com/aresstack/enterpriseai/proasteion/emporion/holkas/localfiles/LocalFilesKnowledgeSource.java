@@ -87,7 +87,8 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     static final int MAX_BATCH = 500;
     /** Verzeichnistiefe der Partition, wie der Standard des Providers. */
     static final int PARTITION_DEPTH = 20;
-    private static final String CURSOR_PREFIX = "f1.";
+    /** Cursor: {@code f2.<Quellen-ID>.<letzter Pfad>}, beides Base64url; bindet ihn an Quelle und Partition. */
+    private static final String CURSOR_PREFIX = "f2.";
     private static final Set<ContentCategory> INDEXABLE = Collections.unmodifiableSet(EnumSet.of(
             ContentCategory.PLAIN_TEXT, ContentCategory.MARKDOWN, ContentCategory.HTML, ContentCategory.PDF,
             ContentCategory.OFFICE_DOCUMENT, ContentCategory.SOURCE_CODE, ContentCategory.STRUCTURED_DATA));
@@ -269,7 +270,8 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
         String after = null;
         if (cursor != null && !cursor.isEmpty()) {
-            after = cursor.startsWith(CURSOR_PREFIX) ? decode(cursor.substring(CURSOR_PREFIX.length())) : null;
+            String own = CURSOR_PREFIX + encode(partitionKey) + ".";
+            after = cursor.startsWith(own) ? decode(cursor.substring(own.length())) : null;
             if (after == null) {
                 throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cursor gehört nicht zu dieser Partition");
             }
@@ -291,7 +293,8 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         for (int i = 0; i < size; i++) {
             batch.add(byPath.get(paths.get(i)));
         }
-        String next = size < paths.size() ? CURSOR_PREFIX + encode(paths.get(size - 1)) : null;
+        String next = size < paths.size()
+                ? CURSOR_PREFIX + encode(partitionKey) + "." + encode(paths.get(size - 1)) : null;
         return new PartitionResources(batch, next);
     }
 

@@ -126,6 +126,18 @@ public class LocalFilesStoredContentTest {
     }
 
     @Test
+    public void aCursorOfAnotherFilesSourceIsRejected() throws Exception {
+        final LocalFilesKnowledgeSource other = new LocalFilesKnowledgeSource(SourceAddress.of("archiv"), root,
+                DETECTOR, new ExtractionRegistry(), 1024);
+        final String foreign = other.resources("archiv", "", 1).nextCursor();
+        final String own = source.resources("handbuch", "", 1).nextCursor();
+
+        assertKind(Kind.UNSUPPORTED, () -> source.resources("handbuch", foreign, 10));
+        assertKind(Kind.UNSUPPORTED, () -> other.resources("archiv", own, 10));
+        assertKind(Kind.UNSUPPORTED, () -> source.resources("handbuch", "f2." + id("handbuch") + ".", 10));
+    }
+
+    @Test
     public void localIdsRoundTripAndFitIntoOnePathSegment() throws Exception {
         KnowledgeResource listed = source.resources("handbuch", "", 10).resources().get(0);
         String localId = source.localId(listed.id());
