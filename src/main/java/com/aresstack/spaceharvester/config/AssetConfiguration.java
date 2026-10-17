@@ -16,7 +16,9 @@ import org.springframework.util.unit.DataSize;
 /**
  * Verdrahtet die Asset-Ernte (#19). Anhänge liegen unter {@code space-harvester.assets.directory} (Standard
  * {@code data/assets}); sie sind so schutzbedürftig wie die Seiten, das Verzeichnis gehört nur dem Dienstkonto. Größere
- * Dateien als {@code space-harvester.assets.max-size} (Standard 50 MB) werden weder geladen noch gekürzt abgelegt.
+ * Dateien als {@code space-harvester.assets.max-size} (Standard 50 MB) werden weder geladen noch gekürzt abgelegt; der
+ * Download bricht schon im Transport an dieser Grenze ab. Alle Inhalte zusammen belegen höchstens
+ * {@code space-harvester.assets.max-total-bytes} (Standard 20 GiB), sonst {@code asset-store-full}.
  * Bildbeschreibungen gibt es nur mit einer {@link ImageDescriber}-Bean; ohne sie antworten die Routen mit
  * {@code image-description-unavailable}.
  */
@@ -24,8 +26,10 @@ import org.springframework.util.unit.DataSize;
 class AssetConfiguration {
 
     @Bean
-    AssetStore assetStore(@Value("${space-harvester.assets.directory:data/assets}") Path directory) {
-        return new FileSystemAssetStore(directory);
+    AssetStore assetStore(@Value("${space-harvester.assets.directory:data/assets}") Path directory,
+                          @Value("${space-harvester.assets.max-total-bytes:"
+                                  + FileSystemAssetStore.DEFAULT_MAX_TOTAL_BYTES + "}") long maxTotalBytes) {
+        return new FileSystemAssetStore(directory, maxTotalBytes);
     }
 
     @Bean

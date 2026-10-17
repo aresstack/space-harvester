@@ -21,6 +21,7 @@ import com.aresstack.enterpriseai.source.api.PagePosition;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.OneTimeCodeChallenge;
 import com.aresstack.enterpriseai.source.api.OneTimeCodeRequiredException;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind;
 import com.aresstack.enterpriseai.source.api.ImageSource;
@@ -403,6 +404,17 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
      */
     @Override
     public SourceFile loadAttachmentFile(KnowledgeResourceId attachment) throws KnowledgeSourceException {
+        return loadAttachmentFile(attachment, readerMaxBytes());
+    }
+
+    /** Bricht den Download beim Lesen ab, sobald er {@code min(maxBytes, Lesebereichsgrenze)} überschreitet. */
+    @Override
+    public SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
+            throws KnowledgeSourceException {
+        if (maxBytes < 1) {
+            throw new IllegalArgumentException("maxBytes muss positiv sein");
+        }
+        final int limit = Math.min(maxBytes, readerMaxBytes());
         final ConfluenceIds.Parsed parsed = parse(attachment);
         if (!parsed.attachment) {
             throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Kein Anhang: " + attachment.value());
@@ -412,7 +424,10 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
             @Override
             public byte[] run(Session session) throws KnowledgeSourceException {
                 described[0] = client.attachment(session, parsed.contentId);
-                return client.readAttachment(session, described[0], readerMaxBytes());
+                if (described[0].size > limit) {
+                    throw new ResponseTooLargeException("Anhang größer als " + limit + " Bytes", limit);
+                }
+                return client.readAttachment(session, described[0], limit);
             }
         });
         return new SourceFile(attachmentResource(described[0]), content);

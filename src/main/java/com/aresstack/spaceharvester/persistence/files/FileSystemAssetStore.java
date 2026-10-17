@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
+import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -22,6 +23,7 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Legt geerntete Anhänge im Dateisystem ab (#19):
@@ -37,16 +39,34 @@ import java.util.regex.Pattern;
  * werden hexadezimal kodiert mit Präfix {@code x}. Geschrieben wird über eine temporäre Datei und Umbenennen, damit
  * ein Leser nie eine halbe Datei sieht. Die Inhalte sind so schutzbedürftig wie die Seiten; das Verzeichnis gehört
  * nur dem Dienstkonto.
+ *
+ * <p>Alle Inhalte zusammen belegen höchstens {@code maxTotalBytes}; ein neuer Inhalt darüber scheitert mit {@link
+ * AssetStoreFullException}, nichts wird verdrängt. Gezählt wird beim ersten Schreiben einmal über {@code blobs/},
+ * danach je neuem Inhalt; Einträge und Beschreibungen sind klein und zählen nicht mit.
  */
 public class FileSystemAssetStore implements AssetStore {
 
     private static final Pattern PLAIN = Pattern.compile("[A-Za-z0-9_-]{1,80}");
     private static final Pattern HEX_SHA = Pattern.compile("sha256:[0-9a-f]{64}");
 
+    /** Standard für {@code space-harvester.assets.max-total-bytes}: 20 GiB, wie die Exportgrenze. */
+    public static final long DEFAULT_MAX_TOTAL_BYTES = 20L * 1024 * 1024 * 1024;
+
     private final Path root;
+    private final long maxTotalBytes;
+    /** Belegte Bytes in {@code blobs/}; {@code -1}, solange noch nicht gezählt. Geschützt durch {@code this}. */
+    private long usedBytes = -1;
 
     public FileSystemAssetStore(Path root) {
+        this(root, DEFAULT_MAX_TOTAL_BYTES);
+    }
+
+    public FileSystemAssetStore(Path root, long maxTotalBytes) {
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+        if (maxTotalBytes <= 0) {
+            throw new IllegalArgumentException("maxTotalBytes muss positiv sein");
+        }
+        this.maxTotalBytes = maxTotalBytes;
     }
 
     @Override
@@ -88,7 +108,13 @@ public class FileSystemAssetStore implements AssetStore {
         try {
             Path blob = blob(asset.sha256());
             if (!Files.isRegularFile(blob) || Files.size(blob) != content.length) {
-                write(blob, content);
+                reserve(content.length);
+                try {
+                    write(blob, content);
+                } catch (IOException | RuntimeException e) {
+                    release(content.length);
+                    throw e;
+                }
             }
             if (asset.version() == null) {
                 return;
@@ -174,6 +200,34 @@ public class FileSystemAssetStore implements AssetStore {
         } catch (IOException | UncheckedIOException e) {
             throw new AssetStoreException("Bildbeschreibung nicht ablegbar", e);
         }
+    }
+
+    private synchronized void reserve(long bytes) throws IOException {
+        if (usedBytes < 0) {
+            usedBytes = blobBytes();
+        }
+        if (usedBytes + bytes > maxTotalBytes) {
+            throw new AssetStoreFullException(maxTotalBytes);
+        }
+        usedBytes += bytes;
+    }
+
+    private synchronized void release(long bytes) {
+        usedBytes = Math.max(0, usedBytes - bytes);
+    }
+
+    private long blobBytes() throws IOException {
+        Path blobs = root.resolve("blobs");
+        if (!Files.isDirectory(blobs)) {
+            return 0;
+        }
+        long total = 0;
+        try (Stream<Path> files = Files.walk(blobs)) {
+            for (Path file : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                total += Files.size(file);
+            }
+        }
+        return total;
     }
 
     private Path descriptionFile(String imageSha256, String describer, String modelVersion) {

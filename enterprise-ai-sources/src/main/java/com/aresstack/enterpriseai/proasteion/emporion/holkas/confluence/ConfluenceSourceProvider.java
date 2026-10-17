@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  * Nur noch in der Datei: {@code startPoints}, {@code maxDepth}, {@code maxResources}, {@code searchSpaceKeys},
  * {@code includeAttachments}, {@code pageSize}, {@code maxAttachmentBytes},
  * {@code maxResponseBytes}, {@code maxRetries}, {@code retryBackoffMillis}, {@code maxRetryBackoffMillis},
- * {@code allowInsecureHttp}, {@code connectTimeoutMillis}, {@code readTimeoutMillis} und
+ * {@code foreignFileRedirects}, {@code allowInsecureHttp}, {@code connectTimeoutMillis}, {@code readTimeoutMillis} und
  * {@code clientCertificate.keyStoreFile}/{@code .keyStorePasswordRef}.
  */
 public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, AddressableKnowledgeSourceProvider {
@@ -303,6 +303,7 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
         int maxRetries = r.integer("maxRetries", 0, 0, 10);
         int retryBackoffMillis = r.integer("retryBackoffMillis", 1000, 0, 60000);
         int maxRetryBackoffMillis = r.integer("maxRetryBackoffMillis", 30000, 0, 300000);
+        boolean foreignFileRedirects = r.bool("foreignFileRedirects", true);
         List<String> spaceKeys = r.list("searchSpaceKeys");
         if (baseUrl == null) {
             return null;
@@ -318,6 +319,7 @@ public final class ConfluenceSourceProvider implements KnowledgeSourceProvider, 
                     .maxRetries(maxRetries)
                     .retryBackoffMillis(retryBackoffMillis)
                     .maxRetryBackoffMillis(maxRetryBackoffMillis)
+                    .foreignFileRedirects(foreignFileRedirects)
                     .diagnosticsDirectory(diagnosticsDirectory);
             for (String spaceKey : spaceKeys) {
                 builder.searchSpaceKey(spaceKey);

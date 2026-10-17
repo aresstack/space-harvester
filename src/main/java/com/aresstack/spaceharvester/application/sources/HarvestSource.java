@@ -114,13 +114,15 @@ public interface HarvestSource {
 
     /**
      * Lädt einen Anhang aus {@link #attachments(String)} über die Anmeldung und den Netzweg der Quelle herunter (#19).
-     * Nur Anhänge der Quelle selbst, nie fremde URLs. Eine Datei über der Größengrenze der Quelle scheitert mit
-     * {@code INVALID_RESPONSE} und wird nie gekürzt.
+     * Nur Anhänge der Quelle selbst, nie fremde URLs. Eine Datei über {@code maxBytes} oder der Größengrenze der Quelle
+     * wird nicht weiter gelesen und nie gekürzt.
      *
-     * @throws SourceAccessException wie {@link #storedPage(String)}; {@code NOT_FOUND} auch für einen gelöschten
-     *                               Anhang
+     * @param maxBytes größte Datei, die der Aufrufer annimmt
+     * @throws AttachmentTooLargeException über {@code maxBytes} oder der Grenze der Quelle
+     * @throws SourceAccessException       wie {@link #storedPage(String)}; {@code NOT_FOUND} auch für einen gelöschten
+     *                                     Anhang
      */
-    default AttachmentFile attachmentFile(PageAttachment attachment) {
+    default AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Anhänge nicht herunterladen", null);
     }

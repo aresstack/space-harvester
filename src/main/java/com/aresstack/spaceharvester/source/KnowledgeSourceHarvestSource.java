@@ -12,12 +12,14 @@ import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
@@ -210,9 +212,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
-    public AttachmentFile attachmentFile(PageAttachment attachment) {
+    public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
         if (!(port instanceof PageViewSource files)) {
-            return HarvestSource.super.attachmentFile(attachment);
+            return HarvestSource.super.attachmentFile(attachment, maxBytes);
         }
         KnowledgeResourceId resourceId;
         try {
@@ -226,7 +228,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         SourceFile file;
         try {
-            file = files.loadAttachmentFile(resourceId);
+            // Die Grenze gilt schon beim Lesen im Transport, nicht erst nach dem vollständigen Download.
+            file = files.loadAttachmentFile(resourceId, (int) Math.min(maxBytes, Integer.MAX_VALUE));
+        } catch (ResponseTooLargeException e) {
+            throw new AttachmentTooLargeException(id, e.maxBytes());
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }

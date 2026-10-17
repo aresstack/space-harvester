@@ -11,12 +11,18 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeRevision;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.PageView;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
+import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
+import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
@@ -73,9 +79,73 @@ class KnowledgeSourceHarvestSourceTest {
                         e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNAVAILABLE));
     }
 
+    @Test
+    void theCallersLimitReachesTheTransportAndOversizedDownloadsAreTooLarge() {
+        Files files = new Files();
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", files);
+        PageAttachment attachment = new PageAttachment("att7", "confluence:wiki.example.org/attachment/att7", "a.png",
+                "image/png", null, "1", null, null);
+
+        assertThatThrownBy(() -> source.attachmentFile(attachment, 1024))
+                .isInstanceOfSatisfying(AttachmentTooLargeException.class,
+                        e -> assertThat(e.maxBytes()).isEqualTo(1024));
+        assertThat(files.maxBytes).isEqualTo(1024);
+        assertThatThrownBy(() -> source.attachmentFile(attachment, 10L * Integer.MAX_VALUE))
+                .isInstanceOf(AttachmentTooLargeException.class);
+        assertThat(files.maxBytes).isEqualTo(Integer.MAX_VALUE);
+    }
+
     private static PageMetadata only(Listing port) {
         return new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port)
                 .pageMetadata("DEV", null, 10).pages().get(0);
+    }
+
+    /** Anhänge, deren Download immer an der Grenze scheitert; merkt sich die Grenze. */
+    private static final class Files implements KnowledgeSourcePort, PageViewSource {
+
+        int maxBytes;
+
+        @Override
+        public boolean isAttachment(KnowledgeResourceId id) {
+            return true;
+        }
+
+        @Override
+        public SourceFile loadAttachmentFile(KnowledgeResourceId attachment, int maxBytes)
+                throws KnowledgeSourceException {
+            this.maxBytes = maxBytes;
+            throw new ResponseTooLargeException("zu groß", maxBytes);
+        }
+
+        @Override
+        public PageView pageView(KnowledgeResourceId page) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte[] loadViewImage(String src) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SourceAddress sourceId() {
+            return SourceAddress.of("confluence-dc");
+        }
+
+        @Override
+        public List<KnowledgeResource> discover(SourceScope scope) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public KnowledgeDocument load(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     /** Liefert genau eine Seite mit den angegebenen Labels. */

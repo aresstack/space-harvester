@@ -221,6 +221,7 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 | Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
+| Asset-Ablage ohne Gesamtgrenze; Download erst nach vollständigem Lesen gemessen; Weiterleitungen beim Anhang-Download auf fremde Hosts verfolgt; Bildbeschreibungen ohne Sperre | `space-harvester.assets.max-total-bytes` (Standard 20 GiB), darüber 507 `asset-store-full` (`FileSystemAssetStoreTest`); die Grenze reicht bis in den Transport (upstream enterprise-ai-client#179, `KnowledgeSourceHarvestSourceTest`); `foreignFileRedirects` standardmäßig aus; je Bild und Modell ein Lauf, höchstens 2 gleichzeitig, sonst 429 (`AssetsTest`) |
 | Lokale Dateiquelle listete versteckte Ordner (`.git`, `.ssh`), las Dateien bis 2000 MB ganz und nannte den absoluten Serverpfad als `url` | versteckte Dateien und Ordner ausgeschlossen, Standard 20 MB, höchstens 64 MB, keine `url` (#85, upstream enterprise-ai-client#178) |
 | Asset-Inhalt: schon `content` legte beim ersten Lesen in der Ablage ab, jeder Leser konnte so die Platte füllen | ablegen nur mit `sync`, sonst nur ausliefern; höchstens 4 Downloads gleichzeitig, sonst 429; `AssetsTest` |
 | Asset-Dateiname: Richtungs- und Formatzeichen (U+202E, U+2028) blieben im `Content-Disposition` und konnten eine Endung vortäuschen | alle Zeichen der Klasse `\p{C}` ersetzt, `AssetsApiTest` |
@@ -239,10 +240,9 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
   beendet.
 - Lokale Dateiquelle: die `resourceId` folgt dem Upstream-Format `file:<Verzeichnis>/<Pfad>` und nennt damit den
   Verzeichnispfad auf dem Server (nur für Clients mit `metadata`, `url` ist leer).
-- Assets, bei Strang B: keine Gesamtgrenze der Ablage auf der Platte (wie `export.max-total-bytes`); der Download
-  aus der Quelle wird erst nach dem vollständigen Lesen an der Grenze gemessen (Abbruch beim Streamen gehört in den
-  Transport, upstream); Weiterleitungen beim Anhang-Download sind upstream noch nicht auf den Host der Quelle
-  beschränkt. Für das Beschreiben fehlen Sperre und Grenze gleichzeitiger Läufe, bevor ein Modell-Adapter kommt.
+- Assets: die Gesamtgrenze der Ablage zählt nur Inhalte, nicht Einträge und Beschreibungen; zwei gleichzeitige
+  Ablagen desselben neuen Inhalts zählen bis zum Neustart doppelt (zu vorsichtig, nie zu großzügig). Ist
+  `foreignFileRedirects` eingeschaltet, lädt der Transport vom fremden Host anonym, ohne dessen Host zu prüfen.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
   Space existiert.
 

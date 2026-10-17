@@ -77,6 +77,7 @@ public class ConfluenceViewImageTest {
     private ConfluenceHttpResponse withSession;
     private String readingPage = READING_PAGE;
     private IOException failure;
+    private boolean foreignFileRedirects = true;
 
     @Before
     public void captureLog() {
@@ -134,7 +135,8 @@ public class ConfluenceViewImageTest {
         };
         return new ConfluenceKnowledgeSource(SourceAddress.of("confluence-dc"),
                 ConfluenceConfig.builder(URI.create(BASE)).credentialRef(RecordingSecretProvider.REF)
-                        .maxAttachmentBytes(maxAttachmentBytes).build(), transport, secrets);
+                        .maxAttachmentBytes(maxAttachmentBytes).foreignFileRedirects(foreignFileRedirects).build(),
+                transport, secrets);
     }
 
     private ConfluenceKnowledgeSource source() {
@@ -282,6 +284,25 @@ public class ConfluenceViewImageTest {
         assertFalse("Anmeldung verlässt die Confluence nie", sentHeaders.get(1).containsKey("Authorization"));
         assertEquals("image/*,*/*;q=0.8", sentHeaders.get(1).get("Accept"));
         assertEquals("ohne Client-Zertifikat", java.util.Collections.singletonList(requests.get(1)), anonymous);
+    }
+
+    @Test
+    public void withoutForeignFileRedirectsARedirectToAnotherHostIsNotFollowed() throws Exception {
+        foreignFileRedirects = false;
+        response = new ConfluenceHttpResponse(302, "text/html", new byte[0],
+                "https://files.invalid/blob/a.png?sig=x");
+        byHost.put("files.invalid", new ConfluenceHttpResponse(200, "image/png", PNG));
+
+        try {
+            source().loadViewImage(IMAGE);
+            fail("fremder Host");
+        } catch (KnowledgeSourceException expected) {
+            assertTrue(requests.toString(), requests.stream().noneMatch(uri -> "files.invalid".equals(uri.getHost())));
+            assertTrue(anonymous.isEmpty());
+        }
+        assertTrue(infoLines.toString(), infoLines.stream()
+                .anyMatch(line -> line.contains("nicht gefolgt (foreignFileRedirects=false)")
+                        && !line.contains("sig=x")));
     }
 
     @Test
