@@ -66,7 +66,7 @@ import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlin
 public final class PdfConverter implements ExportConverter {
 
     public static final String FORMAT = "pdf";
-    public static final String VERSION = "pdf/1";
+    public static final String VERSION = "pdf/2";
 
     private static final float MARGIN = 56;
     /** Mindestbreite für Text, auch bei tiefer Verschachtelung oder vielen Tabellenspalten. */
