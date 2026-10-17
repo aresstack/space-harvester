@@ -68,8 +68,9 @@ public final class ExportsView implements View {
         });
         clearSpaces.addActionListener(e -> setChosen(picker.sourceId(), List.of()));
         // Spaces gehören zu einer Quelle: Mit einer anderen Quelle beginnt die Auswahl neu.
+        // Beim Auffrischen der Quellenliste ist kurz keine Quelle gewählt; das ist kein Wechsel.
         picker.sourceBox().addActionListener(e -> {
-            if (!java.util.Objects.equals(picker.sourceId(), chosenSource)) {
+            if (picker.sourceId() != null && !java.util.Objects.equals(picker.sourceId(), chosenSource)) {
                 setChosen(picker.sourceId(), List.of());
             }
         });
@@ -223,10 +224,10 @@ public final class ExportsView implements View {
     private void start() {
         AppRuntime runtime = context.runtime();
         String sourceId = picker.sourceId();
-        List<String> keys = !chosen.isEmpty() && java.util.Objects.equals(sourceId, chosenSource)
-                ? List.copyOf(chosen) : picker.spaceKey().isEmpty() ? List.of() : List.of(picker.spaceKey());
+        // Exportiert wird genau, was als Marke angezeigt wird; die Space-Auswahl oben zählt erst nach „Hinzufügen“.
+        List<String> keys = java.util.Objects.equals(sourceId, chosenSource) ? List.copyOf(chosen) : List.of();
         if (runtime == null || sourceId == null || keys.isEmpty()) {
-            feedback.warning("Quelle und Space wählen", null);
+            feedback.warning("Space hinzufügen", "Oben einen Space wählen und „Hinzufügen“ klicken.");
             return;
         }
         if (keys.size() >= CONFIRM_FROM && !Dialogs.confirm(root, "Viele Exporte starten?",
