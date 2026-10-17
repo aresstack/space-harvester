@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -127,19 +128,13 @@ public class ProvisioningSearch extends PageSearch {
         for (Map.Entry<String, List<String>> entry : found.entrySet()) {
             complete &= entry.getValue().size() < LIVE_LIMIT;
             String sourceId = entry.getKey();
-            SearchIndexState state = index.state(sourceId).orElse(null);
-            if (state == null) {
-                continue;
-            }
             for (String pageId : entry.getValue()) {
-                PageSearchQuery one = new PageSearchQuery(sourceId, Set.of(), query.spaceKeys(), List.of(), pageId,
-                        query.parentPageId(), query.version(), query.modifiedFrom(), query.modifiedBefore(),
-                        query.sort());
-                for (SearchHit hit : index.search(one, Set.of(sourceId), state.generation(), null, 1)) {
-                    if (visible(caller, hit) && seen.add(hit.page().header().key())) {
-                        hits.add(hit);
-                    }
+                Optional<SearchHit> hit = lookup(caller, query, sourceId, pageId);
+                if (hit.isEmpty() && fetch(caller, sourceId, pageId)) {
+                    // Ablage beim parallelen Nachladen verpasst (Schreibsperre belegt): einmal allein nachholen.
+                    hit = lookup(caller, query, sourceId, pageId);
                 }
+                hit.filter(candidate -> seen.add(candidate.page().header().key())).ifPresent(hits::add);
             }
         }
         // Dazu die Titeltreffer aus dem Index über alle Quellen des Umfangs: Quellen ohne eigene Suche oder gerade
@@ -174,18 +169,40 @@ public class ProvisioningSearch extends PageSearch {
             found.forEach((sourceId, pageIds) -> pageIds.forEach(pageId -> fetches.submit(() -> {
                 slots.acquireUninterruptibly();
                 try {
-                    pages.page(caller, sourceId, pageId, false);
-                } catch (CacheMissException | AccessDeniedException | UnknownSourceException e) {
-                    // Nicht vorhanden oder nicht lesbar: kein Treffer, keine Spur.
-                } catch (RuntimeException e) {
-                    // Ohne Seiten-ID im Log: der Treffer kann für den Aufrufer unsichtbar sein.
-                    LOG.log(System.Logger.Level.INFO, "Suchtreffer in {0} nicht nachgeladen ({1})", sourceId,
-                            e.getClass().getSimpleName());
+                    fetch(caller, sourceId, pageId);
                 } finally {
                     slots.release();
                 }
             })));
         }
+    }
+
+    /** Eine Seite über den Seitenabruf; {@code false}, wenn sie nicht vorhanden oder nicht lesbar ist. */
+    private boolean fetch(AccessContext caller, String sourceId, String pageId) {
+        try {
+            pages.page(caller, sourceId, pageId, false);
+            return true;
+        } catch (CacheMissException | AccessDeniedException | UnknownSourceException e) {
+            // Nicht vorhanden oder nicht lesbar: kein Treffer, keine Spur.
+            return false;
+        } catch (RuntimeException e) {
+            // Ohne Seiten-ID im Log: der Treffer kann für den Aufrufer unsichtbar sein.
+            LOG.log(System.Logger.Level.INFO, "Suchtreffer in {0} nicht nachgeladen ({1})", sourceId,
+                    e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /** Der Treffer aus dem Index, mit den Filtern der Anfrage und sichtbar für den Aufrufer. */
+    private Optional<SearchHit> lookup(AccessContext caller, PageSearchQuery query, String sourceId, String pageId) {
+        Optional<SearchIndexState> state = index.state(sourceId);
+        if (state.isEmpty()) {
+            return Optional.empty();
+        }
+        PageSearchQuery one = new PageSearchQuery(sourceId, Set.of(), query.spaceKeys(), List.of(), pageId,
+                query.parentPageId(), query.version(), query.modifiedFrom(), query.modifiedBefore(), query.sort());
+        return index.search(one, Set.of(sourceId), state.get().generation(), null, 1).stream()
+                .filter(hit -> visible(caller, hit)).findFirst();
     }
 
     private boolean visible(AccessContext caller, SearchHit hit) {
