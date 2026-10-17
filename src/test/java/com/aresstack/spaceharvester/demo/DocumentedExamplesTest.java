@@ -55,6 +55,8 @@ class DocumentedExamplesTest {
             "```bash\\n((?:[A-Z_]+=\\$\\()?curl [^\\n]*)\\n```\\n(?:(?!```)[\\s\\S])*?```json\\n([\\s\\S]*?)\\n```");
     private static final Pattern ASSIGNMENT = Pattern.compile("^([A-Z_]+)=\\$\\(curl .* \\| jq -r \\.id\\)$");
     private static final Pattern VARIABLE = Pattern.compile("\\$([A-Z_]+)");
+    /** Adresse der Fake-Confluence in Seiten-URLs der Beispiele (URL-kodiert); der Test startet sie auf freiem Port. */
+    private static final String DOCUMENTED_CONFLUENCE = "127.0.0.1%3A" + DemoConfluence.DEFAULT_PORT;
     private static final Duration POLL_TIMEOUT = Duration.ofSeconds(30);
     private static final Pattern URL = Pattern.compile("\"http://localhost:8080(/[^\"]*)\"");
     private static final Pattern TOKEN = Pattern.compile("(?m)^TOKEN=(\\S+)$");
@@ -120,7 +122,7 @@ class DocumentedExamplesTest {
             String path = used.replaceAll(match -> {
                 assertThat(variables).as("$" + match.group(1) + " vorher zugewiesen").containsKey(match.group(1));
                 return variables.get(match.group(1));
-            });
+            }).replace(DOCUMENTED_CONFLUENCE, "127.0.0.1%3A" + CONFLUENCE.baseUrl().getPort());
             JsonNode expected = json.readTree(example.expected());
             // status im Auszug ist der HTTP-Status; nicht jeder Fehlerkörper (etwa der von Confluence) wiederholt ihn.
             JsonNode documented = expected instanceof ObjectNode object ? object.remove("status") : null;
