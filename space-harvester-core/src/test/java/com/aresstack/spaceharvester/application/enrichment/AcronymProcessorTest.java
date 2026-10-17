@@ -82,7 +82,20 @@ class AcronymProcessorTest {
 
         assertThat(output.payloadJson()).contains("\"count\":" + (AcronymProcessor.MAX_OCCURRENCES + 3));
         assertThat(output.payloadJson().split("\"start\":")).hasSize(AcronymProcessor.MAX_OCCURRENCES + 1);
-        assertThat(output.warnings()).containsExactly("Fundstellen nur für die ersten 5000 Vorkommen");
+        assertThat(output.warnings()).containsExactly("Fundstellen nur für die ersten 5000 Vorkommen im Text");
+    }
+
+    @Test
+    void keepsTheFirstOccurrencesInTextOrderAcrossAcronyms() {
+        String text = "ZZZ ".repeat(AcronymProcessor.MAX_OCCURRENCES) + "AAA";
+        PageAcronyms acronyms = PageAcronyms.read(PageAcronymsTest.KEY,
+                List.of(PageAcronymsTest.current(plain(text), processor)), plain(text));
+
+        assertThat(acronyms.acronyms()).extracting(PageAcronyms.Acronym::acronym, PageAcronyms.Acronym::count,
+                a -> a.occurrences().size()).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("AAA", 1, 0),
+                org.assertj.core.groups.Tuple.tuple("ZZZ", AcronymProcessor.MAX_OCCURRENCES,
+                        AcronymProcessor.MAX_OCCURRENCES));
     }
 
     private static PageText plain(String text) {

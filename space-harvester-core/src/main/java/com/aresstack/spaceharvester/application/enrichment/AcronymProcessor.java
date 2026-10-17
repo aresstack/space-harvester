@@ -20,8 +20,8 @@ import java.util.regex.Pattern;
  * Fundstelle, {@code occurrences} (seit Version 2, #115) nennt jede Fundstelle in Textreihenfolge; {@code end} schließt
  * ein Plural-{@code s} ein. Alle Positionen sind Zeichenpositionen (UTF-16 wie {@link String#substring}) in
  * {@link PageText#text()} derselben Eingabe ({@code inputSha256} des Ergebnisses). Über alle Akronyme zusammen werden
- * höchstens {@value #MAX_OCCURRENCES} Fundstellen geschrieben; {@code count} zählt weiter alle Vorkommen, eine Warnung
- * nennt die Kürzung. Gelesen wird das Ergebnis mit {@link PageAcronyms}.
+ * nur die ersten {@value #MAX_OCCURRENCES} Fundstellen im Text behalten und geschrieben; {@code count} zählt weiter
+ * alle Vorkommen, eine Warnung nennt die Kürzung. Gelesen wird das Ergebnis mit {@link PageAcronyms}.
  */
 public class AcronymProcessor implements EnrichmentProcessor {
 
@@ -46,6 +46,8 @@ public class AcronymProcessor implements EnrichmentProcessor {
     @Override
     public EnrichmentOutput process(PageText text) {
         Map<String, Found> found = new TreeMap<>();
+        int retained = 0;
+        boolean truncated = false;
         Matcher matcher = ACRONYM.matcher(text.text());
         while (matcher.find()) {
             String acronym = matcher.group(1);
@@ -54,7 +56,13 @@ public class AcronymProcessor implements EnrichmentProcessor {
             }
             Found entry = found.computeIfAbsent(acronym, key -> new Found(matcher.start()));
             entry.count++;
-            entry.occurrences.add(new int[] {matcher.start(), matcher.end()});
+            // Nur so viele Fundstellen behalten, wie geschrieben werden; gezählt wird weiter alles.
+            if (retained < MAX_OCCURRENCES) {
+                entry.occurrences.add(new int[] {matcher.start(), matcher.end()});
+                retained++;
+            } else {
+                truncated = true;
+            }
             if (entry.expansion == null) {
                 entry.expansion = expansion(text.text(), acronym, matcher.start(), matcher.end());
             }
@@ -62,8 +70,6 @@ public class AcronymProcessor implements EnrichmentProcessor {
         List<String> warnings = new ArrayList<>();
         StringBuilder json = new StringBuilder("{\"acronyms\":[");
         int written = 0;
-        int occurrences = 0;
-        boolean truncated = false;
         for (Map.Entry<String, Found> entry : found.entrySet()) {
             if (written == MAX_ACRONYMS) {
                 warnings.add("Nur die ersten " + MAX_ACRONYMS + " von " + found.size() + " Akronymen");
@@ -78,19 +84,14 @@ public class AcronymProcessor implements EnrichmentProcessor {
                     .append(",\"section\":").append(section == null ? "null" : JsonText.quote(section.heading()))
                     .append(",\"charStart\":").append(value.firstOffset).append(",\"occurrences\":[");
             for (int i = 0; i < value.occurrences.size(); i++) {
-                if (occurrences == MAX_OCCURRENCES) {
-                    truncated = true;
-                    break;
-                }
                 int[] occurrence = value.occurrences.get(i);
                 json.append(i == 0 ? "" : ",").append("{\"start\":").append(occurrence[0])
                         .append(",\"end\":").append(occurrence[1]).append('}');
-                occurrences++;
             }
             json.append("]}");
         }
         if (truncated) {
-            warnings.add("Fundstellen nur für die ersten " + MAX_OCCURRENCES + " Vorkommen");
+            warnings.add("Fundstellen nur für die ersten " + MAX_OCCURRENCES + " Vorkommen im Text");
         }
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
