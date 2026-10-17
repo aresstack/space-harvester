@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.jobs.JobError;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -41,10 +42,12 @@ public class SyncController {
 
     private final SpaceSyncJobs syncs;
     private final AccessGuard access;
+    private final SpaceKeyCheck spaces;
 
-    public SyncController(SpaceSyncJobs syncs, AccessGuard access) {
+    public SyncController(SpaceSyncJobs syncs, AccessGuard access, SpaceKeyCheck spaces) {
         this.syncs = syncs;
         this.access = access;
+        this.spaces = spaces;
     }
 
     @PostMapping("/sources/{sourceId}/spaces/{spaceKey}/syncs")
@@ -55,10 +58,14 @@ public class SyncController {
                     + "unvollständiger oder abgebrochener Lauf hinterlässt nichts. Je Space läuft höchstens ein "
                     + "Abgleich.")
     @ApiResponse(responseCode = "202", description = "Abgleich angenommen")
+    @ApiResponse(responseCode = "400", description = "Kein gültiger Space-Key (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine sync-Freigabe für diesen Space oder keine Quelle mit "
             + "dieser ID (access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found)",
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found) oder Space, den die "
+            + "Quelle nicht kennt oder nicht zeigt (source-object-not-found)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "409", description = "Für diesen Space läuft bereits ein Abgleich "
@@ -76,6 +83,8 @@ public class SyncController {
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        // Erst nach der Freigabe: sonst verriete die Antwort Unberechtigten, welche Spaces es gibt.
+        spaces.requireExisting(sourceId, spaceKey);
         JobStatus status = syncs.start(sourceId, spaceKey, owner(caller));
         return ResponseEntity.accepted()
                 .location(URI.create(ApiPaths.V1 + "/syncs/" + status.id()))

@@ -35,6 +35,11 @@ SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew
 Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
 geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
 
+Unter `http://localhost:8080/ui/` liegt eine schlanke Weboberfläche: Quellen und Spaces ansehen, Abgleich und Export
+starten, Fortschritt, Warnungen und Fehler verfolgen, Export-Dateien herunterladen. Sie ruft nur die REST-API auf; das
+Bearer-Token gibt man im Browser ein, es bleibt im sessionStorage des Tabs. Abschalten mit
+`SPACE_HARVESTER_UI_ENABLED=false`.
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -85,7 +90,8 @@ space-harvester:
 
 - **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
   (Personal Access Token als `Authorization: Bearer`). Die Zugangsdaten gehen über einen `SecretProvider` an den
-  Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
+  Confluence-Adapter. Platzhalter können optional aus Azure Key Vault kommen (Profil `azure-keyvault`); ein
+  Platzhalter ohne Wert verhindert den Start. Varianten, Anmeldung und Live-Test: [docs/SECRETS.md](docs/SECRETS.md).
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
 - **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
@@ -110,7 +116,7 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server. Proxy und PAC: siehe nächsten Abschnitt.
+- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
@@ -230,15 +236,16 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments`; `refresh=true` prüft gegen die Quelle |
 | `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre URL (`?pageId=…`, `/spaces/KEY/pages/ID`, Kurzlink `/x/…`) |
-| `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status) |
+| `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}` | Confluence-kompatible Einzelseite aus dem Cache, Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
-Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
+Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet, außer unter `/api/compat/confluence`, wo sie den Fehlerkörper von Confluence haben. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
 abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
