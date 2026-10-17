@@ -24,7 +24,8 @@ java -jar space-harvester.jar
 ```
 
 - Gefragt wird `GET {SPRING_CLOUD_CONFIG_URI}/space-harvester/{aktive Profile}`; Anmeldung am Config Server über
-  `spring.cloud.config.username`/`password` bzw. `headers` (Werte wieder als Platzhalter).
+  `spring.cloud.config.username`/`password` bzw. `headers` (Werte wieder als Platzhalter; nie als
+  `user:passwort@` in `SPRING_CLOUD_CONFIG_URI`, weil die URL in Umgebung und Logs landen kann).
 - Der Import ist `optional:`. Ist der Server nicht erreichbar, startet der Dienst mit der lokalen Konfiguration. Wer ihn verpflichtend will, setzt `spring.cloud.config.fail-fast=true`.
 - Ohne das Profil wird kein Config Server gefragt. Statt des Profils geht auch direkt
   `spring.config.import=optional:configserver:https://…`.

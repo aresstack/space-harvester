@@ -11,14 +11,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * @param maxQueued     höchstens wartende Aufträge, darüber wird ein neuer abgelehnt (Standard 20)
  * @param maxRunTime    Laufzeitgrenze je Auftrag (Standard 6 Stunden)
  * @param retention     wie lange beendete Aufträge abrufbar bleiben (Standard 7 Tage)
+ * @param maxOpenPerOwner höchstens offene Aufträge je Client (Standard 4)
  */
 @ConfigurationProperties("space-harvester.jobs")
-public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration maxRunTime, Duration retention) {
+public record JobsProperties(Integer maxConcurrent, Integer maxQueued, Duration maxRunTime, Duration retention,
+        Integer maxOpenPerOwner) {
 
     public JobsProperties {
         maxConcurrent = maxConcurrent == null ? 2 : maxConcurrent;
         maxQueued = maxQueued == null ? 20 : maxQueued;
         maxRunTime = maxRunTime == null ? Duration.ofHours(6) : maxRunTime;
         retention = retention == null ? JobLimits.DEFAULT_RETENTION : retention;
+        maxOpenPerOwner = maxOpenPerOwner == null ? 4 : maxOpenPerOwner;
     }
 }

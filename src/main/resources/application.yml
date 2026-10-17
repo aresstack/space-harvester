@@ -21,6 +21,10 @@ spring:
 server:
   port: ${SPACE_HARVESTER_PORT:8080}
   shutdown: graceful
+  # Keine Route nimmt einen Formular- oder großen Body an; kleine Grenzen gegen Ressourcenverbrauch (Durchsicht, docs/SECURITY.md).
+  tomcat:
+    max-http-form-post-size: 64KB
+    max-swallow-size: 1MB
 
 management:
   endpoints:
