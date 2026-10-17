@@ -54,12 +54,21 @@ zwischengespeichert.
 7. **Zähler.** Während des Einlesens bleiben die Zähler stehen (siehe 5.); danach zählt der Export jede lesbare Seite
    einmal. Die Phasen selbst macht die Auftragsdiagnose sichtbar (Folge-PR).
 
+8. **Seite lesen ist transparent gecacht.** `PageQueries.page` liefert einen Treffer aus dem Cache; fehlt die Seite,
+   lädt sie sie über `PageFreshness` nach, wie bei `refresh=true`. Die Rechte prüft sie an den live gelesenen
+   Kopfdaten, **bevor** der Inhalt geladen wird; eine nicht lesbare Seite wird gar nicht geladen und antwortet wie eine
+   unbekannte. Einen neuen Inhalt (fehlende Seite oder neue Revision bei `refresh=true`) legt der Port
+   `PageCacheFill` im gemeinsamen Cache ab und berechnet seine Anreicherungen (`EnrichingCacheFill`), danach ist die
+   Seite auch in Suche und Export sichtbar. Abgelegt wird nur, was die Quelle mit der Quellenidentität geliefert hat,
+   nie etwas Benutzerbezogenes. `LucenePageCache.trySave` wartet nie: Schreibt gerade ein Abgleich, wird die Seite
+   nur ausgeliefert (`origin: live`), und der Abgleich bzw. der nächste Abruf legt sie ab. Die Generation des Space
+   ändert sich dadurch nicht; Löschungen leitet weiter nur ein bestätigter Abgleich ab. Eine nicht erreichbare Quelle
+   ist `source-unavailable` und wird nie durch „nicht gefunden“ oder einen alten Stand ersetzt. Dasselbe gilt für die
+   Confluence-kompatible Einzelseite, die denselben Anwendungsfall nutzt.
+
 ## Folgeschritte
 
-- **Seite lesen** (`PageQueries.page`): Heute liefert sie ohne `refresh` bei fehlender Seite `cache-miss`, und
-  `refresh=true` holt die Seite live, schreibt sie aber nicht in den Cache. Ziel: ein gemeinsamer Nachladeweg
-  (Rechte zuerst an den Metadaten prüfen, dann Inhalt mit der Quellenidentität laden, im Cache ablegen, ausliefern),
-  den Seite lesen, gezieltes Nachladen bei der Suche und der Export nutzen. Eigener PR.
-- **Suche nach unbekannten Seiten:** Ein leerer Cache ist nicht „keine Treffer“. Eine ergänzende Live-Suche in den
-  Quellen (Confluence CQL) ist möglich, wird aber gesondert entschieden.
+- **Suche nach unbekannten Seiten:** Ein leerer Cache ist nicht „keine Treffer“. Eine Seite mit bekannter ID oder
+  URL liefert die Seiten-API inzwischen auch ohne Cache (8.). Eine ergänzende Live-Suche in den Quellen (Confluence
+  CQL), deren Treffer über denselben Nachladeweg abgelegt würden, ist möglich, wird aber gesondert entschieden.
 - **Auftragsdiagnose:** strukturierte Ereignisse je Auftrag (Phase, Komponente, HTTP-Status, Proxy-Route, TLS-Befund).

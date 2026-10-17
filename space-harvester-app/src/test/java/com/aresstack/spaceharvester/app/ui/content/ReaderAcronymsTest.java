@@ -138,17 +138,15 @@ class ReaderAcronymsTest {
         assertThat(recomputed.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
         assertThat(recomputed.marks()).hasSameSizeAs(before.marks());
 
-        // Neue Fassung in der Quelle: live angezeigt, aber noch nicht analysiert, also keine Markierung
+        // Neue Fassung in der Quelle: die Prüfung legt sie im Cache ab und analysiert sie sofort (ADR 0010)
         wiki.page("200", "Schnittstellen", "DEV", "<p>neu</p>")
                 .storage("<p>Jetzt nur noch CI (Continuous Integration) und eine API.</p>")
                 .version(4, "2026-10-17T10:00:00.000+02:00");
         ReaderDocument live = open(panel, "wiki", "200", true);
         assertThat(live.text().text()).contains("Continuous Integration");
-        assertThat(live.acronyms().state()).isEqualTo(PageAcronyms.State.STALE);
-        assertThat(live.marks()).isEmpty();
-        assertThat(onEdt(panel::acronymHint)).contains("Live-Fassung ist noch nicht analysiert");
-        assertThat(StyleConstants.isUnderline(live.document()
-                .getCharacterElement(live.text().text().indexOf("API")).getAttributes())).isFalse();
+        assertThat(live.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
+        assertThat(live.acronyms().acronyms()).extracting(PageAcronyms.Acronym::acronym)
+                .containsExactly("API", "CI");
 
         // Nach dem nächsten Abgleich gehört die Analyse zur neuen Fassung
         sync(workspace, "wiki");
@@ -160,7 +158,7 @@ class ReaderAcronymsTest {
     }
 
     @Test
-    void aPageMissingFromTheCacheShowsNoAnalysis() throws Exception {
+    void aPageMissingFromTheCacheIsLoadedStoredAndAnalysed() throws Exception {
         FakeConfluence wiki = confluence("200", "Schnittstellen", WIKI_PAGE);
         Workspace workspace = start(serve(wiki), serve(confluence("300", "Leer", "<p>leer</p>")));
         sync(workspace, "wiki");
@@ -169,9 +167,9 @@ class ReaderAcronymsTest {
         PageDetailPanel panel = onEdt(() -> new PageDetailPanel(context));
         ReaderDocument shown = open(panel, "wiki", "201", true);
 
-        assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.MISSING);
-        assertThat(shown.marks()).isEmpty();
-        assertThat(onEdt(panel::acronymHint)).contains("Live-Fassung ist noch nicht analysiert");
+        assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
+        assertThat(shown.acronyms().acronyms()).extracting(PageAcronyms.Acronym::acronym).containsExactly("API");
+        assertThat(shown.marks()).isNotEmpty();
     }
 
     private static PageAcronyms.Acronym acronym(ReaderDocument document, String name) {

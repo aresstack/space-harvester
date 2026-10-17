@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -32,10 +33,13 @@ import java.util.Optional;
  * native Einzelseite verlangt {@link AccessKind#CONTENT}. Eine Seite ohne Freigabe ist nach außen nicht von einer
  * fehlenden zu unterscheiden.
  *
- * <p>{@code refresh=true} prüft die Einzelseite über {@link PageFreshness} gegen die Quelle und liefert nie
- * stattdessen den Cache-Stand; die Prüfung schreibt nicht in den Cache.
+ * <p>Die Einzelseite ist transparent gecacht (ADR 0010): ein Treffer kommt aus dem Cache, eine fehlende Seite wird
+ * über {@link PageFreshness} nachgeladen und über {@link PageCacheFill} abgelegt. {@code refresh=true} prüft gegen die
+ * Quelle und liefert nie stattdessen den Cache-Stand; ein neuerer Inhalt wird dabei ebenfalls abgelegt.
  */
 public class PageQueries {
+
+    private static final System.Logger LOG = System.getLogger(PageQueries.class.getName());
 
     /** Größte Stapelgröße der Seitenliste je Anfrage; zugleich der Standardwert. */
     public static final int MAX_PAGE_LIMIT = 100;
@@ -53,6 +57,7 @@ public class PageQueries {
     private final PageCacheReader cache;
     private final AccessGuard access;
     private final PageFreshness freshness;
+    private final PageCacheFill fill;
     private final int maxTreeNodes;
 
     /**
@@ -61,6 +66,13 @@ public class PageQueries {
      */
     public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
                        int maxTreeNodes) {
+        this(catalog, cache, access, freshness, PageCacheFill.NONE, maxTreeNodes);
+    }
+
+    /** @param fill legt nachgeladene Seiten im gemeinsamen Cache ab (ADR 0010) */
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       PageCacheFill fill, int maxTreeNodes) {
+        this.fill = Objects.requireNonNull(fill, "fill");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = Objects.requireNonNull(cache, "cache");
         this.access = Objects.requireNonNull(access, "access");
@@ -161,26 +173,37 @@ public class PageQueries {
     }
 
     /**
-     * Eine Seite mit ihrer nativen Payload, aus dem Cache oder nach Prüfung gegen die Quelle.
+     * Eine Seite mit ihrer nativen Payload. Der Cache ist dabei transparent (ADR 0010): Liegt die Seite nicht im Cache,
+     * wird sie von der Quelle nachgeladen, sofern der Aufrufer sie lesen darf, im gemeinsamen Cache abgelegt und
+     * ausgeliefert. Die Rechte werden an den live gelesenen Kopfdaten geprüft, bevor ein Inhalt geladen wird, und bei
+     * jeder Auslieferung erneut, auch bei einem Cache-Treffer.
      *
      * @param caller  Aufrufer aus der geprüften Anmeldung
      * @param refresh {@code true} verlangt eine Prüfung gegen die Quelle vor der Auslieferung; nie stattdessen der
-     *                Cache-Stand
+     *                Cache-Stand. Eine neuere Seite wird dabei ebenfalls abgelegt
      * @throws AccessDeniedException       wenn die Quelle für keinen Space für {@code content} freigegeben ist
      * @throws UnknownSourceException      wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws RefreshUnavailableException bei {@code refresh}, solange keine Prüfung gegen die Quelle angebunden ist
-     * @throws SourceAccessException       bei {@code refresh}, wenn die Quelle nicht oder nicht in der Frist antwortet
-     * @throws CacheMissException          wenn die Seite nicht im Cache liegt bzw. die Quelle sie nicht (mehr) kennt,
-     *                                     oder ihr Space nicht für {@code content} freigegeben ist
+     * @throws SourceAccessException       wenn nachgeladen oder geprüft werden muss und die Quelle nicht oder nicht in
+     *                                     der Frist antwortet
+     * @throws CacheMissException          wenn die Quelle die Seite nicht (mehr) kennt, sie für den Aufrufer nicht
+     *                                     lesbar ist oder sie ohne angebundenen Inhaltsabruf nicht im Cache liegt
      */
     public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         requireSource(sourceId);
         if (!refresh) {
-            return cache.page(new PageKey(sourceId, pageId))
-                    .filter(page -> readable(caller, page.header()))
-                    .map(DeliveredPage::cached)
-                    .orElseThrow(() -> new CacheMissException(sourceId, "Seite nicht im Cache"));
+            Optional<CachedPage> cached = cache.page(new PageKey(sourceId, pageId));
+            if (cached.isPresent()) {
+                if (!readable(caller, cached.get().header())) {
+                    throw new CacheMissException(sourceId, "Seite nicht im Cache");
+                }
+                return DeliveredPage.cached(cached.get());
+            }
+            if (!freshness.available()) {
+                throw new CacheMissException(sourceId, "Seite nicht im Cache");
+            }
+            return fromSource(caller, sourceId, pageId, Optional.empty());
         }
         if (!freshness.available()) {
             throw new RefreshUnavailableException("Die Prüfung gegen die Quelle ist noch nicht angebunden");
@@ -192,10 +215,16 @@ public class PageQueries {
         } catch (CacheUnavailableException e) {
             cached = Optional.empty();
         }
+        return fromSource(caller, sourceId, pageId, cached);
+    }
+
+    /** Prüft bzw. lädt die Seite bei der Quelle, legt einen neuen Inhalt ab und liefert ihn aus. */
+    private DeliveredPage fromSource(AccessContext caller, String sourceId, String pageId,
+                                     Optional<CachedPage> cached) {
         PageFreshness.Refreshed checked;
         try {
             checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header),
-                    cached.map(CachedPage::snapshot));
+                    cached.map(CachedPage::snapshot), header -> readable(caller, header));
         } catch (SourceAccessException e) {
             if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
                 // Etwa beim Inhaltsabruf: wie GONE, damit der Fehlertyp nichts über die Seite verrät.
@@ -208,9 +237,38 @@ public class PageQueries {
         if (checked.outcome() == PageFreshness.Outcome.GONE || !readable(caller, checked.header())) {
             throw new CacheMissException(sourceId, "Seite nicht vorhanden");
         }
-        return new DeliveredPage(checked.header(), checked.snapshot(),
-                cached.map(CachedPage::generation).orElse(null), checked.cacheStale(), checked.outcome(),
+        CacheGeneration generation = cached.map(CachedPage::generation).orElse(null);
+        boolean live = checked.cacheStale();
+        if (checked.outcome() == PageFreshness.Outcome.CONTENT_CHANGED && stored(checked.snapshot())) {
+            // Jetzt im Cache: die Auslieferung ist der Cache-Stand, mit der Generation des Space.
+            Optional<CachedPage> now = cachedQuietly(checked.header().key());
+            if (now.isPresent() && now.get().snapshot().payload().rawSha256()
+                    .equals(checked.snapshot().payload().rawSha256())) {
+                generation = now.get().generation();
+                live = false;
+            }
+        }
+        return new DeliveredPage(checked.header(), checked.snapshot(), generation, live, checked.outcome(),
                 checked.checkedAt());
+    }
+
+    /** Ablegen darf die Auslieferung nie verhindern; misslingt es, legt der nächste Abruf oder Abgleich ab. */
+    private boolean stored(PageSnapshot snapshot) {
+        try {
+            return fill.store(snapshot);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Nachgeladene Seite nicht abgelegt ({0})",
+                    e.getClass().getName());
+            return false;
+        }
+    }
+
+    private Optional<CachedPage> cachedQuietly(PageKey key) {
+        try {
+            return cache.page(key);
+        } catch (CacheUnavailableException e) {
+            return Optional.empty();
+        }
     }
 
     /**

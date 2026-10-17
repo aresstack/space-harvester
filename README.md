@@ -313,7 +313,7 @@ space-harvester:
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
-| `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
+| `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend; eine fehlende Einzelseite wird wie bei der Seiten-API nachgeladen; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
@@ -378,15 +378,19 @@ Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` prüft die Einzelseite vor der Auslieferung gegen die Quelle und liefert nie stattdessen den
 Cache-Stand: Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
 Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
-geladene Payload (`content-changed`); auch Seiten, die noch nicht im Cache liegen, werden so live geliefert.
-Abweichungen vom Cache tragen `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand `stale`. Der Cache
-selbst ändert sich erst mit dem nächsten Abgleich. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
+geladene Payload (`content-changed`), die dabei im Cache abgelegt wird. Konnte sie nicht abgelegt werden (ein Abgleich
+schreibt gerade), tragen Abweichungen vom Cache `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand
+`stale`. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
 `source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
 antwortet `refresh=true` mit `refresh-unavailable` (501). Seiten lassen sich auch über ihre URL abrufen
 (`…/pages?url=…`), sofern sie die Seiten-ID enthält; Formen ohne ID (`/display/KEY/Titel`) ergeben 400, eine URL eines
-anderen Servers als der bekannten Seiten-URL `cache-miss`. Was nicht im Cache liegt, ist `cache-miss`
-(404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
+anderen Servers als der bekannten Seiten-URL `cache-miss`. Der Cache ist transparent
+([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md)): Liegt eine Seite nicht im Cache, wird sie auch ohne
+`refresh` von der Quelle geladen, sofern der Aufrufer sie lesen darf (geprüft an den live gelesenen Kopfdaten, bevor
+der Inhalt geladen wird), im gemeinsamen Cache abgelegt, angereichert und ausgeliefert. `cache-miss` (404) heißt
+dann: auch die Quelle kennt sie nicht oder zeigt sie dem Aufrufer nicht; ist die Quelle nicht erreichbar, kommt
+`source-unavailable` (503); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.

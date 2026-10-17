@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
+import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
@@ -166,7 +167,8 @@ public final class Harvester implements AutoCloseable {
             this.sources = new SourceQueries(catalog);
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
-            this.pages = new PageQueries(catalog, reader, access, freshness, builder.maxTreeNodes);
+            this.pages = new PageQueries(catalog, reader, access, freshness,
+                    new EnrichingCacheFill(cache::trySave, enrichments), builder.maxTreeNodes);
             this.search = new PageSearch(catalog, index, access);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,

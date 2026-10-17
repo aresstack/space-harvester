@@ -160,6 +160,32 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         }
     }
 
+    /**
+     * Wie {@link #save}, aber nur, wenn gerade kein anderer Schreiblauf offen ist; wartet nie (Nachladen beim Lesen
+     * einer Seite, ADR 0010).
+     *
+     * @return ob gespeichert wurde
+     */
+    public boolean trySave(PageSnapshot snapshot) {
+        requireOpen();
+        if (!writeLock.tryLock()) {
+            return false;
+        }
+        try {
+            if (closed) {
+                return false;
+            }
+            // Die Sperre ist wiedereintrittsfähig: begin() nimmt sie ein zweites Mal, der Lauf gibt sie wieder ab.
+            try (Batch batch = begin()) {
+                batch.save(snapshot);
+                batch.commit();
+            }
+            return true;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
     @Override
     public void saveHeader(PageHeader header) {
         try (Batch batch = begin()) {
