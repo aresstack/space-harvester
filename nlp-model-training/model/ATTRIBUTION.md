@@ -14,5 +14,6 @@ Dieses Parsermodell wurde mit MaltParser aus der Treebank **UD German GSD** ({{t
 - Parser: MaltParser 1.9.2, Johan Hall, Jens Nilsson, Joakim Nivre, BSD-3-Clause, http://www.maltparser.org/
 - Training, Evaluation und Verpackung: aresstack/space-harvester, Modul `nlp-model-training` (MIT).
 
-Das Modell enthält keine Kopie der Treebank-Sätze als Text, aber aus ihnen gelernte Gewichte und ein Wortformen-
-Verzeichnis (Symboltabelle) der Trainingsdaten.
+Das Modell enthält keine Kopie der Treebank-Sätze als Text, aber aus ihnen gelernte Gewichte und Symboltabellen mit
+den Wortformen der Trainingsdaten, einzeln und als ungeordnete Paare von je zwei Wortformen (ohne Reihenfolge,
+Häufigkeit oder Satzzuordnung). Einzelheiten und Bewertung: `docs/NLP_MODEL_LICENSE.md` in aresstack/space-harvester.
