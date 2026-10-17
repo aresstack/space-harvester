@@ -34,6 +34,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Zu jedem Auftrag hält {@code Jobs} Diagnoseereignisse fest ({@link JobEvent}, docs/DIAGNOSTICS.md): Annahme,
  * Start, Phasenwechsel, Meldungen des Auftrags und das Ende, beim Scheitern mit Komponente, Phase, Fehlercode,
  * HTTP-Status, Proxy-Route, TLS-Befund und der maskierten Ausnahmekette. Die Ereignisse leben so lange wie ihr Auftrag.
+ *
+ * <p>Der Auftraggeber kann beendete Aufträge und ihre Ereignisse selbst löschen ({@link #delete(String, String)},
+ * {@link #deleteFinished}, {@link #deleteEvent}, {@link #deleteEventsBefore(Instant, String)}); wartende und laufende
+ * Aufträge nie ({@link JobStillRunningException}).
  */
 public class Jobs implements AutoCloseable {
 
@@ -191,6 +195,104 @@ public class Jobs implements AutoCloseable {
                 .limit(limit).toList();
     }
 
+    /**
+     * Löscht einen eigenen beendeten Auftrag samt seinen Diagnoseereignissen. Ein Exportartefakt im Exportverzeichnis
+     * gehört zum Auftrag und wird mit ihm unerreichbar; das nächste {@code Exports.purge()} räumt es weg. Kopien, die
+     * der Benutzer anderswo gespeichert hat, bleiben unberührt.
+     *
+     * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobStillRunningException wenn der Auftrag noch wartet oder läuft (vorher {@link #cancel(String, String)})
+     */
+    public void delete(String jobId, String owner) {
+        JobStatus status = requireFinished(requireOwner(status(jobId), owner));
+        // Erst die Ereignisse: scheitert das, bleibt der Auftrag und der Fehler kommt beim Aufrufer an.
+        events.delete(status.id());
+        store.delete(status.id());
+    }
+
+    /**
+     * Löscht alle eigenen beendeten Aufträge (abgeschlossen, gescheitert, abgebrochen) samt ihren Ereignissen;
+     * wartende und laufende bleiben.
+     *
+     * @param type nur Aufträge dieser Art oder {@code null} für alle
+     * @return Anzahl gelöschter Aufträge
+     */
+    public int deleteFinished(String owner, JobType type) {
+        int removed = 0;
+        for (JobStatus status : store.all()) {
+            if (Objects.equals(status.owner(), owner) && status.state().terminal()
+                    && (type == null || status.type() == type)) {
+                events.delete(status.id());
+                store.delete(status.id());
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * Löscht ein Diagnoseereignis eines eigenen beendeten Auftrags. Die Nummern der übrigen Ereignisse bleiben, und
+     * keine Nummer wird je wieder vergeben.
+     *
+     * @return {@code false}, wenn der Auftrag kein Ereignis mit dieser Nummer hat
+     * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobStillRunningException wenn der Auftrag noch wartet oder läuft
+     */
+    public boolean deleteEvent(String jobId, long sequence, String owner) {
+        requireFinished(requireOwner(status(jobId), owner));
+        boolean present = events.events(jobId).stream().anyMatch(event -> event.sequence() == sequence);
+        if (present) {
+            events.delete(jobId, List.of(sequence));
+        }
+        return present;
+    }
+
+    /**
+     * Löscht die Diagnoseereignisse eines eigenen beendeten Auftrags, die vor {@code before} entstanden sind.
+     *
+     * @return Anzahl gelöschter Ereignisse
+     * @throws UnknownJobException      wenn es keinen Auftrag mit dieser ID für diesen Client gibt
+     * @throws JobStillRunningException wenn der Auftrag noch wartet oder läuft
+     */
+    public int deleteEventsBefore(String jobId, Instant before, String owner) {
+        Objects.requireNonNull(before, "before");
+        requireFinished(requireOwner(status(jobId), owner));
+        return deleteBefore(jobId, before);
+    }
+
+    /**
+     * Löscht die Diagnoseereignisse aller eigenen beendeten Aufträge, die vor {@code before} entstanden sind; die
+     * Aufträge selbst bleiben. Ereignisse wartender und laufender Aufträge bleiben.
+     *
+     * @return Anzahl gelöschter Ereignisse
+     */
+    public int deleteEventsBefore(Instant before, String owner) {
+        Objects.requireNonNull(before, "before");
+        int removed = 0;
+        for (JobStatus status : store.all()) {
+            if (Objects.equals(status.owner(), owner) && status.state().terminal()) {
+                removed += deleteBefore(status.id(), before);
+            }
+        }
+        return removed;
+    }
+
+    private int deleteBefore(String jobId, Instant before) {
+        List<Long> old = events.events(jobId).stream().filter(event -> event.at().isBefore(before))
+                .map(JobEvent::sequence).toList();
+        if (!old.isEmpty()) {
+            events.delete(jobId, old);
+        }
+        return old.size();
+    }
+
+    private static JobStatus requireFinished(JobStatus status) {
+        if (!status.state().terminal()) {
+            throw new JobStillRunningException(status.id());
+        }
+        return status;
+    }
+
     private static JobStatus requireOwner(JobStatus status, String owner) {
         if (!Objects.equals(status.owner(), owner)) {
             throw new UnknownJobException(status.id());
@@ -216,11 +318,14 @@ public class Jobs implements AutoCloseable {
                     open.remove(jobId);
                     job.finish(JobState.CANCELLED, null, clock.instant());
                 }
+                // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
+                // könnte eine Löschung dazwischen eines verwaist zurücklassen.
+                job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
+                        JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
+                        wasQueued ? "Auftrag vor dem Start abgebrochen" : "Abbruch angefordert", null, null, null,
+                        null);
                 JobStatus status = job.snapshot();
                 store.save(status);
-                job.emit(wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO, JobEvent.Category.JOB,
-                        COMPONENT, wasQueued ? "CANCELLED" : null, wasQueued ? "Auftrag vor dem Start abgebrochen"
-                                : "Abbruch angefordert", null, null, null, null);
                 return status;
             }
         }
@@ -279,7 +384,9 @@ public class Jobs implements AutoCloseable {
                         new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags beendet; der Auftrag wird "
                                 + "nicht fortgesetzt und muss neu gestartet werden"),
                         status.cancelRequested(), status.createdAt(), status.startedAt(), now));
-                appendQuietly(new JobEvent(status.id(), events.events(status.id()).size() + 1L, now, status.type(),
+                // Nach der höchsten Nummer, nicht nach der Anzahl: gelöschte Ereignisse hinterlassen Lücken.
+                long next = events.events(status.id()).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
+                appendQuietly(new JobEvent(status.id(), next, now, status.type(),
                         status.sourceId(), status.partitionKey(), JobEvent.Severity.ERROR, JobEvent.Category.JOB,
                         COMPONENT, null, INTERRUPTED, "Der Dienst wurde während des Auftrags beendet", null, null,
                         null, null));

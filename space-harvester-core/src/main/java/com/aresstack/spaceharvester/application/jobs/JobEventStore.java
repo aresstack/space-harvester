@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.jobs;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -21,4 +22,10 @@ public interface JobEventStore {
 
     /** Entfernt die Ereignisse eines Auftrags. */
     void delete(String jobId);
+
+    /**
+     * Entfernt einzelne Ereignisse eines Auftrags ({@link JobEvent#sequence()}); unbekannte Nummern sind ohne Wirkung.
+     * Die übrigen Ereignisse behalten ihre Nummern.
+     */
+    void delete(String jobId, Collection<Long> sequences);
 }

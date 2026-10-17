@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
+import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,19 @@ class JobErrorHandler {
     ProblemDetail artifactNotFound(ExportsController.ArtifactNotFoundException e) {
         return problem(HttpStatus.NOT_FOUND, "artifact-not-found", "Artefakt nicht gefunden",
                 "Der Export hat (noch) kein Artefakt, oder es enthält keine Datei dieses Namens.");
+    }
+
+    @ExceptionHandler(EventNotFoundException.class)
+    ProblemDetail eventNotFound(EventNotFoundException e) {
+        return problem(HttpStatus.NOT_FOUND, "event-not-found", "Ereignis nicht gefunden",
+                "Der Auftrag hat kein Diagnoseereignis mit dieser Nummer (mehr).");
+    }
+
+    @ExceptionHandler(JobStillRunningException.class)
+    ProblemDetail stillRunning(JobStillRunningException e) {
+        return problem(HttpStatus.CONFLICT, "job-running", "Auftrag läuft noch",
+                "Ein wartender oder laufender Auftrag lässt sich nicht löschen; erst abbrechen und das Ende "
+                        + "abwarten.");
     }
 
     @ExceptionHandler(JobCapacityExceededException.class)

@@ -349,6 +349,50 @@ public final class Harvester implements AutoCloseable {
         return jobs.recentEvents(OWNER, limit);
     }
 
+    /**
+     * Löscht einen beendeten Auftrag samt seinen Diagnoseereignissen. Das Exportartefakt im Exportverzeichnis
+     * verschwindet mit dem Auftrag beim nächsten Aufräumen; anderswo gespeicherte Kopien bleiben.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es den Auftrag nicht gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft;
+     *                                                                                vorher {@link #cancel} und das
+     *                                                                                Ende abwarten
+     */
+    public void deleteJob(String jobId) {
+        jobs.delete(jobId, OWNER);
+    }
+
+    /**
+     * Löscht alle beendeten Aufträge (abgeschlossen, gescheitert, abgebrochen) samt ihren Ereignissen; wartende und
+     * laufende bleiben.
+     *
+     * @return Anzahl gelöschter Aufträge
+     */
+    public int deleteFinishedJobs() {
+        return jobs.deleteFinished(OWNER, null);
+    }
+
+    /**
+     * Löscht ein Diagnoseereignis eines beendeten Auftrags ({@link JobEvent#jobId()} und {@link JobEvent#sequence()}).
+     *
+     * @return {@code false}, wenn es das Ereignis nicht (mehr) gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.UnknownJobException      wenn es den Auftrag nicht gibt
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     */
+    public boolean deleteEvent(String jobId, long sequence) {
+        return jobs.deleteEvent(jobId, sequence, OWNER);
+    }
+
+    /**
+     * Löscht die Diagnoseereignisse aller beendeten Aufträge, die vor {@code before} entstanden sind; die Aufträge
+     * bleiben. Ereignisse wartender und laufender Aufträge bleiben.
+     *
+     * @return Anzahl gelöschter Ereignisse
+     */
+    public int deleteEventsBefore(Instant before) {
+        return jobs.deleteEventsBefore(before, OWNER);
+    }
+
     /** Fordert den Abbruch an; ein laufender Auftrag endet an seinem nächsten Prüfpunkt. */
     public JobStatus cancel(String jobId) {
         return jobs.cancel(jobId, OWNER);

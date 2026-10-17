@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.jobs;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -62,6 +63,25 @@ public abstract class JobEventStoreContract {
 
         assertThat(store.events("a")).isEmpty();
         assertThat(store.events("b")).hasSize(1);
+    }
+
+    @Test
+    void singleEventsCanBeDeletedAndTheOthersKeepTheirNumbers() {
+        JobEventStore store = newStore();
+        store.append(event("a", 1, 1));
+        store.append(event("a", 2, 2));
+        store.append(event("a", 3, 3));
+        store.append(event("b", 2, 2));
+
+        store.delete("a", List.of(2L, 9L));
+        store.delete("a", List.of());
+
+        assertThat(store.events("a")).extracting(JobEvent::sequence).containsExactly(1L, 3L);
+        assertThat(store.events("b")).extracting(JobEvent::sequence).containsExactly(2L);
+        JobEventStore reopened = reopen(store);
+        if (reopened != null) {
+            assertThat(reopened.events("a")).extracting(JobEvent::sequence).containsExactly(1L, 3L);
+        }
     }
 
     @Test

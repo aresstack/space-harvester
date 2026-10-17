@@ -33,6 +33,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -152,6 +153,75 @@ public class ExportsController {
                                                  @PathVariable String exportId) {
         ownExport(caller, exportId);
         return ResponseEntity.accepted().body(ExportResponse.of(jobs.cancel(exportId, owner(caller)), null));
+    }
+
+    @DeleteMapping(path = EXPORTS + "/{exportId}")
+    @Operation(summary = "Beendeten Export löschen",
+            description = "Entfernt den Export samt Diagnoseereignissen; sein Artefakt im Exportverzeichnis "
+                    + "verschwindet beim nächsten Aufräumen. Wartende und laufende Exporte erst abbrechen.")
+    @ApiResponse(responseCode = "204", description = "Gelöscht")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Export wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<Void> delete(@Parameter(hidden = true) AccessContext caller,
+                                       @PathVariable String exportId) {
+        ownExport(caller, exportId);
+        jobs.delete(exportId, owner(caller));
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping(path = EXPORTS, produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Alle eigenen beendeten Exporte löschen",
+            description = "Abgeschlossene, gescheiterte und abgebrochene Exporte samt Ereignissen; wartende und "
+                    + "laufende bleiben.")
+    @ApiResponse(responseCode = "200", description = "Anzahl gelöschter Exporte")
+    public DeletedResponse deleteFinished(@Parameter(hidden = true) AccessContext caller) {
+        if (caller == null) {
+            return new DeletedResponse(0);
+        }
+        return new DeletedResponse(jobs.deleteFinished(owner(caller), JobType.EXPORT));
+    }
+
+    @DeleteMapping(path = EXPORTS + "/{exportId}/events/{sequence}")
+    @Operation(summary = "Ein Diagnoseereignis eines beendeten Exports löschen",
+            description = "Die übrigen Ereignisse behalten ihre Nummern; keine Nummer wird wieder vergeben.")
+    @ApiResponse(responseCode = "204", description = "Gelöscht")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found) oder kein "
+            + "Ereignis mit dieser Nummer (event-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Export wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<Void> deleteEvent(@Parameter(hidden = true) AccessContext caller,
+                                            @PathVariable String exportId, @PathVariable String sequence) {
+        ownExport(caller, exportId);
+        if (!jobs.deleteEvent(exportId, EventNotFoundException.sequence(sequence), owner(caller))) {
+            throw new EventNotFoundException();
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping(path = EXPORTS + "/{exportId}/events", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Diagnoseereignisse eines beendeten Exports löschen",
+            description = "Ohne before alle Ereignisse des Exports, sonst die vor diesem Zeitpunkt; der Export bleibt.")
+    @ApiResponse(responseCode = "200", description = "Anzahl gelöschter Ereignisse")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export mit dieser ID (job-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Export wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public DeletedResponse deleteEvents(@Parameter(hidden = true) AccessContext caller,
+                                        @PathVariable String exportId,
+                                        @Parameter(description = "ISO-8601-Zeitpunkt, z. B. 2026-10-17T12:00:00Z")
+                                        @RequestParam(name = "before", required = false) Instant before) {
+        ownExport(caller, exportId);
+        return new DeletedResponse(jobs.deleteEventsBefore(exportId, before == null ? Instant.MAX : before,
+                owner(caller)));
     }
 
     @GetMapping(path = EXPORTS + "/{exportId}/artifact/**")
