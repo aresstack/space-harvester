@@ -19,11 +19,12 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.util.Arrays;
 import java.util.EnumSet;
-import java.util.Set;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -38,12 +39,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final String type;
     private final String title;
     private final KnowledgeSourcePort port;
+    private final InFlightLimit inFlight;
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
+        this(id, type, title, port, null);
+    }
+
+    /** @param inFlight Grenze gleichzeitiger asynchroner Abrufe; {@code null} = unbegrenzt */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight) {
         this.id = id;
         this.type = type;
         this.title = title;
         this.port = port;
+        this.inFlight = inFlight;
     }
 
     @Override
@@ -143,7 +152,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (!(port instanceof AsyncStoredContentSource stored)) {
             return HarvestSource.super.storedPageAsync(pageId);
         }
-        CompletableFuture<StoredContent> request = stored.storedContentAsync(pageId).toCompletableFuture();
+        CompletableFuture<StoredContent> request = inFlight == null
+                ? stored.storedContentAsync(pageId).toCompletableFuture()
+                : inFlight.submit(() -> stored.storedContentAsync(pageId).toCompletableFuture());
         CompletableFuture<StoredPage> result = new CompletableFuture<>();
         request.whenComplete((content, error) -> {
             if (error != null) {

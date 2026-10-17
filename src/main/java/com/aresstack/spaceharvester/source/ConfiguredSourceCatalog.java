@@ -138,7 +138,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             try {
                 SourceAdapter.OpenedSource opened = adapter.open(config, context);
                 sources.put(config.id(), new KnowledgeSourceHarvestSource(config.id(), config.type(), title,
-                        opened.port()));
+                        opened.port(), async == null ? null : async.inFlight()));
                 if (opened.delegated() != null) {
                     delegated.put(config.id(), opened.delegated());
                 }

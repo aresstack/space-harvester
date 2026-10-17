@@ -29,8 +29,12 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
     private final String userAgent;
     private final List<WebClientConfluenceTransport> transports = new CopyOnWriteArrayList<>();
     private final ExecutorService mapping;
+    private final InFlightLimit inFlight;
 
-    /** @param threads Threads der JSON-Abbildung, mindestens 1 */
+    /**
+     * @param threads Threads der JSON-Abbildung, mindestens 1; gleichzeitig laufen höchstens doppelt so viele Abrufe
+     *                ({@link #inFlight()}), damit gepufferte Antworten nicht unbegrenzt vor der Abbildung warten
+     */
     public AsyncSnapshotTransports(SecretProvider secrets, HttpRoutePort routes, String userAgent, int threads) {
         if (secrets == null || routes == null) {
             throw new IllegalArgumentException("secrets and routes must not be null");
@@ -41,6 +45,7 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
         this.secrets = secrets;
         this.routes = routes;
         this.userAgent = userAgent;
+        this.inFlight = new InFlightLimit(2 * threads);
         AtomicInteger counter = new AtomicInteger();
         this.mapping = Executors.newFixedThreadPool(threads, runnable -> {
             Thread thread = new Thread(runnable, "confluence-snapshot-" + counter.incrementAndGet());
@@ -57,6 +62,11 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
     /** Derselbe Provider mit asynchronen Snapshots über Transporte dieser Instanz. */
     ConfluenceSourceProvider attach(ConfluenceSourceProvider provider, X509TrustManager trust, String thumbprint) {
         return provider.withAsyncTransports(new PerSource(trust, thumbprint), mapping);
+    }
+
+    /** Gemeinsame Grenze gleichzeitig laufender Snapshot-Abrufe aller Quellen dieser Instanz. */
+    public InFlightLimit inFlight() {
+        return inFlight;
     }
 
     /** Anzahl gebauter Transporte (für Tests und Diagnose). */
