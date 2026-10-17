@@ -5,7 +5,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -17,17 +16,16 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>die Quelle selbst, gefragt mit dem Token des Endnutzers ({@link DelegatedSourceAccess#canSee}).</li>
  * </ul>
  *
- * <p>Endnutzer lesen nur {@link AccessKind#METADATA} und {@link AccessKind#CONTENT}; Exporte und andere Aufträge laufen
- * ohne Anfrage weiter und können kein Endnutzer-Token tragen, sie bleiben technischen Clients vorbehalten. Das Token
- * gilt nur für seine Quelle; jeder Scope einer anderen Quelle wird verweigert, ohne die Quelle zu fragen.
+ * <p>Die Anmeldeart schränkt keine Funktion ein (ADR 0010): Ein Endnutzer bekommt jede Art ({@link AccessKind}), die
+ * die Korpusfreigabe des Clients erlaubt, auch Export und Abgleich, und sieht dabei genau die Spaces und Seiten, die
+ * die Quelle ihm zeigt. Ein Export eines Endnutzers enthält deshalb nur seine lesbaren Seiten. Das Token gilt nur für
+ * seine Quelle; jeder Scope einer anderen Quelle wird verweigert, ohne die Quelle zu fragen.
  *
  * <p>Antworten der Quelle werden je Token und Scope für {@code decisionTtl} gehalten, damit Listen und Bäume nicht jede
  * Seite bei jeder Anfrage erneut prüfen. Entzogene Rechte wirken also spätestens nach dieser Zeit. Unklare Antworten
  * werden nicht gehalten.
  */
 public final class DelegatedAccessPolicy implements AccessPolicy {
-
-    private static final Set<AccessKind> END_USER_KINDS = Set.of(AccessKind.METADATA, AccessKind.CONTENT);
 
     private final AccessPolicy base;
     private final Map<String, DelegatedSourceAccess> sources;
@@ -56,7 +54,7 @@ public final class DelegatedAccessPolicy implements AccessPolicy {
         }
         UserCredential credential = context.credential();
         DelegatedSourceAccess source = sources.get(scope.sourceId());
-        if (!END_USER_KINDS.contains(kind) || source == null || !credential.sourceId().equals(scope.sourceId())) {
+        if (source == null || !credential.sourceId().equals(scope.sourceId())) {
             return AccessDecision.DENY;
         }
         AccessDecision corpus = base.decide(AccessContext.technicalClient(context.via()), scope, kind);

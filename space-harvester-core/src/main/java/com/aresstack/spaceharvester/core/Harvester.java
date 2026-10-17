@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -174,7 +175,7 @@ public final class Harvester implements AutoCloseable {
                     new FileSystemExportArtifactWriter(builder.exportDirectory()),
                     new ExportConverters(List.of(new JsonArrayConverter(), new MarkdownConverter(),
                             new DocxConverter(), new PdfConverter(builder.pdfFont)), ExportConverters.DEFAULT_MAX_BYTES),
-                    clock);
+                    syncs, clock);
             this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
                     builder.maxAssetBytes, clock, builder.imageDescriber);
             this.caller = AccessContext.technicalClient(OWNER);
@@ -246,7 +247,7 @@ public final class Harvester implements AutoCloseable {
         return syncs;
     }
 
-    /** Exporte aus bestätigten Cache-Generationen. */
+    /** Exporte eines Space; fehlt er im Cache, liest der Export ihn selbst ein. */
     public Exports exports() {
         return exports;
     }
@@ -276,8 +277,25 @@ public final class Harvester implements AutoCloseable {
      *                                                                               {@code CONTENT} nicht freigibt
      */
     public JobStatus export(String sourceId, String spaceKey, List<String> formats) {
+        return export(sourceId, spaceKey, formats, false);
+    }
+
+    /**
+     * Wie {@link #export(String, String, List)}; ein noch nicht eingelesener Space wird im Auftrag eingelesen.
+     *
+     * @param refresh {@code true} gleicht vor dem Export immer gegen die Quelle ab
+     */
+    public JobStatus export(String sourceId, String spaceKey, List<String> formats, boolean refresh) {
         requireExport(sourceId, spaceKey);
-        return exports.start(sourceId, spaceKey, OWNER, formats);
+        return exports.start(ExportRequest.of(sourceId, spaceKey, OWNER, formats).withRefresh(refresh)
+                .withVisible(header -> access.canRead(caller, header.key().sourceId(),
+                        header.metadata().partitionKey(), header.key().pageId()))
+                .withAuthorized(() -> exportPermitted(sourceId, spaceKey)));
+    }
+
+    private boolean exportPermitted(String sourceId, String spaceKey) {
+        ResourceScope space = ResourceScope.space(sourceId, spaceKey);
+        return access.permits(caller, space, AccessKind.EXPORT) && access.permits(caller, space, AccessKind.CONTENT);
     }
 
     /**

@@ -317,7 +317,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 ## 7. Export
 
 Der Export schreibt die bestätigte Generation als `pages.ndjson` (eine Seite je Zeile), `tree.json`, die Rohdaten unter
-`raw/` und `manifest.json`. Auch er ist ein Auftrag:
+`raw/` und `manifest.json`. Den Abgleich aus Abschnitt 5 braucht er nicht: Einen noch nicht eingelesenen Space liest
+der Exportauftrag selbst ein, mit `?refresh=true` gleicht er immer zuerst ab. Auch er ist ein Auftrag:
 
 ```bash
 EXPORT_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/exports" | jq -r .id)
@@ -607,14 +608,16 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-De
 { "status": 401, "type": "https://github.com/aresstack/space-harvester/problems/delegated-token-rejected" }
 ```
 
-Endnutzer dürfen nur lesen; Exporte und Abgleiche bleiben technischen Clients vorbehalten:
+Die Anmeldeart schränkt keine Funktion ein (ADR 0010): Auch ein Endnutzer exportiert, und sein Export enthält genau
+die Seiten, die Confluence ihm zeigt. Nicht lesbare Seiten erscheinen weder im Artefakt noch im Manifest oder in den
+Zählern:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "X-Delegated-Source: demo" -H "X-Delegated-Authorization: Bearer anna-token-nur-lokal" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/exports"
 ```
 
 ```json
-{ "status": 403, "type": "https://github.com/aresstack/space-harvester/problems/access-denied" }
+{ "sourceId": "demo", "spaceKey": "DEMO" }
 ```
 
 ## 13. Lokale Dateien als zweite Quelle

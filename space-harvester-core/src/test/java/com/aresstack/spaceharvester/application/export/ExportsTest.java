@@ -169,14 +169,35 @@ class ExportsTest {
     }
 
     @Test
-    void notCachedSpaceFailsWithoutArtifact() {
-        JobStatus job = exports(cache).start("confluence", "OTHER", "client-a");
+    void notCachedSpaceIsReadInByTheExportItself() {
+        List<String> provisioned = new ArrayList<>();
+        SpaceProvisioning provisioning = new SpaceProvisioning() {
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public Provisioned provision(com.aresstack.spaceharvester.application.jobs.JobContext context,
+                                         String sourceId, String spaceKey) {
+                provisioned.add(sourceId + "/" + spaceKey);
+                context.discovered(2);
+                cache.publish(sourceId, spaceKey, confirmed("g1"), List.of(page(sourceId, spaceKey, "1", null),
+                        page(sourceId, spaceKey, "2", "1")));
+                return new Provisioned(true, false, java.util.Set.of());
+            }
+        };
+
+        JobStatus job = new Exports(jobs, cache, writer,
+                com.aresstack.spaceharvester.application.convert.ExportConverters.none(), provisioning, clock)
+                .start("confluence", "OTHER", "client-a");
 
         JobStatus status = jobs.status(job.id());
-        assertThat(status.state()).isEqualTo(JobState.FAILED);
-        assertThat(status.error().code()).isEqualTo("NOT_CACHED");
-        assertThat(writer.published).isEmpty();
-        assertThat(exports(cache).artifact(job.id(), "client-a")).isEmpty();
+        assertThat(status.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(status.progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        assertThat(provisioned).containsExactly("confluence/OTHER");
+        assertThat(writer.published.get(job.id()).pageIds()).containsExactly("1", "2");
+        assertThat(writer.published.get(job.id()).summary().complete()).isTrue();
     }
 
     @Test

@@ -119,8 +119,16 @@ space-harvester:
   Endnutzer-Token erlauben (`DelegatedSourceAccess.canSee` je Space bzw. Seite). Die Lesbarkeit für das Erntekonto
   oder ein Cache-Treffer ersetzen diese Prüfung nie. Listen und Bäume werden je Seite beschnitten, auch die
   Live-Metadatenliste eines Space. Eine nicht sichtbare Seite antwortet wie eine unbekannte.
-- **Nur Lesen:** Endnutzer bekommen nur `metadata` und `content`. Exporte und andere Aufträge laufen ohne Anfrage
-  weiter, können kein Endnutzer-Token tragen und bleiben technischen Clients vorbehalten.
+- **Gleiche Funktionen:** Die Anmeldeart (PAT, Basic, delegierter Benutzer) schränkt keine Funktion ein
+  ([ADR 0010](adr/0010-export-ohne-vorbereiteten-bestand.md)). Endnutzer bekommen jede Art, die die Korpusfreigabe des
+  Clients erlaubt, auch `export` und `sync`; was sie sehen, entscheidet die Quelle je Space und Seite. Ein Export eines
+  Endnutzers enthält genau seine lesbaren Seiten; nicht lesbare erscheinen weder im Artefakt noch im Manifest, in
+  Warnungen, Fehlern oder Zählern. Inhalte lädt der Harvester mit dem Erntekonto in den gemeinsamen Cache; das ersetzt
+  nie die Prüfung des Endnutzers, die bei jeder Ausgabe erneut stattfindet.
+- **Lange Aufträge:** Ein Exportauftrag hält den Aufrufer samt Token nur im Speicher, solange er läuft; abgelegt wird
+  das Token nie. Die Freigabe für den Space wird zu Beginn und vor dem Veröffentlichen erneut geprüft, jede Seite beim
+  Schreiben. Ist das Token inzwischen abgelaufen oder das Recht entzogen, scheitert der Export mit `ACCESS_REVOKED`
+  und veröffentlicht nichts; das Erntekonto springt nie ein.
 - **Token:** gilt nur für die genannte Quelle und geht nur an sie. Es wird nicht gespeichert, nicht geloggt und nie
   als Erntezugang verwendet. Zwischengespeichert werden nur die Benutzerkennung und Entscheidungen, jeweils unter
   einem SHA-256-Fingerprint aus Quelle und Token.
@@ -177,7 +185,7 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 
 - Jede Route verlangt ein Token und prüft über den `AccessGuard`; Listen, Baum, Suche, Fassade und Live-Metadaten
   filtern je Seite, eine verweigerte Seite antwortet wie eine fehlende. Exporte und Syncs prüfen den Eigentümer, ein
-  fremder Auftrag ist 404. Endnutzer bekommen nur `metadata` und `content`.
+  fremder Auftrag ist 404. Endnutzer bekommen dieselben Arten wie technische Clients (ADR 0010).
 - Keine Zugangsdaten in Logs, `toString()`, Antworten, Exporten oder dem Lucene-Index; Fehlerantworten haben feste
   Texte. Das Endnutzer-Token liest nur der Quellenadapter (ArchUnit).
 - Dateien: Export-IDs und Dateinamen nur nach Whitelist, Normalisierung mit Präfixprüfung, Rohdateien mit `CREATE_NEW`;
