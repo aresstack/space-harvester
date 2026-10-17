@@ -60,7 +60,7 @@ public final class AppRuntime implements AutoCloseable {
         Set<String> waiting = new LinkedHashSet<>();
         for (AppSettings.SourceEntry entry : settings.sources()) {
             // Ein in der App eingegebener (oder aus dem Tresor geladener) Wert geht einer Property oder Variable vor.
-            if (sessionSecrets.has(entry.config())) {
+            if (sessionSecrets.has(entry)) {
                 sources.add(sessionSecrets.apply(entry.config()));
             } else if (!entry.secretMissing()) {
                 sources.add(entry.config());
@@ -113,7 +113,7 @@ public final class AppRuntime implements AutoCloseable {
         AppSettings.SourceEntry entry = settings.sources().stream().filter(s -> s.id().equals(sourceId)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Die Quelle " + sourceId + " ist nicht eingerichtet."));
         SourceSettingsConfig source;
-        if (sessionSecrets.has(entry.config())) {
+        if (sessionSecrets.has(entry)) {
             source = sessionSecrets.apply(entry.config());
         } else if (!entry.secretMissing()) {
             source = entry.config();
@@ -216,16 +216,20 @@ public final class AppRuntime implements AutoCloseable {
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
 
         /**
-         * Wofür ein Wert gilt: Anmeldeart und (bei Basic) Benutzer. Ändert sich das in der Datei, passt ein alter
-         * Wert nicht mehr (ein Token taugt nicht als Passwort) und bleibt unbenutzt.
+         * Wofür ein Wert gilt: Anmeldeart, (bei Basic) Benutzer und Platzhalter. Ändert sich eins davon in der Datei,
+         * passt ein alter Wert nicht mehr (ein Token taugt nicht als Passwort, ein neuer Platzhalter meint einen
+         * neuen Wert) und bleibt unbenutzt.
          */
-        public static String login(SourceSettingsConfig.AuthType type, String username) {
-            return type == SourceSettingsConfig.AuthType.BASIC ? "basic:" + (username == null ? "" : username.strip())
+        public static String login(SourceSettingsConfig.AuthType type, String username, String variable) {
+            String kind = type == SourceSettingsConfig.AuthType.BASIC
+                    ? "basic:" + (username == null ? "" : username.strip())
                     : String.valueOf(type).toLowerCase(java.util.Locale.ROOT);
+            return kind + "|" + (variable == null ? "" : variable.strip());
         }
 
-        public static String login(SourceSettingsConfig.Auth auth) {
-            return login(auth.type(), auth.username());
+        public static String login(AppSettings.SourceEntry entry) {
+            SourceSettingsConfig.Auth auth = entry.config().auth();
+            return login(auth.type(), auth.username(), entry.secretVariable());
         }
 
         /** @param login {@link #login} der Anmeldung, für die der Wert gilt */
@@ -239,9 +243,9 @@ public final class AppRuntime implements AutoCloseable {
         }
 
         /** Ob ein Wert für genau diese Anmeldung der Quelle da ist. */
-        public boolean has(SourceSettingsConfig config) {
-            return config.auth().type() != SourceSettingsConfig.AuthType.NONE
-                    && has(config.id(), login(config.auth()));
+        public boolean has(AppSettings.SourceEntry entry) {
+            return entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE
+                    && has(entry.id(), login(entry));
         }
 
         /** Ob ein Wert für die Anmeldung {@code login} ({@link #login}) da ist. */

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
@@ -10,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -169,7 +171,8 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "pat", "sitzungs-token".toCharArray());
+        context.secrets().put("wiki", AppRuntime.SessionSecrets.login(SourceSettingsConfig.AuthType.PAT, null,
+                "WIKI_TOKEN"), "sitzungs-token".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         CountDownLatch saved = new CountDownLatch(1);
@@ -222,7 +225,8 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "basic:angelo", "sitzungs-passwort".toCharArray());
+        context.secrets().put("wiki", AppRuntime.SessionSecrets.login(SourceSettingsConfig.AuthType.BASIC, "angelo",
+                "WIKI_PASSWORD"), "sitzungs-passwort".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         assertThat(editable.plaintextSecrets()).isEmpty();

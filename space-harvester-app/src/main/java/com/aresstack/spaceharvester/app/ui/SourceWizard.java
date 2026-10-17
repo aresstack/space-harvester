@@ -438,36 +438,21 @@ final class SourceWizard {
             ConfigFileEditor.Draft draft = write(source);
             SecretVault vault = context.vault();
             boolean typed = value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE;
-            if (typed && vault.available()) {
-                // Erst der Tresor, dann die Datei: scheitert die Datei, kommt der alte Tresorwert zurück, sodass
-                // ein zweiter Versuch auf demselben Stand beginnt.
-                String previousLogin = editing == null ? null
-                        : AppRuntime.SessionSecrets.login(editing.draft().authType(), editing.draft().username());
-                char[] previous = previousLogin == null ? null : vault.load(source.id(), previousLogin);
-                vault.store(source.id(), login(source), Arrays.copyOf(value, value.length));
-                try {
-                    editor.save(context.configFile(), draft, backup);
-                } catch (IOException | RuntimeException e) {
-                    restore(vault, source.id(), previousLogin, previous, e);
-                    throw e;
-                }
-                if (previous != null) {
-                    Arrays.fill(previous, '\0');
-                }
-            } else if (!typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE)) {
-                // Auch hier erst der Tresor (verschlüsselt gemerkt), dann die Datei; scheitert sie, kommt er zurück.
+            boolean drop = !typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE);
+            if ((typed && vault.available()) || drop) {
+                // Erst der Tresor, dann die Datei: Der bisherige Eintrag wird verschlüsselt gemerkt (ohne ihn zu
+                // entschlüsseln) und kommt zurück, wenn die Datei scheitert; ein zweiter Versuch beginnt auf
+                // demselben Stand.
                 String stored = vault.raw(source.id());
-                vault.remove(source.id());
+                if (typed) {
+                    vault.store(source.id(), login(source), Arrays.copyOf(value, value.length));
+                } else {
+                    vault.remove(source.id());
+                }
                 try {
                     editor.save(context.configFile(), draft, backup);
                 } catch (IOException | RuntimeException e) {
-                    if (stored != null) {
-                        try {
-                            vault.restore(source.id(), stored);
-                        } catch (IOException | RuntimeException restore) {
-                            e.addSuppressed(restore);
-                        }
-                    }
+                    restore(vault, source.id(), stored, e);
                     throw e;
                 }
             } else {
@@ -493,16 +478,15 @@ final class SourceWizard {
     }
 
     private static String login(SourceDraft source) {
-        return AppRuntime.SessionSecrets.login(source.authType(), source.username());
+        return AppRuntime.SessionSecrets.login(source.authType(), source.username(), source.secretVariable());
     }
 
-    private static void restore(SecretVault vault, String sourceId, String login, char[] previous,
-                                Exception failure) {
+    private static void restore(SecretVault vault, String sourceId, String stored, Exception failure) {
         try {
-            if (previous == null) {
+            if (stored == null) {
                 vault.remove(sourceId);
             } else {
-                vault.store(sourceId, login, previous);
+                vault.restore(sourceId, stored);
             }
         } catch (IOException | RuntimeException e) {
             failure.addSuppressed(e);

@@ -195,9 +195,9 @@ public final class SourcesView implements View {
         config.options().forEach((key, value) -> facts.add("Option " + key, value));
         facts.add("Anmeldung", Texts.auth(config.auth()));
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-            boolean session = context.secrets().has(config);
+            boolean session = context.secrets().has(entry);
             facts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(config.auth())) ? "verschlüsselt gespeichert"
+                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)) ? "verschlüsselt gespeichert"
                             : session ? "für diese Sitzung eingegeben"
                             : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
                             : "fehlt (im Assistenten unter Bearbeiten … eingeben)",
@@ -223,7 +223,7 @@ public final class SourcesView implements View {
                 capabilities.add(Texts.capability(capability), has ? "ja" : "nein", has ? Comic.INK : Comic.MUTED);
             }
         } else {
-            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry.config())
+            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry)
                     ? "wartet auf Zugangsdaten" : "nicht gestartet");
         }
 
@@ -284,7 +284,7 @@ public final class SourcesView implements View {
         if (value == null || value.length == 0) {
             return;
         }
-        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry.config().auth()), value);
+        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
         // Die Eingabe geht einer Property oder Variable vor und gilt sofort (Neustart der Quellen).
         feedback.working(entry.secretMissing() ? "Quelle wird mit den neuen Zugangsdaten gestartet …"
                 : "Die Eingabe ersetzt für diese Sitzung den Wert aus Property/Umgebung; Quellen starten neu …");

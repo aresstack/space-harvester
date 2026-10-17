@@ -173,7 +173,8 @@ class WorkspaceTest {
                 scratch)).isInstanceOf(IllegalStateException.class).hasMessageContaining("NEU_TOKEN");
 
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
-        secrets.put("neu", "pat", TOKEN.toCharArray());
+        secrets.put("neu", AppRuntime.SessionSecrets.login(SourceSettingsConfig.AuthType.PAT, null, "NEU_TOKEN"),
+                TOKEN.toCharArray());
         Path second = Files.createTempDirectory(home, "probe");
         assertThat(AppRuntime.probe(draft.settings(), "neu", secrets, "test", second))
                 .extracting(Partition::key).containsExactly("DEV");
@@ -250,7 +251,8 @@ class WorkspaceTest {
         runtime.close();
 
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
-        secrets.put("wiki", "pat", TOKEN.toCharArray());
+        secrets.put("wiki", AppRuntime.SessionSecrets.login(SourceSettingsConfig.AuthType.PAT, null, "WIKI_TOKEN"),
+                TOKEN.toCharArray());
         assertThat(secrets.toString()).doesNotContain(TOKEN);
         runtime = AppRuntime.start(settings, secrets, "test");
         assertThat(runtime.waitingForSecret()).isEmpty();
