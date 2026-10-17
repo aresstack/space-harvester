@@ -125,7 +125,8 @@ Sätze mit Kopula (`ist zuständig`; Eigenschaften liefert #29).
   `obl:agent`, `obl:tmod`, `nmod`, `nmod:poss`, `compound:prt`, `conj` (vollständige Liste im Manifest).
 - **Qualität am Referenzsatz:** aus Rohtext richtig `nsubj` (Sachbearbeiter), `obj` (Beleg), `obl:arg` (dem
   Vorgesetzten, Dativ bestätigt) und `nmod` (des Kunden am Beleg). `am Montag` hängt das Modell als `nmod` an
-  `dem Vorgesetzten` statt als `obl` an das Prädikat. Die Auswertung führt eine solche Zeitangabe mit Präposition
+  `dem Vorgesetzten` statt als `obl` an das Prädikat. Die Auswertung führt eine Zeitangabe mit Präposition am
+  Dativempfänger (nicht `von`/`vom`, nicht an Subjekt oder Objekt: `den Bericht vom Montag` bleibt Datum des Berichts)
   zusätzlich als unsichere Zeitrolle der Aussage (`TIME_FROM_NOMINAL`, Grundlage Wortliste) und lässt die Kante als
   nominalen Bezug stehen; die Kernrelation ist davon nicht betroffen. Im lokalen Vorversuch mit dem
   MaltParser-Standard-Featuremodell kippte Dativ gegen Akkusativ; das veröffentlichte Modell nutzt deshalb

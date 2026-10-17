@@ -79,6 +79,19 @@ class ObjectCentricExtractionTest {
     }
 
     @Test
+    void dateOfAnObjectIsNotPromotedToTheTimeOfTheStatement() {
+        // "den Bericht vom Montag" datiert den Bericht; "dem Kunden vom Montag" bezeichnet den Kunden
+        ObjectCentricAnalysis analysis = Gold.analyze("time-on-object.conllu");
+
+        for (Statement statement : analysis.statements()) {
+            assertTrue(statement.withRole(Role.TIME).isEmpty(), statement.arguments().toString());
+            assertFalse(statement.has(Finding.TIME_FROM_NOMINAL));
+        }
+        Mention bericht = analysis.mention(analysis.statements().get(0).core(Role.AFFECTED_OBJECT).mention());
+        assertEquals("Montag", analysis.mention(analysis.attachmentsOf(bericht.id()).get(0).dependent()).text());
+    }
+
+    @Test
     void mentionsKeepOriginalSpansAndLemmas() {
         ObjectCentricAnalysis analysis = Gold.analyze("reference.conllu");
         Mention subject = analysis.mention("test/gold@1#s1.t2");

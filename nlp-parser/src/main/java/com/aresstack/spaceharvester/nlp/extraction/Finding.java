@@ -23,7 +23,7 @@ public enum Finding {
     /** Ein Dativargument ohne bestätigten Dativ (Kasus unbekannt oder mehrdeutig). */
     UNCONFIRMED_DATIVE,
     /**
-     * Eine Zeitangabe mit Präposition hing laut Parser an einem Beteiligten ({@code dem Vorgesetzten am Montag}) und
+     * Eine Zeitangabe mit Präposition hing laut Parser am Dativempfänger ({@code dem Vorgesetzten am Montag}) und
      * ist als Zeitkontext der Aussage übernommen; der nominale Bezug bleibt daneben erhalten.
      */
     TIME_FROM_NOMINAL
