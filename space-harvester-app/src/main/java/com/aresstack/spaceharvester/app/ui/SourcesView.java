@@ -357,8 +357,8 @@ public final class SourcesView implements View {
             });
             if (confluence) {
                 row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
-                        "Anmeldeart und Benutzer ändern (öffnet „Anmeldung“)",
-                        () -> edit(entry, SourceWizard.Step.AUTH)));
+                        "Anmeldeart, Benutzer und Token bzw. Passwort ändern",
+                        () -> setting(entry, SettingDialogs::auth)));
             } else {
                 row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
             }
@@ -383,17 +383,17 @@ public final class SourcesView implements View {
                                 + (certificate.alias() == null ? "" : ", Alias " + certificate.alias())
                                 + (certificate.thumbprint() == null ? ""
                                 : ", Fingerabdruck " + certificate.thumbprint()),
-                        Comic.INK, "Client-Zertifikat wählen (öffnet „Anmeldung“)",
-                        () -> edit(entry, SourceWizard.Step.AUTH)));
-                row(EditableProperty.action("Vertrauen", config.trustBundle() == null
-                                ? "Zertifikate der Java-Laufzeit"
-                                : TrustStores.WINDOWS.equals(config.trustBundle()) ? SourceWizard.WINDOWS_TRUST
-                                : "SSL-Bundle " + config.trustBundle(), Comic.INK,
-                        "Vertrauen ändern (öffnet „Proxy und Netzwerk“)",
-                        () -> edit(entry, SourceWizard.Step.NETWORK)));
-                row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode()) + " · gilt für alle Quellen",
-                        Comic.INK, "Netzwerkeinstellungen öffnen (Proxy für alle Quellen)",
-                        () -> edit(entry, SourceWizard.Step.NETWORK)));
+                        Comic.INK, "Client-Zertifikat wählen",
+                        () -> setting(entry, SettingDialogs::certificate)));
+                row(EditableProperty.action(SettingDialogs.TRUST_TITLE,
+                        SettingDialogs.trustLabel(config.trustBundle()), Comic.INK,
+                        "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
+                        () -> setting(entry, SettingDialogs::trust)));
+                row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())
+                                + " · gilt für alle Quellen", Comic.INK, "Proxy ändern (gilt für alle Quellen)",
+                        () -> SettingDialogs.proxy(root, context,
+                                config.baseUrl() == null ? null : config.baseUrl().toString(),
+                                () -> select(entry.id())).open()));
             }
         }
         properties.revalidate();
@@ -422,6 +422,10 @@ public final class SourcesView implements View {
      */
     private void saveField(AppSettings.SourceEntry entry, UnaryOperator<SourceDraft> change, Runnable ok,
                            Consumer<Throwable> failed) {
+        if (!Dialogs.restartAllowed(root, context)) {
+            failed.accept(new IllegalStateException("Nicht übernommen: Es laufen noch Aufträge."));
+            return;
+        }
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         Background.run(() -> {
             SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
@@ -460,6 +464,10 @@ public final class SourcesView implements View {
                         : "Gilt nur für diese Sitzung; auf diesem System gibt es keinen Tresor."),
                 persist ? "Speichern" : "Übernehmen");
         if (value == null || value.length == 0) {
+            return;
+        }
+        if (!Dialogs.restartAllowed(root, context)) {
+            Arrays.fill(value, '\0');
             return;
         }
         String login = AppRuntime.SessionSecrets.login(entry);
@@ -502,6 +510,10 @@ public final class SourcesView implements View {
         if (value == null || value.length == 0) {
             return;
         }
+        if (!Dialogs.restartAllowed(root, context)) {
+            Arrays.fill(value, '\0');
+            return;
+        }
         context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry), value);
         // Die Eingabe geht einer Property oder Variable vor und gilt sofort (Neustart der Quellen).
         feedback.working(entry.secretMissing() ? "Quelle wird mit den neuen Zugangsdaten gestartet …"
@@ -511,6 +523,24 @@ public final class SourcesView implements View {
 
     private void edit(AppSettings.SourceEntry entry) {
         edit(entry, null);
+    }
+
+    /** Ein Einstellungsdialog der Quelle, z. B. „Anmeldung“; liest den Eintrag frisch aus der Datei. */
+    private void setting(AppSettings.SourceEntry entry, SettingDialog dialog) {
+        SourceDraft.Editable editable;
+        try {
+            editable = new ConfigFileEditor(context.loader()).editable(context.configFile(), entry.id());
+        } catch (IOException | RuntimeException e) {
+            feedback.problem(e);
+            return;
+        }
+        dialog.create(root, context, editable, this::select).open();
+    }
+
+    /** Erzeugt einen der {@link SettingDialogs} zu einer Quelle. */
+    interface SettingDialog {
+        SettingDialogs.Shell create(java.awt.Component parent, AppContext context, SourceDraft.Editable editing,
+                                    Consumer<String> saved);
     }
 
     private void edit(AppSettings.SourceEntry entry, SourceWizard.Step step) {
@@ -544,8 +574,9 @@ public final class SourcesView implements View {
                         + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
                 : "Die vorige Fassung bleibt als .bak erhalten.";
         if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "
-                + "entfernt. " + backup + " Laufende Aufträge enden mit dem Neu laden. Der lokale Bestand im "
-                + "Datenordner bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")) {
+                + "entfernt. " + backup + " Die Quellen starten danach neu. Der lokale Bestand im "
+                + "Datenordner bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")
+                || !Dialogs.restartAllowed(root, context)) {
             return;
         }
         feedback.working("Quelle wird entfernt …");
