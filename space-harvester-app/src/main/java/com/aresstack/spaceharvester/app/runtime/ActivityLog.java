@@ -12,7 +12,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Merkt sich die IDs der Aufträge, die die App gestartet hat, damit „Aktivitäten“ sie auch nach einem Neustart
+ * Merkt sich die IDs der Aufträge, die die App gestartet hat, damit „Aufträge“ sie auch nach einem Neustart
  * zeigt; Status und Ergebnis liegen weiter in der Auftragsablage des Cache. Nur IDs, keine Inhalte.
  */
 public final class ActivityLog {

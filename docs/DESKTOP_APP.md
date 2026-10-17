@@ -30,7 +30,7 @@ Optionen:
 | `--screenshot <ordner>` | rendert jeden Bereich als PNG und beendet sich (Sichtprüfung) |
 | `--version` | Version ausgeben |
 
-Beim ersten Start ohne Quelle begrüßt die Übersicht mit der Weltraumszene und **Erste Wissensquelle hinzufügen …**;
+Die App öffnet mit der Suche. Ohne Quelle begrüßt **Status** mit der Weltraumszene und **Erste Wissensquelle hinzufügen …**;
 das öffnet denselben Assistenten wie **Wissensquellen › Quelle hinzufügen …** (siehe
 [Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
 Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
@@ -44,7 +44,7 @@ geladen (`ui/brand/BrandImages`), funktionieren also auch im ausführbaren JAR:
 | Datei | Verwendung |
 |---|---|
 | `space-harvester-ship.png` (freigestellt, transparent) | Anwendungssymbol für Fenster, Taskleiste und Alt+Tab (`ApplicationIcons`, 16 bis 256 Pixel), kleines Logo links in der eigenen Titelleiste |
-| `space-harvester.png` (Weltraumszene) | Willkommensansicht der Übersicht, solange keine Quelle eingerichtet ist; Dialog **Einstellungen › Über Space Harvester** |
+| `space-harvester.png` (Weltraumszene) | Willkommensansicht unter Status, solange keine Quelle eingerichtet ist; Dialog **Einstellungen › Über Space Harvester** |
 
 Alle kleineren Fassungen entstehen beim Start aus den Originalen, immer gleich und ohne erzeugte Bilddateien im
 Repository: auf das Schiff zuschneiden, quadratisch auffüllen, in Halbierungsschritten mit vormultipliziertem Alpha
@@ -160,7 +160,7 @@ spring:
 - **Fehlt ein Token oder Passwort**, startet die Quelle nicht, die App läuft aber weiter: Wissensquellen zeigt
   „Zugangsdaten fehlen“; **Bearbeiten …** nimmt den Wert dauerhaft auf, **Zugangsdaten eingeben …** nur für die
   Sitzung.
-- **Fehler in der Datei** verhindern den Start nicht: Die betroffene Quelle fehlt, Übersicht und Einstellungen nennen
+- **Fehler in der Datei** verhindern den Start nicht: Die betroffene Quelle fehlt, Status und Einstellungen nennen
   Quelle und Feld. YAML-Fehler nennen nur die Zeile, nie den Inhalt.
 - **Azure Key Vault** und **Config Server** sind Spring-Profile des Dienstes; die App liest sie nicht direkt.
   Werte aus Key Vault kommen als Umgebungsvariable in die App (z. B. Startskript mit
@@ -175,13 +175,15 @@ spring:
 
 | Bereich | Inhalt |
 |---|---|
-| Übersicht | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge; ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
-| Wissensquellen | Quelle hinzufügen, bearbeiten und entfernen (Assistent), Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
-| Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
-| Aktivitäten | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
-| Exporte | Space und Formate wählen, Export starten, letzte Exporte |
 | Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Quellen …“ beschränkt sie auf ausgewählte Quellen, „Weitere laden“ blättert weiter |
+| Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten, entfernen, weitere Aktionen: Assistent, Zugangsdaten für die Sitzung); rechts die Spaces mit Filter, Öffnen, Abgleich und Export, darunter die Einstellungen ohne Geheimnisse und eingeklappt die technischen Fähigkeiten |
+| Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
+| Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
+| Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
+| Status | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge; ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
 | Einstellungen | Konfigurationsdatei, Hinweise, Ablage, Netz und Zertifikate, Embedding-Modell, Diagnose, Über Space Harvester |
+
+Die Seitenleiste folgt dieser Reihenfolge; die App öffnet mit der Suche.
 
 Lange Arbeit (Netz, Lucene, Export) läuft immer im Hintergrund; die Oberfläche zeigt „läuft …“ und bleibt bedienbar.
 Fehler erscheinen als verständliche Meldung mit Hinweis; Technische Details (Fehlerart, Code) lassen sich aufklappen,
@@ -189,7 +191,7 @@ Ursachenketten mit möglichen Geheimnissen nie.
 
 **Raw-First:** Originaldaten zeigt die App byte-genau als Text (JSON eingerückt nur in der Anzeige) und speichert sie
 mit „Original speichern …“ unverändert. „Aktualität prüfen“ ist `refresh=true`: echte Prüfung gegen die Quelle. Ein
-Abgleich heißt nur „vollständig“, wenn der Core die Generation bestätigt hat; sonst zeigt Aktivitäten den Grund.
+Abgleich heißt nur „vollständig“, wenn der Core die Generation bestätigt hat; sonst zeigt „Aufträge“ den Grund.
 
 **Zugriff:** Die App läuft im Vertrauensbereich des angemeldeten Windows-Benutzers. Sie setzt eine eigene
 `AccessPolicy` (`LocalOperatorPolicy`): freigegeben ist nur der App-Aufrufer und nur für konfigurierte Quellen. Alle
@@ -233,7 +235,7 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 
 | REST (Dienst) | Anwendungsfall (Core) | App-Aktion | Test |
 |---|---|---|---|
-| `GET /api/v1/sources` | `SourceQueries.sources` | Wissensquellen, Übersicht | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/sources` | `SourceQueries.sources` | Wissensquellen, Status | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/sources/{id}/spaces` | `SourceQueries.partitions` | Verbindung prüfen, Space-Auswahl | `WorkspaceTest.harvestsBrowses…`, `…onlyConfiguredSourcesAreReachable` |
 | `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Inhalte › Live | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/pages/{pageId}/metadata` | `SourceQueries.pageMetadata` | Seite › Eigenschaften (live) | `MainWindowTest` (Navigation) |
@@ -247,12 +249,12 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 | `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | `PageSearch.search` (ohne Quelle global, #114) | Suche (Titel, Neueste) mit „Quellen …“ und „Weitere laden“ über den Core-Cursor, Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `SearchViewTest`, `MainWindowTest` |
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` (ein Fenster über alle Quellen) | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
-| `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aktivitäten | `WorkspaceTest.harvestsBrowses…` |
-| `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aktivitäten › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
-| `POST …/spaces/{key}/exports` | `Exports.start` | Exporte › Export starten | `WorkspaceTest.harvestsBrowses…` |
-| `GET /api/v1/exports/{id}` | `Exports.artifact` | Aktivitäten › Ergebnis | `WorkspaceTest.harvestsBrowses…` |
-| `GET /api/v1/exports/{id}/artifact/**` | `Exports.artifactFile` | Aktivitäten › Dateien speichern … | `WorkspaceTest.harvestsBrowses…` |
-| `POST /api/v1/exports/{id}/cancel` | `Jobs.cancel` | Aktivitäten › Abbrechen | – |
+| `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aufträge | `WorkspaceTest.harvestsBrowses…` |
+| `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aufträge › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
+| `POST …/spaces/{key}/exports` | `Exports.start` | Exportieren › Export starten | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/exports/{id}` | `Exports.artifact` | Aufträge › Ergebnis | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/exports/{id}/artifact/**` | `Exports.artifactFile` | Aufträge › Dateien speichern … | `WorkspaceTest.harvestsBrowses…` |
+| `POST /api/v1/exports/{id}/cancel` | `Jobs.cancel` | Aufträge › Abbrechen | – |
 | `GET …/pages/{pageId}/assets` | `Assets.assets` | Seite › Anhänge | `WorkspaceTest.attachmentsAre…` |
 | `POST …/pages/{pageId}/assets/harvest` | `Assets.harvest` | Seite › Anhänge › Alle ablegen | `WorkspaceTest.attachmentsAre…` |
 | `GET …/assets/{id}/content` | `Assets.content` | Seite › Anhänge › Speichern … | `WorkspaceTest.attachmentsAre…` (byte-genau) |
@@ -261,7 +263,7 @@ alle APIs melden sich per SSO (Single Sign-On) an.“ abgleichen und unter Inhal
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
 | – | `Harvester.builder` mit nur der neuen Quelle, `SourceQueries.partitions` | Wissensquellen › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
 | – | – | Konfiguration, Platzhalter, fehlende Zugangsdaten | `AppSettingsLoaderTest`, `PlaceholdersTest`, `WorkspaceTest.aSourceWithoutToken…` |
-| – | Auftragsliste der App | Aktivitäten nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
+| – | Auftragsliste der App | Aufträge nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
 
 „–“ in der Testspalte heißt: Die Aktion ist gebaut, aber noch nicht automatisch getestet.
 
