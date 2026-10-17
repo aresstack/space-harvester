@@ -334,7 +334,9 @@ public final class StatusView implements View {
             return;
         }
         // Auch die Verbindungsprüfungen bis jetzt; spätere Prüfungen erscheinen wieder.
-        checksBefore = before.equals(Instant.MAX) ? Instant.now() : before;
+        Instant cutoff = before.equals(Instant.MAX) ? Instant.now() : before;
+        // Nie zurück: eine engere Bereinigung holt bereits entfernte Prüfungen nicht wieder hervor.
+        checksBefore = cutoff.isAfter(checksBefore) ? cutoff : checksBefore;
         Background.run(() -> runtime.workspace().deleteEventsBefore(before), deleted -> {
             feedback.success(Texts.count(deleted, "Ereignis", "Ereignisse") + " gelöscht"
                     + "; Ereignisse laufender Aufträge bleiben");

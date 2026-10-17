@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -286,15 +287,47 @@ public final class Workspace {
         return deleted;
     }
 
+    /**
+     * Löscht genau diese Aufträge, soweit sie sichtbar und beendet sind; schon gelöschte oder wieder laufende bleiben
+     * unberührt. @return Anzahl
+     */
+    public int deleteJobs(List<String> jobIds) {
+        int deleted = 0;
+        for (String id : jobIds) {
+            try {
+                if (job(id).state().terminal()) {
+                    deleteJob(id);
+                    deleted++;
+                }
+            } catch (UnknownJobException | JobStillRunningException e) {
+                // Inzwischen gelöscht oder wieder aktiv: bleibt unberührt.
+            }
+        }
+        return deleted;
+    }
+
     /** Löscht ein Diagnoseereignis eines beendeten, sichtbaren Auftrags; {@code false}, wenn es schon fehlt. */
     public boolean deleteEvent(String jobId, long sequence) {
         job(jobId);
         return harvester.deleteEvent(jobId, sequence);
     }
 
-    /** Löscht die Ereignisse beendeter Aufträge vor {@code before}; die Aufträge bleiben. @return Anzahl */
+    /**
+     * Löscht die Ereignisse sichtbarer beendeter Aufträge vor {@code before}; die Aufträge bleiben. Aufträge, die die
+     * App nicht (mehr) sehen darf, z. B. einer entfernten Quelle, bleiben unberührt. @return Anzahl
+     */
     public int deleteEventsBefore(Instant before) {
-        return harvester.deleteEventsBefore(before);
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            if (status.state().terminal()) {
+                try {
+                    deleted += harvester.jobs().deleteEventsBefore(status.id(), before, Harvester.OWNER);
+                } catch (UnknownJobException | JobStillRunningException e) {
+                    // Inzwischen gelöscht oder (neu gestartet) wieder aktiv: dann bleibt er unberührt.
+                }
+            }
+        }
+        return deleted;
     }
 
     // ------------------------------------------------------------------ Anhänge

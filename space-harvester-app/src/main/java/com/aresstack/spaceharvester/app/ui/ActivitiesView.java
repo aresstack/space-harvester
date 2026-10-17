@@ -388,7 +388,9 @@ public final class ActivitiesView implements View {
 
     private void deleteFinished() {
         AppRuntime runtime = context.runtime();
-        long finished = model.rows.stream().filter(j -> j.state().terminal()).count();
+        // Genau die Aufträge, die der Dialog nennt; was danach erst endet, bleibt stehen.
+        List<String> confirmed = model.rows.stream().filter(j -> j.state().terminal()).map(JobStatus::id).toList();
+        long finished = confirmed.size();
         if (runtime == null || finished == 0) {
             return;
         }
@@ -400,7 +402,7 @@ public final class ActivitiesView implements View {
             return;
         }
         boolean selectedFinished = currentStatus().map(s -> s.state().terminal()).orElse(false);
-        Background.run(() -> runtime.workspace().deleteFinishedJobs(), deleted -> {
+        Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
             if (selectedFinished) {
                 selectedId = null;
                 detail = null;
