@@ -531,23 +531,35 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
 
     void close(Duration wait) {
         boolean locked;
+        boolean interrupted = false;
         try {
             locked = writeLock.tryLock(wait.toMillis(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            // Erst nach dem Freigeben wieder setzen: Lucene bricht Datei-I/O eines unterbrochenen Threads ab.
+            interrupted = true;
             locked = false;
         }
-        if (!locked) {
-            // Ein hängender Lauf darf das Herunterfahren nicht aufhalten: Er scheitert an seinem nächsten Schritt, und
-            // Batch.finish gibt danach frei.
-            closed = true;
-            throw new PageCacheException("Cache " + path + ": ein Schreiblauf endet nicht; er wird beim Ende verworfen");
-        }
         try {
-            closed = true;
-            release();
+            if (!locked) {
+                // Ein hängender Lauf darf das Herunterfahren nicht aufhalten: Er scheitert an seinem nächsten Schritt,
+                // und Batch.finish gibt danach frei. Hat er die Sperre freigegeben, bevor er closed sah (oder war der
+                // Aufrufer nur unterbrochen), gibt dieser Thread frei; einer von beiden tut es also immer.
+                closed = true;
+                if (!writeLock.tryLock()) {
+                    throw new PageCacheException(
+                            "Cache " + path + ": ein Schreiblauf endet nicht; er wird beim Ende verworfen");
+                }
+            }
+            try {
+                closed = true;
+                release();
+            } finally {
+                writeLock.unlock();
+            }
         } finally {
-            writeLock.unlock();
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

@@ -473,6 +473,21 @@ class LucenePageCacheTest {
     }
 
     @Test
+    void anInterruptedCallerStillClosesAnIdleCache() {
+        LucenePageCache cache = open();
+
+        Thread.currentThread().interrupt();
+        try {
+            cache.close();
+        } finally {
+            assertThat(Thread.interrupted()).isTrue();
+        }
+
+        // Writer und Sperrdatei sind freigegeben.
+        assertThat(open().documentCount()).isZero();
+    }
+
+    @Test
     void aClosedCacheRefusesAccess() {
         LucenePageCache cache = open();
         cache.close();
