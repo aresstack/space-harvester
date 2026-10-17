@@ -108,3 +108,10 @@ Entscheidung Angelo ([#89](https://github.com/aresstack/space-harvester/issues/8
   ein Cross-Encoder ist keine Voraussetzung.
 - Damit sind Punkt 1 der offenen Liste und die Modellwahl erledigt. Qualität, CPU- und Speicherbedarf auf echten Daten
   misst Angelo; erst danach wird über ein stärkeres oder entferntes Modell entschieden.
+
+## Nachtrag 17.10.2026: Hochstufen statt Ablehnen von `enrichment-store/v1` (#89)
+
+Abweichend von Abschnitt 3 wird ein Index im Schema `enrichment-store/v1` beim Öffnen hochgestuft statt abgelehnt.
+Grund: v2 fügt nur Vektordokumente hinzu. Ein v1-Index enthält Ergebnisse aller übrigen Prozessoren, die gültig
+bleiben; nur `embedding`-Ergebnisse haben in v1 keine Vektoren. Diese werden beim Hochstufen gelöscht und beim
+nächsten Abgleich neu berechnet. Ein Index in einem unbekannten Schema wird weiter abgelehnt.

@@ -63,7 +63,25 @@ Andere Dateien als die gepinnten lädt der Harvester nur, wenn auch Prüfsummen 
 Danach berechnet jeder bestätigte Abgleich die Anreicherung `embedding` für neue und geänderte Seiten
 (`POST …/pages/{pageId}/enrichments` für eine einzelne Seite). Ergebnis je Seite:
 `{"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}` unter `enrichments` in
-`view=extended`. Die Suche über diese Vektoren folgt mit #89 Teil 2 und 3.
+`view=extended`.
+
+## Ablage der Vektoren
+
+Jedes Stück liegt zusätzlich als eigenes Dokument mit einem Lucene-`KnnFloatVectorField` (HNSW, Skalarprodukt über
+L2-normierte Vektoren, also Kosinus) im Index `enrichments/`, Schema `enrichment-store/v2`:
+
+- Die Vektordokumente gehören zu ihrem Ergebnis. Ein neues Ergebnis derselben Seite ersetzt sie, ein `failed`-Ergebnis
+  hat keine, eine entfernte Seite verliert sie mit ihren Anreicherungen. Der Seitenindex bleibt unberührt.
+- Gesucht wird nur unter Vektoren derselben Quelle und genau derselben Prozessorversion. Die Version enthält
+  Format, Modellkennung samt Revision, Dimension und Stückgröße; nach einem Modell- oder Chunker-Wechsel zählen alte
+  Vektoren also nicht mit, bis die Seite neu berechnet ist. Jeder Treffer trägt den `inputSha256` seiner Eingabe, damit
+  die Suche veraltete Treffer erkennt.
+- Ein Index im Schema `enrichment-store/v1` wird beim Öffnen hochgestuft. Weil v1 keine Vektoren kannte, werden nur
+  seine `embedding`-Ergebnisse gelöscht und beim nächsten Abgleich neu berechnet; alle übrigen Ergebnisse bleiben.
+- Lucene nimmt höchstens 1024 Dimensionen je Vektor an; größere Modelle bekommen kein Vektordokument.
+
+Die Ablage kennt keine Rechte: Die Vektorsuche liefert nur Kandidaten, die die Suche erst nach der `content`-Prüfung
+ausgibt (#89 Teil 3).
 
 ## Fehlerverhalten
 
