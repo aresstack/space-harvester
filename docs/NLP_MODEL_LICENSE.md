@@ -2,8 +2,8 @@
 
 Freigabebedingung für die öffentliche Weitergabe von `maltparser-de-gsd` über GitHub Releases. Die
 **Lizenz- und Risikoentscheidung ist getroffen**; das Rezept dokumentiert `license.approval=approved`.
-**Die technische Veröffentlichung ist davon getrennt:** Bis zum erfolgreichen Neuverpacken, Prüfen und manuellen
-Veröffentlichen bleibt das Modell ein Entwurfs-Release.
+Die technische Veröffentlichung ist davon getrennt (Neuverpacken, Prüfen, manuelles Veröffentlichen); für v1.0.0 ist
+sie abgeschlossen. Spätere Versionen bleiben bis dahin Entwurfs-Releases.
 
 **Status: freigegeben und veröffentlicht** (Release [maltparser-de-gsd-v1.0.0](https://github.com/aresstack/space-harvester/releases/tag/maltparser-de-gsd-v1.0.0), 17.10.2026). Die Entscheidung und die verbliebenen
 Rechtsunsicherheiten sind im Abschnitt [Freigabeentscheidung](#freigabeentscheidung) dokumentiert.
@@ -61,8 +61,8 @@ Dritttexten**, sollten solche entgegen der Zielsetzung in rechtlich relevanter F
 rekonstruierbar sein. Ein Lizenzangebot kann fehlende Rechte Dritter **nicht heilen**. Weder der Vermerk
 „CC BY-SA“ noch das Fehlen ganzer Sätze im Modell ist eine uneingeschränkte Rechtsgarantie.
 
-Diese Klarstellung ändert **nicht** den Status `license.approval=pending` und ist **keine Freigabe**.
-Die im Abschnitt „Bewertung und Restrisiken“ beschriebenen Risiken bleiben vor der Veröffentlichung zu entscheiden.
+Diese Klarstellung ist für sich **keine Freigabe**; die Freigabe von v1.0.0 steht unter
+[Freigabeentscheidung](#freigabeentscheidung) und trägt die Risiken aus „Bewertung und Restrisiken“ ausdrücklich.
 
 ## Prüfung des Modells v1.0.0
 
@@ -223,18 +223,18 @@ Die Seite empfiehlt keine dieser Möglichkeiten zwingend; sie sind die Antwort, 
 - [x] Laufzeitabhängigkeiten des Parsers mit freien Lizenzen (BSD-3-Clause, Apache-2.0), keine GPL.
 - [x] Inhalt der `.mco` von v1.0.0 geprüft und reproduzierbar gezählt (Abschnitt „Prüfung des Modells v1.0.0“).
 - [x] Rechtslage zu Wortformen, Text und Data Mining und CC BY-SA mit Quellen bewertet, Restrisiken benannt.
-- [ ] Entscheidung, ob die Weitergabe der Wortformen und Wortform-Paare mit den genannten Restrisiken getragen wird.
-- [ ] Entscheidung, ob CC BY-SA 4.0 als Modelllizenz für die Verbraucher (Space Harvester und andere Java-Projekte)
+- [x] Entscheidung, ob die Weitergabe der Wortformen und Wortform-Paare mit den genannten Restrisiken getragen wird.
+- [x] Entscheidung, ob CC BY-SA 4.0 als Modelllizenz für die Verbraucher (Space Harvester und andere Java-Projekte)
       tragbar ist.
-- [ ] Freigabe unten eintragen und im Rezept `license.approval=approved` setzen.
+- [x] Freigabe unten eingetragen und im Rezept `license.approval=approved` gesetzt (#129).
 
 ## Freigabeentscheidung
 
 Die projektverantwortliche Person hat am 17.10.2026 **ausdrücklich die öffentliche Veröffentlichung von v1.0.0**
 in der Projektunterhaltung befürwortet, nachdem die Trennung der Rechte an Annotationen, Modell und Satztexten
 sowie die bestehenden Restrisiken erläutert wurden. Dies dokumentiert eine **bewusste Risikoentscheidung, keine
-Rechteklärung oder rechtliche Garantie**. Die technische Veröffentlichung bedarf weiterhin der unten genannten
-Integritätsprüfungen und der manuellen Freigabe des Release-Entwurfs.
+Rechteklärung oder rechtliche Garantie**. Veröffentlicht wurde nach den Integritätsprüfungen unten am 17.10.2026
+von Hand.
 
 | Feld | Eintrag |
 |---|---|
@@ -246,15 +246,17 @@ Integritätsprüfungen und der manuellen Freigabe des Release-Entwurfs.
 | Veröffentlichte ZIP | `maltparser-de-gsd-v1.0.0.zip` SHA-256 `d779fb3296bd53753574e329c59b0194419683860883698480cc9788ccdaa959`, Manifest `maltparser-de-gsd-v1.0.0.manifest.json` SHA-256 `3f6e7d794ce7b249cac6936e7bc45ce862f461c1edff56afe01b2718059e2fed` (neu verpackt ohne Training in Lauf [39041881358](https://github.com/aresstack/space-harvester/actions/runs/39041881358); Download ohne Token geprüft) |
 
 Die hier festgehaltene Freigabe wurde **nicht als Namensunterschrift oder externe anwaltliche Prüfung** ausgegeben.
-Vor dem öffentlichen Release ist das genehmigte Modellpaket mit Lizenzhinweis, Attributionsdatei, unveränderter
-Modell-SHA und den SHA256SUMS zu prüfen. Der Klarname kann bei Bedarf durch die verantwortliche Person in einem
+Vor dem öffentlichen Release wurde das genehmigte Modellpaket geprüft: Lizenzhinweis und Attributionsdatei im Stand
+`approved`, `.mco` SHA-256 unverändert, `SHA256SUMS` passend zu ZIP und Manifest. Der Klarname kann bei Bedarf durch die verantwortliche Person in einem
 separaten Commit ergänzt werden; hier wird keiner erfunden.
 
 ## Ablauf der Freigabe
 
-Das Modell wird dafür nicht neu trainiert; v1.0.0 stammt aus dem Trainingslauf
-[39025709576](https://github.com/aresstack/space-harvester/actions/runs/39025709576) vom 17.10.2026 und ist als
-Entwurfs-Release `maltparser-de-gsd-v1.0.0` gesichert (Lizenzstand dort noch `pending`).
+Für v1.0.0 abgeschlossen; die Schritte gelten so für spätere Versionen. Das Modell wird dafür nicht neu trainiert;
+v1.0.0 stammt aus dem Trainingslauf
+[39025709576](https://github.com/aresstack/space-harvester/actions/runs/39025709576) vom 17.10.2026, wurde als Entwurf
+gesichert, in Lauf [39041881358](https://github.com/aresstack/space-harvester/actions/runs/39041881358) mit Lizenzstand
+`approved` neu verpackt und am 17.10.2026 veröffentlicht.
 
 1. Freigabeentscheidung oben eintragen.
 2. Im Rezept `nlp-model-training/model/maltparser-de-gsd.properties` `license.approval=approved` setzen (per PR auf
