@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -47,6 +48,8 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
                 problems.add("Die PAC-Adresse fehlt.");
             } else if (!pacUrl.matches("(?i)(https?|file)://.+")) {
                 problems.add("Die PAC-Adresse beginnt mit http://, https:// oder file://.");
+            } else if (!parsable(pacUrl)) {
+                problems.add("Die PAC-Adresse ist keine gültige Adresse (Leerzeichen oder Sonderzeichen?).");
             }
         }
         if (mode == ProxySettings.Mode.MANUAL_PROXY) {
@@ -58,6 +61,15 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
             }
         }
         return problems;
+    }
+
+    private static boolean parsable(String uri) {
+        try {
+            URI parsed = new URI(uri);
+            return "file".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() != null;
+        } catch (URISyntaxException e) {
+            return false;
+        }
     }
 
     /** Die Einstellungen für den Core; nur gültig, wenn {@link #problems()} leer ist. */

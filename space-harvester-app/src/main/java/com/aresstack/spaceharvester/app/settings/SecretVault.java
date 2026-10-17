@@ -163,15 +163,19 @@ public final class SecretVault {
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
+        // Beide Ausgaben in eigenen Threads lesen, damit die Frist auch gilt, wenn PowerShell hängt.
         Thread errors = new Thread(() -> copy(process.getErrorStream(), err), "secret-vault-stderr");
+        Thread output = new Thread(() -> copy(process.getInputStream(), out), "secret-vault-stdout");
         errors.setDaemon(true);
+        output.setDaemon(true);
         errors.start();
-        copy(process.getInputStream(), out);
+        output.start();
         try {
             if (!process.waitFor(30, TimeUnit.SECONDS)) {
                 process.destroyForcibly();
                 throw new IOException("PowerShell hat für den Tresor nicht rechtzeitig geantwortet.");
             }
+            output.join(5000);
             errors.join(1000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

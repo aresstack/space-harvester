@@ -426,14 +426,28 @@ final class SourceWizard {
         Background.run(() -> {
             // Ob die bisherige Fassung ein Geheimnis enthält, entscheidet der Rohtext der ganzen Datei.
             boolean backup = editing == null || !editor.fileHasPlaintextSecret(context.configFile());
-            editor.save(context.configFile(), write(source), backup);
+            ConfigFileEditor.Draft draft = write(source);
             SecretVault vault = context.vault();
-            if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
-                if (vault.available()) {
-                    vault.store(source.id(), Arrays.copyOf(value, value.length));
+            boolean typed = value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE;
+            if (typed && vault.available()) {
+                // Erst der Tresor, dann die Datei: scheitert die Datei, kommt der alte Tresorwert zurück, sodass
+                // ein zweiter Versuch auf demselben Stand beginnt.
+                char[] previous = vault.load(source.id());
+                vault.store(source.id(), Arrays.copyOf(value, value.length));
+                try {
+                    editor.save(context.configFile(), draft, backup);
+                } catch (IOException | RuntimeException e) {
+                    restore(vault, source.id(), previous, e);
+                    throw e;
                 }
-            } else if (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE) {
-                vault.remove(source.id());
+                if (previous != null) {
+                    Arrays.fill(previous, '\0');
+                }
+            } else {
+                editor.save(context.configFile(), draft, backup);
+                if (!typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE)) {
+                    vault.remove(source.id());
+                }
             }
             return source.id();
         }, savedId -> {
@@ -454,7 +468,19 @@ final class SourceWizard {
         });
     }
 
-    private boolean dropsBackup() {
+    private static void restore(SecretVault vault, String sourceId, char[] previous, Exception failure) {
+        try {
+            if (previous == null) {
+                vault.remove(sourceId);
+            } else {
+                vault.store(sourceId, previous);
+            }
+        } catch (IOException | RuntimeException e) {
+            failure.addSuppressed(e);
+        }
+    }
+
+        private boolean dropsBackup() {
         if (editing == null) {
             return false;
         }

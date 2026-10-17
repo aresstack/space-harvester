@@ -371,6 +371,13 @@ class ConfigFileEditorTest {
                 null, "99999", null, null, null, null))).hasMessageContaining("Proxy-Host")
                 .hasMessageContaining("Proxy-Port");
         assertThat(file).doesNotExist();
+        for (String pac : new String[] {"http://bad host/proxy.pac", "http://[invalid"}) {
+            assertThat(new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, pac, null, null, null, null, null, null)
+                    .problems()).as(pac).containsExactly(
+                            "Die PAC-Adresse ist keine gültige Adresse (Leerzeichen oder Sonderzeichen?).");
+        }
+        assertThat(new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "file:///C:/proxy.pac", null, null, null, null,
+                null, null).problems()).isEmpty();
     }
 
     private static SourceDraft wiki() {
