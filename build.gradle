@@ -7,5 +7,6 @@ plugins {
 
 allprojects {
     group = 'com.aresstack.spaceharvester'
-    version = '0.1.0-SNAPSHOT'
+    // Gemeinsame Release-Version aller Module (Workflow Release: -PreleaseVersion=0.1.0-beta.3); sonst SNAPSHOT
+    version = providers.gradleProperty('releaseVersion').getOrElse('0.1.0-SNAPSHOT')
 }
