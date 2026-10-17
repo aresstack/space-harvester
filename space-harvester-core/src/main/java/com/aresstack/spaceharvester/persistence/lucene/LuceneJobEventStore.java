@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +30,8 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
@@ -185,6 +188,31 @@ public final class LuceneJobEventStore implements JobEventStore, AutoCloseable {
         Objects.requireNonNull(jobId, "jobId");
         requireOpen();
         write(() -> deleteNow(jobId));
+    }
+
+    @Override
+    public void delete(String jobId, Collection<Long> sequences) {
+        Objects.requireNonNull(jobId, "jobId");
+        Objects.requireNonNull(sequences, "sequences");
+        requireOpen();
+        if (sequences.isEmpty()) {
+            return;
+        }
+        Query[] queries = sequences.stream().distinct().map(sequence -> new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(JOB_ID, jobId)), BooleanClause.Occur.FILTER)
+                .add(NumericDocValuesField.newSlowExactQuery(SEQUENCE_SORT, sequence), BooleanClause.Occur.FILTER)
+                .build()).toArray(Query[]::new);
+        write(() -> deleteNow(queries));
+    }
+
+    private void deleteNow(Query... queries) {
+        try {
+            writer.deleteDocuments(queries);
+            writer.commit();
+            searchers.maybeRefreshBlocking();
+        } catch (IOException e) {
+            throw new PageCacheException("Diagnoseablage " + path + " kann nicht geschrieben werden", e);
+        }
     }
 
     private void deleteNow(String jobId) {

@@ -289,6 +289,43 @@ class ExportsApiTest {
     }
 
     @Test
+    void theOwnerDeletesEventsAndThenTheExport() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/NONE/exports", null)).path("id").asString();
+        awaitFinished(id);
+        JsonNode before = body(send("GET", "/api/v1/exports/" + id + "/events", null));
+        long first = before.get(0).path("sequence").asLong();
+
+        assertThat(send("DELETE", "/api/v1/exports/" + id + "/events/" + first, OTHER_TOKEN).statusCode())
+                .isEqualTo(404);
+        assertThat(send("DELETE", "/api/v1/exports/" + id, OTHER_TOKEN).statusCode()).isEqualTo(404);
+        assertThat(send("DELETE", "/api/v1/exports/" + id + "/events/" + first, null).statusCode()).isEqualTo(204);
+        assertThat(send("DELETE", "/api/v1/exports/" + id + "/events/" + first, null).statusCode()).isEqualTo(404);
+        JsonNode after = body(send("GET", "/api/v1/exports/" + id + "/events", null));
+        assertThat(after).extracting(event -> event.path("sequence").asLong()).doesNotContain(first)
+                .hasSize(before.size() - 1);
+
+        HttpResponse<byte[]> purged = send("DELETE", "/api/v1/exports/" + id + "/events", null);
+        assertThat(purged.statusCode()).isEqualTo(200);
+        assertThat(body(purged).path("deleted").asInt()).isEqualTo(before.size() - 1);
+
+        assertThat(send("DELETE", "/api/v1/exports/" + id, null).statusCode()).isEqualTo(204);
+        assertThat(send("GET", "/api/v1/exports/" + id, null).statusCode()).isEqualTo(404);
+    }
+
+    @Test
+    void deletingAllFinishedExportsKeepsThoseOfOtherClients() throws Exception {
+        String mine = body(send("POST", "/api/v1/sources/wiki/spaces/NONE/exports", null)).path("id").asString();
+        awaitFinished(mine);
+
+        HttpResponse<byte[]> deleted = send("DELETE", "/api/v1/exports", OTHER_TOKEN);
+
+        assertThat(deleted.statusCode()).isEqualTo(200);
+        assertThat(send("GET", "/api/v1/exports/" + mine, null).statusCode()).isEqualTo(200);
+        assertThat(body(send("DELETE", "/api/v1/exports", null)).path("deleted").asInt()).isPositive();
+        assertThat(send("GET", "/api/v1/exports/" + mine, null).statusCode()).isEqualTo(404);
+    }
+
+    @Test
     void artifactPathsCannotLeaveTheExport() throws Exception {
         String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null)).path("id").asString();
         awaitFinished(id);

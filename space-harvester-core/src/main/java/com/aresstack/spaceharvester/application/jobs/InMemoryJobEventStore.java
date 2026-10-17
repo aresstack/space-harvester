@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.jobs;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -47,5 +48,15 @@ public class InMemoryJobEventStore implements JobEventStore {
     @Override
     public void delete(String jobId) {
         events.remove(jobId);
+    }
+
+    @Override
+    public void delete(String jobId, Collection<Long> sequences) {
+        List<JobEvent> list = events.get(jobId);
+        if (list != null) {
+            synchronized (list) {
+                list.removeIf(event -> sequences.contains(event.sequence()));
+            }
+        }
     }
 }

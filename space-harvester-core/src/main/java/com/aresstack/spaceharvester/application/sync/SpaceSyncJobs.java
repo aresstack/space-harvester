@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -167,6 +168,53 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     public SyncJob cancel(String jobId, String owner) {
         view(jobs.status(jobId, owner));
         return view(jobs.cancel(jobId, owner));
+    }
+
+    /**
+     * Löscht einen eigenen beendeten Abgleich samt Delta und Diagnoseereignissen.
+     *
+     * @throws UnknownJobException wie {@link #status}
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     */
+    public void delete(String jobId, String owner) {
+        view(jobs.status(jobId, owner));
+        jobs.delete(jobId, owner);
+        summaries.remove(jobId);
+    }
+
+    /**
+     * Löscht alle eigenen beendeten Abgleiche samt Ereignissen; wartende und laufende bleiben.
+     *
+     * @return Anzahl gelöschter Abgleiche
+     */
+    public int deleteFinished(String owner) {
+        int removed = jobs.deleteFinished(owner, JobType.SYNC);
+        summaries.keySet().removeIf(this::expired);
+        return removed;
+    }
+
+    /**
+     * Löscht ein Diagnoseereignis eines eigenen beendeten Abgleichs.
+     *
+     * @return {@code false}, wenn es das Ereignis nicht gibt
+     * @throws UnknownJobException wie {@link #status}
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     */
+    public boolean deleteEvent(String jobId, long sequence, String owner) {
+        view(jobs.status(jobId, owner));
+        return jobs.deleteEvent(jobId, sequence, owner);
+    }
+
+    /**
+     * Löscht die Diagnoseereignisse eines eigenen beendeten Abgleichs vor {@code before}.
+     *
+     * @return Anzahl gelöschter Ereignisse
+     * @throws UnknownJobException wie {@link #status}
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     */
+    public int deleteEventsBefore(String jobId, Instant before, String owner) {
+        view(jobs.status(jobId, owner));
+        return jobs.deleteEventsBefore(jobId, before, owner);
     }
 
     /**

@@ -24,10 +24,12 @@ import java.util.Locale;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -138,6 +140,77 @@ public class SyncController {
         visible(caller, syncs.status(syncId, owner(caller)));
         SpaceSyncJobs.SyncJob job = syncs.cancel(syncId, owner(caller));
         return SyncResponse.of(job, pageIdsVisible(caller, job));
+    }
+
+    @DeleteMapping("/syncs/{syncId}")
+    @Operation(summary = "Beendeten Abgleich löschen",
+            description = "Entfernt den Abgleich samt Delta und Diagnoseereignissen; der Seitenbestand bleibt. "
+                    + "Wartende und laufende Abgleiche erst abbrechen.")
+    @ApiResponse(responseCode = "204", description = "Gelöscht")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Abgleich wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<Void> delete(@Parameter(hidden = true) AccessContext caller,
+                                       @PathVariable String syncId) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        syncs.delete(syncId, owner(caller));
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/syncs")
+    @Operation(summary = "Alle eigenen beendeten Abgleiche löschen",
+            description = "Abgeschlossene, gescheiterte und abgebrochene Abgleiche samt Ereignissen; wartende und "
+                    + "laufende bleiben, der Seitenbestand bleibt.")
+    @ApiResponse(responseCode = "200", description = "Anzahl gelöschter Abgleiche")
+    public DeletedResponse deleteFinished(@Parameter(hidden = true) AccessContext caller) {
+        if (caller == null) {
+            return new DeletedResponse(0);
+        }
+        return new DeletedResponse(syncs.deleteFinished(owner(caller)));
+    }
+
+    @DeleteMapping("/syncs/{syncId}/events/{sequence}")
+    @Operation(summary = "Ein Diagnoseereignis eines beendeten Abgleichs löschen",
+            description = "Die übrigen Ereignisse behalten ihre Nummern; keine Nummer wird wieder vergeben.")
+    @ApiResponse(responseCode = "204", description = "Gelöscht")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found) oder "
+            + "kein Ereignis mit dieser Nummer (event-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Abgleich wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<Void> deleteEvent(@Parameter(hidden = true) AccessContext caller,
+                                            @PathVariable String syncId, @PathVariable long sequence) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        if (!syncs.deleteEvent(syncId, sequence, owner(caller))) {
+            throw new EventNotFoundException();
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    @DeleteMapping("/syncs/{syncId}/events")
+    @Operation(summary = "Diagnoseereignisse eines beendeten Abgleichs löschen",
+            description = "Ohne before alle Ereignisse des Abgleichs, sonst die vor diesem Zeitpunkt; der Abgleich "
+                    + "bleibt.")
+    @ApiResponse(responseCode = "200", description = "Anzahl gelöschter Ereignisse")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Abgleich mit dieser ID (sync-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Der Abgleich wartet oder läuft noch (job-running)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public DeletedResponse deleteEvents(@Parameter(hidden = true) AccessContext caller,
+                                        @Parameter(description = "ID aus der Location des Starts")
+                                        @PathVariable String syncId,
+                                        @Parameter(description = "ISO-8601-Zeitpunkt, z. B. 2026-10-17T12:00:00Z")
+                                        @RequestParam(name = "before", required = false) Instant before) {
+        visible(caller, syncs.status(syncId, owner(caller)));
+        return new DeletedResponse(syncs.deleteEventsBefore(syncId, before == null ? Instant.MAX : before,
+                owner(caller)));
     }
 
     /** Eigentümer eines Auftrags ({@link AccessContext#jobOwner()}); Clients und Endnutzer fallen nie zusammen. */

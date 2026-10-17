@@ -45,7 +45,8 @@ Einlesen eines Exports meldet nur Phasen, keine Seiten, und Warnungen nennen nur
 
 Die Ereignisse liegen in einem eigenen Lucene-Index unter `cache/job-events` (Schema `job-events/v1`), neben der
 Auftragsablage. Ohne Cache-Verzeichnis liegen sie im Speicher. Je Auftrag werden höchstens 500 Ereignisse gehalten.
-Sie verschwinden mit ihrem Auftrag nach `space-harvester.jobs.retention`. Ein Fehler der Ablage lässt keinen Auftrag
+Sie verschwinden mit ihrem Auftrag nach `space-harvester.jobs.retention` oder wenn der Auftraggeber sie löscht
+(siehe „Löschen“). Ein Fehler der Ablage lässt keinen Auftrag
 scheitern.
 
 ## Zugriff
@@ -54,6 +55,26 @@ scheitern.
   `Jobs.recentEvents(owner, limit)`, für Abgleiche auch `SpaceSyncJobs.events(syncId, owner)`.
 - REST: `GET /api/v1/exports/{exportId}/events` und `GET /api/v1/syncs/{syncId}/events`, mit denselben Freigaben wie
   der Status. Ein fremder oder unbekannter Auftrag antwortet mit 404.
+
+## Löschen
+
+Der Auftraggeber löscht beendete Aufträge (abgeschlossen, gescheitert, abgebrochen) und ihre Ereignisse selbst; die
+Löschung ist dauerhaft und überdauert den Neustart. Wartende und laufende Aufträge lassen sich nicht löschen
+(`JobStillRunningException`, REST 409 `job-running`): erst abbrechen, dann das Ende abwarten. Fremde Aufträge gelten
+wie beim Lesen als unbekannt (404).
+
+| Was | Bibliothek | REST |
+|---|---|---|
+| Ein Auftrag samt Ereignissen | `Harvester.deleteJob(jobId)` | `DELETE /api/v1/exports/{id}`, `DELETE /api/v1/syncs/{id}` (204) |
+| Alle beendeten Aufträge | `Harvester.deleteFinishedJobs()` | `DELETE /api/v1/exports`, `DELETE /api/v1/syncs` (`{"deleted": n}`) |
+| Ein Ereignis | `Harvester.deleteEvent(jobId, sequence)` | `DELETE …/{id}/events/{sequence}` (204, sonst 404 `event-not-found`) |
+| Ereignisse vor einem Zeitpunkt | `Harvester.deleteEventsBefore(Instant)` (alle eigenen Aufträge) | `DELETE …/{id}/events?before=2026-10-17T12:00:00Z` (ohne `before` alle) |
+
+Allgemein stehen dieselben Operationen an `Jobs` (`delete`, `deleteFinished`, `deleteEvent`, `deleteEventsBefore`)
+und für Abgleiche an `SpaceSyncJobs`. Die übrigen Ereignisse behalten ihre Nummern, und keine Nummer wird wieder
+vergeben. Gelöscht werden nur Einträge der Auftrags- und Diagnoseablage: Das Exportartefakt im Exportverzeichnis gehört
+zum Auftrag und verschwindet beim nächsten Aufräumen mit ihm; Dateien, die der Benutzer anderswo gespeichert hat, und
+der Seitenbestand eines Abgleichs bleiben unberührt.
 
 ## Welche Anfrage welchen Transport nimmt
 
