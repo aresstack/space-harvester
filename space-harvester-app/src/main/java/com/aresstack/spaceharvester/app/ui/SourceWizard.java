@@ -37,7 +37,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
- * Quellen-Assistent: legt eine Wissensquelle in der Konfigurationsdatei an. Schritte: Art, Adresse, Anmeldung,
+ * Quellen-Assistent: legt eine Wissensquelle in der Konfigurationsdatei an oder ändert eine bestehende an ihrer Stelle. Schritte: Art, Adresse, Anmeldung,
  * Zertifikate und Netz, Prüfen und Speichern. Passwort und Token kommen nie in die Datei, dort steht nur der
  * Platzhalter der Umgebungsvariable; ein hier eingegebener Wert gilt nur für den Test und diese Sitzung. Der
  * Verbindungstest läuft mit einem eigenen Harvester in einem leeren Arbeitsordner, bevor etwas gespeichert ist.
@@ -102,13 +102,20 @@ final class SourceWizard {
     final ComposerButton save = Comic.primary("Speichern", "Quelle in die Konfigurationsdatei schreiben und neu laden");
     final ComposerButton cancel = Comic.button("Abbrechen", null);
 
+    private final SourceDraft.Editable editing;
     private Step step = Step.KIND;
     private String suggestedVariable;
     private Runnable close = () -> { };
     private Consumer<String> saved = ignored -> { };
 
     SourceWizard(AppContext context) {
+        this(context, null);
+    }
+
+    /** @param editing bestehender Eintrag zum Bearbeiten oder {@code null} für eine neue Quelle */
+    SourceWizard(AppContext context, SourceDraft.Editable editing) {
         this.context = context;
+        this.editing = editing;
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(640, 470));
@@ -194,21 +201,30 @@ final class SourceWizard {
         test.addActionListener(e -> test(() -> { }));
         save.addActionListener(e -> save());
         cancel.addActionListener(e -> close.run());
+        if (editing != null) {
+            prefill(editing.draft());
+        }
         updateVisibility();
         show(Step.KIND);
     }
 
     /** Öffnet den Assistenten modal; {@code saved} erhält nach Speichern und Neu laden die ID der neuen Quelle. */
     static void open(Component parent, AppContext context, Consumer<String> saved) {
-        SourceWizard wizard = new SourceWizard(context);
-        JDialog dialog = Dialogs.dialog(parent, "Wissensquelle hinzufügen");
+        open(parent, context, null, saved);
+    }
+
+    /** Wie {@link #open(Component, AppContext, Consumer)}, aber zum Bearbeiten eines bestehenden Eintrags. */
+    static void open(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
+        SourceWizard wizard = new SourceWizard(context, editing);
+        String heading = editing == null ? "Wissensquelle hinzufügen" : "Wissensquelle bearbeiten";
+        JDialog dialog = Dialogs.dialog(parent, heading);
         wizard.saved = saved;
         wizard.close = dialog::dispose;
         JPanel content = new JPanel(new BorderLayout(0, 12));
         content.setBackground(Comic.SURFACE);
         content.setBorder(BorderFactory.createCompoundBorder(ComicBorder.windowBorder(Comic.PALETTE, 2),
                 BorderFactory.createEmptyBorder(14, 18, 14, 18)));
-        JLabel label = new JLabel("Wissensquelle hinzufügen");
+        JLabel label = new JLabel(heading);
         label.setFont(Comic.semiBold(16f));
         label.setForeground(Comic.INK);
         content.add(label, BorderLayout.NORTH);
@@ -258,7 +274,8 @@ final class SourceWizard {
                 pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
                 certificateType == null ? null : alias.getText(),
                 certificateType == null ? null : thumbprint.getText(),
-                !confluence || JAVA_TRUST.equals(bundle) ? null : bundle);
+                !confluence || JAVA_TRUST.equals(bundle) ? null : bundle,
+                editing == null ? null : editing.draft().extraOptions());
     }
 
     /** Nächster Schritt, wenn die Eingaben dieses Schritts vollständig sind. */
@@ -291,7 +308,7 @@ final class SourceWizard {
         SourceDraft source = draft();
         ConfigFileEditor.Draft draft;
         try {
-            draft = editor.draft(context.configFile(), source);
+            draft = write(source);
         } catch (IOException | RuntimeException e) {
             feedback.problem(e);
             done.run();
@@ -323,8 +340,8 @@ final class SourceWizard {
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         Background.run(() -> {
-            ConfigFileEditor.Draft draft = editor.draft(context.configFile(), source);
-            editor.save(context.configFile(), draft);
+            editor.save(context.configFile(), write(source),
+                    editing == null || editing.plaintextSecrets().isEmpty());
             return source.id();
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {
@@ -339,6 +356,47 @@ final class SourceWizard {
             save.setEnabled(true);
             feedback.problem(error);
         });
+    }
+
+    private ConfigFileEditor.Draft write(SourceDraft source) throws IOException {
+        return editing == null ? editor.draft(context.configFile(), source)
+                : editor.replace(context.configFile(), source);
+    }
+
+    private void prefill(SourceDraft source) {
+        boolean confluence = source.confluence();
+        kind.setSelectedItem(confluence ? CONFLUENCE : FILES);
+        kind.setEnabled(false);
+        id.setText(source.id());
+        id.setEditable(false);
+        title.setText(source.title() == null ? "" : source.title());
+        baseUrl.setText(source.baseUrl() == null ? "" : source.baseUrl());
+        directory.setText(source.directory() == null ? "" : source.directory());
+        include.setText(source.include() == null ? "" : source.include());
+        auth.setSelectedItem(switch (source.authType()) {
+            case PAT -> PAT;
+            case BASIC -> BASIC;
+            case NONE -> NONE;
+        });
+        username.setText(source.username() == null ? "" : source.username());
+        variable.setText(source.secretVariable() == null ? "" : source.secretVariable());
+        certificate.setSelectedItem(source.certificateType() == null ? NO_CERTIFICATE
+                : source.certificateType() == SourceSettingsConfig.CertificateStoreType.WINDOWS_MY ? WINDOWS_MY : PKCS12);
+        thumbprint.setText(source.thumbprint() == null ? "" : source.thumbprint());
+        alias.setText(source.certificateAlias() == null ? "" : source.certificateAlias());
+        certificatePath.setText(source.certificatePath() == null ? "" : source.certificatePath());
+        certificatePasswordVariable.setText(source.certificatePasswordVariable() == null ? ""
+                : source.certificatePasswordVariable());
+        if (source.trustBundle() != null) {
+            boolean listed = false;
+            for (int i = 0; i < trust.getItemCount(); i++) {
+                listed |= source.trustBundle().equals(trust.getItemAt(i));
+            }
+            if (!listed) {
+                trust.addItem(source.trustBundle());
+            }
+            trust.setSelectedItem(source.trustBundle());
+        }
     }
 
     void clearSecret() {
@@ -377,7 +435,7 @@ final class SourceWizard {
                 mine.add(problem);
             }
         }
-        if (current == Step.KIND && source.id() != null && context.settings() != null
+        if (current == Step.KIND && editing == null && source.id() != null && context.settings() != null
                 && context.settings().sources().stream().anyMatch(s -> s.id().equals(source.id()))) {
             mine.add("Eine Quelle mit der ID " + source.id() + " gibt es schon.");
         }
@@ -415,9 +473,16 @@ final class SourceWizard {
         SourceDraft source = draft();
         preview.setText(source.yaml(""));
         preview.setCaretPosition(0);
-        StringBuilder notes = new StringBuilder("Dieser Eintrag kommt in ")
+        StringBuilder notes = new StringBuilder(editing == null ? "Dieser Eintrag kommt in " : "Dieser Eintrag ersetzt ")
+                .append(editing == null ? "" : "den bisherigen der Quelle " + source.id() + " in ")
                 .append(context.configFile().toAbsolutePath()).append(" unter space-harvester.sources; der Rest der "
                         + "Datei bleibt unverändert, die vorige Fassung bleibt als .bak erhalten.");
+        if (editing != null && !editing.plaintextSecrets().isEmpty()) {
+            notes.append("\n\nDie Datei enthält ").append(String.join(" und ", editing.plaintextSecrets()))
+                    .append(" im Klartext. Beim Speichern steht dort nur noch der Platzhalter, und es entsteht keine "
+                            + ".bak-Sicherung mit dem Geheimnis; den Wert als Umgebungsvariable setzen oder hier für "
+                            + "diese Sitzung eingeben.");
+        }
         if (source.secretVariable() != null && System.getenv(source.secretVariable()) == null
                 && System.getProperty(source.secretVariable()) == null) {
             notes.append("\n\nDie Umgebungsvariable ").append(source.secretVariable()).append(" ist nicht gesetzt. ")

@@ -139,6 +139,95 @@ class ConfigFileEditorTest {
                 .anySatisfy(p -> assertThat(p).contains("Umgebungsvariable"));
     }
 
+    private static final String THREE = """
+            # Kopf bleibt
+            space-harvester:
+              sources:
+                - id: eins
+                  type: files
+                  options:
+                    directory: /tmp/eins
+                # zwei ist das Wiki
+                - id: zwei
+                  type: confluence
+                  title: Wiki
+                  base-url: https://wiki.example.org
+                  auth:
+                    type: pat
+                    token: ${ZWEI_TOKEN}
+                  options:
+                    connectTimeoutMillis: 2000
+                - id: drei
+                  type: files
+                  options:
+                    directory: /tmp/drei
+              network:
+                async-transport: web-client
+            """;
+
+    @Test
+    void editsAnEntryInPlaceAndKeepsOptionsTheWizardDoesNotAsk() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE);
+
+        SourceDraft.Editable editable = editor.editable(file, "zwei");
+        assertThat(editable.plaintextSecrets()).isEmpty();
+        SourceDraft zwei = editable.draft();
+        assertThat(zwei.secretVariable()).isEqualTo("ZWEI_TOKEN");
+        assertThat(zwei.extraOptions()).containsEntry("connectTimeoutMillis", "2000");
+
+        SourceDraft renamed = new SourceDraft(zwei.id(), zwei.type(), "Neues Wiki", zwei.baseUrl(), null, null,
+                zwei.authType(), null, zwei.secretVariable(), null, null, null, null, null, null, zwei.extraOptions());
+        editor.save(file, editor.replace(file, renamed));
+
+        String text = Files.readString(file);
+        assertThat(text).startsWith("# Kopf bleibt").contains("# zwei ist das Wiki", "title: \"Neues Wiki\"",
+                "connectTimeoutMillis: \"2000\"", "token: ${ZWEI_TOKEN}", "  network:\n    async-transport");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("eins", "zwei", "drei");
+        assertThat(settings.sources().get(1).config().options()).containsEntry("connectTimeoutMillis", "2000");
+        assertThat(home.resolve("app.yml.bak")).hasContent(THREE);
+    }
+
+    @Test
+    void removesOnlyTheChosenEntry() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE);
+
+        editor.save(file, editor.remove(file, "zwei"));
+
+        String text = Files.readString(file);
+        assertThat(text).doesNotContain("id: zwei", "ZWEI_TOKEN").contains("# zwei ist das Wiki", "id: drei");
+        assertThat(loader.load(file).sources()).extracting(AppSettings.SourceEntry::id).containsExactly("eins", "drei");
+        assertThat(editor.hasPlaintextSecret(file, "eins")).isFalse();
+        assertThatThrownBy(() -> editor.remove(file, "zwei")).hasMessageContaining("zwei");
+    }
+
+    @Test
+    void aPlaintextSecretIsReplacedByAPlaceholderAndLeavesNoBackup() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE.replace("${ZWEI_TOKEN}", "klartext-geheim"));
+        Files.writeString(home.resolve("app.yml.bak"), "alt mit klartext-geheim");
+        assertThat(editor.hasPlaintextSecret(file, "zwei")).isTrue();
+
+        SourceDraft.Editable editable = editor.editable(file, "zwei");
+        assertThat(editable.plaintextSecrets()).containsExactly("auth.token");
+        assertThat(editable.draft().secretVariable()).isEqualTo("ZWEI_TOKEN");
+        assertThat(editable.draft().toString()).doesNotContain("klartext-geheim");
+        editor.save(file, editor.replace(file, editable.draft()), false);
+
+        assertThat(Files.readString(file)).doesNotContain("klartext-geheim").contains("token: ${ZWEI_TOKEN}");
+        assertThat(home.resolve("app.yml.bak")).doesNotExist();
+    }
+
+    @Test
+    void entriesWithKeysTheWizardDoesNotKnowAreNotEdited() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE.replace("      title: Wiki", "      title: Wiki\n      enabled: false"));
+        assertThatThrownBy(() -> editor.editable(file, "zwei")).hasMessageContaining("enabled");
+    }
+
     private static SourceDraft wiki() {
         return new SourceDraft("wiki", "confluence", "Wiki", "https://wiki.example.org", null, null,
                 SourceSettingsConfig.AuthType.PAT, null, "WIKI_TOKEN",

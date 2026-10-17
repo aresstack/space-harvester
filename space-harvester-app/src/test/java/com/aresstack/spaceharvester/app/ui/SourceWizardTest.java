@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -92,6 +94,48 @@ class SourceWizardTest {
                 .containsExactly("handbuch", "notizen");
         assertThat(context.runtime().workspace().sources()).extracting(HarvestSource::id)
                 .containsExactly("handbuch", "notizen");
+    }
+
+    @Test
+    void editsAnExistingSourceInPlace() throws Exception {
+        Path handbuch = Files.createDirectories(home.resolve("handbuch"));
+        Path neu = Files.createDirectories(home.resolve("neu"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Alt
+                      options:
+                        directory: %s
+                        maxFileBytes: 1000
+                """.formatted(home.resolve("data"), handbuch));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "handbuch");
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context, editable);
+            w.onSaved(id -> saved.countDown());
+            assertThat(w.id.isEditable()).isFalse();
+            assertThat(w.title.getText()).isEqualTo("Alt");
+            w.title.setText("Neu");
+            assertThat(w.next()).as("ID ist schon vergeben, aber die eigene").isTrue();
+            w.directory.setText(neu.toString());
+            assertThat(w.next()).isTrue();
+            w.save();
+        });
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+        String text = Files.readString(config);
+        assertThat(text).contains("title: \"Neu\"", "maxFileBytes: \"1000\"").doesNotContain("title: Alt");
+        assertThat(context.settings().sources()).singleElement()
+                .satisfies(source -> assertThat(source.config().title()).isEqualTo("Neu"));
     }
 
     @Test

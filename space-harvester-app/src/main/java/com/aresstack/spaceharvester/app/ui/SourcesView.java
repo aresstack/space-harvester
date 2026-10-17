@@ -4,6 +4,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -24,6 +26,7 @@ import java.awt.Component;
 import java.awt.GridLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -53,6 +56,9 @@ public final class SourcesView implements View {
     private final ComposerButton export = Comic.button("Exportieren …", "Export dieses Space vorbereiten");
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
             "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
+    private final ComposerButton edit = Comic.button("Bearbeiten …", "Quelle im Assistenten ändern");
+    private final ComposerButton remove = Comic.button("Entfernen …",
+            "Quelle aus der Konfigurationsdatei entfernen; der lokale Bestand bleibt im Datenordner");
     private final JLabel title = new JLabel(" ");
 
     public SourcesView(AppContext context) {
@@ -85,6 +91,8 @@ public final class SourcesView implements View {
         title.setForeground(Comic.INK);
         check.addActionListener(e -> checkSelected());
         secret.addActionListener(e -> askSecret());
+        edit.addActionListener(e -> editSelected());
+        remove.addActionListener(e -> removeSelected());
         open.addActionListener(e -> selectedSpace().ifPresent(space ->
                 context.navigator().openSpace(selectedId(), space.key())));
         sync.addActionListener(e -> selectedSpace().ifPresent(space -> startSync(space.key())));
@@ -111,7 +119,7 @@ public final class SourcesView implements View {
         JPanel header = new JPanel(new BorderLayout(0, 8));
         header.setOpaque(false);
         header.add(title, BorderLayout.NORTH);
-        header.add(Comic.row(check, secret), BorderLayout.CENTER);
+        header.add(Comic.row(check, secret, edit, remove), BorderLayout.CENTER);
         header.add(feedback, BorderLayout.SOUTH);
 
         JPanel detail = new JPanel(new BorderLayout());
@@ -244,6 +252,8 @@ public final class SourcesView implements View {
         boolean running = entry != null && context.runtime() != null
                 && !context.runtime().waitingForSecret().contains(entry.id());
         check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
+        edit.setEnabled(entry != null);
+        remove.setEnabled(entry != null);
         secret.setVisible(entry != null && entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE);
         boolean space = running && spaces.getSelectedRow() >= 0;
         open.setEnabled(space);
@@ -279,6 +289,39 @@ public final class SourcesView implements View {
         context.reload(() -> { });
     }
 
+    private void editSelected() {
+        String id = selectedId();
+        if (id == null) {
+            return;
+        }
+        ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+        SourceDraft.Editable editable;
+        try {
+            editable = editor.editable(context.configFile(), id);
+        } catch (IOException | RuntimeException e) {
+            feedback.problem(e);
+            return;
+        }
+        SourceWizard.open(root, context, editable, this::select);
+    }
+
+    private void removeSelected() {
+        String id = selectedId();
+        if (id == null || !Dialogs.confirm(root, "Quelle entfernen",
+                "Die Quelle " + id + " wird aus der Konfigurationsdatei entfernt; die vorige Fassung bleibt als .bak "
+                        + "erhalten. Laufende Aufträge enden mit dem Neu laden. Der lokale Bestand im Datenordner "
+                        + "bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")) {
+            return;
+        }
+        ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+        feedback.working("Quelle wird entfernt …");
+        Background.execute(() -> editor.save(context.configFile(), editor.remove(context.configFile(), id),
+                !editor.hasPlaintextSecret(context.configFile(), id)), () -> {
+            context.secrets().remove(id);
+            context.reload(() -> feedback.success("Quelle " + id + " entfernt"));
+        }, feedback::problem);
+    }
+
     private void startSync(String spaceKey) {
         String id = selectedId();
         AppRuntime runtime = context.runtime();
@@ -302,18 +345,18 @@ public final class SourcesView implements View {
         return row < 0 ? Optional.empty() : Optional.of(spacesModel.rows.get(spaces.convertRowIndexToModel(row)));
     }
 
+    /**
+     * Eine Zeile der Quellenliste als ein HTML-Label: Name, Art und Ort, geprüfter Zustand. Ein einzelnes Label statt
+     * eines Panels mit Kindern, weil Listen Panels als Renderer ohne Layout malen und deren Text dann fehlt.
+     */
     private Component renderSource(JList<? extends AppSettings.SourceEntry> jlist, AppSettings.SourceEntry entry,
                                    int index, boolean selected, boolean focus) {
-        JPanel row = new JPanel(new GridLayout(3, 1, 0, 0));
-        row.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
-        row.setBackground(selected ? Comic.YELLOW : Comic.SURFACE);
         SourceSettingsConfig config = entry.config();
-        JLabel name = new JLabel(config.title() == null ? config.id() : config.title());
-        name.setFont(Comic.semiBold(13.5f));
-        name.setForeground(Comic.INK);
         String where = config.baseUrl() != null ? config.baseUrl().getHost()
                 : config.options().getOrDefault("directory", "");
-        JLabel kind = Comic.muted(Texts.sourceType(config.type()) + " · " + where);
+        if (where.length() > 22) {
+            where = "…" + where.substring(where.length() - 21);
+        }
         AppContext.Connection connection = context.connection(entry.id());
         String state;
         Color color;
@@ -340,12 +383,24 @@ public final class SourcesView implements View {
                 }
             }
         }
-        JLabel status = Comic.muted(state);
-        status.setForeground(color);
-        row.add(name);
-        row.add(kind);
-        row.add(status);
+        JLabel row = new JLabel("<html><b style='font-size:1.05em'>"
+                + html(config.title() == null ? config.id() : config.title()) + "</b><br>"
+                + "<span style='color:" + hex(Comic.MUTED) + "'>" + html(Texts.sourceType(config.type()) + " · " + where)
+                + "</span><br><span style='color:" + hex(color) + "'>" + html(state) + "</span></html>");
+        row.setFont(Comic.regular(12.5f));
+        row.setForeground(Comic.INK);
+        row.setOpaque(true);
+        row.setBackground(selected ? Comic.YELLOW : Comic.SURFACE);
+        row.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
         return row;
+    }
+
+    private static String html(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private static String hex(Color color) {
+        return String.format("#%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue());
     }
 
     private static final class SpacesModel extends AbstractTableModel {

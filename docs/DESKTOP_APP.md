@@ -43,7 +43,12 @@ Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu lad
    unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources` an, lässt Kommentare und den Rest der Datei
    unverändert, legt die vorige Fassung als `<datei>.bak` ab und lädt neu.
 
-Ändern oder Entfernen einer Quelle geschieht weiter in der Datei (**Einstellungen › Datei öffnen**).
+**Bearbeiten …** öffnet denselben Assistenten mit den Angaben der gewählten Quelle (ID und Art bleiben fest) und
+ersetzt den Eintrag an seiner Stelle. Optionen, die der Assistent nicht abfragt (z. B. `connectTimeoutMillis`),
+bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht ein Passwort,
+Token oder Zertifikatspasswort im Klartext in der Datei, ersetzt der Assistent es durch den Platzhalter und legt keine
+`.bak` mit dem Geheimnis an (eine vorhandene wird gelöscht). **Entfernen …** nimmt den Eintrag nach Rückfrage aus der
+Datei; der lokale Bestand im Datenordner bleibt liegen.
 
 ## Konfiguration
 
@@ -106,7 +111,7 @@ spring:
 | Bereich | Inhalt |
 |---|---|
 | Übersicht | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge |
-| Wissensquellen | Quelle hinzufügen (Assistent), Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
+| Wissensquellen | Quelle hinzufügen, bearbeiten und entfernen (Assistent), Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
 | Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
 | Aktivitäten | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
 | Exporte | Space und Formate wählen, Export starten, letzte Exporte |
@@ -155,7 +160,7 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
-| – | `Harvester.builder` mit nur der neuen Quelle, `SourceQueries.partitions` | Wissensquellen › Quelle hinzufügen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
+| – | `Harvester.builder` mit nur der neuen Quelle, `SourceQueries.partitions` | Wissensquellen › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
 | – | – | Konfiguration, Platzhalter, fehlende Zugangsdaten | `AppSettingsLoaderTest`, `PlaceholdersTest`, `WorkspaceTest.aSourceWithoutToken…` |
 | – | Auftragsliste der App | Aktivitäten nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
 

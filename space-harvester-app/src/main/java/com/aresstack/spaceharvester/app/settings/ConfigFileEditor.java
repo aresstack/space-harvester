@@ -13,12 +13,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
- * Trägt eine neue Quelle in die Konfigurationsdatei ein, ohne den Rest der Datei anzufassen: Kommentare, Reihenfolge
- * und Platzhalter bleiben, der Eintrag kommt ans Ende von {@code space-harvester.sources}. Vor dem Schreiben wird der
- * neue Text wie beim Start gelesen; scheitert das, bleibt die Datei unverändert. Die vorige Fassung liegt danach als
- * {@code <datei>.bak} daneben.
+ * Trägt Quellen in die Konfigurationsdatei ein, ersetzt oder entfernt sie, ohne den Rest der Datei anzufassen:
+ * Kommentare, Reihenfolge und Platzhalter bleiben, ein neuer Eintrag kommt ans Ende von {@code space-harvester.sources},
+ * ein geänderter an seine bisherige Stelle. Vor dem Schreiben wird der neue Text wie beim Start gelesen; scheitert das,
+ * bleibt die Datei unverändert. Die vorige Fassung liegt danach als {@code <datei>.bak} daneben.
  */
 public final class ConfigFileEditor {
 
@@ -66,13 +67,89 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Der Dateitext, in dem der Eintrag mit der ID von {@code source} an derselben Stelle durch die neuen Angaben
+     * ersetzt ist.
+     */
+    public Draft replace(Path file, SourceDraft source) throws IOException {
+        List<String> problems = source.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String current = Files.readString(file, StandardCharsets.UTF_8);
+        List<String> before = configuredIds(current);
+        Edit edit = locate(current, source.id());
+        List<String> lines = edit.lines();
+        lines.subList(edit.start(), edit.end()).clear();
+        add(lines, edit.start(), source.yaml(edit.indent()));
+        String text = String.join(edit.newline(), lines) + edit.newline();
+        if (!configuredIds(text).equals(before)) {
+            throw unsupported("der Eintrag ließ sich nicht eindeutig abgrenzen");
+        }
+        AppSettings settings = loader.read(file, text);
+        if (settings.sources().stream().noneMatch(entry -> entry.id().equals(source.id()))) {
+            List<String> mine = settings.problems().stream().filter(p -> p.contains(source.id())).toList();
+            throw new IllegalArgumentException(mine.isEmpty()
+                    ? "Die geänderte Quelle ließ sich nicht lesen; bitte die Datei von Hand bearbeiten."
+                    : String.join(" ", mine));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Der Dateitext ohne den Eintrag {@code sourceId}; Kommentare um ihn herum bleiben stehen. */
+    public Draft remove(Path file, String sourceId) throws IOException {
+        String current = Files.readString(file, StandardCharsets.UTF_8);
+        List<String> expected = new ArrayList<>(configuredIds(current));
+        expected.remove(sourceId);
+        Edit edit = locate(current, sourceId);
+        List<String> lines = edit.lines();
+        lines.subList(edit.start(), edit.end()).clear();
+        String text = String.join(edit.newline(), lines) + edit.newline();
+        if (!configuredIds(text).equals(expected)) {
+            throw unsupported("der Eintrag ließ sich nicht eindeutig abgrenzen");
+        }
+        return new Draft(text, loader.read(file, text));
+    }
+
+    /**
+     * Der Eintrag {@code sourceId} so, wie der Assistent ihn bearbeiten kann.
+     *
+     * @throws IllegalArgumentException wenn der Eintrag Schlüssel enthält, die der Assistent nicht kennt; sie gingen
+     *                                  beim Speichern verloren
+     */
+    public SourceDraft.Editable editable(Path file, String sourceId) throws IOException {
+        Map<?, ?> raw = rawSource(Files.readString(file, StandardCharsets.UTF_8), sourceId);
+        return SourceDraft.from(raw);
+    }
+
+    /** Ob der Eintrag Passwort, Token oder Zertifikatspasswort im Klartext statt als Platzhalter enthält. */
+    public boolean hasPlaintextSecret(Path file, String sourceId) throws IOException {
+        Map<?, ?> raw = rawSource(Files.readString(file, StandardCharsets.UTF_8), sourceId);
+        Map<?, ?> auth = AppSettingsLoader.map(AppSettingsLoader.get(raw, "auth"));
+        Map<?, ?> certificate = AppSettingsLoader.map(AppSettingsLoader.get(raw, "client-certificate"));
+        return Stream.of(AppSettingsLoader.get(auth, "password"), AppSettingsLoader.get(auth, "token"),
+                        AppSettingsLoader.get(certificate, "password"))
+                .filter(value -> value != null && !String.valueOf(value).isBlank())
+                .anyMatch(value -> !String.valueOf(value).strip().matches("\\$\\{[^}]+}"));
+    }
+
     /** Schreibt den Entwurf; die bisherige Datei bleibt als {@code .bak} erhalten. */
     public void save(Path file, Draft draft) throws IOException {
+        save(file, draft, true);
+    }
+
+    /**
+     * @param backup {@code false}, wenn die bisherige Fassung ein Geheimnis im Klartext enthält: Dann entsteht keine
+     *               Sicherung, und eine alte {@code .bak} wird gelöscht, damit das Geheimnis nicht liegen bleibt
+     */
+    public void save(Path file, Draft draft, boolean backup) throws IOException {
         Path target = file.toAbsolutePath();
         Files.createDirectories(target.getParent());
-        if (Files.isRegularFile(target)) {
-            Files.copy(target, target.resolveSibling(target.getFileName() + ".bak"),
-                    StandardCopyOption.REPLACE_EXISTING);
+        Path bak = target.resolveSibling(target.getFileName() + ".bak");
+        if (!backup) {
+            Files.deleteIfExists(bak);
+        } else if (Files.isRegularFile(target)) {
+            Files.copy(target, bak, StandardCopyOption.REPLACE_EXISTING);
         }
         Path temp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".tmp");
         try {
@@ -198,6 +275,106 @@ public final class ConfigFileEditor {
             }
         }
         return ids;
+    }
+
+    /** Zeilen eines Eintrags in der Liste {@code sources}: {@code [start, end)} ohne folgende Leer-/Kommentarzeilen. */
+    private record Edit(List<String> lines, int start, int end, String indent, String newline) {
+    }
+
+    private static Edit locate(String text, String sourceId) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size() && root < 0; i++) {
+            if (ROOT.matcher(lines.get(i)).matches()) {
+                root = i;
+            }
+        }
+        int sources = -1;
+        int childIndent = -1;
+        for (int i = root + 1; root >= 0 && i < lines.size() && sources < 0; i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            if (indent == 0) {
+                break;
+            }
+            if (childIndent < 0) {
+                childIndent = indent;
+            }
+            if (indent == childIndent && SOURCES.matcher(line).matches()) {
+                sources = i;
+            }
+        }
+        if (sources < 0) {
+            throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
+        }
+        List<Integer> starts = new ArrayList<>();
+        int itemIndent = -1;
+        int listEnd = sources + 1;
+        for (int i = sources + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            int indent = indent(line);
+            boolean item = indent > childIndent || (indent == childIndent && line.strip().startsWith("- "));
+            if (!item) {
+                break;
+            }
+            if (itemIndent < 0) {
+                itemIndent = indent;
+            }
+            if (indent == itemIndent && line.strip().startsWith("- ")) {
+                starts.add(i);
+            }
+            listEnd = i + 1;
+        }
+        starts.add(listEnd);
+        for (int k = 0; k + 1 < starts.size(); k++) {
+            int start = starts.get(k);
+            int end = starts.get(k + 1);
+            while (end > start + 1 && blankOrComment(lines.get(end - 1))) {
+                end--;
+            }
+            StringBuilder block = new StringBuilder();
+            for (int i = start; i < end; i++) {
+                String line = lines.get(i);
+                block.append(line.length() >= itemIndent ? line.substring(itemIndent) : line.strip()).append('\n');
+            }
+            Object parsed;
+            try {
+                parsed = AppSettingsLoader.yaml().load(block.toString());
+            } catch (YAMLException e) {
+                continue;
+            }
+            if (parsed instanceof List<?> list && list.size() == 1 && list.get(0) instanceof Map<?, ?> entry
+                    && sourceId.equals(String.valueOf(AppSettingsLoader.get(entry, "id")).strip())) {
+                return new Edit(lines, start, end, " ".repeat(itemIndent), newline);
+            }
+        }
+        throw new IllegalArgumentException("Der Eintrag der Quelle " + sourceId + " ließ sich in der Datei nicht "
+                + "abgrenzen; bitte von Hand bearbeiten (Einstellungen › Datei öffnen).");
+    }
+
+    private static Map<?, ?> rawSource(String text, String sourceId) {
+        Object document = AppSettingsLoader.yaml().load(text);
+        if (document instanceof Map<?, ?> map
+                && AppSettingsLoader.get(map, AppSettingsLoader.ROOT) instanceof Map<?, ?> root
+                && AppSettingsLoader.get(root, "sources") instanceof List<?> list) {
+            for (Object entry : list) {
+                if (entry instanceof Map<?, ?> source
+                        && sourceId.equals(String.valueOf(AppSettingsLoader.get(source, "id")).strip())) {
+                    return source;
+                }
+            }
+        }
+        throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
     }
 
     private static void add(List<String> lines, int at, String block) {
