@@ -1,0 +1,113 @@
+# Synthetische Prüfsätze für das deutsche Modell (#99), eigene Sätze, keine GSD-Daten; Lizenz wie das Repository (MIT).
+# Annotation nach den Konventionen von UD German GSD (Dativobjekte als obl:arg, Verschmelzungen als Mehrwort-Zeilen).
+# expect = <Wort-ID>:<DEPREL>:<HEAD> ... nennt die Kanten, die die Auswertung je Satz prüft.
+
+# sent_id = synthetic-1
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg des Kunden.
+# expect = 2:nsubj:3 5:obl:arg:3 8:obl:3 10:obj:3 12:nmod:10
+1	Der	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	nsubj	_	_
+3	übermittelt	übermitteln	VERB	VVFIN	_	0	root	_	_
+4	dem	der	DET	ART	_	5	det	_	_
+5	Vorgesetzten	Vorgesetzter	NOUN	NN	_	3	obl:arg	_	_
+6-7	am	_	_	_	_	_	_	_	_
+6	an	an	ADP	APPR	_	8	case	_	_
+7	dem	der	DET	ART	_	8	det	_	_
+8	Montag	Montag	PROPN	NN	_	3	obl	_	_
+9	den	der	DET	ART	_	10	det	_	_
+10	Beleg	Beleg	NOUN	NN	_	3	obj	_	_
+11	des	der	DET	ART	_	12	det	_	_
+12	Kunden	Kunde	NOUN	NN	_	10	nmod	_	_
+13	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-2
+# text = Der Sachbearbeiter prüft den Beleg des Kunden am Montag.
+# expect = 2:nsubj:3 5:obj:3 7:nmod:5 10:obl:3
+1	Der	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Beleg	Beleg	NOUN	NN	_	3	obj	_	_
+6	des	der	DET	ART	_	7	det	_	_
+7	Kunden	Kunde	NOUN	NN	_	5	nmod	_	_
+8-9	am	_	_	_	_	_	_	_	_
+8	an	an	ADP	APPR	_	10	case	_	_
+9	dem	der	DET	ART	_	10	det	_	_
+10	Montag	Montag	PROPN	NN	_	3	obl	_	_
+11	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-passive
+# text = Der Beleg wird vom Sachbearbeiter geprüft.
+# expect = 2:nsubj:pass:7 3:aux:pass:7 6:obl:agent:7
+1	Der	der	DET	ART	_	2	det	_	_
+2	Beleg	Beleg	NOUN	NN	_	7	nsubj:pass	_	_
+3	wird	werden	AUX	VAFIN	_	7	aux:pass	_	_
+4-5	vom	_	_	_	_	_	_	_	_
+4	von	von	ADP	APPR	_	6	case	_	_
+5	dem	der	DET	ART	_	6	det	_	_
+6	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	7	obl:agent	_	_
+7	geprüft	prüfen	VERB	VVPP	_	0	root	_	_
+8	.	.	PUNCT	$.	_	7	punct	_	_
+
+# sent_id = synthetic-separable
+# text = Der Kunde reicht den Antrag heute ein.
+# expect = 2:nsubj:3 5:obj:3 7:compound:prt:3
+1	Der	der	DET	ART	_	2	det	_	_
+2	Kunde	Kunde	NOUN	NN	_	3	nsubj	_	_
+3	reicht	einreichen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	3	obj	_	_
+6	heute	heute	ADV	ADV	_	3	advmod	_	_
+7	ein	ein	ADP	PTKVZ	_	3	compound:prt	_	_
+8	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-coordination
+# text = Die Sachbearbeiterin prüft den Antrag und leitet ihn weiter.
+# expect = 2:nsubj:3 5:obj:3 7:conj:3 8:obj:7 9:compound:prt:7
+1	Die	der	DET	ART	_	2	det	_	_
+2	Sachbearbeiterin	Sachbearbeiterin	NOUN	NN	_	3	nsubj	_	_
+3	prüft	prüfen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Antrag	Antrag	NOUN	NN	_	3	obj	_	_
+6	und	und	CCONJ	KON	_	7	cc	_	_
+7	leitet	weiterleiten	VERB	VVFIN	_	3	conj	_	_
+8	ihn	er	PRON	PPER	_	7	obj	_	_
+9	weiter	weiter	ADP	PTKVZ	_	7	compound:prt	_	_
+10	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-dative-time
+# text = Der Kunde schickt der Behörde morgen das Formular.
+# expect = 2:nsubj:3 5:obl:arg:3 6:advmod:3 8:obj:3
+1	Der	der	DET	ART	_	2	det	_	_
+2	Kunde	Kunde	NOUN	NN	_	3	nsubj	_	_
+3	schickt	schicken	VERB	VVFIN	_	0	root	_	_
+4	der	der	DET	ART	_	5	det	_	_
+5	Behörde	Behörde	NOUN	NN	_	3	obl:arg	_	_
+6	morgen	morgen	ADV	ADV	_	3	advmod	_	_
+7	das	der	DET	ART	_	8	det	_	_
+8	Formular	Formular	NOUN	NN	_	3	obj	_	_
+9	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-no-object
+# text = Der Vorgesetzte antwortet dem Kunden am Dienstag.
+# expect = 2:nsubj:3 5:obl:arg:3 8:obl:3
+1	Der	der	DET	ART	_	2	det	_	_
+2	Vorgesetzte	Vorgesetzter	NOUN	NN	_	3	nsubj	_	_
+3	antwortet	antworten	VERB	VVFIN	_	0	root	_	_
+4	dem	der	DET	ART	_	5	det	_	_
+5	Kunden	Kunde	NOUN	NN	_	3	obl:arg	_	_
+6-7	am	_	_	_	_	_	_	_	_
+6	an	an	ADP	APPR	_	8	case	_	_
+7	dem	der	DET	ART	_	8	det	_	_
+8	Dienstag	Dienstag	PROPN	NN	_	3	obl	_	_
+9	.	.	PUNCT	$.	_	3	punct	_	_
+
+# sent_id = synthetic-pronouns
+# text = Er übermittelt ihr den Bericht.
+# expect = 1:nsubj:2 3:obl:arg:2 5:obj:2
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	übermittelt	übermitteln	VERB	VVFIN	_	0	root	_	_
+3	ihr	sie	PRON	PPER	_	2	obl:arg	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Bericht	Bericht	NOUN	NN	_	2	obj	_	_
+6	.	.	PUNCT	$.	_	2	punct	_	_

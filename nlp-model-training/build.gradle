@@ -1,0 +1,105 @@
+// Modellfabrik für das deutsche MaltParser-Modell (#99): holt die gepinnte UD-German-GSD-Treebank, trainiert,
+// evaluiert, verpackt und prüft das Modell. Kein anderes Projekt hängt hiervon ab; Training läuft nur über die
+// ausdrücklich aufgerufenen Tasks unten, nie über build, test, check oder assemble. Anleitung: README.md.
+plugins {
+    id 'java'
+}
+
+description = 'Training, Evaluation und Verpackung des deutschen MaltParser-Modells (maltparser-de-gsd).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    implementation libs.maltparser
+    implementation libs.gson
+    // Vorhergesagte Wortarten für die zweite Evaluation, dieselben Modelle wie die Vorverarbeitung aus #98
+    implementation libs.opennlp.tools
+    runtimeOnly libs.opennlp.models.pos.de
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// MaltParser 1.9.2 zieht log4j 1.2.16 (CVE-2019-17571, CVE-2021-4104, CVE-2022-23302/23305/23307). reload4j ist der
+// gepflegte, API-gleiche Nachfolger; MaltParser nutzt nur Logger und ConsoleAppender (README.md, Abhängigkeiten).
+configurations.configureEach {
+    resolutionStrategy.dependencySubstitution {
+        substitute module('log4j:log4j') using module("ch.qos.reload4j:reload4j:${libs.versions.reload4j.get()}") because 'log4j 1.x ist verwundbar und nicht mehr gepflegt'
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// ---- Modellherstellung, nur auf ausdrücklichen Aufruf ----
+
+def recipe = layout.projectDirectory.file('model/maltparser-de-gsd.properties')
+def work = layout.buildDirectory.dir('maltparser-de-gsd')
+def treebankDir = providers.gradleProperty('treebankDir')
+        .map { layout.projectDirectory.dir(it) }
+        .orElse(layout.buildDirectory.dir('treebank'))
+def trainingHeap = providers.gradleProperty('trainingHeap')
+def trainingCommit = providers.environmentVariable('GITHUB_SHA')
+        .orElse(providers.exec { commandLine 'git', 'rev-parse', 'HEAD'; ignoreExitValue = true }
+                .standardOutput.asText.map { it.trim() })
+
+def modelTask = { String name, String command, String text ->
+    tasks.register(name, JavaExec) {
+        group = 'model training'
+        description = text
+        classpath = sourceSets.main.runtimeClasspath
+        mainClass = 'com.aresstack.spaceharvester.nlp.training.TrainingCli'
+        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+        maxHeapSize = '2g'
+        jvmArgs '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8'
+        args command, '--recipe', recipe.asFile.absolutePath,
+                '--treebank', treebankDir.get().asFile.absolutePath,
+                '--work', work.get().asFile.absolutePath
+        if (trainingHeap.isPresent()) {
+            args '--heap', trainingHeap.get()
+        }
+        systemProperty 'training.commit', trainingCommit.getOrElse('unknown')
+        systemProperty 'training.gradleVersion', gradle.gradleVersion
+        outputs.upToDateWhen { false }
+    }
+}
+
+def prepare = modelTask('prepareGermanTreebank', 'prepare',
+        'Lädt die gepinnten GSD-Dateien und prüft ihre SHA-256 (vorhandene, passende Dateien werden nicht neu geladen).')
+def validate = modelTask('validateGermanTreebank', 'validate',
+        'Prüft die Treebank als CoNLL-U und schreibt die normalisierten Train-/Dev-/Testdateien.')
+def train = modelTask('trainGermanModel', 'train',
+        'Trainiert das MaltParser-Modell aus dem Train-Teil (eigene JVM mit Heap- und Zeitgrenze).')
+def evaluate = modelTask('evaluateGermanModel', 'evaluate',
+        'Evaluiert auf Dev und Test mit Gold- und vorhergesagten Wortarten, Baseline, Testsätze und Qualitätsgrenzen.')
+def pack = modelTask('packageGermanModel', 'package',
+        'Verpackt Modell, Manifest, Evaluation, Lizenz und Attribution als Release-Assets mit SHA256SUMS.')
+def verify = modelTask('verifyGermanModel', 'verify',
+        'Lädt das verpackte Modell wie ein Verbraucher (SHA-256, Manifest, Parsen ohne Training).')
+
+validate.configure { dependsOn prepare }
+train.configure { dependsOn validate }
+evaluate.configure { mustRunAfter train }
+pack.configure { mustRunAfter evaluate }
+verify.configure { mustRunAfter pack }
+
+tasks.register('buildGermanModel') {
+    group = 'model training'
+    description = 'Ganzer Lauf: Treebank holen und prüfen, trainieren, evaluieren, verpacken, als Verbraucher laden.'
+    dependsOn train, evaluate, pack, verify
+}

@@ -25,6 +25,13 @@ gson = "2.10.1"
 jsoup = "1.17.2"
 jgraphx = "4.2.2"
 junit4 = "4.13.2"
+# nlp-model-training (#99): MaltParser 1.9.2 wie im Laufzeitmodul aus #98; reload4j ersetzt dessen log4j 1.2.16,
+# OpenNLP liefert vorhergesagte Wortarten für die Evaluation, JUnit wie in der Spring-Boot-BOM
+maltparser = "1.9.2"
+reload4j = "1.2.26"
+opennlp = "2.5.12"
+opennlpModels = "1.3.0"
+junitJupiter = "6.0.3"
 
 [libraries]
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
@@ -39,6 +46,11 @@ spring-cloud-azure-dependencies = { module = "com.azure.spring:spring-cloud-azur
 pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
 onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
 djl-tokenizers = { module = "ai.djl.huggingface:tokenizers", version.ref = "djlTokenizers" }
+maltparser = { module = "org.maltparser:maltparser", version.ref = "maltparser" }
+reload4j = { module = "ch.qos.reload4j:reload4j", version.ref = "reload4j" }
+opennlp-tools = { module = "org.apache.opennlp:opennlp-tools", version.ref = "opennlp" }
+opennlp-models-pos-de = { module = "org.apache.opennlp:opennlp-models-pos-de", version.ref = "opennlpModels" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junitJupiter" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

@@ -30,7 +30,7 @@ jobs:
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py build/test-results enterprise-ai-sources/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py build/test-results enterprise-ai-sources/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -40,4 +40,6 @@ jobs:
             build/test-results/
             enterprise-ai-sources/build/reports/tests/
             enterprise-ai-sources/build/test-results/
+            nlp-model-training/build/reports/tests/
+            nlp-model-training/build/test-results/
           if-no-files-found: ignore
