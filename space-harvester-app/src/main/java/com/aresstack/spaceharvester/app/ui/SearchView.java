@@ -120,8 +120,10 @@ public final class SearchView implements View {
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
         head.add(lines, BorderLayout.NORTH);
-        head.add(Comic.note("Gesucht wird live in den Quellen über Titel und Inhalt; Treffer werden dabei übernommen. "
-                + "Doppelklick öffnet die Seite unter Inhalte."), BorderLayout.CENTER);
+        head.add(Comic.note("Mit Suchtext sortiert nach Titel oder Neueste suchen Quellen mit Volltextsuche live über "
+                + "Titel und Inhalt; Treffer werden dabei übernommen. Relevanz und eine Suche ohne Text nutzen den "
+                + "lokalen Bestand. Die Zeile unter der Liste sagt, woher die Treffer stammen. Doppelklick öffnet die "
+                + "Seite unter Inhalte."), BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
@@ -262,7 +264,7 @@ public final class SearchView implements View {
             } else if (outcome.hits().isEmpty()) {
                 feedback.info("Keine Treffer", outcome.live()
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
-                        : "Keine Quelle war für die Live-Suche erreichbar, und im Bestand passt kein Titel.");
+                        : "Im lokalen Bestand passt keine Seite.");
             } else {
                 feedback.clear();
             }
