@@ -64,9 +64,21 @@ class HarvesterSearchTest {
 
             assertThat(results.live()).isTrue();
             assertThat(results.nextCursor()).isNull();
+            // sort=title: „Bereitschaft“ vor „Prüfung“, nicht in der Rangfolge der Quelle.
             assertThat(results.hits()).extracting(SearchHit::page).extracting(page -> page.header().key().pageId())
-                    .containsExactly("102", "200");
+                    .containsExactly("200", "102");
             assertThat(harvester.pages().page(harvester.caller(), "wiki", "102", false).live()).isFalse();
+        }
+    }
+
+    @Test
+    void theRequestedSortAppliesToTheHitsOfTheSource() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            SearchResults results = harvester.search().search(harvester.caller(), PageSearchQuery.of("wiki",
+                    List.of(), List.of(), "Nachtlauf", null, null, null, null, null, SearchSort.PAGE_ID), null, 1);
+
+            assertThat(results.hits()).extracting(hit -> hit.page().header().key().pageId()).containsExactly("102");
+            assertThat(results.complete()).isFalse();
         }
     }
 

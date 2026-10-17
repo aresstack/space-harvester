@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
+import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
@@ -231,9 +232,10 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Suche über Titel und Inhalt: mit Suchtext live in den Quellen, Treffer werden nachgeladen und indexiert; sonst
-     * Titel- und Metadatensuche im Index ({@link ProvisioningSearch}).
+     * Titel- und Metadatensuche im Index. Liefert eine {@link ProvisioningSearch}; der Rückgabetyp bleibt
+     * {@link PageSearch}, damit eingebettete Programme unverändert weiterlaufen.
      */
-    public ProvisioningSearch search() {
+    public PageSearch search() {
         return search;
     }
 

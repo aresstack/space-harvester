@@ -17,6 +17,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Verdrahtet die cachegestützte Query-API (#27) und die Suche (#28). Solange kein {@link PageCacheReader} bzw.
@@ -34,7 +35,12 @@ class QueryConfiguration {
                 fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes);
     }
 
+    /**
+     * Die reine Indexsuche, etwa für die Confluence-kompatible Fassade. {@code @Primary}, weil
+     * {@link ProvisioningSearch} ebenfalls eine {@link PageSearch} ist und nur ausdrücklich angefordert wird.
+     */
     @Bean
+    @Primary
     PageSearch pageSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access) {
         return new PageSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access);
     }

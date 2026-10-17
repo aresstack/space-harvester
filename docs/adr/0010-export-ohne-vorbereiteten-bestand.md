@@ -79,9 +79,10 @@ zwischengespeichert.
    keine Quelle mehr Treffer hatte als abgefragt. Ohne Suchtext, mit Cursor, für Quellen ohne eigene Suche, ohne
    `content` für die Quelle oder wenn die Quelle nicht antwortet, gilt die Titelsuche im Index (`origin: cache`);
    ist die einzige Quelle nicht erreichbar und nichts von ihr im Index, ist es `source-unavailable`. Global werden
-   die Quellen in Konfigurationsreihenfolge abgefragt. Hinter den Treffern der Quellen folgen ohne Doppelte die
+   die Quellen in Konfigurationsreihenfolge abgefragt. Zu den Treffern der Quellen kommen ohne Doppelte die
    Titeltreffer aus dem Index über alle Quellen des Umfangs (Quellen ohne eigene Suche, Seiten, die der Suchindex der
-   Quelle noch nicht kennt); `sourceIds` gilt wie in ADR 0009.
+   Quelle noch nicht kennt); alle zusammen stehen in der Sortierung der Anfrage (`sort`). `sourceIds` gilt wie in
+   ADR 0009.
 
 ## Folgeschritte
 
