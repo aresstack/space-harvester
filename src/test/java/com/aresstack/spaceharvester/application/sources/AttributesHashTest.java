@@ -46,6 +46,19 @@ class AttributesHashTest {
     }
 
     @Test
+    void incompleteAttributesAreRecognisedWithoutChangingTheHashOfCompleteOnes() {
+        PageMetadata complete = page(Map.of("confluence.labels", "api"));
+        PageMetadata truncated = page(Map.of("confluence.labels", "api", "confluence.labels.complete", "false"));
+
+        assertThat(complete.attributesComplete()).isTrue();
+        assertThat(page(Map.of("confluence.labels.complete", "true")).attributesComplete()).isTrue();
+        assertThat(truncated.attributesComplete()).isFalse();
+        assertThat(AttributesHash.of("wiki", complete)).isEqualTo("sha256:" + sha256(
+                "{\"schema\":\"page-attributes/v1\",\"sourceId\":\"wiki\",\"pageId\":\"101\","
+                        + "\"attributes\":{\"confluence.labels\":\"api\"}}"));
+    }
+
+    @Test
     void metadataChangesDoNotTouchTheAttributesHash() {
         PageMetadata page = page(Map.of("confluence.labels", "api"));
         PageMetadata renamed = new PageMetadata("101", page.resourceId(), "Neuer Titel", "DEV", "100", "4",
