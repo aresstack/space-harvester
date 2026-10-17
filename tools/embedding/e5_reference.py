@@ -3,7 +3,7 @@
 
 Unabhängig vom ONNX-Weg des Harvesters: Tokenizer und Gewichte aus transformers, Mean-Pooling über die
 Attention-Maske, L2-Normierung, Präfixe "query: " und "passage: " wie in der Modellkarte. Ergebnis als JSON auf
-stdout; liegt als src/test/resources/embedding/multilingual-e5-small/reference.json im Repository.
+stdout; liegt als space-harvester-core/src/test/resources/embedding/multilingual-e5-small/reference.json im Repository.
 
     python3 tools/embedding/e5_reference.py <modellverzeichnis> > reference.json
 

@@ -1,0 +1,99 @@
+// Bibliothek: Fachlogik, Quellenadapter, Lucene-Cache, Export und Embeddings ohne Spring Boot, ohne REST und ohne
+// ApplicationContext. Zuordnung und Ausnahmen (Spring WebClient im asynchronen Transport) in docs/MODULES.md (#100).
+plugins {
+    id 'java-library'
+    id 'java-test-fixtures'
+}
+
+description = 'Space Harvester Core – erntet Wissensquellen (zunächst Confluence Data Center) als Java-Bibliothek.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // Confluence- und Dateiquelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
+    implementation project(':enterprise-ai-sources')
+    // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
+    implementation libs.win.proxy.java
+    // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als HTTP-Client
+    implementation libs.spring.webflux
+    implementation libs.reactor.netty.http
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+    // Seiten-Cache und Index, nur im Paket persistence (#26)
+    implementation libs.lucene.core
+    // Storage-Format (XHTML mit ac:/ri:-Elementen) lesen für Ausgabe-Converter (#30); dieselbe Version wie die Kopie
+    implementation libs.jsoup
+    // PDF-Ausgabe (#30), nur im Paket output.convert
+    implementation libs.pdfbox
+    // Lokales Embedding-Modell (#89), nur im Paket embedding.onnx; ohne Provider onnx unbenutzt
+    implementation libs.onnxruntime
+    implementation libs.djl.tokenizers
+
+    // Testversionen aus der Spring-Boot-BOM; nur Testklassenpfad, nicht in der veröffentlichten POM
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation 'org.mockito:mockito-core'
+    // OutputCaptureExtension für Log-Prüfungen (keine Secrets in Logs)
+    testImplementation 'org.springframework.boot:spring-boot-test'
+    testImplementation libs.archunit.junit5
+    testImplementation testFixtures(project(':enterprise-ai-sources'))
+    testImplementation libs.lucene.core
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // SLF4J-Ausgabe in Tests wie im Server, damit Log-Prüfungen (OutputCaptureExtension) etwas sehen
+    testRuntimeOnly 'ch.qos.logback:logback-classic'
+    // Vertragstest ConfluenceAsyncHttpTransportContract aus der Kopie ist JUnit 4
+    testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
+
+    testFixturesImplementation platform(libs.spring.boot.dependencies)
+    testFixturesImplementation 'org.assertj:assertj-core'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
+    systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
+}
+
+ext.publishedArtifactId = 'space-harvester-core'
+apply from: rootProject.file('gradle/publishing.gradle')
+
+// Die veröffentlichte POM darf weder Spring Boot, Servlet noch Spring Security nennen und keine Projektabhängigkeit
+// ohne eigene Publikation (sie stünde sonst mit der internen Gruppe com.aresstack.spaceharvester darin), #100.
+def verifyPublishedPom = tasks.register('verifyPublishedPom') {
+    group = 'verification'
+    description = 'Prüft die Abhängigkeiten der veröffentlichten Core-POM.'
+    dependsOn 'generatePomFileForMavenPublication'
+    inputs.file(tasks.named('generatePomFileForMavenPublication').map { it.destination })
+    doLast {
+        def xml = new groovy.xml.XmlSlurper().parse(tasks.generatePomFileForMavenPublication.destination)
+        def problems = xml.dependencies.dependency.collect { "${it.groupId}:${it.artifactId}".toString() }.findAll {
+            it.startsWith('org.springframework.boot:') || it.startsWith('jakarta.servlet:')
+                    || it.startsWith('org.springframework.security:') || it.startsWith('com.aresstack.spaceharvester:')
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("Unzulässige Abhängigkeiten in der Core-POM: ${problems}")
+        }
+        if (xml.dependencies.dependency.any { it.version.text().isEmpty() }) {
+            throw new GradleException('Core-POM enthält Abhängigkeiten ohne Version')
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn verifyPublishedPom
+}

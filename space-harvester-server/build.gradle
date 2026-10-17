@@ -24,25 +24,12 @@ dependencies {
     // Optionaler Spring Cloud Config Server nur über spring.config.import (docs/CONFIGURATION.md, #3)
     implementation platform(libs.spring.cloud.dependencies)
     implementation 'org.springframework.cloud:spring-cloud-starter-config'
-    // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
-    implementation project(':enterprise-ai-sources')
-    // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
-    implementation libs.win.proxy.java
-    // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als Client, MVC bleibt
-    implementation 'org.springframework:spring-webflux'
-    implementation 'io.projectreactor.netty:reactor-netty-http'
-    // Seiten-Cache und Index, nur im Paket persistence (#26)
-    implementation libs.lucene.core
-    // Storage-Format (XHTML mit ac:/ri:-Elementen) lesen für Ausgabe-Converter (#30); dieselbe Version wie die Kopie
-    implementation libs.jsoup
-    // PDF-Ausgabe (#30), nur im Paket output.convert
-    implementation libs.pdfbox
-    // Lokales Embedding-Modell (#89), nur im Paket embedding.onnx; ohne space-harvester.embedding.provider=onnx unbenutzt
-    implementation libs.onnxruntime
-    implementation libs.djl.tokenizers
+    // Fachlogik, Quellenadapter, Cache und Export (#100)
+    implementation project(':space-harvester-core')
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5
+    testImplementation testFixtures(project(':space-harvester-core'))
     testImplementation testFixtures(project(':enterprise-ai-sources'))
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // Vertragstest ConfluenceAsyncHttpTransportContract aus der Kopie ist JUnit 4
@@ -77,8 +64,6 @@ tasks.withType(AbstractArchiveTask).configureEach {
 tasks.named('test') {
     useJUnitPlatform()
     workingDir = rootProject.projectDir
-    // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
-    systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
 }
 
 // Das einfache (nicht ausführbare) Jar wird nicht gebraucht; bootJar ist das Artefakt.

@@ -1,10 +1,10 @@
 # Module: Core-Bibliothek und Spring-Boot-Server (#100)
 
-**Stand:** 17.10.2026 · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100)
+**Stand:** 17.10.2026, Trennung umgesetzt · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100) · **Entscheidung:** [ADR 0005](adr/0005-core-bibliothek-und-server.md)
 
 Space Harvester wird in eine eigenständig nutzbare Bibliothek und einen Spring-Boot-Dienst getrennt, der die
 Bibliothek verwendet. Dieses Dokument ordnet den bestehenden Code den Modulen zu und hält die Entscheidungen fest,
-die vor der Migration getroffen sein müssen. Die Migration selbst folgt in kleinen PRs (Abschnitt 6).
+die vor der Migration getroffen sein müssen. Die Migration lief in kleinen PRs (Abschnitt 6).
 
 ## 1. Zielbild
 
@@ -51,7 +51,7 @@ Kein Paket aus `application`, `source`, `persistence`, `output` oder `embedding`
 | `persistence.lucene`, `persistence.files` | Umsetzung der Ports SnapshotRepository, PageCacheReader, PageSearchIndex, JobStore, SyncBaselineStore, EnrichmentStore, AssetStore |
 | `output.convert`, `output.export` | Konverter JSON/Markdown/DOCX/PDF und Exportdateien |
 | `embedding.onnx` | lokales Embedding-Modell hinter dem Port `EmbeddingProvider` |
-| neu: `com.aresstack.spaceharvester.Harvester` | kleiner öffentlicher Einstieg ohne Spring (Abschnitt 4) |
+| `core` (`com.aresstack.spaceharvester.core.Harvester`) | kleiner öffentlicher Einstieg ohne Spring (Abschnitt 4) |
 
 ### `:space-harvester-server`
 
@@ -73,10 +73,13 @@ Tests ziehen mit ihrem Paket um. Ausnahmen, weil sie einen Spring-Kontext brauch
 | `source.NativeSnapshotSourceTest` | Server | `@SpringBootTest` |
 | `demo.*` (DemoConfluence, DocumentedExamplesTest, Walking Skeleton, LargeSpaceMetadataTest), `TestClient` | Server | prüfen den Dienst über HTTP; Task `demoConfluence` nutzt `DemoConfluence` |
 | `source.ConfluenceDelegatedAccessTest`, `source.network.PacRoutingTest` | Core | nutzen nur `OutputCaptureExtension` aus spring-boot-test; im Core als reine Testabhängigkeit erlaubt |
-| `LayeringTest` | beide | wird je Modul geteilt; Regeln werden übernommen, nicht gelockert, und um Modulregeln ergänzt (Core kennt kein `api`, `config`, `security`, keine Spring-Boot-/Servlet-/Security-Typen) |
+| `InMemoryPageCache`, `InMemorySearchIndex`, `InMemorySyncStore`, `InMemorySnapshotRepository`, `TestCertificates` | Core-Testfixtures | auch API-Tests des Servers nutzen sie |
+| `LayeringTest` | Server | prüft unverändert alle Schichtregeln über beide Module (der Core liegt auf dem Testklassenpfad) |
+| neu: `CoreModuleTest` | Core | Modulgrenze: kein `api`, `config`, `security`, keine Spring-Boot-/Servlet-/Security-Typen, Spring nur in `WebClientConfluenceTransport` |
 
-Testressourcen: `embedding/` und `test-hosts` gehen in den Core, `confluence-contract/` und `sentinel.pac` in den
-Server; was beide brauchen, liegt in beiden.
+Testressourcen: `embedding/` und `test-hosts` liegen im Core, `confluence-contract/` und `sentinel.pac` im Server.
+Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core) liegt zusätzlich im Server für
+`EmbeddingConfigurationTest`.
 
 ## 4. Entscheidungen
 
@@ -96,7 +99,8 @@ Server; was beide brauchen, liegt in beiden.
 4. **Konfiguration.** Die `@ConfigurationProperties`-Klassen bleiben im Server und bilden die YAML-Schlüssel
    unverändert auf die Core-Einstellungstypen ab (`SourceSettingsConfig`, `ProxySettings`, `JobLimits`,
    `OnnxEmbeddingSettings` usw., die schon heute frameworkneutral sind). Keine Konfigurationsschlüssel ändern sich.
-5. **Öffentlicher Einstieg.** `com.aresstack.spaceharvester.Harvester` baut aus Quellen-Einstellungen und einem
+5. **Öffentlicher Einstieg.** `com.aresstack.spaceharvester.core.Harvester` (eigenes Paket, damit kein Paket auf
+   zwei Module verteilt ist) baut aus Quellen-Einstellungen und einem
    Cache-Verzeichnis dieselben Objekte, die heute `config` verdrahtet, und bietet Quellen, Abgleich, Seiten, Suche und
    Export als Methoden an. Der Server nutzt weiter die einzelnen Anwendungsfälle; der Einstieg ist eine zusätzliche
    Tür, keine zweite Implementierung. Paketnamen bleiben unverändert, damit Historie und Importe stabil bleiben.

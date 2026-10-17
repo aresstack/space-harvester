@@ -1,0 +1,61 @@
+// Veröffentlichung vorbereiten, nicht veröffentlichen (#100, docs/MODULES.md): Maven-Koordinaten unter com.aresstack,
+// POM mit Lizenz, SCM und Entwicklern, Sources- und Javadoc-JAR. Ziel ist nur das lokale Verzeichnis build/repo;
+// Signatur und Upload nach Maven Central kommen erst mit einem Release-Prozess.
+apply plugin: 'maven-publish'
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+tasks.named('javadoc') {
+    options.encoding = 'UTF-8'
+    options.addStringOption('Xdoclint:none', '-quiet')
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'com.aresstack'
+            artifactId = project.ext.publishedArtifactId
+            from components.java
+            // testFixtures gehören nicht in die veröffentlichte Bibliothek
+            suppressAllPomMetadataWarnings()
+            pom {
+                name = project.ext.publishedArtifactId
+                description = project.description
+                url = 'https://github.com/aresstack/space-harvester'
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'aresstack'
+                        name = 'AresStack'
+                        url = 'https://github.com/aresstack'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/aresstack/space-harvester.git'
+                    developerConnection = 'scm:git:ssh://git@github.com/aresstack/space-harvester.git'
+                    url = 'https://github.com/aresstack/space-harvester'
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = 'local'
+            url = layout.buildDirectory.dir('repo')
+        }
+    }
+}
+
+// Testfixtures nicht mitveröffentlichen.
+plugins.withId('java-test-fixtures') {
+    components.java.withVariantsFromConfiguration(configurations.testFixturesApiElements) { skip() }
+    components.java.withVariantsFromConfiguration(configurations.testFixturesRuntimeElements) { skip() }
+}

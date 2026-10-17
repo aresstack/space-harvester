@@ -8,7 +8,8 @@ import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 
 /**
- * Hält die Abhängigkeitsrichtung aus {@code package-info.java} fest.
+ * Hält die Abhängigkeitsrichtung aus {@code package-info.java} fest. Prüft Server und Bibliothek zusammen, weil
+ * {@code space-harvester-core} auf dem Testklassenpfad liegt; die Modulgrenze selbst prüft {@code CoreModuleTest}.
  */
 @AnalyzeClasses(packages = "com.aresstack.spaceharvester", importOptions = ImportOption.DoNotIncludeTests.class)
 class LayeringTest {

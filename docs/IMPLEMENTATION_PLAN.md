@@ -5,6 +5,8 @@
 
 Zentrale Planung: [Roadmap #20](https://github.com/aresstack/space-harvester/issues/20). Dieses Dokument beschreibt das **Vorgehen**; die Issues enthalten die **konkret abzuarbeitenden Akzeptanzkriterien**. Bei Widersprüchen zur älteren Text-First-Planung gilt die hier beschriebene Raw-First-Entscheidung, bis eine neue explizite Entscheidung getroffen wird.
 
+**Module (#100):** Fachlogik und Adapter als Bibliothek `space-harvester-core`, REST-Dienst als `space-harvester-server`; siehe [MODULES.md](MODULES.md) und [ADR 0005](adr/0005-core-bibliothek-und-server.md).
+
 ## 1. Ziel und bewusst nicht im ersten Inkrement
 
 Space Harvester ist ein **headless, leichtgewichtiger, quellenunabhängiger Read-Cache, Harvester und Suchdienst** mit Confluence Data Center als erster Quelle. Er inventarisiert Quellen, ruft native Daten ab, bewahrt sie möglichst originalgetreu, indiziert ausgewählte Metadaten, synchronisiert Änderungen und bietet eine eigene REST-/OpenAPI-Abfrageschicht sowie Exporte.

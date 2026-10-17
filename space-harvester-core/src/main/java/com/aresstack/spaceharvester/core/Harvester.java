@@ -1,0 +1,466 @@
+package com.aresstack.spaceharvester.core;
+
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.convert.ExportConverters;
+import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
+import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.Exports;
+import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.query.PageQueries;
+import com.aresstack.spaceharvester.application.query.PageSearch;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingProvider;
+import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingSettings;
+import com.aresstack.spaceharvester.output.convert.DocxConverter;
+import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
+import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
+import com.aresstack.spaceharvester.output.convert.PdfConverter;
+import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
+import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.TrustBundles;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
+import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
+
+/**
+ * Space Harvester als Bibliothek: Quellen, Abgleich in den eingebetteten Lucene-Cache, Seiten, Baum, Suche und Export
+ * ohne Spring, ohne REST und ohne ApplicationContext (#100).
+ *
+ * <p>Ein {@code Harvester} baut dieselben Anwendungsfälle, die der Server in {@code config} verdrahtet, und gibt sie über
+ * {@link #sources()}, {@link #pages()}, {@link #search()}, {@link #syncs()}, {@link #exports()} und {@link #jobs()}
+ * und den weiteren Zugriffsmethoden heraus; es gibt keine zweite Implementierung. Abgleich und Export laufen als Aufträge im Hintergrund: Fortschritt und
+ * Zustand über {@link #status(String)}, kooperativer Abbruch über {@link #cancel(String)}, Warten über
+ * {@link #await(String, Duration)}.
+ *
+ * <pre>{@code
+ * try (Harvester harvester = Harvester.builder()
+ *         .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", URI.create("https://wiki.example.org"),
+ *                 new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.PAT, null, null, token), Map.of()))
+ *         .dataDirectory(Path.of("data"))
+ *         .build()) {
+ *     JobStatus sync = harvester.await(harvester.sync("wiki", "DOC").id(), Duration.ofMinutes(30));
+ *     JobStatus export = harvester.await(harvester.export("wiki", "DOC", List.of("markdown")).id(),
+ *             Duration.ofMinutes(30));
+ *     ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
+ * }
+ * }</pre>
+ *
+ * <p>Rechte: Die Bibliothek läuft im Vertrauensbereich des einbettenden Programms. Ohne eigene {@link AccessPolicy}
+ * darf der Aufrufer {@link #caller()} alles lesen, was die konfigurierten Zugangsdaten erreichen; wer Inhalte an Dritte
+ * weitergibt, setzt mit {@link Builder#accessPolicy} eine Richtlinie (wie der Server mit seinen Client-Freigaben).
+ */
+public final class Harvester implements AutoCloseable {
+
+    /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
+    public static final String OWNER = "space-harvester-core";
+
+    private static final Duration POLL = Duration.ofMillis(50);
+
+    private final List<AutoCloseable> resources;
+    private final AccessContext caller;
+    private final SourceQueries sources;
+    private final SourceSnapshots snapshots;
+    private final SpaceKeyCheck spaceKeys;
+    private final PageFreshness freshness;
+    private final PageQueries pages;
+    private final PageSearch search;
+    private final RelevanceSearch relevance;
+    private final Jobs jobs;
+    private final SpaceSyncJobs syncs;
+    private final Exports exports;
+    private final Assets assets;
+    private final Enrichments enrichments;
+
+    private Harvester(Builder builder) {
+        List<AutoCloseable> opened = new ArrayList<>();
+        try {
+            ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
+                    builder.trustBundles, builder.proxy, builder.asyncTransport);
+            opened.add(catalog);
+            Path cacheDirectory = builder.dataDirectory.resolve("cache");
+            LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
+            opened.add(cache);
+            LuceneJobStore jobStore = LuceneJobStore.open(cacheDirectory.resolve("jobs"));
+            opened.add(jobStore);
+            ExecutorService executor = Executors.newThreadPerTaskExecutor(
+                    Thread.ofVirtual().name("harvester-job-", 0).factory());
+            opened.add(executor::shutdownNow);
+            this.jobs = new Jobs(jobStore, executor, builder.jobLimits, Clock.systemUTC());
+            opened.add(jobs);
+
+            Clock clock = Clock.systemUTC();
+            LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
+            opened.add(enrichmentStore);
+            EmbeddingProcessor embedding = null;
+            if (builder.embedding != null) {
+                OnnxEmbeddingProvider provider = new OnnxEmbeddingProvider(builder.embedding);
+                opened.add(provider);
+                embedding = new EmbeddingProcessor(provider, builder.maxChunkChars);
+            }
+            List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
+                    new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
+                    new RelationProcessor()));
+            if (embedding != null) {
+                processors.add(embedding);
+            }
+            this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
+                    clock);
+
+            AccessGuard access = new AccessGuard(builder.accessPolicy);
+            LucenePageCacheReader reader = new LucenePageCacheReader(cache);
+            LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
+            this.snapshots = new SourceSnapshots(catalog);
+            this.sources = new SourceQueries(catalog);
+            this.spaceKeys = new SpaceKeyCheck(sources);
+            this.freshness = new PageFreshness(sources, snapshots, clock);
+            this.pages = new PageQueries(catalog, reader, access, freshness, builder.maxTreeNodes);
+            this.search = new PageSearch(catalog, index, access);
+            this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding);
+            this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
+                    List.of(new EnrichmentsAfterSync(enrichments, cache)));
+            this.exports = new Exports(jobs, reader,
+                    new FileSystemExportArtifactWriter(builder.exportDirectory()),
+                    new ExportConverters(List.of(new JsonArrayConverter(), new MarkdownConverter(),
+                            new DocxConverter(), new PdfConverter(builder.pdfFont)), ExportConverters.DEFAULT_MAX_BYTES),
+                    clock);
+            this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
+                    builder.maxAssetBytes, clock, builder.imageDescriber);
+            this.caller = AccessContext.technicalClient(OWNER);
+            this.resources = List.copyOf(opened);
+        } catch (RuntimeException e) {
+            closeAll(opened, e);
+            throw e;
+        }
+    }
+
+    public static Builder builder() {
+        return new Builder();
+    }
+
+    /** Aufrufer für {@link #pages()} und {@link #search()}; die Richtlinie aus dem Builder entscheidet über ihn. */
+    public AccessContext caller() {
+        return caller;
+    }
+
+    /** Quellen, Partitionen (Spaces), Live-Metadaten und Anhangslisten direkt bei der Quelle. */
+    public SourceQueries sources() {
+        return sources;
+    }
+
+    /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */
+    public SourceSnapshots snapshots() {
+        return snapshots;
+    }
+
+    /** Prüft, ob ein Space bei der Quelle existiert. */
+    public SpaceKeyCheck spaceKeys() {
+        return spaceKeys;
+    }
+
+    /** Echte Prüfung einer Seite gegen die Quelle ({@code refresh=true}). */
+    public PageFreshness freshness() {
+        return freshness;
+    }
+
+    /** Seiten, Baum und Einzelseiten aus dem Cache, mit {@code refresh} gegen die Quelle geprüft. */
+    public PageQueries pages() {
+        return pages;
+    }
+
+    /** Titel- und Metadatensuche im Cache. */
+    public PageSearch search() {
+        return search;
+    }
+
+    /**
+     * Suche nach Relevanz ({@code sort=relevance}): semantisch mit {@link Builder#embedding}, sonst nur Titeltreffer.
+     */
+    public RelevanceSearch relevance() {
+        return relevance;
+    }
+
+    /** Anhänge und Bilder einer Seite, abgelegt unter dem Asset-Verzeichnis. */
+    public Assets assets() {
+        return assets;
+    }
+
+    /** Anreicherungen (Akronyme, Gliederung, Sprache, optional Embeddings); nach jedem Abgleich aktualisiert. */
+    public Enrichments enrichments() {
+        return enrichments;
+    }
+
+    /** Abgleich eines Space in den Cache als Auftrag; Status und Delta über {@link SpaceSyncJobs#status}. */
+    public SpaceSyncJobs syncs() {
+        return syncs;
+    }
+
+    /** Exporte aus bestätigten Cache-Generationen. */
+    public Exports exports() {
+        return exports;
+    }
+
+    /** Alle Aufträge dieses Harvesters. */
+    public Jobs jobs() {
+        return jobs;
+    }
+
+    /** Startet den Abgleich eines Space, ohne zu warten. */
+    public JobStatus sync(String sourceId, String spaceKey) {
+        return syncs.start(sourceId, spaceKey, OWNER);
+    }
+
+    /**
+     * Startet einen Export, ohne zu warten; die Job-ID ist die Export-ID.
+     *
+     * @param formats zusätzliche Formate aus {@link Exports#formats()}, leer für nur das Raw-First-Artefakt
+     */
+    public JobStatus export(String sourceId, String spaceKey, List<String> formats) {
+        return exports.start(sourceId, spaceKey, OWNER, formats);
+    }
+
+    /** Das fertige Artefakt eines Exports oder leer, solange es keines gibt. */
+    public Optional<ExportArtifact> exportArtifact(String exportId) {
+        return exports.artifact(exportId, OWNER);
+    }
+
+    /** Zustand und Fortschritt eines Auftrags. */
+    public JobStatus status(String jobId) {
+        return jobs.status(jobId, OWNER);
+    }
+
+    /** Fordert den Abbruch an; ein laufender Auftrag endet an seinem nächsten Prüfpunkt. */
+    public JobStatus cancel(String jobId) {
+        return jobs.cancel(jobId, OWNER);
+    }
+
+    /**
+     * Wartet, bis der Auftrag einen Endzustand erreicht hat.
+     *
+     * @return der Endzustand ({@link JobState#COMPLETED}, {@link JobState#FAILED} oder {@link JobState#CANCELLED})
+     * @throws TimeoutException     wenn der Auftrag nach {@code timeout} noch läuft; er läuft weiter
+     * @throws InterruptedException wenn der wartende Thread unterbrochen wird; der Auftrag läuft weiter
+     */
+    public JobStatus await(String jobId, Duration timeout) throws TimeoutException, InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        while (true) {
+            JobStatus status = status(jobId);
+            if (status.state().terminal()) {
+                return status;
+            }
+            if (Instant.now().isAfter(deadline)) {
+                throw new TimeoutException("Auftrag " + jobId + " läuft nach " + timeout + " noch");
+            }
+            Thread.sleep(POLL);
+        }
+    }
+
+    /** Beendet Aufträge, schließt die Indizes und die Verbindungen der Quellen. */
+    @Override
+    public void close() {
+        RuntimeException failure = closeAll(resources.reversed(), null);
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static RuntimeException closeAll(List<AutoCloseable> resources, RuntimeException primary) {
+        RuntimeException failure = primary;
+        for (AutoCloseable resource : resources) {
+            try {
+                resource.close();
+            } catch (Exception e) {
+                if (failure == null) {
+                    failure = new IllegalStateException("Schließen fehlgeschlagen", e);
+                } else {
+                    failure.addSuppressed(e);
+                }
+            }
+        }
+        return primary == null ? failure : null;
+    }
+
+    /** Einstellungen eines {@link Harvester}; dieselben Bedeutungen wie die gleichnamigen Schlüssel des Servers. */
+    public static final class Builder {
+
+        private final List<SourceSettingsConfig> sources = new ArrayList<>();
+        private Path dataDirectory;
+        private String userAgent = "space-harvester-core";
+        private ProxySettings proxy = ProxySettings.disabled();
+        private TrustBundles trustBundles = TrustBundles.NONE;
+        private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
+        private AccessPolicy accessPolicy = (context, scope, kind) -> AccessDecision.ALLOW;
+        private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
+        private Duration searchTimeout = Duration.ofSeconds(5);
+        private int maxTreeNodes = 50_000;
+        private Path pdfFont;
+        private Path exportDirectory;
+        private Path assetDirectory;
+        private long maxAssetBytes = 50L * 1024 * 1024;
+        private ImageDescriber imageDescriber;
+        private OnnxEmbeddingSettings embedding;
+        private int maxChunkChars = 1500;
+
+        private Builder() {
+        }
+
+        /** Exportartefakte; Standard {@code <dataDirectory>/exports}. */
+        public Builder exportDirectory(Path exportDirectory) {
+            this.exportDirectory = exportDirectory;
+            return this;
+        }
+
+        /** Abgelegte Anhänge und Bilder; Standard {@code <dataDirectory>/assets}. */
+        public Builder assetDirectory(Path assetDirectory) {
+            this.assetDirectory = assetDirectory;
+            return this;
+        }
+
+        /** Größte einzelne Datei, die als Asset abgelegt wird; Standard 50 MiB wie im Server. */
+        public Builder maxAssetBytes(long maxAssetBytes) {
+            this.maxAssetBytes = maxAssetBytes;
+            return this;
+        }
+
+        /** Optionale Bildbeschreibung durch ein Modell; ohne bleibt es bei Referenzen. */
+        public Builder imageDescriber(ImageDescriber imageDescriber) {
+            this.imageDescriber = imageDescriber;
+            return this;
+        }
+
+        /** Lokales Embedding-Modell (ADR 0004); ohne gibt es keine semantische Suche. */
+        public Builder embedding(OnnxEmbeddingSettings embedding, int maxChunkChars) {
+            this.embedding = embedding;
+            this.maxChunkChars = maxChunkChars;
+            return this;
+        }
+
+        private Path exportDirectory() {
+            return exportDirectory != null ? exportDirectory : dataDirectory.resolve("exports");
+        }
+
+        private Path assetDirectory() {
+            return assetDirectory != null ? assetDirectory : dataDirectory.resolve("assets");
+        }
+
+        /** Eine Quelle wie unter {@code space-harvester.sources}. */
+        public Builder source(SourceSettingsConfig source) {
+            sources.add(Objects.requireNonNull(source, "source"));
+            return this;
+        }
+
+        public Builder sources(List<SourceSettingsConfig> sources) {
+            sources.forEach(this::source);
+            return this;
+        }
+
+        /**
+         * Pflicht: darunter liegen {@code cache/pages}, {@code cache/jobs}, {@code cache/enrichments} und, ohne eigene
+         * Angabe, {@code exports} und {@code assets}.
+         */
+        public Builder dataDirectory(Path dataDirectory) {
+            this.dataDirectory = Objects.requireNonNull(dataDirectory, "dataDirectory");
+            return this;
+        }
+
+        public Builder userAgent(String userAgent) {
+            this.userAgent = Objects.requireNonNull(userAgent, "userAgent");
+            return this;
+        }
+
+        /** Proxy und PAC wie {@code space-harvester.network.proxy}; Standard ohne Proxy. */
+        public Builder proxy(ProxySettings proxy) {
+            this.proxy = Objects.requireNonNull(proxy, "proxy");
+            return this;
+        }
+
+        /** Vertrauensquellen für {@code trust-bundle} der Quellen; Standard keine. */
+        public Builder trustBundles(TrustBundles trustBundles) {
+            this.trustBundles = Objects.requireNonNull(trustBundles, "trustBundles");
+            return this;
+        }
+
+        /** {@code WEB_CLIENT} (Standard wie im Server) oder {@code DISABLED} für den synchronen Transport. */
+        public Builder asyncTransport(ConfiguredSourceCatalog.AsyncTransport asyncTransport) {
+            this.asyncTransport = Objects.requireNonNull(asyncTransport, "asyncTransport");
+            return this;
+        }
+
+        public Builder accessPolicy(AccessPolicy accessPolicy) {
+            this.accessPolicy = Objects.requireNonNull(accessPolicy, "accessPolicy");
+            return this;
+        }
+
+        public Builder jobLimits(JobLimits jobLimits) {
+            this.jobLimits = Objects.requireNonNull(jobLimits, "jobLimits");
+            return this;
+        }
+
+        public Builder searchTimeout(Duration searchTimeout) {
+            this.searchTimeout = Objects.requireNonNull(searchTimeout, "searchTimeout");
+            return this;
+        }
+
+        public Builder maxTreeNodes(int maxTreeNodes) {
+            this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /** TrueType-Schrift, die PDF-Exporte einbetten; Standard die eingebaute. */
+        public Builder pdfFont(Path pdfFont) {
+            this.pdfFont = pdfFont;
+            return this;
+        }
+
+        /**
+         * @throws IllegalStateException ohne {@link #dataDirectory}
+         * @throws com.aresstack.spaceharvester.source.InvalidSourceConfigurationException mit allen Problemen der
+         *                                                                                 Quellen
+         */
+        public Harvester build() {
+            if (dataDirectory == null) {
+                throw new IllegalStateException("dataDirectory fehlt");
+            }
+            return new Harvester(this);
+        }
+    }
+}
