@@ -36,6 +36,8 @@ class LocalFilesSourceApiTest {
             Files.writeString(DIR.resolve("start.md"), "# Start\n", StandardCharsets.UTF_8);
             Files.createDirectories(DIR.resolve("handbuch"));
             Files.writeString(DIR.resolve("handbuch/betrieb.txt"), "Betrieb\n", StandardCharsets.UTF_8);
+            Files.createDirectories(DIR.resolve(".ssh"));
+            Files.writeString(DIR.resolve(".ssh/schluessel.txt"), "geheim\n", StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -86,7 +88,13 @@ class LocalFilesSourceApiTest {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"pageId\":\"" + pageId("start.md") + "\"",
-                "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"", "\"complete\":true");
+                "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"", "\"complete\":true")
+                // Versteckte Ordner bleiben außen vor, und es gibt keinen Link auf den Serverpfad. Die resourceId
+                // folgt noch dem Upstream-Format file:<Verzeichnis>/<Pfad>.
+                .contains("\"url\":null")
+                .doesNotContain(pageId(".ssh/schluessel.txt"), "schluessel");
+        assertThat(get("/api/v1/sources/docs/pages/" + pageId(".ssh/schluessel.txt") + "/metadata").statusCode())
+                .isEqualTo(404);
     }
 
     @Test

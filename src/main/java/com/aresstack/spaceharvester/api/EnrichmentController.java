@@ -6,7 +6,7 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
-import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import io.swagger.v3.oas.annotations.Operation;
@@ -83,7 +83,7 @@ public class EnrichmentController {
         if (processor != null && !enrichments.processorIds().contains(processor)) {
             throw new InvalidQueryException("processor kennt nur " + String.join(", ", enrichments.processorIds()));
         }
-        CachedPage page = queries.page(caller, sourceId, pageId, false);
+        DeliveredPage page = queries.page(caller, sourceId, pageId, false);
         // Neu berechnen schreibt in den Index und kostet Rechenzeit: wie ein Abgleich nur mit sync-Freigabe, also nie
         // für reine Leser oder durchgereichte Endnutzer.
         access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);

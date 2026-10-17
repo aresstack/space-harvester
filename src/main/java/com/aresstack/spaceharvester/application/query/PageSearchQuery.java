@@ -100,9 +100,25 @@ public record PageSearchQuery(String sourceId, Set<String> spaceKeys, List<Strin
 
     /** Kanonische Form, an die ein Cursor gebunden wird. */
     String canonical() {
-        return String.join("\u0001", sourceId, String.join("\u0002", spaceKeys), String.join("\u0002", titleTerms),
-                String.valueOf(pageId), String.valueOf(parentPageId), String.valueOf(version),
-                String.valueOf(modifiedFrom), String.valueOf(modifiedBefore), sort.name());
+        // Jeder Wert mit Länge, fehlende als "-": kein Wert kann mit einem anderen oder mit "fehlt" zusammenfallen.
+        StringBuilder canonical = new StringBuilder();
+        field(canonical, sourceId);
+        canonical.append(spaceKeys.size()).append('[');
+        spaceKeys.stream().sorted().forEach(spaceKey -> field(canonical, spaceKey));
+        canonical.append(titleTerms.size()).append('[');
+        titleTerms.forEach(term -> field(canonical, term));
+        for (Object value : new Object[]{pageId, parentPageId, version, modifiedFrom, modifiedBefore, sort}) {
+            field(canonical, value == null ? null : value.toString());
+        }
+        return canonical.toString();
+    }
+
+    private static void field(StringBuilder canonical, String value) {
+        if (value == null) {
+            canonical.append('-');
+        } else {
+            canonical.append(value.length()).append(':').append(value);
+        }
     }
 
     private static String optional(String name, String value) {

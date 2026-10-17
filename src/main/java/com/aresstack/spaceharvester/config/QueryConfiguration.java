@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -21,8 +22,10 @@ class QueryConfiguration {
 
     @Bean
     PageQueries pageQueries(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
+                            PageFreshness freshness,
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
-        return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, maxTreeNodes);
+        return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
+                maxTreeNodes);
     }
 
     @Bean

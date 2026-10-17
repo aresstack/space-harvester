@@ -25,8 +25,11 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -75,7 +78,8 @@ class ContentListingTest {
 
     private ContentListing listing(AccessPolicy policy) {
         AccessGuard guard = new AccessGuard(policy);
-        return new ContentListing(new PageSearch(CATALOG, index, guard), new PageQueries(CATALOG, cache, guard, 1000),
+        return new ContentListing(new PageSearch(CATALOG, index, guard), new PageQueries(CATALOG, cache, guard,
+                new PageFreshness(new SourceQueries(CATALOG, Clock.systemUTC()), null, Clock.systemUTC()), 1000),
                 guard);
     }
 

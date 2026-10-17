@@ -219,14 +219,19 @@ public final class MarkdownConverter implements ExportConverter {
     }
 
     private static String code(CodeBlock code) {
+        String fence = "`".repeat(Math.max(3, longestTickRun(code.code()) + 1));
+        String body = code.code().endsWith("\n") ? code.code() : code.code() + "\n";
+        // Nur harmlose Zeichen: ein Backtick in der Sprache machte die Zeile zu keinem Zaun mehr (Seiteninhalt als HTML).
+        return fence + code.language().replaceAll("[^A-Za-z0-9_+.#-]", "") + "\n" + body + fence;
+    }
+
+    private static int longestTickRun(String text) {
         int longest = 0;
-        Matcher ticks = Pattern.compile("`+").matcher(code.code());
+        Matcher ticks = Pattern.compile("`+").matcher(text);
         while (ticks.find()) {
             longest = Math.max(longest, ticks.group().length());
         }
-        String fence = "`".repeat(Math.max(3, longest + 1));
-        String body = code.code().endsWith("\n") ? code.code() : code.code() + "\n";
-        return fence + code.language().replaceAll("\\s", "") + "\n" + body + fence;
+        return longest;
     }
 
     private static String quote(String text) {
@@ -245,11 +250,22 @@ public final class MarkdownConverter implements ExportConverter {
                 case Text plain -> text.append(styled(plain));
                 case Link link -> {
                     String label = link.text().isEmpty() ? (link.target() == null ? "" : link.target()) : link.text();
-                    text.append(link.target() == null ? escape(label)
+                    text.append(link.target() == null || !safeTarget(link.target()) ? escape(label)
                             : "[" + escape(label) + "](" + destination(link.target()) + ")");
                 }
-                case ImageRef image -> text.append("![").append(escape(image.alt())).append("](")
-                        .append(destination(image.reference())).append(')');
+                case ImageRef image -> {
+                    String reference = image.reference();
+                    if (reference.startsWith("attachment:")) {
+                        text.append("![").append(escape(image.alt())).append("](").append(destination(reference))
+                                .append(')');
+                    } else if (safeTarget(reference)) {
+                        // Externe Bilder nur als Verweis: ein eingebettetes Bild lädt der Betrachter ungefragt nach.
+                        text.append('[').append(escape(image.alt().isEmpty() ? "Bild" : image.alt())).append("](")
+                                .append(destination(reference)).append(')');
+                    } else {
+                        text.append(escape(image.alt()));
+                    }
+                }
                 case LineBreak lineBreak -> text.append('\n');
             }
         }
@@ -265,8 +281,10 @@ public final class MarkdownConverter implements ExportConverter {
         String trailing = value.substring(value.stripTrailing().length());
         String core = value.strip();
         if (text.code()) {
-            String fence = core.contains("`") ? "`` " : "`";
-            core = fence + core + new StringBuilder(fence).reverse();
+            // Zaun länger als jede Backtick-Folge im Text, sonst endet der Code früher und der Rest wird HTML.
+            String ticks = "`".repeat(longestTickRun(core) + 1);
+            String pad = core.startsWith("`") || core.endsWith("`") || core.contains("``") ? " " : "";
+            core = ticks + pad + core + pad + ticks;
         } else {
             core = escape(core);
         }
@@ -277,6 +295,19 @@ public final class MarkdownConverter implements ExportConverter {
             core = "**" + core + "**";
         }
         return leading + core + trailing;
+    }
+
+    /** Nur Ziele ohne Ausführung: Seiten- und Anhangsverweise, http(s), mailto; javascript:, data: usw. werden Text. */
+    static boolean safeTarget(String target) {
+        if (target.startsWith("#page-") || target.startsWith("attachment:")) {
+            return true;
+        }
+        Matcher scheme = Pattern.compile("^([A-Za-z][A-Za-z0-9+.-]*):").matcher(target.strip());
+        if (!scheme.find()) {
+            return false;
+        }
+        String name = scheme.group(1).toLowerCase(java.util.Locale.ROOT);
+        return name.equals("http") || name.equals("https") || name.equals("mailto");
     }
 
     /** Linkziel; mit Leerzeichen oder Klammern in spitzen Klammern. */

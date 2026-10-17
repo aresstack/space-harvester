@@ -153,6 +153,22 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         if (scope.selectionApplies() && scope.excludedPartitions().contains(sourceId.value())) {
             return Collections.emptyList();
         }
+        List<KnowledgeResource> resources = new ArrayList<KnowledgeResource>();
+        for (Path file : files(scope)) {
+            if (resources.size() >= scope.maxResources()) {
+                break;
+            }
+            try {
+                resources.add(resource(file, typeByName(file), true));
+            } catch (IOException | RuntimeException e) {
+                // Datei verschwunden oder nicht lesbar: überspringen.
+            }
+        }
+        return resources;
+    }
+
+    /** Die lesbaren Dateien der Startpunkte in Fundreihenfolge, ohne Metadaten zu lesen. */
+    private List<Path> files(SourceScope scope) throws KnowledgeSourceException {
         final LocalFileAccessPolicy policy = policy();
         Set<Path> files = new LinkedHashSet<Path>();
         for (String startPoint : scope.startPoints()) {
@@ -170,7 +186,11 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                         new SimpleFileVisitor<Path>() {
                             @Override
                             public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-                                return dir.equals(start) || patterns.entersFolder(relative(dir))
+                                if (dir.equals(start)) {
+                                    return FileVisitResult.CONTINUE;
+                                }
+                                return !dir.getFileName().toString().startsWith(".")
+                                        && patterns.entersFolder(relative(dir))
                                         ? FileVisitResult.CONTINUE : FileVisitResult.SKIP_SUBTREE;
                             }
 
@@ -198,21 +218,16 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
             Collections.sort(found);
             files.addAll(found);
         }
-        List<KnowledgeResource> resources = new ArrayList<KnowledgeResource>();
+        List<Path> readable = new ArrayList<Path>();
         for (Path file : files) {
-            if (resources.size() >= scope.maxResources()) {
+            if (readable.size() >= scope.maxResources()) {
                 break;
             }
-            if (!candidate(file) || !patterns.acceptsFile(relative(file)) || !policy.isAllowed(file)) {
-                continue;
-            }
-            try {
-                resources.add(resource(file, typeByName(file)));
-            } catch (IOException | RuntimeException e) {
-                // Datei verschwunden oder nicht lesbar: überspringen.
+            if (candidate(file) && patterns.acceptsFile(relative(file)) && policy.isAllowed(file)) {
+                readable.add(file);
             }
         }
-        return resources;
+        return readable;
     }
 
     @Override
@@ -239,7 +254,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         }
         KnowledgeResource resource;
         try {
-            resource = resource(file, type);
+            resource = resource(file, type, true);
         } catch (IOException e) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, resourceId + " nicht lesbar", e);
         }
@@ -276,25 +291,35 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                 throw new KnowledgeSourceException(Kind.UNSUPPORTED, "Cursor gehört nicht zu dieser Partition");
             }
         }
-        List<KnowledgeResource> all = discover(SourceScope.builder().startPoints(".").maxDepth(PARTITION_DEPTH)
+        if (!Files.isDirectory(root)) {
+            throw new KnowledgeSourceException(Kind.UNAVAILABLE, "Verzeichnis nicht gefunden: " + root);
+        }
+        // Je Stapel nur die Pfade aller Dateien, Metadaten nur für die gelieferten.
+        List<Path> all = files(SourceScope.builder().startPoints(".").maxDepth(PARTITION_DEPTH)
                 .maxResources(Integer.MAX_VALUE).ignoringSelection().build());
         List<String> paths = new ArrayList<String>();
-        Map<String, KnowledgeResource> byPath = new LinkedHashMap<String, KnowledgeResource>();
-        for (KnowledgeResource resource : all) {
-            String path = resource.metadata().get("file.path").orElse(null);
-            if (path != null && (after == null || path.compareTo(after) > 0)) {
+        Map<String, Path> byPath = new LinkedHashMap<String, Path>();
+        for (Path file : all) {
+            String path = relative(file);
+            if (after == null || path.compareTo(after) > 0) {
                 paths.add(path);
-                byPath.put(path, resource);
+                byPath.put(path, file);
             }
         }
         Collections.sort(paths);
-        int size = Math.min(paths.size(), Math.max(1, Math.min(limit, MAX_BATCH)));
+        int wanted = Math.max(1, Math.min(limit, MAX_BATCH));
         List<KnowledgeResource> batch = new ArrayList<KnowledgeResource>();
-        for (int i = 0; i < size; i++) {
-            batch.add(byPath.get(paths.get(i)));
+        int used = 0;
+        while (used < paths.size() && batch.size() < wanted) {
+            try {
+                batch.add(resource(byPath.get(paths.get(used)), typeByName(byPath.get(paths.get(used))), false));
+            } catch (IOException | RuntimeException e) {
+                // Datei inzwischen verschwunden oder nicht lesbar: überspringen wie in discover.
+            }
+            used++;
         }
-        String next = size < paths.size()
-                ? CURSOR_PREFIX + encode(partitionKey) + "." + encode(paths.get(size - 1)) : null;
+        String next = used < paths.size()
+                ? CURSOR_PREFIX + encode(partitionKey) + "." + encode(paths.get(used - 1)) : null;
         return new PartitionResources(batch, next);
     }
 
@@ -311,7 +336,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
     public KnowledgeResource resourceMetadata(String localId) throws KnowledgeSourceException {
         Path file = readable(localId);
         try {
-            return resource(file, typeByName(file));
+            return resource(file, typeByName(file), false);
         } catch (IOException e) {
             throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " nicht lesbar", e);
         }
@@ -332,7 +357,7 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
                 throw new ResponseTooLargeException(localId + ": Datei größer als " + maxFileBytes + " Bytes",
                         maxFileBytes);
             }
-            resource = resource(file, typeByName(file));
+            resource = resource(file, typeByName(file), false);
             bytes = Files.readAllBytes(file);
             if (bytes.length != size) {
                 throw new KnowledgeSourceException(Kind.UNAVAILABLE, localId + " hat sich beim Lesen geändert");
@@ -390,8 +415,14 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
 
     private boolean candidate(Path file) {
         String name = file.getFileName().toString();
-        if (name.startsWith(".") || name.startsWith("~$")) {
+        if (name.startsWith("~$")) {
             return false;
+        }
+        // Versteckte Dateien und alles in versteckten Ordnern (.git, .docker, .ssh) unterhalb der Wurzel nie.
+        for (String segment : relative(file).split("/")) {
+            if (segment.startsWith(".")) {
+                return false;
+            }
         }
         try {
             if (Files.isHidden(file) || Files.size(file) > maxFileBytes || Files.size(file) == 0) {
@@ -407,21 +438,29 @@ public final class LocalFilesKnowledgeSource implements KnowledgeSourcePort, Par
         return detector.detect(file.getFileName().toString(), null, null);
     }
 
-    private KnowledgeResource resource(Path file, DetectedContentType type) throws IOException {
+    /**
+     * @param location {@code true}: die Datei-URI mit absolutem Pfad als Ort (Desktop öffnet sie); für Partition,
+     *                 Metadaten und Original ({@link #resources}, {@link #resourceMetadata}, {@link #storedContent})
+     *                 {@code false}, damit kein Serverpfad in Metadaten und Exporte gerät ({@code file.path} ist
+     *                 relativ)
+     */
+    private KnowledgeResource resource(Path file, DetectedContentType type, boolean location) throws IOException {
         BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class);
         String relative = relative(file);
         Map<String, String> metadata = new LinkedHashMap<String, String>();
         metadata.put("file.path", relative);
         metadata.put("file.size", String.valueOf(attributes.size()));
-        return KnowledgeResource.builder(idOf(relative), sourceId)
+        KnowledgeResource.Builder builder = KnowledgeResource.builder(idOf(relative), sourceId)
                 .title(file.getFileName().toString())
                 .contentType(type.mimeType())
                 .revision(KnowledgeRevision.of(attributes.lastModifiedTime().toInstant(),
                         String.valueOf(attributes.size())))
                 .scope(sourceId.value())
-                .location(file.toUri())
-                .metadata(KnowledgeMetadata.of(metadata))
-                .build();
+                .metadata(KnowledgeMetadata.of(metadata));
+        if (location) {
+            builder.location(file.toUri());
+        }
+        return builder.build();
     }
 
     private String relative(Path file) {

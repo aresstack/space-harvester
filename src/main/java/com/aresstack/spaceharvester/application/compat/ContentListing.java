@@ -9,7 +9,7 @@ import com.aresstack.spaceharvester.application.query.CacheGenerationChangedExce
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.CacheState;
 import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
-import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -75,7 +75,7 @@ public class ContentListing {
 
     /** Direkte Kinder einer Seite in ihrem aktuellen Space, aufsteigend nach {@code pageId}. */
     public Slice children(AccessContext caller, String sourceId, String pageId, int start, int limit) {
-        CachedPage parent = pages.page(caller, sourceId, pageId, false);
+        DeliveredPage parent = pages.page(caller, sourceId, pageId, false);
         requireComplete(parent.generation());
         PageSearchQuery query = PageSearchQuery.of(sourceId, List.of(parent.header().metadata().partitionKey()), null,
                 null, pageId, null, null, null, SearchSort.PAGE_ID);
@@ -130,7 +130,7 @@ public class ContentListing {
             }
             cursor = batch.nextCursor();
         } while (!more && !batch.complete());
-        List<CachedPage> loaded = new ArrayList<>(visible.size());
+        List<DeliveredPage> loaded = new ArrayList<>(visible.size());
         for (SearchHit hit : visible) {
             try {
                 loaded.add(pages.page(caller, query.sourceId(), hit.page().pageId(), false));
@@ -153,7 +153,8 @@ public class ContentListing {
     }
 
     private static void requireComplete(CacheGeneration generation) {
-        if (generation.state() == CacheState.INCOMPLETE) {
+        // Ohne Generation (nur bei refresh=true möglich) gibt es keinen Abgleichstand, der unvollständig sein kann.
+        if (generation != null && generation.state() == CacheState.INCOMPLETE) {
             throw new IncompleteListingException("Der Abgleich des Space ist unvollständig");
         }
     }
@@ -173,7 +174,7 @@ public class ContentListing {
      * @param pages höchstens {@code limit} Seiten mit Payload
      * @param more  {@code true}, wenn hinter dem Ausschnitt weitere Seiten folgen
      */
-    public record Slice(int start, int limit, List<CachedPage> pages, boolean more) {
+    public record Slice(int start, int limit, List<DeliveredPage> pages, boolean more) {
 
         public Slice {
             pages = List.copyOf(pages);
