@@ -16,14 +16,14 @@ werden wiederverwendet (siehe [#2](https://github.com/aresstack/space-harvester/
 ## Bauen, testen, starten
 
 ```bash
-./gradlew build        # kompiliert, testet und baut build/libs/space-harvester-<version>.jar
+./gradlew build        # kompiliert, testet und baut space-harvester-server/build/libs/space-harvester-<version>.jar
 ./gradlew bootRun      # startet den Dienst auf http://localhost:8080
 ```
 
 Alternativ das gebaute Jar starten:
 
 ```bash
-java -jar build/libs/space-harvester-0.1.0-SNAPSHOT.jar
+java -jar space-harvester-server/build/libs/space-harvester-0.1.0-SNAPSHOT.jar
 ```
 
 Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern. Die API verlangt
@@ -204,7 +204,7 @@ Route nicht bestimmbar ist):
 
 ```bash
 java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsMain \
-     -cp build/libs/space-harvester-0.1.0-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher \
+     -cp space-harvester-server/build/libs/space-harvester-0.1.0-SNAPSHOT.jar org.springframework.boot.loader.launch.PropertiesLauncher \
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 

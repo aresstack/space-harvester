@@ -111,9 +111,10 @@ Server; was beide brauchen, liegt in beiden.
    Netty und Spring WebFlux. Der Core darf diese BOM nicht in seine POM tragen; die Versionen stehen daher im
    Versionskatalog, abgestimmt auf Spring Boot 4.1.1, und der Server erzwingt weiter über die BOM dieselben.
 
-## 5. Java 8 für den Core? Befund und Empfehlung
+## 5. Java-Version: Java 21 (festgelegt)
 
-Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Pakete, 245 Dateien):
+Angelo hat am 17.10.2026 bestätigt, dass Space Harvester komplett auf Java 21 läuft, Core eingeschlossen. Der
+folgende Befund bleibt als Begründung stehen. Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Pakete, 245 Dateien):
 
 | Hindernis | Umfang |
 | --- | --- |
@@ -128,7 +129,7 @@ Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Paket
 Ein Java-8-Core wäre damit ein Neubau großer Teile von Cache, Suche, Transport und Domänenmodell, mit hohem Risiko
 für die festgelegten Hashes (`page-metadata/v1`, `page-attributes/v1`), die Konverter-Versionen und das Indexformat.
 
-**Empfehlung und Festlegung:** Der Core bleibt Java 21 (Toolchain und `release 21`). Java-8-Anwendungen
+**Festlegung:** Der Core bleibt Java 21 (Toolchain und `release 21`). Java-8-Anwendungen
 (MainframeMate, askai-java8) binden Space Harvester über die REST-API an; der gemeinsame Java-8-Boden bleibt die
 Upstream-Bibliothek in enterprise-ai-client, aus der `enterprise-ai-sources` kopiert ist. Sollte später ein
 Java-8-Client nötig sein, wäre ein kleines eigenes Modul mit den API-DTOs und einem HTTP-Client der richtige Weg,
@@ -145,7 +146,7 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
    `java-library` mit eigenen Abhängigkeiten, `LayeringTest` je Modul, Modulregeln.
 4. **Öffentlicher Einstieg und Veröffentlichung:** `Harvester` mit einem Test, der ohne Spring und ohne HTTP-Server
    des Dienstes einen Space gegen eine Fake-Confluence abgleicht und exportiert; `maven-publish` und POM-Prüfung;
-   ADR 0005; README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
+   ADR 0006 (0005 ist das UD-Parsing aus #98); README und Dokumente mit den neuen Pfaden; Workflows auf die neuen Testverzeichnisse.
 
 ## 7. Offene Punkte
 
