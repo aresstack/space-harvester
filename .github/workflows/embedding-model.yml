@@ -21,14 +21,31 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Revision und Dateien
         run: |
           api=https://huggingface.co/api/models/intfloat/multilingual-e5-small
-          curl -sSf "$api/revision/main" | python3 -c "import json,sys; d=json.load(sys.stdin); print('main', d['sha'], d.get('lastModified'))"
           rev=$(curl -sSf "$api/revision/main" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])")
-          for dir in "" onnx; do
-            curl -sSf "$api/tree/$rev/$dir" | python3 -c "
+          echo "main $rev"
+          for path in "$api/tree/$rev" "$api/tree/$rev/onnx"; do
+            curl -sSf "$path" | python3 -c "
           import json,sys
           for e in json.load(sys.stdin):
               print(e['path'], e.get('size'), (e.get('lfs') or {}).get('oid', e.get('oid')))"
           done
+          echo "rev=$rev" >> "$GITHUB_ENV"
+      - name: Referenzvektoren (PyTorch)
+        run: |
+          pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -q transformers==4.46.3 huggingface_hub sentencepiece
+          python3 -c "
+          from huggingface_hub import snapshot_download
+          snapshot_download('intfloat/multilingual-e5-small', revision='$rev', local_dir='$RUNNER_TEMP/e5',
+              allow_patterns=['config.json','tokenizer.json','tokenizer_config.json','special_tokens_map.json',
+                              'sentencepiece.bpe.model','model.safetensors','onnx/model.onnx'])"
+          (cd "$RUNNER_TEMP/e5" && find . -type f -not -path './.cache/*' | sort | xargs sha256sum)
+          echo "----- Referenz -----"
+          python3 tools/embedding/e5_reference.py "$RUNNER_TEMP/e5"
+          echo "----- Ende -----"
