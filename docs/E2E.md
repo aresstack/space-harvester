@@ -625,5 +625,91 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 }
 ```
 
+## 14. Seite über ihre URL, Prüfung gegen die Quelle
+
+Seiten lassen sich auch über ihre Confluence-URL abrufen, sofern sie die Seiten-ID enthält (`pageId=…`,
+`/spaces/KEY/pages/ID` oder Kurzlink `/x/…`); die URL steht URL-kodiert in `url`:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages?url=http%3A%2F%2F127.0.0.1%3A8090%2Fwiki%2Fpages%2Fviewpage.action%3FpageId%3D1001&view=extended"
+```
+
+```json
+{ "origin": "cache", "metadata": { "page": { "pageId": "1001", "title": "Architektur" } } }
+```
+
+Eine URL ohne Seiten-ID (`/display/KEY/Titel`) löst der Dienst nicht über den Titel auf:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages?url=http%3A%2F%2F127.0.0.1%3A8090%2Fwiki%2Fdisplay%2FDEMO%2FArchitektur"
+```
+
+```json
+{ "status": 400, "type": "https://github.com/aresstack/space-harvester/problems/invalid-request" }
+```
+
+`refresh=true` prüft die Seite vor der Auslieferung gegen die Quelle. Ist sie unverändert, kommt der bestätigte
+Cache-Stand (`X-Page-Refresh: current`); bei neuer Revision käme die live geladene Payload mit `origin: live`:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001?refresh=true&view=extended"
+```
+
+```json
+{ "origin": "cache", "cache": { "state": "confirmed" }, "metadata": { "page": { "pageId": "1001", "version": "7" } } }
+```
+
+## 15. Bilder und Anhänge ernten
+
+Die Seiten-Payload verweist auf Bilder und Diagramme nur. Die Anhänge selbst lädt der Dienst getrennt und nur auf
+Anfrage; die Übersicht ordnet sie ein (draw.io-Diagramm vor Bild) und lädt nichts:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/assets"
+```
+
+```json
+{
+  "pageId": "1001",
+  "listComplete": true,
+  "assets": [
+    { "attachmentId": "att1001", "title": "diagramm.png", "kind": "IMAGE", "version": "1", "stored": null },
+    { "attachmentId": "att1002", "title": "architektur", "kind": "DIAGRAM", "version": "1", "stored": null }
+  ]
+}
+```
+
+Die Ernte legt jede Version einmal ab, unter ihrem SHA-256 (Freigabe `sync`):
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/assets/harvest"
+```
+
+```json
+{
+  "status": 200,
+  "complete": true,
+  "stored": 2,
+  "reused": 0,
+  "failed": 0,
+  "assets": [
+    { "attachmentId": "att1001", "status": "STORED", "stored": { "version": "1", "size": 15, "sha256": "sha256:2068060e19a880e260bfcce7de3cee520fb61f5f24e0dc3bf81999d45d7da48c" } },
+    { "attachmentId": "att1002", "status": "STORED", "stored": { "version": "1", "size": 158, "sha256": "sha256:2ae8c89b8ab302c683f1f8c5daba2661f1eaa5df1ff43a64dc735ee76257b414" } }
+  ]
+}
+```
+
+Eine zweite Ernte überträgt gleiche Versionen nicht erneut:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/assets/harvest"
+```
+
+```json
+{ "status": 200, "complete": true, "stored": 0, "reused": 2, "failed": 0 }
+```
+
+Den Inhalt eines Anhangs liefert `GET …/assets/att1002/content` Byte für Byte als Download, `ETag` = SHA-256.
+
 Geänderte, neue, verschobene und nicht ladbare Seiten sowie unvollständige Exporte prüft `HarvestWalkingSkeletonIntegrationTest`. Die
 Demo setzt man mit `rm -rf build/demo` zurück.
