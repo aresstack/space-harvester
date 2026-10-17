@@ -116,9 +116,10 @@ public final class ContentView implements View {
         });
         space.setEditable(true);
         space.setToolTipText("Space wählen oder Space-Key eingeben");
-        // Auswahl oder Enter im Feld öffnet den Space; dieselbe Wahl ein zweites Mal lädt nicht neu.
+        // Auswahl oder Enter im Feld öffnet den Space; dieselbe Wahl ein zweites Mal lädt nur nach einem Fehlschlag neu.
         space.addActionListener(e -> {
-            if (!filling && !spaceKey().isEmpty() && !Objects.equals(spaceKey(), pagesModel.spaceKey)) {
+            if (!filling && !spaceKey().isEmpty()
+                    && (!Objects.equals(spaceKey(), pagesModel.spaceKey) || failed())) {
                 reload();
             }
         });
@@ -239,16 +240,41 @@ public final class ContentView implements View {
     /** Öffnet einen Space (z. B. aus „Wissensquellen“): seine Seiten aus dem Bestand, ohne Bestand live. */
     public void openSpace(String sourceId, String spaceKey) {
         if (!Objects.equals(sourceId, selectedSource())) {
-            selectSource(sourceId);
+            // Eine gerade angelegte Quelle steht womöglich noch nicht in der Auswahl.
+            if (!selectSource(sourceId)) {
+                refreshSources();
+                selectSource(sourceId);
+            }
             sourceChanged();
         }
+        showSpace(spaceKey);
+        reload();
+    }
+
+    /**
+     * Zeigt den Space im Auswahlfeld, auch wenn seine Space-Liste noch geladen wird oder nicht abrufbar war: Der Eintrag
+     * wird dann ergänzt, damit Feld und Liste denselben Space zeigen. Die nächste vollständige Liste ersetzt ihn.
+     */
+    private void showSpace(String key) {
         filling = true;
         try {
-            space.setSelectedItem(spaceKey);
+            boolean listed = false;
+            for (int i = 0; i < space.getItemCount() && !listed; i++) {
+                listed = key.equals(space.getItemAt(i));
+            }
+            if (!listed) {
+                space.addItem(key);
+            }
+            space.setSelectedItem(key);
+            space.getEditor().setItem(key);
         } finally {
             filling = false;
         }
-        reload();
+    }
+
+    /** Die Seitenliste des gewählten Space konnte nicht geladen werden; dieselbe Wahl darf es erneut versuchen. */
+    private boolean failed() {
+        return loading == null && origin == null && feedback.isVisible();
     }
 
     /** Öffnet eine Seite (z. B. aus der Suche). */
@@ -283,16 +309,17 @@ public final class ContentView implements View {
         }
     }
 
-    private void selectSource(String sourceId) {
+    private boolean selectSource(String sourceId) {
         boolean before = filling;
         filling = true;
         try {
             for (int i = 0; i < source.getItemCount(); i++) {
                 if (source.getItemAt(i).id().equals(sourceId)) {
                     source.setSelectedIndex(i);
-                    return;
+                    return true;
                 }
             }
+            return false;
         } finally {
             filling = before;
         }
@@ -428,7 +455,7 @@ public final class ContentView implements View {
                     status.setText(pagesModel.size() == 0 ? "Keine Seiten geladen."
                             : pagesModel.size() + " Seiten geladen; weitere nicht.");
                     feedback.problem(error, batch.origin() == Origin.LIVE ? Problems.Step.PAGE_LIST
-                            : Problems.Step.STOCK);
+                            : Problems.Step.STOCK, "Space " + batch.spaceKey());
                 });
     }
 
@@ -614,6 +641,15 @@ public final class ContentView implements View {
 
     Feedback feedback() {
         return feedback;
+    }
+
+    /** Für Tests: gewählte Quelle und der Space-Key, wie das Auswahlfeld ihn zeigt. */
+    String chosenSource() {
+        return selectedSource();
+    }
+
+    String chosenSpace() {
+        return spaceKey();
     }
 
     boolean treeAvailable() {

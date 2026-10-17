@@ -70,6 +70,11 @@ public final class Problems {
      * dann schon im Text, weil sie die eigentliche Auskunft ist.
      */
     public static Problem describe(Throwable error, Step step) {
+        return describe(error, step, null);
+    }
+
+    /** Wie {@link #describe(Throwable, Step)}; {@code subject} (z. B. „Space DOC“) steht mit in der Überschrift. */
+    public static Problem describe(Throwable error, Step step, String subject) {
         Problem base = describe(error);
         Throwable e = unwrap(error);
         String hint = base.hint();
@@ -82,7 +87,8 @@ public final class Problems {
             hint = "Die Verbindungsprüfung fragt nur die Spaces ab; dieser Abruf geht an eine andere Adresse der "
                     + "Quelle. Erneut versuchen; bleibt es dabei, Proxy/PAC und Zertifikate prüfen.";
         }
-        return new Problem(step.heading() + ": " + base.title(), message, hint, base.technical());
+        String heading = subject == null ? step.heading() : step.heading() + " (" + subject + ")";
+        return new Problem(heading + ": " + base.title(), message, hint, base.technical());
     }
 
     public static Problem describe(Throwable error) {

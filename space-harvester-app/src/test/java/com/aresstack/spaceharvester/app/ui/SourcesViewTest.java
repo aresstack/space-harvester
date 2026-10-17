@@ -14,7 +14,10 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.awt.event.MouseEvent;
 import javax.swing.AbstractButton;
+import javax.swing.JComboBox;
+import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
@@ -154,6 +157,46 @@ class SourcesViewTest {
                 .anySatisfy(label -> assertThat(label.getText()).startsWith("Seiten werden live"));
         assertThat(find((Container) view[0].component(), AbstractButton.class))
                 .anySatisfy(button -> assertThat(button.getText()).isEqualTo("Space synchronisieren"));
+    }
+
+    @Test
+    void doubleClickingASpaceOpensExactlyThatSpaceInContents() throws Exception {
+        start();
+        MainWindow[] window = new MainWindow[1];
+        JPanel[] surface = new JPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            window[0] = new MainWindow(context);
+            surface[0] = window[0].content(() -> { }, () -> { });
+            surface[0].setSize(1280, 820);
+            window[0].show(AppContext.Section.SOURCES);
+        });
+        JTable spaces = find(surface[0], JTable.class).stream()
+                .filter(table -> table.getColumnCount() > 1 && "Schlüssel".equals(table.getColumnName(1)))
+                .findFirst().orElseThrow();
+        await(() -> spaces.getRowCount() > 0);
+        String[] key = new String[1];
+        SwingUtilities.invokeAndWait(() -> {
+            spaces.setRowSelectionInterval(0, 0);
+            key[0] = String.valueOf(spaces.getValueAt(0, 1));
+            java.awt.Rectangle cell = spaces.getCellRect(0, 0, true);
+            spaces.dispatchEvent(new MouseEvent(spaces, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0,
+                    cell.x + 2, cell.y + 2, 2, false, MouseEvent.BUTTON1));
+        });
+
+        JComboBox<?> space = find(surface[0], JComboBox.class).stream()
+                .filter(combo -> "Space wählen oder Space-Key eingeben".equals(combo.getToolTipText()))
+                .findFirst().orElseThrow();
+        await(() -> key[0].equals(String.valueOf(space.getEditor().getItem())));
+        await(() -> find(surface[0], JTable.class).stream().anyMatch(table -> table != spaces
+                && table.getRowCount() == 3));
+        // Auch nach der nächsten Verbindungsprüfung bleibt der geöffnete Space gewählt.
+        CountDownLatch checked = new CountDownLatch(2);
+        SwingUtilities.invokeAndWait(() -> context.runtime().workspace().sources()
+                .forEach(source -> context.checkConnection(source.id(), checked::countDown)));
+        assertThat(checked.await(30, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> { });
+        assertThat(String.valueOf(space.getEditor().getItem())).isEqualTo(key[0]);
+        assertThat(space.getSelectedItem()).isEqualTo(key[0]);
     }
 
     private void start() throws Exception {

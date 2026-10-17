@@ -50,6 +50,14 @@ class ContentViewTest {
                             directory: %s
                     """.formatted(id, id, files));
         }
+        // Eine Quelle, die niemand annimmt: Spaces und Seitenliste scheitern am Netz.
+        sources.append("""
+                    - id: wiki
+                      type: confluence
+                      base-url: http://127.0.0.1:9
+                      options:
+                        connectTimeoutMillis: 500
+                """);
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
                 space-harvester-app:
@@ -154,6 +162,38 @@ class ContentViewTest {
         });
         await(() -> view.detail().shownPage() != null);
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
+    }
+
+    @Test
+    void openingASpaceKeepsItChosenWhileTheConnectionIsRechecked() throws Exception {
+        String space = context.runtime().workspace().spaces("notizen").get(0).key();
+        onEdt(() -> {
+            context.checkConnection("notizen", () -> { });
+            view.openSpace("notizen", space);
+            return null;
+        });
+        await(() -> context.connection("notizen").state() != AppContext.Connection.State.CHECKING
+                && view.pages().getRowCount() == 3);
+        Thread.sleep(300);
+
+        assertThat(onEdt(view::chosenSource)).isEqualTo("notizen");
+        assertThat(onEdt(view::chosenSpace)).isEqualTo(space);
+        assertThat(onEdt(() -> view.pages().getRowCount())).isEqualTo(3);
+    }
+
+    @Test
+    void anUnreachableSpaceStaysChosenAndTheMessageNamesIt() throws Exception {
+        onEdt(() -> {
+            view.openSpace("wiki", "DOC");
+            return null;
+        });
+
+        await(() -> view.feedback().isVisible());
+        Thread.sleep(300);
+        assertThat(onEdt(view::chosenSource)).isEqualTo("wiki");
+        assertThat(onEdt(view::chosenSpace)).isEqualTo("DOC");
+        assertThat(onEdt(() -> view.feedback().text())).contains("Seitenliste nicht abrufbar (Space DOC)");
+        assertThat(onEdt(() -> view.pages().getRowCount())).isZero();
     }
 
     private void open(String sourceId) throws Exception {
