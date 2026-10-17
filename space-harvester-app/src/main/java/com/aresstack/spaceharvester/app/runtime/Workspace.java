@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
@@ -237,6 +238,23 @@ public final class Workspace {
         }
         result.sort(Comparator.comparing(JobStatus::createdAt).reversed());
         return result;
+    }
+
+    /**
+     * Diagnoseereignisse eines Auftrags in ihrer Reihenfolge (docs/DIAGNOSTICS.md); bereits maskiert. Ein fremder
+     * oder nicht mehr sichtbarer Auftrag gilt als unbekannt.
+     */
+    public List<JobEvent> events(String jobId) {
+        job(jobId);
+        return harvester.events(jobId);
+    }
+
+    /** Die jüngsten Diagnoseereignisse aller sichtbaren Aufträge dieser App, neueste zuerst. */
+    public List<JobEvent> recentEvents(int limit) {
+        return harvester.recentEvents(limit).stream()
+                .filter(event -> access.permits(caller, ResourceScope.space(event.sourceId(), event.partitionKey()),
+                        event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC))
+                .toList();
     }
 
     // ------------------------------------------------------------------ Anhänge

@@ -179,8 +179,8 @@ spring:
 | Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen: Kreispfeil gleicht den rechts gewählten Space vollständig mit der Quelle ab (ohne Auswahl bittet er um eine), Stift öffnet die Einstellungen, Papierkorb entfernt nach Rückfrage, ⋯ mit Assistent, Verbindung prüfen, Exportieren und Zugangsdaten für die Sitzung. Rechts Textreiter: **Spaces** mit Filter (Doppelklick oder Enter öffnet unter Inhalte), **Einstellungen** ohne Geheimnisse (Anzeigename, Adresse und Ordner direkt mit dem Stift, Enter übernimmt, Escape verwirft; Token oder Passwort per Dialog, unter Windows verschlüsselt gespeichert; Anmeldung, Zertifikat, Vertrauen und Proxy im Assistenten auf der passenden Seite), **Fähigkeiten** |
 | Inhalte | Wissensquelle → Space → Seiten → Seiteninhalt (siehe „Inhalte“ unten): Seiten sofort nach der Space-Wahl, aus dem Bestand oder ohne Bestand live, Liste oder Seitenbaum, Suchfeld; eine gewählte Seite lädt sofort; „Space synchronisieren“ übernimmt den Space in den Bestand; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen und Erweitert (Technische Angaben, Analyse, Originaldaten, Aktualität prüfen, Original speichern) |
 | Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
-| Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
-| Status | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge; ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
+| Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien; **Diagnose ansehen** (bei gescheiterten Aufträgen **Fehler diagnostizieren**) springt unter Status zu genau diesem Auftrag |
+| Status | Diagnosezentrum: oben nur, was fehlt (Konfiguration, Zugangsdaten); darunter die jüngsten 500 Diagnoseereignisse der Aufträge ([DIAGNOSTICS.md](DIAGNOSTICS.md)) und die letzte Verbindungsprüfung je Quelle, neueste zuerst, mit Zeit, Schwere, Komponente, Phase, Code, HTTP-Status, Proxy-Route, TLS-Befund, Auftrag und Meldung. Filter **Alle**, **Fehler** (Fehler und Warnungen), **Netzwerk**, **Aufträge**, Zeitraum und Freitext (auch Auftrags-ID); ein gewähltes Ereignis zeigt unten alle Befunde und die Ausnahmekette, **Kopieren** übernimmt sie. Alles ist maskiert (`Redaction`), Geheimnisse erscheinen nie. Ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
 | Einstellungen | Konfigurationsdatei, Hinweise, Ablage, Netz und Zertifikate, Embedding-Modell, Diagnose, Über Space Harvester |
 
 Die Seitenleiste folgt dieser Reihenfolge; die App öffnet mit der Suche.
@@ -274,6 +274,7 @@ synchronisieren.
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` (ein Fenster über alle Quellen) | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aufträge | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/syncs/{id}/events`, `GET /api/v1/exports/{id}/events` | `Harvester.events`, `Harvester.recentEvents` | Status (Diagnose), Aufträge › Diagnose ansehen | `StatusViewTest` |
 | `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aufträge › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
 | `POST …/spaces/{key}/exports` | `Exports.start` | Exportieren › Export starten | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}` | `Exports.artifact` | Aufträge › Ergebnis | `WorkspaceTest.harvestsBrowses…` |

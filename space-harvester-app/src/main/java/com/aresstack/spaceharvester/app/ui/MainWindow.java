@@ -53,7 +53,7 @@ public final class MainWindow implements AppContext.Navigator {
             Comic.PALETTE);
     private final JLabel status = Comic.muted(" ");
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
-    private final OverviewView overview;
+    private final StatusView statusView;
     private final SourcesView sources;
     private final ContentView content;
     private final ActivitiesView activities;
@@ -64,14 +64,14 @@ public final class MainWindow implements AppContext.Navigator {
     public MainWindow(AppContext context) {
         this.context = context;
         context.setNavigator(this);
-        overview = new OverviewView(context);
+        statusView = new StatusView(context);
         sources = new SourcesView(context);
         content = new ContentView(context);
         activities = new ActivitiesView(context);
         exports = new ExportsView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        views.put(AppContext.Section.STATUS, overview);
+        views.put(AppContext.Section.STATUS, statusView);
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
@@ -212,6 +212,12 @@ public final class MainWindow implements AppContext.Navigator {
     public void showJob(String jobId) {
         show(AppContext.Section.ACTIVITIES);
         activities.show(jobId);
+    }
+
+    @Override
+    public void showDiagnosis(String jobId) {
+        show(AppContext.Section.STATUS);
+        statusView.showJob(jobId);
     }
 
     @Override

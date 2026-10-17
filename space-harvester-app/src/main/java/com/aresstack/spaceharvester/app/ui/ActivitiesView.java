@@ -51,6 +51,8 @@ public final class ActivitiesView implements View {
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
     private final ComposerButton files = Comic.button("Dateien speichern …", "Exportdateien in einen Ordner kopieren");
     private final ComposerButton content = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
+    private final ComposerButton diagnosis = Comic.button("Diagnose ansehen", "Unter Status: Phasen, Fehlercode, "
+            + "HTTP-Status, Proxy-Route, TLS-Befund und Ausnahmekette dieses Auftrags");
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
@@ -82,6 +84,7 @@ public final class ActivitiesView implements View {
         files.addActionListener(e -> saveFiles());
         content.addActionListener(e -> currentStatus().ifPresent(s ->
                 context.navigator().openSpace(s.sourceId(), s.partitionKey())));
+        diagnosis.addActionListener(e -> currentStatus().ifPresent(s -> context.navigator().showDiagnosis(s.id())));
 
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
@@ -89,7 +92,7 @@ public final class ActivitiesView implements View {
         head.add(progress, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        south.add(Comic.row(cancel, again, files, content), BorderLayout.NORTH);
+        south.add(Comic.row(diagnosis, cancel, again, files, content), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         head.add(south, BorderLayout.SOUTH);
 
@@ -315,6 +318,10 @@ public final class ActivitiesView implements View {
         again.setEnabled(!running);
         files.setVisible(detail instanceof ExportDetail export && export.artifact() != null);
         content.setEnabled(current.isPresent());
+        diagnosis.setEnabled(current.isPresent());
+        // Ein gescheiterter Auftrag führt zuerst zu seiner Diagnose.
+        boolean failed = current.map(s -> s.state() == JobState.FAILED).orElse(false);
+        diagnosis.setText(failed ? "Fehler diagnostizieren" : "Diagnose ansehen");
     }
 
     private void cancelSelected() {

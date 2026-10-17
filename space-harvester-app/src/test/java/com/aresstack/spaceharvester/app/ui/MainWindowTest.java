@@ -86,8 +86,8 @@ class MainWindowTest {
         assertThat(buttonTexts(surface[0])).containsSubsequence("Suche", "Wissensquellen", "Inhalte",
                 "Exportieren", "Aufträge", "Status", "Einstellungen");
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
-        assertThat(labelTexts(surface[0])).as("„Zu erledigen“ steht im Dashboard, nicht in der Begrüßung")
-                .contains("Nichts offen.");
+        assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
+                .doesNotContain(AboutDialog.TAGLINE);
 
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         String job = context.runtime().workspace().startSync("handbuch", space).id();
@@ -98,6 +98,7 @@ class MainWindowTest {
                 .header().key().pageId();
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
+            window[0].showDiagnosis(job);
             window[0].openSpace("handbuch", space);
             window[0].openPage("handbuch", pageId);
             window[0].search("betrieb");
