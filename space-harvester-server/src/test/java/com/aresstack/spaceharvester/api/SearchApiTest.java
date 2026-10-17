@@ -42,7 +42,11 @@ class SearchApiTest {
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
         registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
-        TestClient.register(registry, "wiki");
+        // Zweite Quelle mit denselben Seiten-IDs und Spaces für die globale Suche (#114).
+        registry.add("space-harvester.sources[1].id", () -> "wiki2");
+        registry.add("space-harvester.sources[1].type", () -> "confluence");
+        registry.add("space-harvester.sources[1].base-url", () -> "http://127.0.0.1:9");
+        TestClient.register(registry, "wiki", "wiki2");
         // Zweiter Client nur mit metadata auf DEV.
         registry.add("space-harvester.security.clients[1].id", () -> "dev-only");
         registry.add("space-harvester.security.clients[1].token-sha256", () -> "sha256:" + sha256(DEV_ONLY_TOKEN));
@@ -78,6 +82,9 @@ class SearchApiTest {
         }
         entries.add(entry(page("wiki", "OPS", "900", null), confirmed("g7")));
         index.publish("wiki", new SearchIndexState("i1", Instant.parse("2026-10-16T20:10:00Z")), entries);
+        index.publish("wiki2", new SearchIndexState("j1", Instant.parse("2026-10-16T20:20:00Z")), List.of(
+                entry(page("wiki2", "DEV", "101", null), confirmed("h1")),
+                entry(page("wiki2", "OPS", "104", null), confirmed("h1"))));
     }
 
     @Test
@@ -113,7 +120,7 @@ class SearchApiTest {
         assertProblem(get("/api/v1/search?sourceId=wiki&modifiedFrom=gestern"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?sourceId=wiki&limit=101"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?sourceId=wiki&title=a+b+c+d+e+f+g+h+i"), 400, "invalid-request");
-        assertThat(get("/api/v1/search").statusCode()).isEqualTo(400);
+        assertProblem(get("/api/v1/search?limit=0"), 400, "invalid-request");
         String cursor = json.readTree(get("/api/v1/search?sourceId=wiki&limit=1").body()).get("nextCursor")
                 .asString();
         assertProblem(get("/api/v1/search?sourceId=wiki&limit=1&title=seite&cursor=" + cursor), 400,
@@ -173,6 +180,82 @@ class SearchApiTest {
     }
 
     @Test
+    void withoutSourceIdTheSearchIsGlobalSortedAndPagedAcrossSources() throws Exception {
+        JsonNode body = json.readTree(get("/api/v1/search?title=seite&sort=pageId&limit=3").body());
+
+        assertThat(body.get("scope").asString()).isEqualTo("global");
+        assertThat(body.get("sourceId").isNull()).isTrue();
+        assertThat(body.get("index").get("generation").asString()).isNotIn("i1", "j1");
+        assertThat(body.get("index").get("committedAt").asString()).isEqualTo("2026-10-16T20:20:00Z");
+        List<String> keys = new ArrayList<>(keys(body));
+        assertThat(keys).containsExactly("wiki/101", "wiki2/101", "wiki/102");
+        assertThat(body.get("hits").get(1).get("cache").get("generation").asString()).isEqualTo("h1");
+
+        JsonNode next = body;
+        while (!next.get("complete").asBoolean()) {
+            next = json.readTree(get("/api/v1/search?title=seite&sort=pageId&limit=3&cursor="
+                    + next.get("nextCursor").asString()).body());
+            if (next != body) {
+                keys.addAll(keys(next));
+            }
+        }
+        assertThat(keys).containsExactly("wiki/101", "wiki2/101", "wiki/102", "wiki/103", "wiki2/104", "wiki/900");
+
+        // Mit sourceId bleibt die Antwort die einer Quelle, jetzt mit scope und sourceId je Treffer.
+        JsonNode single = json.readTree(get("/api/v1/search?sourceId=wiki2&sort=pageId").body());
+        assertThat(single.get("scope").asString()).isEqualTo("source");
+        assertThat(single.get("sourceId").asString()).isEqualTo("wiki2");
+        assertThat(keys(single)).containsExactly("wiki2/101", "wiki2/104");
+    }
+
+    @Test
+    void aGlobalSearchShowsOnlyReleasedSourcesAndSpacesWithoutRefusing() throws Exception {
+        HttpResponse<String> response = getAs(DEV_ONLY_TOKEN, "/api/v1/search?sort=pageId");
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(keys(body)).containsExactly("wiki/101", "wiki/102", "wiki/103");
+        assertThat(body.toString()).doesNotContain("wiki2").doesNotContain("900").doesNotContain("OPS");
+
+        // spaceKey=OPS global: kein 403, nur nichts Sichtbares.
+        HttpResponse<String> ops = getAs(DEV_ONLY_TOKEN, "/api/v1/search?spaceKey=OPS");
+        assertThat(ops.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(ops.body()).get("hits").isEmpty()).isTrue();
+        assertThat(json.readTree(ops.body()).get("index").isNull()).isTrue();
+        assertProblem(getAs(DEV_ONLY_TOKEN, "/api/v1/search?sourceId=wiki2"), 403, "access-denied");
+    }
+
+    @Test
+    void aChangedSourceEndsTheGlobalPaginationWith409() throws Exception {
+        String cursor = json.readTree(get("/api/v1/search?limit=1").body()).get("nextCursor").asString();
+        index.publish("wiki2", new SearchIndexState("j2", Instant.parse("2026-10-16T21:00:00Z")), List.of());
+
+        assertProblem(get("/api/v1/search?limit=1&cursor=" + cursor), 409, "cache-generation-changed");
+        assertProblem(get("/api/v1/search?sourceId=wiki&limit=1&cursor=" + cursor), 400, "invalid-request");
+    }
+
+    @Test
+    void aGlobalSearchWithoutIndexedSourcesIsEmptyNotACacheMiss() throws Exception {
+        index.clear();
+
+        HttpResponse<String> response = get("/api/v1/search");
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("hits").isEmpty()).isTrue();
+        assertThat(body.get("complete").asBoolean()).isTrue();
+        assertThat(body.get("index").isNull()).isTrue();
+    }
+
+    @Test
+    void aGlobalRelevanceSearchWithoutAModelKeepsTitleHitsOfAllSources() throws Exception {
+        JsonNode body = json.readTree(get("/api/v1/search?title=seite&sort=relevance&limit=10").body());
+
+        assertThat(body.get("scope").asString()).isEqualTo("global");
+        assertThat(body.get("reranker").asString()).isEqualTo("none");
+        assertThat(keys(body)).contains("wiki/101", "wiki2/101").doesNotHaveDuplicates().hasSize(6);
+        assertProblem(get("/api/v1/search?sort=relevance&q=Betrieb"), 503, "semantic-search-unavailable");
+    }
+
+    @Test
     void sourceWithoutIndexIsCacheMiss() throws Exception {
         index.clear();
 
@@ -186,6 +269,11 @@ class SearchApiTest {
         assertThat(search.get("responses").has("409")).isTrue();
         assertThat(search.get("parameters").valueStream().map(parameter -> parameter.get("name").asString()))
                 .contains("sourceId", "spaceKey", "title", "modifiedFrom", "modifiedBefore", "sort", "cursor");
+    }
+
+    private static List<String> keys(JsonNode body) {
+        return body.get("hits").valueStream()
+                .map(hit -> hit.get("sourceId").asString() + "/" + hit.get("page").get("pageId").asString()).toList();
     }
 
     private void assertProblem(HttpResponse<String> response, int status, String type) throws Exception {

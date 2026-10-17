@@ -91,8 +91,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 ```
 
 - Die Anfrage wird mit dem Präfix `query: ` eingebettet, die Seiten mit `passage: ` (wie in der Modellkarte).
-- Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle unter genau der aktuellen Prozessorversion, zu Seiten
-  zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
+- Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle (ohne `sourceId`: aller freigegebenen Quellen zusammen, eine
+  Einbettung der Anfrage und eine Vektorsuche, #114) unter genau der aktuellen Prozessorversion, zu Seiten
+  (`sourceId + pageId`) zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
   Filter (`spaceKey`, `title`, `parentPageId`, Zeitgrenzen …) gelten auch für Kandidaten der Vektorsuche.
 - Rechte: wie die übrige Suche `metadata` für Quelle bzw. Spaces und jeden Treffer. Ähnlichkeiten sind aus dem Inhalt
   abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Ein

@@ -312,7 +312,7 @@ space-harvester:
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
-| `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `GET /api/v1/search[?sourceId=…]` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen (#114) |
 | `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
@@ -416,16 +416,30 @@ Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (j
 vorkommen, ohne Beachtung der Groß-/Kleinschreibung; Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist;
 kein Präfix, keine Abfragesprache; höchstens 8 Wörter und 200 Zeichen), `spaceKey` (wiederholbar, höchstens 20),
 `pageId`, `parentPageId` (direkte Kinder), `version`, `modifiedFrom` (einschließlich) und `modifiedBefore`
-(ausschließlich). `sort` ist `title` (Standard), `-modifiedAt` oder `pageId`, jeweils danach `pageId`; `limit` 1 bis
-100. Treffer haben dieselben Felder wie die Seitenliste und den Cache-Stand ihres Space; `index.generation` nennt den
-Indexstand. Wie bei der Seitenliste kann ein Stapel kürzer als `limit` sein; `nextCursor` gilt nur für dieselbe Anfrage
+(ausschließlich). `sort` ist `title` (Standard), `-modifiedAt` oder `pageId`, jeweils danach `pageId` und `sourceId`;
+`limit` 1 bis 100. Treffer haben `sourceId`, dieselben Felder wie die Seitenliste und den Cache-Stand ihres Space;
+`index.generation` nennt den Indexstand. Wie bei der Seitenliste kann ein Stapel kürzer als `limit` sein; `nextCursor` gilt nur für dieselbe Anfrage
 (sonst 400), ein neuer Indexstand ergibt `cache-generation-changed` (409). Rechte: mit `spaceKey` `metadata` für jeden
 genannten Space, sonst für die Quelle; Treffer ohne Freigabe fallen weg. Ohne Index antwortet die Suche mit
 `cache-miss` (404) bzw. ohne eingerichteten Index mit `cache-unavailable` (503).
 
+**Globale Suche (#114, [ADR 0009](docs/adr/0009-globale-mehrquellensuche.md)):** Ohne `sourceId` durchsucht
+`GET /api/v1/search` alle Quellen, für die der Aufrufer `metadata` hat und die im Index liegen (`scope: global`,
+`sourceId: null`): eine Abfrage über den gemeinsamen Index, global sortiert und mit einem Cursor über die ganze
+Treffermenge. Filter gelten in jeder Quelle (`spaceKey=DEV` heißt DEV in jeder freigegebenen Quelle); nicht
+freigegebene Quellen fallen ohne 403 und ohne Spur weg. Jeder Treffer nennt seine `sourceId`. Ändert sich eine der
+gelesenen Quellen, endet das Weiterblättern mit 409; ohne lesbare indexierte Quelle ist die Antwort leer
+(`index: null`), nie 404. Die Desktop-App nutzt denselben Core-Anwendungsfall.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?title=Architektur"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sort=relevance&q=Softwarearchitektur"
+```
+
 **Suche nach Relevanz (#89):** `sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
 die Wörter aus `title`) liefert genau einen Stapel (`complete=true`, kein `cursor`) aus höchstens 100 Kandidaten der
-Vektorsuche und der Titelsuche, geordnet nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
+Vektorsuche und der Titelsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet
+nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
 weiter. Kandidaten der Vektorsuche brauchen `content` für ihre Seite; `relevance` (Ähnlichkeit, Abschnitt, `freshness`)
 steht nur an Treffern mit `content`-Freigabe. Ohne eingerichtetes Modell bleiben die Titeltreffer in Titelreihenfolge
 (`reranker: none`); ohne `title` antwortet die Suche dann mit `semantic-search-unavailable` (503). Einzelheiten:
