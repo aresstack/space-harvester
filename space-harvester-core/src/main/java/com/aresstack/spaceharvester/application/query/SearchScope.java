@@ -21,7 +21,8 @@ import java.util.TreeSet;
  *       Quelle scheitert die Suche wie vor #114 mit {@link AccessDeniedException} (403).</li>
  *   <li>Ohne {@code sourceId}: jede konfigurierte Quelle, für die der Aufrufer {@code metadata} hat, mit
  *       {@code spaceKey} für mindestens einen der genannten Spaces. Andere Quellen fallen still weg: Eine globale Suche
- *       verrät weder durch 403 noch durch Zähler, dass es sie gibt.</li>
+ *       verrät weder durch 403 noch durch Zähler, dass es sie gibt. Mit Quellenliste ({@code sourceIds}) zählen nur
+ *       deren Quellen; unbekannte oder nicht freigegebene IDs der Liste fallen ebenso still weg.</li>
  * </ul>
  *
  * Danach prüft der Aufrufer weiter jeden Treffer an seiner Seite; der Umfang ist nur die Vorauswahl im Index.
@@ -57,6 +58,9 @@ public record SearchScope(String sourceId, Set<String> sourceIds) {
         Set<String> visible = new TreeSet<>();
         for (HarvestSource source : catalog.all()) {
             String id = source.id();
+            if (!query.sourceIds().isEmpty() && !query.sourceIds().contains(id)) {
+                continue;
+            }
             boolean permitted = query.spaceKeys().isEmpty()
                     ? access.permits(caller, ResourceScope.source(id), AccessKind.METADATA)
                     : query.spaceKeys().stream().anyMatch(spaceKey ->

@@ -225,6 +225,28 @@ class SearchApiTest {
     }
 
     @Test
+    void sourceIdsRestrictsTheGlobalSearchToTheListedSources() throws Exception {
+        JsonNode repeated = json.readTree(get("/api/v1/search?sourceIds=wiki2&sourceIds=unbekannt&sort=pageId").body());
+        assertThat(repeated.get("scope").asString()).isEqualTo("global");
+        assertThat(repeated.get("sourceId").isNull()).isTrue();
+        assertThat(keys(repeated)).containsExactly("wiki2/101", "wiki2/104");
+        JsonNode commas = json.readTree(get("/api/v1/search?sourceIds=wiki,wiki2&sort=pageId&limit=100").body());
+        assertThat(keys(commas)).hasSize(6);
+
+        // Nicht freigegebene Quellen der Liste fallen still weg, wie bei der globalen Suche.
+        HttpResponse<String> hidden = getAs(DEV_ONLY_TOKEN, "/api/v1/search?sourceIds=wiki2");
+        assertThat(hidden.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(hidden.body()).get("hits").isEmpty()).isTrue();
+        assertThat(json.readTree(hidden.body()).get("index").isNull()).isTrue();
+
+        assertProblem(get("/api/v1/search?sourceId=wiki&sourceIds=wiki2"), 400, "invalid-request");
+        // Der cursor gehört zur Liste: ohne sie ist es eine andere Suche.
+        String cursor = json.readTree(get("/api/v1/search?sourceIds=wiki,wiki2&limit=1").body()).get("nextCursor")
+                .asString();
+        assertProblem(get("/api/v1/search?limit=1&cursor=" + cursor), 400, "invalid-request");
+    }
+
+    @Test
     void aChangedSourceEndsTheGlobalPaginationWith409() throws Exception {
         String cursor = json.readTree(get("/api/v1/search?limit=1").body()).get("nextCursor").asString();
         index.publish("wiki2", new SearchIndexState("j2", Instant.parse("2026-10-16T21:00:00Z")), List.of());

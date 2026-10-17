@@ -231,6 +231,11 @@ class LucenePageSearchIndexTest {
             queries.add(query(null, List.of("DEV"), null, null, null, null, null, null, sort));
             queries.add(query(null, List.of(), null, "101", null, null, null, null, sort));
             queries.add(query(null, List.of(), "startseite", null, null, null, null, null, sort));
+            // Quellenliste (#114 Nachtrag): nur diese Quellen des Umfangs.
+            queries.add(PageSearchQuery.of(null, List.of("third", "wiki"), List.of(), null, null, null, null, null,
+                    null, sort));
+            queries.add(PageSearchQuery.of(null, List.of("other", "fehlt"), List.of(), "api", null, null, null, null,
+                    null, sort));
         }
         String generation = index.state(scope).orElseThrow().generation();
 

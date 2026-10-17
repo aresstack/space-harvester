@@ -227,8 +227,10 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         if (query.sourceId() != null) {
             filter.add(term(PageCacheSchema.SOURCE_ID, query.sourceId()), BooleanClause.Occur.FILTER);
         } else {
-            filter.add(new TermInSetQuery(PageCacheSchema.SOURCE_ID,
-                    sources.stream().map(BytesRef::new).toList()), BooleanClause.Occur.FILTER);
+            // Eine Quellenliste der Anfrage schränkt den Umfang weiter ein (gleiche Semantik wie PageSearchQuery.matches).
+            filter.add(new TermInSetQuery(PageCacheSchema.SOURCE_ID, sources.stream()
+                    .filter(id -> query.sourceIds().isEmpty() || query.sourceIds().contains(id))
+                    .map(BytesRef::new).toList()), BooleanClause.Occur.FILTER);
         }
         if (!query.spaceKeys().isEmpty()) {
             BooleanQuery.Builder spaces = new BooleanQuery.Builder();

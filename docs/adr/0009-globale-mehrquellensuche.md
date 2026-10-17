@@ -49,7 +49,15 @@ liegen aber schon in **einem** Lucene-Index; `sourceId + pageId` (`PageKey`) ist
    demselben Modell (gleiche Prozessorversion) und sind über Quellen vergleichbar. Vektorkandidaten und Ähnlichkeiten
    nur mit `content`, Titeltreffer mit `metadata`; ohne Modell bleiben Titeltreffer, ohne `title` 503
    `semantic-search-unavailable`.
-7. **Antwort.** REST nennt `scope` (`source`/`global`), global `sourceId: null`, und jeder Treffer trägt `sourceId`;
+7. **Quellenliste (Nachtrag 17.10.2026).** `PageSearchQuery.sourceIds` (REST `sourceIds`, wiederholbar oder durch
+   Komma getrennt, höchstens 50) beschränkt die globale Suche auf diese Quellen; leer heißt alle. Der Umfang ist die
+   Schnittmenge aus Liste und freigegebenen Quellen: unbekannte oder nicht freigegebene IDs fallen still weg wie
+   sonst global (kein 403, kein 404, sonst könnte die Liste die Existenz einer Quelle abfragen); bleibt nichts
+   übrig, ist die Antwort leer (`index=null`). `scope` bleibt `global`, die Generation umfasst nur die Quellen der
+   Liste, der Cursor bindet die Liste (Reihenfolge und Doppelte egal). `sourceId` zusammen mit `sourceIds` ist 400:
+   eine Einzelquelle hat eigene Fehlersemantik (403/404), eine Liste mit einem Eintrag nicht. Relevanz nutzt
+   denselben Umfang. Der Name `sourceIds` statt wiederholtem `sourceId` hält die Einzelquellensuche unverändert.
+8. **Antwort.** REST nennt `scope` (`source`/`global`), global `sourceId: null`, und jeder Treffer trägt `sourceId`;
    mit `page.pageId` ist er unter `/api/v1/sources/{sourceId}/…` adressierbar.
 
 ## Folgen
