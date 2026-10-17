@@ -61,7 +61,8 @@ space-harvester:
 | Einzelne Seite in einem nicht freigegebenen Space | 404 `source-object-not-found`, genau wie für eine unbekannte Seite, damit die Antwort keine Existenz verrät |
 | Listen (Quellen, Spaces) | nur die freigegebenen Einträge |
 
-Problem Details nennen keine Tokens, Zugangsdaten oder Meldungen der Quelle. Tokens erscheinen weder in Logs noch in
+Problem Details nennen keine Tokens, Zugangsdaten oder Meldungen der Quelle. Die Diagnoseereignisse der Aufträge
+enthalten Meldungen und Ausnahmeketten, aber maskiert und nur für den Auftraggeber ([DIAGNOSTICS.md](DIAGNOSTICS.md)). Tokens erscheinen weder in Logs noch in
 Antworten; eine Anmeldung mit unbekanntem Token loggt nur Methode und Pfad.
 
 ## Für neue Endpunkte (Stränge E und G)

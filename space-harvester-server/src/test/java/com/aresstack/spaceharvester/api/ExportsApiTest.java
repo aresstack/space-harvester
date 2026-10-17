@@ -270,6 +270,25 @@ class ExportsApiTest {
     }
 
     @Test
+    void eventsExplainAFailedExportOnlyToItsOwner() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/NONE/exports", null)).path("id").asString();
+        awaitFinished(id);
+
+        HttpResponse<byte[]> events = send("GET", "/api/v1/exports/" + id + "/events", null);
+
+        assertThat(events.statusCode()).isEqualTo(200);
+        JsonNode last = body(events).get(body(events).size() - 1);
+        assertThat(last.path("severity").asString()).isEqualTo("error");
+        assertThat(last.path("code").asString()).isEqualTo("PROVISIONING_UNAVAILABLE");
+        assertThat(last.path("phase").asString()).isEqualTo("Bestand prüfen");
+        assertThat(last.path("component").asString()).isEqualTo("Exports");
+        assertThat(last.path("detail").asString()).contains("SyncUnavailableException");
+        assertThat(body(events)).extracting(event -> event.path("message").asString())
+                .startsWith("Auftrag angenommen", "Auftrag gestartet");
+        assertThat(send("GET", "/api/v1/exports/" + id + "/events", OTHER_TOKEN).statusCode()).isEqualTo(404);
+    }
+
+    @Test
     void artifactPathsCannotLeaveTheExport() throws Exception {
         String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null)).path("id").asString();
         awaitFinished(id);

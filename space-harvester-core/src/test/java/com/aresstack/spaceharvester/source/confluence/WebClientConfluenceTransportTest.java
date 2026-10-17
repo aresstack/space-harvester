@@ -8,6 +8,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.UrlConnectionConfluenceTransport;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.application.jobs.RequestRoute;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -207,6 +208,8 @@ class WebClientConfluenceTransportTest {
                 .getAsync(base.resolve("/status/200"), HEADERS, 1024));
 
         assertThat(failure).isInstanceOf(IOException.class).hasMessageContaining("nicht verfügbar");
+        assertThat(RequestRoute.find(failure)).map(RequestRoute::describe)
+                .contains(HttpRoute.unavailable("pac-failed", "PAC nicht ladbar").describe() + " · WebClient");
         assertThat(requests).hasValue(0);
     }
 
@@ -227,6 +230,57 @@ class WebClientConfluenceTransportTest {
         // direkt/Zertifikat, Proxy/Zertifikat, direkt/anonym
         assertThat(transport.clientCount()).isEqualTo(3);
         assertThat(requests).hasValue(3);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"http", "https"})
+    void aProxiedTargetIsNeverResolvedLocally(String scheme) throws Exception {
+        // Im Unternehmensnetz löst nur der Proxy externe Namen auf: der Name muss unaufgelöst beim Proxy ankommen.
+        try (ServerSocket proxy = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            CompletableFuture<String> requestLine = CompletableFuture.supplyAsync(() -> {
+                try (Socket socket = proxy.accept()) {
+                    InputStream in = socket.getInputStream();
+                    StringBuilder line = new StringBuilder();
+                    for (int c = in.read(); c != -1 && c != '\r'; c = in.read()) {
+                        line.append((char) c);
+                    }
+                    OutputStream out = socket.getOutputStream();
+                    out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n"
+                            + "Connection: close\r\n\r\n{}").getBytes(StandardCharsets.US_ASCII));
+                    out.flush();
+                    return line.toString();
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+            WebClientConfluenceTransport transport = transport(WebClientConfluenceTransport.builder()
+                    .routes(target -> HttpRoute.proxy("127.0.0.1", proxy.getLocalPort(), "PROXY 127.0.0.1")));
+
+            Throwable outcome = null;
+            try {
+                transport.getAsync(URI.create(scheme + "://confluence.example.invalid/rest/api/space"), HEADERS, 1024)
+                        .toCompletableFuture().get(10, TimeUnit.SECONDS);
+            } catch (ExecutionException e) {
+                outcome = e.getCause();
+            }
+
+            assertThat(requestLine.get(10, TimeUnit.SECONDS)).contains("confluence.example.invalid");
+            if (outcome != null) {
+                // Der Test-Proxy schließt nach seiner Antwort; nur eine lokale Namensauflösung wäre der Fehler.
+                assertThat(rootCause(outcome)).isNotInstanceOf(java.net.UnknownHostException.class);
+                assertThat(RequestRoute.find(outcome)).map(RequestRoute::describe)
+                        .contains(HttpRoute.proxy("127.0.0.1", proxy.getLocalPort(), "PROXY 127.0.0.1").describe()
+                                + " · WebClient");
+            }
+        }
+    }
+
+    private static Throwable rootCause(Throwable failure) {
+        Throwable current = failure;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     @Test

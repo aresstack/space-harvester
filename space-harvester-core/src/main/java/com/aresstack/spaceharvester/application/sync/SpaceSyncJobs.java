@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.sync;
 
 import com.aresstack.spaceharvester.application.export.SpaceProvisioning;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobFailedException;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -46,6 +47,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     static final String PARTIAL = "SYNC_PARTIAL";
 
     private static final System.Logger LOG = System.getLogger(SpaceSyncJobs.class.getName());
+    private static final String COMPONENT = "SpaceSync";
 
     private final Jobs jobs;
     private final SourceQueries queries;
@@ -99,6 +101,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         }
         SpaceSync.SyncRun run;
         try {
+            context.phase(COMPONENT, "Inventur");
             run = sync.run(sourceId, spaceKey, applier, listener(context));
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
@@ -108,6 +111,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     sourceId, spaceKey, context.jobId(), run.notConfirmed());
             return Provisioned.NOT_CONFIRMED;
         }
+        context.phase(COMPONENT, "Anreichern");
         afterCommit(run, sourceId, spaceKey);
         return new Provisioned(true, false, failedPages(run));
     }
@@ -149,6 +153,16 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         return view(jobs.status(jobId, owner));
     }
 
+    /**
+     * Diagnoseereignisse des Abgleichs.
+     *
+     * @throws UnknownJobException wie {@link #status}
+     */
+    public List<JobEvent> events(String jobId, String owner) {
+        view(jobs.status(jobId, owner));
+        return jobs.events(jobId, owner);
+    }
+
     /** @throws UnknownJobException wie {@link #status} */
     public SyncJob cancel(String jobId, String owner) {
         view(jobs.status(jobId, owner));
@@ -177,6 +191,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private void run(JobContext context, String sourceId, String spaceKey) {
         SpaceSync.SyncRun run;
         try {
+            context.phase(COMPONENT, "Inventur");
             run = sync.run(sourceId, spaceKey, applier, listener(context));
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
@@ -190,6 +205,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     spaceKey, run.notConfirmed());
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
         }
+        context.phase(COMPONENT, "Anreichern");
         afterCommit(run, sourceId, spaceKey);
         if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
             throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
@@ -226,6 +242,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
 
             @Override
             public void inventoried(int pages) {
+                context.phase(COMPONENT, "Seiten abrufen");
                 context.discovered(pages);
             }
 
