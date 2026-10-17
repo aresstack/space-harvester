@@ -145,6 +145,8 @@ public class ExportsController {
         String fileName = name.substring(name.lastIndexOf('/') + 1);
         return ResponseEntity.ok().contentType(type)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                // Konvertierte Dateien (Markdown, PDF, Word) enthalten Seiteninhalt: im Browser nie ausführbar.
+                .header("Content-Security-Policy", "sandbox; default-src 'none'")
                 .body(new InputStreamResource(content));
     }
 

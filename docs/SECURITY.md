@@ -170,8 +170,8 @@ Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API
 
 Durchgesehen nach dem Zusammenführen aller Stränge: alle Routen unter `/api` (Seiten, Baum, Suche, Metadaten,
 Anreicherungen, Confluence-Fassade, Exporte samt Downloads, Syncs), die Weboberfläche `/ui/`, Logs, Fehlerantworten,
-Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Eine Anhangsroute und Converter-Ausgaben gab es zu
-diesem Zeitpunkt noch nicht; sie fallen bei ihrem Hinzukommen unter `ApiRouteCoverageTest` und die Regeln oben.
+Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft nach ihrem Merge: die Anhangsliste (#9,
+#76) und die Converter-Ausgaben der Exporte (#30, #68).
 
 **Ohne Befund**
 
@@ -188,6 +188,14 @@ diesem Zeitpunkt noch nicht; sie fallen bei ihrem Hinzukommen unter `ApiRouteCov
   `frame-ancestors 'none'`), `Referrer-Policy: no-referrer`, kein `innerHTML`, Token nur im `sessionStorage`. API-
   Antworten tragen `nosniff`, `Cache-Control: no-store` und `X-Frame-Options: DENY`.
 
+- Anhangsliste `GET …/pages/{pageId}/attachments`: verlangt `metadata`, verdeckt wie die Einzelseiten-Metadaten (ohne
+  Freigabe für alle Spaces erst nach dem Lesen mit dem Space aus der Quelle geprüft, sonst 404); die Seiten-ID prüft der
+  Adapter, die Liste ist auf `MAX_ATTACHMENTS` begrenzt und gehört nachweislich zur angefragten Seite. Sie liefert nur
+  Metadaten und die Adresse in der Quelle, keine Inhalte und keine Download-Freigabe.
+- Converter: ein Format wird erst nach der Export-Freigabe angenommen, unbekannte ergeben 400; Dateinamen nur nach
+  Whitelist, nie überschreibend (`CREATE_NEW`), Größe begrenzt (`max-converted-bytes`), Download nur für den Eigentümer
+  mit `export` und `content`.
+
 **Behoben**
 
 | Befund | Behebung |
@@ -198,6 +206,7 @@ diesem Zeitpunkt noch nicht; sie fallen bei ihrem Hinzukommen unter `ApiRouteCov
 | Fassade: unbegrenztes `start` ließ eine Anfrage den ganzen Space lesen und prüfen | `start` höchstens 10 000, darüber 400 |
 | Keine Tomcat-Grenzen für Formular- und verworfene Bodies | `max-http-form-post-size` 64 KB, `max-swallow-size` 1 MB |
 | Config-Server-Zugang in der URL möglich | `docs/CONFIGURATION.md`: Zugang nur über `username`/`password` |
+| Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 
 **Bewusst offen**
 

@@ -170,6 +170,11 @@ class ExportsApiTest {
         assertThat(pages.statusCode()).isEqualTo(200);
         assertThat(pages.headers().firstValue("Content-Type")).hasValueSatisfying(
                 type -> assertThat(type).startsWith("application/json"));
+        assertThat(pages.headers().firstValue("Content-Disposition")).hasValueSatisfying(
+                value -> assertThat(value).startsWith("attachment"));
+        assertThat(pages.headers().firstValue("Content-Security-Policy")).hasValueSatisfying(
+                value -> assertThat(value).contains("sandbox"));
+        assertThat(pages.headers().firstValue("X-Content-Type-Options")).contains("nosniff");
         assertThat(body(pages)).extracting(page -> page.path("header").path("pageId").asString())
                 .containsExactly("100", "101", "200");
         assertThat(body(pages).get(1).path("content")).isEqualTo(json.readTree(PRETTY));
