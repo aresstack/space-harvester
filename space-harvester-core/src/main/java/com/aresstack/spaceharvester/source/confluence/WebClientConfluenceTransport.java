@@ -14,6 +14,7 @@ import io.netty.handler.ssl.JdkSslContext;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.timeout.ReadTimeoutException;
 import io.netty.resolver.DefaultAddressResolverGroup;
+import io.netty.resolver.NoopAddressResolverGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -289,8 +290,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .pendingAcquireTimeout(connectTimeout.plus(readTimeout))
                 .maxIdleTime(Duration.ofSeconds(30))
                 .build();
+        // Über einen Proxy bleibt der Zielname unaufgelöst: im Unternehmensnetz kennt oft nur der Proxy externe Namen,
+        // eine lokale Auflösung endete dort in einer UnknownHostException, obwohl die PAC-Route stimmte.
         HttpClient http = HttpClient.create(pool)
-                .resolver(DefaultAddressResolverGroup.INSTANCE)
+                .resolver(key.kind() == HttpRoute.Kind.PROXY ? NoopAddressResolverGroup.INSTANCE
+                        : DefaultAddressResolverGroup.INSTANCE)
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) connectTimeout.toMillis())
                 .responseTimeout(readTimeout)
                 .followRedirect(false)
