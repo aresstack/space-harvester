@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.View;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
@@ -328,7 +329,9 @@ public final class ContentView implements View {
                         return;
                     }
                     loading = null;
-                    if (fallBackToLive(batch, from)) {
+                    // Nur der erwartete Fehlbestand führt zu live; ein beschädigter Bestand oder fehlende Rechte
+                    // bleiben als Problem sichtbar.
+                    if (cacheMiss(error) && fallBackToLive(batch, from)) {
                         return;
                     }
                     status.setText(pagesModel.size() + " Seiten geladen; Laden abgebrochen.");
@@ -350,6 +353,15 @@ public final class ContentView implements View {
         feedback.info("Noch kein Bestand für " + batch.spaceKey() + ", die Seiten kommen live aus der Quelle.",
                 "„Synchronisieren“ unter Wissensquellen legt den lokalen Bestand an.");
         return true;
+    }
+
+    private static boolean cacheMiss(Throwable error) {
+        for (Throwable e = error; e != null; e = e.getCause()) {
+            if (e instanceof CacheMissException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean fitsOnScreen() {
