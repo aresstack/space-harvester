@@ -1,0 +1,53 @@
+name: Confluence-Referenz
+
+# Prüft, ob die öffentliche OpenAPI-Referenz von Confluence Data Center erreichbar ist und ob der versionierte
+# Auszug unter src/test/resources/confluence-contract/ noch mit ihr übereinstimmt (#31). Die Vertragstests selbst
+# laufen im Build gegen den Auszug und hängen nicht von dieser Seite ab.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 1'
+  pull_request:
+    paths:
+      - '.github/workflows/confluence-contract.yml'
+      - 'tools/confluence-contract/**'
+      - 'src/test/resources/confluence-contract/**'
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Erreichbarkeit
+        run: |
+          for url in \
+            https://developer.atlassian.com/server/confluence/rest/v1020/ \
+            https://dac-static.atlassian.com/server/confluence/10.2.0.swagger.v3.json; do
+            echo "$url $(curl -sS -o /dev/null -w '%{http_code} %{size_download}' --max-time 60 "$url" 2>&1)"
+          done
+      - name: Auszug mit dem Repository vergleichen
+        run: |
+          set -e
+          found=0
+          for dir in src/test/resources/confluence-contract/*/; do
+            [ -f "$dir/openapi-extract.json" ] || continue
+            found=1
+            version=$(basename "$dir")
+            curl -sSf --max-time 120 -o "$RUNNER_TEMP/$version.json" \
+              "https://dac-static.atlassian.com/server/confluence/$version.swagger.v3.json"
+            python3 tools/confluence-contract/extract.py "$RUNNER_TEMP/$version.json" > "$RUNNER_TEMP/$version.extract.json"
+            if diff -u "$dir/openapi-extract.json" "$RUNNER_TEMP/$version.extract.json"; then
+              echo "$version: Auszug stimmt mit der Referenz überein"
+            else
+              echo "::error::$version: Die Atlassian-Referenz hat sich geändert; Auszug mit tools/confluence-contract/extract.py neu erzeugen und Vertragstests prüfen"
+              exit 1
+            fi
+          done
+          if [ "$found" = 0 ]; then
+            echo "::error::Kein Auszug unter src/test/resources/confluence-contract/"
+            exit 1
+          fi
