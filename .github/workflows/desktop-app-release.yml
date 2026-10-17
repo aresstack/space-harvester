@@ -4,12 +4,18 @@ name: Desktop-App-Release
 # das SNAPSHOT-JAR als Workflow-Artefakt ab. Ein Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand
 # baut dasselbe mit der Version aus dem Tag und erzeugt ein GitHub-Release mit JAR, SHA256SUMS und Release-Notizen;
 # Tags mit Vorabkennung (z. B. v0.1.0-alpha.1) werden als Pre-Release markiert. Ein vorhandenes Release wird nie
-# überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
+# überschrieben. Alternativ legt ein manueller Start auf main mit Eingabe „tag“ Tag und Release in einem Lauf an.
+# Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Neuer Release-Tag auf dem gewählten main-Stand, z. B. v0.1.0-alpha.2; leer: nur bauen'
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -28,6 +34,7 @@ jobs:
       attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
+      INPUT_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,8 +42,17 @@ jobs:
       - name: Version bestimmen
         id: version
         run: |
+          tag=""
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             tag="$GITHUB_REF_NAME"
+          elif [ -n "$INPUT_TAG" ]; then
+            [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Release-Tags nur von main aus anlegen"; exit 1; }
+            tag="$INPUT_TAG"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::Tag $tag gibt es schon"; exit 1
+            fi
+          fi
+          if [ -n "$tag" ]; then
             [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
               || { echo "::error::Tag $tag folgt nicht v<Major>.<Minor>.<Patch>[-<Vorabkennung>]"; exit 1; }
             git fetch --no-tags origin main
@@ -49,6 +65,7 @@ jobs:
             prerelease=false
             [[ "$version" == *-* ]] && prerelease=true
             echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "args=-PappVersion=$version" >> "$GITHUB_OUTPUT"
           else
             version=$(sed -n "s/^ *version = '\(.*\)'$/\1/p" build.gradle)
@@ -113,7 +130,7 @@ jobs:
         if: steps.version.outputs.release == 'true'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
           JAR: ${{ steps.version.outputs.jar }}
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
@@ -133,6 +150,9 @@ jobs:
           Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
           Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/DESKTOP_APP.md).
           NOTES
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Space Harvester Desktop $VERSION" \
+          # Beim Tag-Push existiert der Tag schon; beim manuellen Start legt gh ihn auf dem gebauten Commit an
+          verify=--verify-tag
+          [ "$GITHUB_REF_TYPE" = "tag" ] || verify="--target=$GITHUB_SHA"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$verify" --title "Space Harvester Desktop $VERSION" \
             --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" \
             "$JAR" SHA256SUMS
