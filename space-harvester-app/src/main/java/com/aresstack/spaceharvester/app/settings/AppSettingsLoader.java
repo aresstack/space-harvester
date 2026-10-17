@@ -1,0 +1,502 @@
+package com.aresstack.spaceharvester.app.settings;
+
+import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.embedding.onnx.E5Defaults;
+import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+import org.yaml.snakeyaml.error.YAMLException;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Liest die YAML-Konfiguration der App. Schlüssel werden wie bei Spring locker verglichen ({@code base-url},
+ * {@code baseUrl} und {@code base_url} sind gleich), Platzhalter {@code ${NAME:Standard}} kommen aus
+ * Systemeigenschaften und Umgebung. Fehler einzelner Quellen verhindern den Start nicht: die Quelle fehlt dann, und
+ * {@link AppSettings#problems()} sagt, was zu tun ist. Fehlt nur das Passwort oder Token einer Quelle, bleibt sie
+ * erhalten und die App fragt es für die Sitzung ab.
+ */
+public final class AppSettingsLoader {
+
+    /** Wurzel der Dienst-Schlüssel. */
+    static final String ROOT = "space-harvester";
+    /** Wurzel der App-eigenen Schlüssel. */
+    static final String APP_ROOT = "space-harvester-app";
+
+    private static final Pattern SIZE = Pattern.compile("(\\d+)\\s*(B|KB|MB|GB|TB)?", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SIMPLE_DURATION = Pattern.compile("(\\d+)\\s*(ms|s|m|h|d)", Pattern.CASE_INSENSITIVE);
+
+    private final Placeholders placeholders;
+    private final Path home;
+
+    /**
+     * @param home Standard-Basisverzeichnis der App ({@code ~/.space-harvester}); darunter liegen Daten und Konfiguration
+     */
+    public AppSettingsLoader(Placeholders placeholders, Path home) {
+        this.placeholders = placeholders;
+        this.home = home;
+    }
+
+    /** Standard-Basisverzeichnis {@code <user.home>/.space-harvester}. */
+    public static Path defaultHome() {
+        return Path.of(System.getProperty("user.home"), ".space-harvester");
+    }
+
+    /** Standard-Konfigurationsdatei {@code <home>/space-harvester-app.yml}. */
+    public static Path defaultFile(Path home) {
+        return home.resolve("space-harvester-app.yml");
+    }
+
+    /**
+     * @param file YAML-Datei; fehlt sie, gelten die Standards ohne Quellen
+     */
+    public AppSettings load(Path file) {
+        if (file == null || !Files.isRegularFile(file)) {
+            return read(file, Map.of(), new ArrayList<>());
+        }
+        List<String> problems = new ArrayList<>();
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            Object document = yaml().load(reader);
+            if (document == null) {
+                return read(file, Map.of(), problems);
+            }
+            if (!(document instanceof Map<?, ?> map)) {
+                problems.add("Die Konfigurationsdatei enthält keine Schlüssel (" + file + ")");
+                return read(file, Map.of(), problems);
+            }
+            return read(file, map, problems);
+        } catch (IOException e) {
+            problems.add("Die Konfigurationsdatei ist nicht lesbar: " + file + " (" + e.getClass().getSimpleName() + ")");
+        } catch (YAMLException e) {
+            // Die Meldung von SnakeYAML zitiert Zeilen der Datei; dort könnten Geheimnisse stehen.
+            problems.add("Die Konfigurationsdatei ist kein gültiges YAML: " + file + yamlPosition(e));
+        }
+        return read(file, Map.of(), problems);
+    }
+
+    /** Liest ein bereits geladenes YAML-Dokument (für Tests und die Bearbeitung in der App). */
+    public AppSettings read(Path file, Map<?, ?> document, List<String> problems) {
+        Map<?, ?> root = map(get(document, ROOT));
+        Map<?, ?> app = map(get(document, APP_ROOT));
+        Map<?, ?> network = map(get(root, "network"));
+
+        ProxySettings proxy = proxy(map(get(network, "proxy")), problems);
+        ConfiguredSourceCatalog.AsyncTransport async = enumValue(ConfiguredSourceCatalog.AsyncTransport.class,
+                text(get(network, "async-transport"), problems), ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT,
+                "space-harvester.network.async-transport", problems);
+
+        List<AppSettings.SourceEntry> sources = new ArrayList<>();
+        Object list = get(root, "sources");
+        if (list instanceof List<?> entries) {
+            int index = 0;
+            for (Object entry : entries) {
+                AppSettings.SourceEntry source = source(map(entry), index++, problems);
+                if (source != null) {
+                    sources.add(source);
+                }
+            }
+        } else if (list != null) {
+            problems.add("space-harvester.sources muss eine Liste sein");
+        }
+
+        Path data = path(get(app, "data-directory"), problems);
+        data = data == null ? home.resolve("data") : data;
+        Path exports = path(get(map(get(root, "export")), "directory"), problems);
+        Path assets = path(get(map(get(root, "assets")), "directory"), problems);
+        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 50L * 1024 * 1024,
+                "space-harvester.assets.max-size", problems);
+        Duration searchTimeout = duration(get(map(get(root, "cache")), "search-timeout"), Duration.ofSeconds(5),
+                "space-harvester.cache.search-timeout", problems);
+        int maxTreeNodes = integer(get(map(get(root, "query")), "max-tree-nodes"), 50_000,
+                "space-harvester.query.max-tree-nodes", problems);
+        Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
+        AppSettings.Storage storage = new AppSettings.Storage(data,
+                exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
+                maxAsset, searchTimeout, maxTreeNodes, pdfFont);
+
+        return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
+                storage, jobLimits(map(get(root, "jobs")), problems), embedding(map(get(root, "embedding")), problems),
+                problems);
+    }
+
+    private AppSettings.SourceEntry source(Map<?, ?> source, int index, List<String> problems) {
+        String id = text(get(source, "id"), problems);
+        String label = "Quelle " + (id == null ? "Nr. " + (index + 1) : id);
+        String type = text(get(source, "type"), problems);
+        if (id == null || id.isBlank()) {
+            problems.add(label + ": id fehlt");
+            return null;
+        }
+        if (type == null || type.isBlank()) {
+            problems.add(label + ": type fehlt (confluence oder files)");
+            return null;
+        }
+        URI baseUrl = null;
+        String url = text(get(source, "base-url"), problems);
+        if (url != null && !url.isBlank()) {
+            try {
+                baseUrl = new URI(url.trim());
+            } catch (URISyntaxException e) {
+                problems.add(label + ": base-url ist keine gültige Adresse");
+                return null;
+            }
+        }
+        Map<String, String> options = new TreeMap<>();
+        for (Map.Entry<?, ?> option : map(get(source, "options")).entrySet()) {
+            String value = text(option.getValue(), problems);
+            if (value != null) {
+                options.put(String.valueOf(option.getKey()), value);
+            }
+        }
+
+        Map<?, ?> auth = map(get(source, "auth"));
+        SourceSettingsConfig.AuthType authType = enumValue(SourceSettingsConfig.AuthType.class,
+                text(get(auth, "type"), problems), SourceSettingsConfig.AuthType.NONE, label + ": auth.type", problems);
+        String username = text(get(auth, "username"), problems);
+        String secretKey = authType == SourceSettingsConfig.AuthType.PAT ? "token" : "password";
+        Secret secret = authType == SourceSettingsConfig.AuthType.NONE ? Secret.NONE : secret(get(auth, secretKey));
+        SourceSettingsConfig.Auth credentials = switch (authType) {
+            case NONE -> SourceSettingsConfig.Auth.anonymous();
+            case BASIC -> new SourceSettingsConfig.Auth(authType, username, secret.value(), null);
+            case PAT -> new SourceSettingsConfig.Auth(authType, null, null, secret.value());
+        };
+
+        Map<?, ?> certificate = map(get(source, "client-certificate"));
+        SourceSettingsConfig.ClientCertificate clientCertificate = SourceSettingsConfig.ClientCertificate.disabled();
+        if (!certificate.isEmpty()) {
+            boolean enabled = Boolean.parseBoolean(text(get(certificate, "enabled"), problems));
+            SourceSettingsConfig.CertificateStoreType storeType = enumValue(
+                    SourceSettingsConfig.CertificateStoreType.class, text(get(certificate, "type"), problems), null,
+                    label + ": client-certificate.type", problems);
+            Secret password = secret(get(certificate, "password"));
+            if (password.variable() != null) {
+                problems.add(label + ": Das Passwort des Client-Zertifikats fehlt (Umgebungsvariable "
+                        + password.variable() + ")");
+            }
+            clientCertificate = new SourceSettingsConfig.ClientCertificate(enabled, storeType,
+                    path(get(certificate, "path"), problems), text(get(certificate, "alias"), problems),
+                    password.value(), text(get(certificate, "thumbprint"), problems));
+        }
+        SourceSettingsConfig config = new SourceSettingsConfig(id.trim(), type.trim(), text(get(source, "title"),
+                problems), baseUrl, credentials, options, clientCertificate, text(get(source, "trust-bundle"), problems));
+        return new AppSettings.SourceEntry(config, secret.missing(), secret.variable());
+    }
+
+    private ProxySettings proxy(Map<?, ?> proxy, List<String> problems) {
+        if (proxy.isEmpty()) {
+            return ProxySettings.disabled();
+        }
+        ProxySettings.Mode mode = enumValue(ProxySettings.Mode.class, text(get(proxy, "mode"), problems),
+                ProxySettings.Mode.DISABLED, "space-harvester.network.proxy.mode", problems);
+        String pac = text(get(proxy, "pac-url"), problems);
+        URI pacUrl = null;
+        if (pac != null && !pac.isBlank()) {
+            try {
+                pacUrl = new URI(pac.trim());
+            } catch (URISyntaxException e) {
+                problems.add("space-harvester.network.proxy.pac-url ist keine gültige Adresse");
+            }
+        }
+        Object port = get(proxy, "proxy-port");
+        List<String> nonProxy = new ArrayList<>();
+        if (get(proxy, "non-proxy-hosts") instanceof List<?> hosts) {
+            for (Object host : hosts) {
+                String value = text(host, problems);
+                if (value != null) {
+                    nonProxy.add(value);
+                }
+            }
+        }
+        return new ProxySettings(mode, pacUrl, text(get(proxy, "proxy-host"), problems),
+                port == null ? null : integer(port, 0, "space-harvester.network.proxy.proxy-port", problems), nonProxy,
+                optionalDuration(get(proxy, "resolve-timeout"), "space-harvester.network.proxy.resolve-timeout", problems),
+                optionalDuration(get(proxy, "cache-ttl"), "space-harvester.network.proxy.cache-ttl", problems),
+                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems));
+    }
+
+    private Map<String, AppSettings.TrustStoreSettings> trustStores(Map<?, ?> spring, List<String> problems) {
+        Map<String, AppSettings.TrustStoreSettings> result = new LinkedHashMap<>();
+        Map<?, ?> bundle = map(get(map(get(spring, "ssl")), "bundle"));
+        for (Map.Entry<?, ?> entry : map(get(bundle, "jks")).entrySet()) {
+            String name = String.valueOf(entry.getKey());
+            Map<?, ?> store = map(get(map(entry.getValue()), "truststore"));
+            Path location = path(stripFilePrefix(text(get(store, "location"), problems)), problems);
+            if (location == null) {
+                problems.add("spring.ssl.bundle.jks." + name + ": truststore.location fehlt");
+                continue;
+            }
+            Secret password = secret(get(store, "password"));
+            result.put(name, new AppSettings.TrustStoreSettings(name, location, text(get(store, "type"), problems),
+                    password.value(), null));
+        }
+        for (Map.Entry<?, ?> entry : map(get(bundle, "pem")).entrySet()) {
+            String name = String.valueOf(entry.getKey());
+            Map<?, ?> store = map(get(map(entry.getValue()), "truststore"));
+            Path pem = path(stripFilePrefix(text(get(store, "certificate"), problems)), problems);
+            if (pem == null) {
+                problems.add("spring.ssl.bundle.pem." + name + ": truststore.certificate fehlt");
+                continue;
+            }
+            result.put(name, new AppSettings.TrustStoreSettings(name, null, null, null, pem));
+        }
+        return result;
+    }
+
+    private JobLimits jobLimits(Map<?, ?> jobs, List<String> problems) {
+        int concurrent = integer(get(jobs, "max-concurrent"), 2, "space-harvester.jobs.max-concurrent", problems);
+        int queued = integer(get(jobs, "max-queued"), 20, "space-harvester.jobs.max-queued", problems);
+        Duration runTime = duration(get(jobs, "max-run-time"), Duration.ofHours(6), "space-harvester.jobs.max-run-time",
+                problems);
+        Duration retention = duration(get(jobs, "retention"), JobLimits.DEFAULT_RETENTION,
+                "space-harvester.jobs.retention", problems);
+        // Ein Bediener: die Grenze je Auslöser ist die Gesamtgrenze.
+        try {
+            return new JobLimits(concurrent, queued, runTime, retention);
+        } catch (IllegalArgumentException e) {
+            problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
+            return new JobLimits(2, 20, Duration.ofHours(6));
+        }
+    }
+
+    private AppSettings.EmbeddingSettings embedding(Map<?, ?> embedding, List<String> problems) {
+        String provider = text(get(embedding, "provider"), problems);
+        if (provider == null || provider.isBlank() || "none".equalsIgnoreCase(provider.trim())) {
+            return AppSettings.EmbeddingSettings.DISABLED;
+        }
+        if (!"onnx".equalsIgnoreCase(provider.trim())) {
+            problems.add("space-harvester.embedding.provider kennt nur none und onnx");
+            return AppSettings.EmbeddingSettings.DISABLED;
+        }
+        Map<?, ?> onnx = map(get(embedding, "onnx"));
+        Path dir = path(get(onnx, "model-dir"), problems);
+        Path model = path(get(onnx, "model-file"), problems);
+        Path tokenizer = path(get(onnx, "tokenizer-file"), problems);
+        if (model == null && dir != null) {
+            model = dir.resolve(E5Defaults.MODEL_FILE);
+        }
+        if (tokenizer == null && dir != null) {
+            tokenizer = dir.resolve(E5Defaults.TOKENIZER_FILE);
+        }
+        if (model == null || tokenizer == null) {
+            problems.add("space-harvester.embedding.onnx.model-dir fehlt; die semantische Suche bleibt aus");
+            return AppSettings.EmbeddingSettings.DISABLED;
+        }
+        String prefix = "space-harvester.embedding.onnx.";
+        return new AppSettings.EmbeddingSettings(true, model, tokenizer,
+                orDefault(text(get(onnx, "model-sha256"), problems), E5Defaults.MODEL_SHA256),
+                orDefault(text(get(onnx, "tokenizer-sha256"), problems), E5Defaults.TOKENIZER_SHA256),
+                orDefault(text(get(onnx, "model-id"), problems), E5Defaults.MODEL_ID),
+                integer(get(onnx, "dimensions"), E5Defaults.DIMENSIONS, prefix + "dimensions", problems),
+                integer(get(onnx, "max-tokens"), E5Defaults.MAX_TOKENS, prefix + "max-tokens", problems),
+                integer(get(onnx, "batch-size"), 16, prefix + "batch-size", problems),
+                integer(get(onnx, "threads"), 2, prefix + "threads", problems),
+                integer(get(onnx, "max-concurrent"), 1, prefix + "max-concurrent", problems),
+                duration(get(onnx, "acquire-timeout"), Duration.ofMinutes(2), prefix + "acquire-timeout", problems),
+                duration(get(onnx, "retry-after"), Duration.ofMinutes(5), prefix + "retry-after", problems),
+                integer(get(embedding, "max-chunk-chars"), 1500, "space-harvester.embedding.max-chunk-chars", problems));
+    }
+
+    // ------------------------------------------------------------------ Werte
+
+    /** Ein Geheimnis: aufgelöst, leer oder mit fehlender Umgebungsvariable. */
+    private record Secret(String value, boolean missing, String variable) {
+
+        static final Secret NONE = new Secret(null, false, null);
+    }
+
+    private Secret secret(Object raw) {
+        if (raw == null) {
+            return new Secret(null, true, null);
+        }
+        try {
+            String value = placeholders.resolve(String.valueOf(raw));
+            return value == null || value.isEmpty() ? new Secret(null, true, null) : new Secret(value, false, null);
+        } catch (Placeholders.UnresolvedPlaceholderException e) {
+            return new Secret(null, true, e.name());
+        }
+    }
+
+    private String text(Object raw, List<String> problems) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Map<?, ?> || raw instanceof List<?>) {
+            return null;
+        }
+        try {
+            return placeholders.resolve(String.valueOf(raw));
+        } catch (Placeholders.UnresolvedPlaceholderException e) {
+            problems.add(e.getMessage());
+            return null;
+        }
+    }
+
+    private Path path(Object raw, List<String> problems) {
+        String value = raw instanceof String s ? text(s, problems) : text(raw, problems);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String expanded = value.trim();
+        if (expanded.startsWith("~/") || expanded.startsWith("~\\")) {
+            expanded = System.getProperty("user.home") + expanded.substring(1);
+        }
+        try {
+            return Path.of(expanded);
+        } catch (InvalidPathException e) {
+            problems.add("Ungültiger Pfad: " + value);
+            return null;
+        }
+    }
+
+    private static String stripFilePrefix(String location) {
+        return location != null && location.startsWith("file:") ? location.substring("file:".length()) : location;
+    }
+
+    private int integer(Object raw, int fallback, String key, List<String> problems) {
+        String value = text(raw, problems);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            problems.add(key + " ist keine ganze Zahl: " + value);
+            return fallback;
+        }
+    }
+
+    private long size(Object raw, long fallback, String key, List<String> problems) {
+        String value = text(raw, problems);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        Matcher matcher = SIZE.matcher(value.trim());
+        if (!matcher.matches()) {
+            problems.add(key + " ist keine Größe wie 50MB: " + value);
+            return fallback;
+        }
+        long number = Long.parseLong(matcher.group(1));
+        String unit = matcher.group(2) == null ? "B" : matcher.group(2).toUpperCase(Locale.ROOT);
+        int shift = switch (unit) {
+            case "KB" -> 10;
+            case "MB" -> 20;
+            case "GB" -> 30;
+            case "TB" -> 40;
+            default -> 0;
+        };
+        return number << shift;
+    }
+
+    private Duration duration(Object raw, Duration fallback, String key, List<String> problems) {
+        Duration value = optionalDuration(raw, key, problems);
+        return value == null ? fallback : value;
+    }
+
+    private Duration optionalDuration(Object raw, String key, List<String> problems) {
+        String value = text(raw, problems);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.trim();
+        Matcher simple = SIMPLE_DURATION.matcher(trimmed);
+        if (simple.matches()) {
+            long amount = Long.parseLong(simple.group(1));
+            return switch (simple.group(2).toLowerCase(Locale.ROOT)) {
+                case "ms" -> Duration.ofMillis(amount);
+                case "s" -> Duration.ofSeconds(amount);
+                case "m" -> Duration.ofMinutes(amount);
+                case "h" -> Duration.ofHours(amount);
+                default -> Duration.ofDays(amount);
+            };
+        }
+        if (trimmed.matches("\\d+")) {
+            return Duration.ofMillis(Long.parseLong(trimmed));
+        }
+        try {
+            return Duration.parse(trimmed);
+        } catch (DateTimeParseException e) {
+            problems.add(key + " ist keine Dauer wie 5s, 10m oder PT1H: " + value);
+            return null;
+        }
+    }
+
+    private <E extends Enum<E>> E enumValue(Class<E> type, String value, E fallback, String key,
+                                             List<String> problems) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String name = value.trim().replace('-', '_').toUpperCase(Locale.ROOT);
+        try {
+            return Enum.valueOf(type, name);
+        } catch (IllegalArgumentException e) {
+            List<String> allowed = new ArrayList<>();
+            for (E constant : type.getEnumConstants()) {
+                allowed.add(constant.name().toLowerCase(Locale.ROOT).replace('_', '-'));
+            }
+            problems.add(key + " kennt nur " + String.join(", ", allowed) + ", nicht " + value.trim());
+            return fallback;
+        }
+    }
+
+    private static String orDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    // ------------------------------------------------------------------ YAML-Baum
+
+    static Yaml yaml() {
+        LoaderOptions options = new LoaderOptions();
+        options.setAllowDuplicateKeys(false);
+        options.setMaxAliasesForCollections(20);
+        return new Yaml(new SafeConstructor(options));
+    }
+
+    /** Wert zu einem Schlüssel, locker verglichen wie bei Spring (Groß-/Kleinschreibung, -, _ egal). */
+    static Object get(Map<?, ?> map, String key) {
+        if (map == null) {
+            return null;
+        }
+        String wanted = normalize(key);
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (normalize(String.valueOf(entry.getKey())).equals(wanted)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    static Map<?, ?> map(Object value) {
+        return value instanceof Map<?, ?> map ? map : Map.of();
+    }
+
+    static String normalize(String key) {
+        return key.replace("-", "").replace("_", "").toLowerCase(Locale.ROOT);
+    }
+
+    private static String yamlPosition(YAMLException e) {
+        if (e instanceof org.yaml.snakeyaml.error.MarkedYAMLException marked && marked.getProblemMark() != null) {
+            return " (Zeile " + (marked.getProblemMark().getLine() + 1) + ")";
+        }
+        return "";
+    }
+}

@@ -1,0 +1,129 @@
+// Eigenständige Swing-Desktop-App (#103): nutzt die Anwendungsfälle der Core-Bibliothek direkt, ohne REST-Aufrufe,
+// ohne HTTP-Server und ohne Spring-Kontext. Das Spring-Boot-Plugin dient nur dem Packaging: bootJar legt die
+// Bibliotheken als verschachtelte JARs in ein einziges ausführbares JAR (wie beim Dienst, siehe bootJarPacCheck;
+// GraalJS für PAC läuft dort nachweislich). Zur Laufzeit startet der Loader nur SpaceHarvesterApp.main.
+plugins {
+    id 'java'
+    alias(libs.plugins.spring.boot)
+}
+
+description = 'Space Harvester Desktop – Wissensquellen, Inhalte, Abgleich, Export und Suche als Swing-Anwendung.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // Nur die Bibliothek, nie :space-harvester-server (#103)
+    implementation project(':space-harvester-core')
+    implementation project(':comic-controls')
+    implementation libs.snakeyaml
+    // Originaldaten lesbar einrücken und body.storage zeigen; dieselbe Jackson-3-Fassung wie im Core
+    implementation libs.jackson.databind
+    implementation libs.slf4j.api
+    // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst
+    runtimeOnly platform(libs.spring.boot.dependencies)
+    runtimeOnly 'ch.qos.logback:logback-classic'
+
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation testFixtures(project(':space-harvester-core'))
+    testImplementation testFixtures(project(':enterprise-ai-sources'))
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+springBoot {
+    mainClass = 'com.aresstack.spaceharvester.app.SpaceHarvesterApp'
+}
+
+// Das ausführbare App-JAR: space-harvester-app-<version>.jar
+tasks.named('bootJar') {
+    archiveBaseName = 'space-harvester-app'
+    manifest {
+        attributes 'Implementation-Title': 'Space Harvester Desktop', 'Implementation-Version': project.version
+    }
+}
+
+tasks.named('jar') {
+    enabled = false
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    systemProperty 'java.awt.headless', 'true'
+}
+
+// Startet das fertige JAR wie ein Benutzer (#103): --version und --screenshot mit einer Dateiquelle, ohne Bildschirm.
+// Prüft, dass der Loader alle verschachtelten JARs findet und jeder Bereich ohne Fehler rendert.
+def appJarCheck = tasks.register('appJarCheck') {
+    group = 'verification'
+    description = 'Startet das ausführbare App-JAR und rendert jeden Bereich als PNG.'
+    def jar = tasks.named('bootJar').flatMap { it.archiveFile }
+    def work = layout.buildDirectory.dir('app-jar-check')
+    def launcher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    inputs.file(jar)
+    outputs.dir(work)
+    doLast {
+        def dir = work.get().asFile
+        project.delete(dir)
+        def files = new File(dir, 'handbuch')
+        files.mkdirs()
+        new File(files, 'betrieb.md').setText('# Betrieb\n\nNeustart mit systemctl.\n', 'UTF-8')
+        def config = new File(dir, 'app.yml')
+        config.setText("""\
+            space-harvester-app:
+              data-directory: '${new File(dir, 'data').absolutePath.replace('\\', '/')}'
+            space-harvester:
+              sources:
+                - id: handbuch
+                  type: files
+                  title: Betriebshandbuch
+                  options:
+                    directory: '${files.absolutePath.replace('\\', '/')}'
+            """.stripIndent(), 'UTF-8')
+        def java = launcher.get().executablePath.asFile.absolutePath
+        def run = { List<String> args ->
+            def out = new ByteArrayOutputStream()
+            def result = project.providers.exec {
+                commandLine([java, '-Djava.awt.headless=true', "-DSPACE_HARVESTER_LOG_DIR=${dir}/logs",
+                             '-jar', jar.get().asFile.absolutePath] + args)
+                ignoreExitValue = true
+            }
+            def text = result.standardOutput.asText.get() + result.standardError.asText.get()
+            if (result.result.get().exitValue != 0) {
+                throw new GradleException("App-JAR ${args} endete mit ${result.result.get().exitValue}:\n${text}")
+            }
+            return text
+        }
+        def version = run(['--version'])
+        if (!version.contains('Space Harvester Desktop')) {
+            throw new GradleException("--version gab keine Version aus:\n${version}")
+        }
+        def shots = new File(dir, 'screenshots')
+        def log = run(['--config', config.absolutePath, '--screenshot', shots.absolutePath])
+        def pngs = (shots.listFiles() ?: []).findAll { it.name.endsWith('.png') && it.length() > 0 }
+        if (pngs.size() != 7) {
+            throw new GradleException("Erwartet 7 Bildschirmfotos, gefunden ${pngs*.name}:\n${log}")
+        }
+        if (log.contains('Exception')) {
+            throw new GradleException("Ausnahme beim Rendern:\n${log}")
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn appJarCheck
+}

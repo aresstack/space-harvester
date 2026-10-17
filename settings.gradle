@@ -26,3 +26,9 @@ include 'space-harvester-server'
 // Deutsches Dependency Parsing nach Universal Dependencies (#98, ADR 0005): Laufzeitmodul mit MaltParser und
 // objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
 include 'nlp-parser'
+
+// Unveränderte Kopie der Comic-Bedienelemente aus aresstack/enterprise-ai-client, siehe comic-controls/UPSTREAM.md.
+include 'comic-controls'
+
+// Eigenständige Swing-Desktop-App auf der Core-Bibliothek, ohne REST und ohne Spring-Kontext (#103).
+include 'space-harvester-app'

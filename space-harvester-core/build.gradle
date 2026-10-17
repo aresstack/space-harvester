@@ -21,6 +21,9 @@ dependencies {
     implementation libs.win.proxy.java
     // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als HTTP-Client
     implementation libs.spring.webflux
+    // ReactorClientHttpConnector implementiert SmartLifecycle (spring-context), webflux zieht es nicht mit; ohne es
+    // bleibt jeder asynchrone Abruf außerhalb des Servers hängen (Desktop-App #103)
+    implementation libs.spring.context
     implementation libs.reactor.netty.http
     implementation libs.jackson.databind
     implementation libs.slf4j.api
