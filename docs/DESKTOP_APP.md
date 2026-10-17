@@ -261,17 +261,30 @@ Die CI baut das JAR, startet `--version` und rendert die Bereiche unter Xvfb (`a
 
 ## Releases
 
-Der Workflow **Desktop-App-Release** (`.github/workflows/desktop-app-release.yml`) baut bei jedem Push das JAR, führt
-die App-Tests und `appJarCheck` aus, prüft `--version` und stellt das JAR mit `SHA256SUMS` und
-Herkunftsnachweis (Build-Provenance-Attestierung) bereit:
+Der Workflow **Release** (`.github/workflows/release.yml`, bis #134 `desktop-app-release.yml`) baut bei jedem Push
+alle Module mit `./gradlew build` (Tests, `appJarCheck`, `bootJarPacCheck`, `verifyPublishedPom`) und stellt
+dieselbe Version aus demselben Commit als ein Release bereit, mit `SHA256SUMS` und Herkunftsnachweis
+(Build-Provenance-Attestierung):
+
+| Datei | Modul | Inhalt |
+|---|---|---|
+| `space-harvester-app-<v>.jar` | `:space-harvester-app` | Desktop-App, ausführbar, startet ohne Server |
+| `space-harvester-<v>.jar` | `:space-harvester-server` | REST-Service, ausführbares Spring-Boot-JAR (Name wie vor #100) |
+| `space-harvester-core-<v>.jar`, `-sources.jar`, `-javadoc.jar` | `:space-harvester-core` | Bibliothek, normales JAR ohne Abhängigkeiten |
+
+Der Workflow prüft vor dem Hochladen, dass App (`--version`) und Server (`build-info.properties`) die Release-Version
+nennen und das Core-JAR kein Fat-JAR ist. Für Maven-Nutzer mit transitiven Abhängigkeiten bleibt die POM-Veröffentlichung
+(`publishMavenPublicationToLocalRepository`, siehe [MODULES.md](MODULES.md)) ein eigener Schritt.
 
 | Auslöser | Ergebnis |
 |---|---|
-| Push auf `main` | neues Pre-Release `v<Basis>-<Kanal>.<N>`, z. B. `v0.1.0-beta.1`, `v0.1.0-beta.2`, … |
-| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird durch diesen Stand ersetzt (JAR `…-SNAPSHOT.jar`) |
+| Push auf `main` | neues Pre-Release `v<Basis>-<Kanal>.<N>`, z. B. `v0.1.0-beta.3`, `v0.1.0-beta.4`, … |
+| Push auf einen anderen Branch | das rollierende Pre-Release `snapshot` wird durch diesen Stand ersetzt (`…-SNAPSHOT.jar`) |
 | Tag `v<Major>.<Minor>.<Patch>[-<Vorabkennung>]` auf einem `main`-Stand | Release genau mit dieser Version |
 | *Run workflow* auf `main` mit Feld `tag` | wie ein Tag; der Lauf legt den Tag selbst an |
 
+- Die Version steuert zentral `build.gradle` für alle Module: ohne Angabe `0.1.0-SNAPSHOT`, im Release
+  `-PreleaseVersion=<v>`. Lokal: `./gradlew build -PreleaseVersion=0.1.0-beta.3`.
 - **Basis** ist die Version aus `build.gradle` ohne `-SNAPSHOT` (derzeit `0.1.0`), **Kanal** steht als
   `RELEASE_CHANNEL` im Workflow (derzeit `beta`; davor gab es `v0.1.0-alpha.1`). `N` zählt die vorhandenen Tags des
   Kanals je Push hoch. Für den nächsten Kanal `RELEASE_CHANNEL` auf `rc` setzen, für eine neue Version die Basis in
@@ -279,6 +292,4 @@ Herkunftsnachweis (Build-Provenance-Attestierung) bereit:
 - Ein reguläres Release (ohne Vorabkennung, als „Latest“ markiert) entsteht nur über einen Tag wie `v0.1.0` oder
   *Run workflow* mit `tag`.
 - Versionierte Releases werden nie überschrieben. Nur `snapshot` wird ersetzt; zum Testen ein versioniertes Release
-  nehmen.
-- Die Version gilt nur für `:space-harvester-app` (`-PappVersion=…`); lokal:
-  `./gradlew :space-harvester-app:bootJar -PappVersion=0.1.0-beta.1`.
+  nehmen. Releases bis `v0.1.0-beta.2` enthalten nur die Desktop-App.

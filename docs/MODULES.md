@@ -159,6 +159,8 @@ Jeder Schritt ist ein eigener PR; danach ist `main` grün, alle REST-Routen blei
 
 - Ein eigenes Konnektor-Modul (`space-harvester-connector-confluence`) erst, wenn ein zweiter Quellentyp außerhalb
   der Upstream-Kopie dazukommt.
-- Signatur, Release-Workflow und tatsächliche Veröffentlichung auf Maven Central entscheidet Angelo später.
+- Core-, Server- und App-JAR erscheinen gemeinsam in jedem GitHub-Release (Workflow `release.yml`, siehe
+  [DESKTOP_APP.md › Releases](DESKTOP_APP.md#releases)). Signatur und tatsächliche Veröffentlichung auf Maven Central
+  entscheidet Angelo später.
 - Ein Austausch von Spring WebClient gegen Reactor Netty direkt würde die letzte Spring-Abhängigkeit des Core
   entfernen; nur sinnvoll zusammen mit einer neuen Abnahme des Transports.

@@ -9,9 +9,6 @@ plugins {
 
 description = 'Space Harvester Desktop – Wissensquellen, Inhalte, Abgleich, Export und Suche als Swing-Anwendung.'
 
-// Release-Version aus dem Tag (Workflow Desktop-App-Release: -PappVersion=0.1.0-alpha.1); ohne Angabe die SNAPSHOT-Version
-version = providers.gradleProperty('appVersion').getOrElse(version.toString())
-
 java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)

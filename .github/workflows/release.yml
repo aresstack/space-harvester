@@ -1,7 +1,11 @@
-name: Desktop-App-Release
+name: Release
 
-# Baut die Desktop-App (:space-harvester-app, #103) als ausführbares JAR, prüft es (App-Tests, appJarCheck,
-# --version) und stellt es bereit:
+# Gemeinsames Release von Space Harvester: baut und testet alle Module (./gradlew build) und stellt drei Artefakte
+# derselben Version aus demselben Commit bereit, dazu SHA256SUMS und Build-Provenance-Attestierung:
+# - space-harvester-app-<v>.jar     Desktop-App (:space-harvester-app, ausführbar)
+# - space-harvester-<v>.jar         REST-Service (:space-harvester-server, ausführbares Spring-Boot-JAR)
+# - space-harvester-core-<v>.jar    Bibliothek (:space-harvester-core, normales JAR) mit -sources.jar und -javadoc.jar
+# Die Version kommt zentral über -PreleaseVersion (build.gradle). Auslöser:
 # - Push auf main: neues Pre-Release v<Basis>-<Kanal>.<N> (z. B. v0.1.0-beta.3), N zählt je Push hoch. Basis ist die
 #   Version aus build.gradle ohne -SNAPSHOT, Kanal steht unten in RELEASE_CHANNEL.
 # - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ wird durch diesen Stand ersetzt.
@@ -24,7 +28,7 @@ permissions:
 
 # main und Tags laufen nacheinander (fortlaufende Nummern); alle anderen Branches teilen sich das Snapshot-Release.
 concurrency:
-  group: desktop-app-release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || 'versioned' }}
+  group: release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || 'versioned' }}
   cancel-in-progress: false
 
 env:
@@ -35,7 +39,7 @@ env:
 jobs:
   app:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
@@ -50,7 +54,7 @@ jobs:
       - name: Version bestimmen
         id: version
         run: |
-          base=$(sed -n "s/^ *version = '\(.*\)'$/\1/p" build.gradle)
+          base=$(sed -n "s/.*gradleProperty('releaseVersion').getOrElse('\(.*\)').*/\1/p" build.gradle)
           base="${base%-SNAPSHOT}"
           [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Basisversion $base aus build.gradle unbrauchbar"; exit 1; }
           tag=""
@@ -88,38 +92,51 @@ jobs:
             version="${tag#v}"
             prerelease=false
             [[ "$version" == *-* ]] && prerelease=true
-            echo "args=-PappVersion=$version" >> "$GITHUB_OUTPUT"
+            echo "args=-PreleaseVersion=$version" >> "$GITHUB_OUTPUT"
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "jar=space-harvester-app-$version.jar" >> "$GITHUB_OUTPUT"
           echo "Modus $mode, Version $version, Tag ${tag:-$SNAPSHOT_TAG}" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      # check umfasst die App-Tests und appJarCheck (startet das fertige JAR mit --version und rendert alle Bereiche)
-      - name: App testen und JAR bauen
-        run: ./gradlew :space-harvester-app:check :space-harvester-app:bootJar ${{ steps.version.outputs.args }} --console=plain
-      - name: JAR prüfen
+      # build = alle Module mit Tests, appJarCheck (App-JAR mit --version und allen Bereichen), bootJarPacCheck (PAC im
+      # Server-JAR), verifyPublishedPom (Core) sowie Core-JAR mit Sources und Javadoc
+      - name: Alle Module bauen und testen
+        run: ./gradlew build ${{ steps.version.outputs.args }} --console=plain
+      - name: Artefakte prüfen
         id: dist
         env:
-          JAR: ${{ steps.version.outputs.jar }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           dist="$RUNNER_TEMP/dist"
           mkdir -p "$dist"
-          cp "space-harvester-app/build/libs/$JAR" "$dist/"
-          out=$(java -jar "$dist/$JAR" --version)
+          files=(
+            "space-harvester-app/build/libs/space-harvester-app-$VERSION.jar"
+            "space-harvester-server/build/libs/space-harvester-$VERSION.jar"
+            "space-harvester-core/build/libs/space-harvester-core-$VERSION.jar"
+            "space-harvester-core/build/libs/space-harvester-core-$VERSION-sources.jar"
+            "space-harvester-core/build/libs/space-harvester-core-$VERSION-javadoc.jar"
+          )
+          for f in "${files[@]}"; do
+            [ -s "$f" ] || { echo "::error::$f fehlt"; exit 1; }
+            cp "$f" "$dist/"
+          done
+          out=$(java -jar "$dist/space-harvester-app-$VERSION.jar" --version)
           echo "$out"
-          [[ "$out" == *"$VERSION"* ]] || { echo "::error::--version nennt nicht $VERSION"; exit 1; }
-          (cd "$dist" && sha256sum "$JAR" > SHA256SUMS && cat SHA256SUMS)
+          [[ "$out" == *"$VERSION"* ]] || { echo "::error::App --version nennt nicht $VERSION"; exit 1; }
+          info=$(unzip -p "$dist/space-harvester-$VERSION.jar" META-INF/build-info.properties)
+          echo "$info"
+          grep -qx "build.version=$VERSION" <<< "$info" || { echo "::error::Server-build-info nennt nicht $VERSION"; exit 1; }
+          unzip -l "$dist/space-harvester-core-$VERSION.jar" | grep -q 'BOOT-INF/' && { echo "::error::Core-JAR ist ein Fat-JAR"; exit 1; }
+          (cd "$dist" && sha256sum *.jar > SHA256SUMS && cat SHA256SUMS)
           echo "dir=$dist" >> "$GITHUB_OUTPUT"
           {
-            echo "### Space Harvester Desktop $VERSION"
+            echo "### Space Harvester $VERSION"
             echo
             echo '```'
             cat "$dist/SHA256SUMS"
@@ -127,52 +144,59 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py space-harvester-app/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: space-harvester-app-${{ steps.version.outputs.version }}-${{ github.sha }}
+          name: space-harvester-${{ steps.version.outputs.version }}-${{ github.sha }}
           path: ${{ steps.dist.outputs.dir }}/
           if-no-files-found: error
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: app-test-reports
+          name: test-reports
           path: |
-            space-harvester-app/build/reports/tests/
-            space-harvester-app/build/test-results/
+            */build/reports/tests/
+            */build/test-results/
             space-harvester-app/build/app-jar-check/
           if-no-files-found: ignore
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: ${{ steps.dist.outputs.dir }}/${{ steps.version.outputs.jar }}
+          subject-path: ${{ steps.dist.outputs.dir }}/*.jar
       - name: Release-Notizen
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
           MODE: ${{ steps.version.outputs.mode }}
           TAG: ${{ steps.version.outputs.tag }}
-          JAR: ${{ steps.version.outputs.jar }}
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
           BRANCH: ${{ github.ref_name }}
         run: |
-          sum=$(cut -d' ' -f1 SHA256SUMS)
+          app="space-harvester-app-$VERSION.jar"
+          sum=$(grep " $app\$" SHA256SUMS | cut -d' ' -f1)
           if [ "$MODE" = "snapshot" ]; then
             intro="Rollierender Entwicklungsstand vom Branch \`$BRANCH\` (\`${GITHUB_SHA:0:12}\`). Wird beim nächsten Push auf einen Branch außer main ersetzt; zum Testen ein versioniertes Release nehmen."
             ref="$GITHUB_SHA"
           else
             kind="Release"
             [ "$PRERELEASE" = "true" ] && kind="Vorabversion zum Testen"
-            intro="Space Harvester Desktop $VERSION – $kind, gebaut aus \`${GITHUB_SHA:0:12}\` auf main."
+            intro="Space Harvester $VERSION – $kind, gebaut aus \`${GITHUB_SHA:0:12}\` auf main."
             ref="$TAG"
           fi
           cat > "$RUNNER_TEMP/RELEASE_NOTES.md" <<NOTES
           $intro
 
-          **Start unter Windows** (Java 21, z. B. Eclipse Temurin 21):
+          | Datei | Inhalt |
+          |---|---|
+          | \`$app\` | Desktop-App (Swing), startet ohne Server |
+          | \`space-harvester-$VERSION.jar\` | REST-Service (Spring Boot), [docs/MODULES.md](https://github.com/$GITHUB_REPOSITORY/blob/$ref/docs/MODULES.md) |
+          | \`space-harvester-core-$VERSION.jar\` (+ \`-sources\`, \`-javadoc\`) | Bibliothek für eigene Anwendungen, Abhängigkeiten nicht enthalten |
+          | \`SHA256SUMS\` | Prüfsummen aller JARs |
 
-          1. \`$JAR\` herunterladen.
-          2. Optional prüfen: \`certutil -hashfile $JAR SHA256\` muss \`$sum\` ergeben.
-          3. \`java -jar $JAR\` starten; beim ersten Start **Wissensquellen › Quelle hinzufügen …** wählen.
+          **Desktop-App unter Windows starten** (Java 21, z. B. Eclipse Temurin 21):
+
+          1. \`$app\` herunterladen.
+          2. Optional prüfen: \`certutil -hashfile $app SHA256\` muss \`$sum\` ergeben.
+          3. \`java -jar $app\` starten; beim ersten Start **Wissensquellen › Quelle hinzufügen …** wählen.
 
           Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
           Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$ref/docs/DESKTOP_APP.md).
@@ -181,27 +205,25 @@ jobs:
         if: steps.version.outputs.mode == 'snapshot'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
-          JAR: ${{ steps.version.outputs.jar }}
           BRANCH: ${{ github.ref_name }}
         run: |
           gh release delete "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
           git push origin ":refs/tags/$SNAPSHOT_TAG" 2>/dev/null || true
           gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Space Harvester Desktop Snapshot ($BRANCH)" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
-            --prerelease --latest=false "$JAR" SHA256SUMS
+            --title "Space Harvester Snapshot ($BRANCH)" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
+            --prerelease --latest=false *.jar SHA256SUMS
       - name: Release anlegen
         if: steps.version.outputs.mode != 'snapshot'
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
           MODE: ${{ steps.version.outputs.mode }}
           TAG: ${{ steps.version.outputs.tag }}
-          JAR: ${{ steps.version.outputs.jar }}
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
         run: |
           # Beim Tag-Push existiert der Tag schon; sonst legt gh ihn auf dem gebauten Commit an
           ref=--verify-tag
           [ "$MODE" = "tag" ] || ref="--target=$GITHUB_SHA"
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester Desktop $VERSION" \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester $VERSION" \
             --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" \
-            --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" "$JAR" SHA256SUMS
+            --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" *.jar SHA256SUMS
