@@ -4,18 +4,25 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.app.ui.brand.ScenePanel;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
+import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import java.awt.BorderLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.Insets;
 import java.util.List;
 
 /**
  * Übersicht: Was ist eingerichtet, was fehlt, was läuft gerade und was ist zuletzt passiert. Jede Kachel führt in den
- * Bereich, in dem sich die Sache erledigen lässt.
+ * Bereich, in dem sich die Sache erledigen lässt. Solange keine Quelle eingerichtet ist, begrüßt stattdessen die
+ * Weltraumszene mit dem Einstieg in den Quellen-Assistenten.
  */
 public final class OverviewView implements View {
 
@@ -25,6 +32,10 @@ public final class OverviewView implements View {
     private final JPanel sources = new JPanel(new GridLayout(0, 2, 12, 12));
     private final Facts recent = new Facts();
     private final ComposerButton toActivities = Comic.button("Alle Aktivitäten", "Aufträge ansehen");
+    private final JComponent dashboard;
+    private final JComponent welcome;
+    private final JComponent welcomeAttention;
+    private boolean welcoming;
 
     public OverviewView(AppContext context) {
         this.context = context;
@@ -37,10 +48,13 @@ public final class OverviewView implements View {
         activity.setOpaque(false);
         activity.add(recent, BorderLayout.CENTER);
         activity.add(Comic.row(toActivities), BorderLayout.SOUTH);
-        root.add(Comic.column(
+        dashboard = Comic.column(
                 Comic.plate("Zu erledigen", Comic.RED, attention),
                 Comic.plate("Wissensquellen", Comic.BLUE, sources),
-                Comic.plate("Zuletzt", Comic.PETROL, activity)), BorderLayout.CENTER);
+                Comic.plate("Zuletzt", Comic.PETROL, activity));
+        welcomeAttention = Comic.plate("Zu erledigen", Comic.RED, attention);
+        welcome = Comic.column(welcomePlate(), welcomeAttention);
+        root.add(dashboard, BorderLayout.CENTER);
         context.onChange(ignored -> render());
         render();
     }
@@ -59,15 +73,12 @@ public final class OverviewView implements View {
         attention.removeAll();
         sources.removeAll();
         AppRuntime runtime = context.runtime();
+        showWelcome(runtime != null && context.settings().sources().isEmpty());
         if (runtime == null) {
             note(context.startProblem() == null ? "Die App startet …"
                     : "Der Start ist fehlgeschlagen: " + Problems.describe(context.startProblem()).title()
                     + ". Details unter Einstellungen.", AppContext.Section.SETTINGS, "Zu den Einstellungen");
         } else {
-            if (context.settings().sources().isEmpty()) {
-                note("Noch keine Wissensquelle eingerichtet. Unter Wissensquellen führt „Quelle hinzufügen …“ durch die "
-                        + "Einrichtung.", AppContext.Section.SOURCES, "Zu den Wissensquellen");
-            }
             if (!context.settings().problems().isEmpty()) {
                 note(Texts.count(context.settings().problems().size(), "Hinweis", "Hinweise")
                         + " zur Konfiguration: " + context.settings().problems().get(0),
@@ -85,12 +96,56 @@ public final class OverviewView implements View {
                 sources.add(tile(source));
             }
         }
+        welcomeAttention.setVisible(attention.getComponentCount() > 0);
         if (attention.getComponentCount() == 0) {
             attention.add(Comic.muted("Nichts offen."));
         }
         renderRecent(runtime);
         root.revalidate();
         root.repaint();
+    }
+
+    /** Leere Übersicht ohne Quellen: Szene, Name, Leitsatz und der Weg zur ersten Quelle. */
+    private JComponent welcomePlate() {
+        JLabel name = new JLabel("Space Harvester");
+        name.setFont(Comic.semiBold(30f));
+        name.setForeground(Comic.INK);
+        ComposerButton add = Comic.primary("Erste Wissensquelle hinzufügen …", "Führt Schritt für Schritt durch die "
+                + "Einrichtung einer Confluence- oder Dateiquelle");
+        add.addActionListener(e -> SourceWizard.open(root, context,
+                id -> context.navigator().show(AppContext.Section.SOURCES)));
+        JPanel text = new JPanel(new GridBagLayout());
+        text.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.anchor = GridBagConstraints.WEST;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        text.add(name, c);
+        c.insets = new Insets(2, 0, 16, 0);
+        text.add(AboutDialog.heading(AboutDialog.TAGLINE), c);
+        c.insets = new Insets(0, 0, 18, 0);
+        text.add(Comic.note("Noch ist keine Wissensquelle eingerichtet. Der Assistent fragt Adresse, Anmeldung und "
+                + "Netz ab, prüft die Verbindung und trägt die Quelle in die Konfigurationsdatei ein; Passwörter und "
+                + "Token stehen dort nur als Verweis auf eine Umgebungsvariable."), c);
+        c.fill = GridBagConstraints.NONE;
+        c.insets = new Insets(0, 0, 0, 0);
+        text.add(add, c);
+        JPanel body = new JPanel(new BorderLayout(28, 0));
+        body.setOpaque(false);
+        body.setBorder(BorderFactory.createEmptyBorder(8, 4, 8, 8));
+        body.add(new ScenePanel(380, 520, Comic.INK), BorderLayout.WEST);
+        body.add(text, BorderLayout.CENTER);
+        return Comic.plate(null, Comic.BLUE, body);
+    }
+
+    private void showWelcome(boolean show) {
+        if (show == welcoming) {
+            return;
+        }
+        welcoming = show;
+        root.removeAll();
+        root.add(show ? welcome : dashboard, BorderLayout.CENTER);
     }
 
     private void renderRecent(AppRuntime runtime) {

@@ -29,9 +29,32 @@ Optionen:
 | `--screenshot <ordner>` | rendert jeden Bereich als PNG und beendet sich (Sichtprüfung) |
 | `--version` | Version ausgeben |
 
-Beim ersten Start ohne Datei führt **Wissensquellen › Quelle hinzufügen …** durch die Einrichtung (siehe
+Beim ersten Start ohne Quelle begrüßt die Übersicht mit der Weltraumszene und **Erste Wissensquelle hinzufügen …**;
+das öffnet denselben Assistenten wie **Wissensquellen › Quelle hinzufügen …** (siehe
 [Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
 Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
+
+## Erscheinungsbild
+
+Die beiden Markenbilder liegen unverändert als Original in
+`space-harvester-app/src/main/resources/com/aresstack/spaceharvester/app/images/` und werden aus dem Klassenpfad
+geladen (`ui/brand/BrandImages`), funktionieren also auch im ausführbaren JAR:
+
+| Datei | Verwendung |
+|---|---|
+| `space-harvester-ship.png` (freigestellt, transparent) | Anwendungssymbol für Fenster, Taskleiste und Alt+Tab (`ApplicationIcons`, 16 bis 256 Pixel), kleines Logo links in der eigenen Titelleiste |
+| `space-harvester.png` (Weltraumszene) | Willkommensansicht der Übersicht, solange keine Quelle eingerichtet ist; Dialog **Einstellungen › Über Space Harvester** |
+
+Alle kleineren Fassungen entstehen beim Start aus den Originalen, immer gleich und ohne erzeugte Bilddateien im
+Repository: auf das Schiff zuschneiden, quadratisch auffüllen, in Halbierungsschritten mit vormultipliziertem Alpha
+verkleinern (keine dunklen Säume am blauen Schein). Bis 32 Pixel wird enger zugeschnitten, der schwache Schein fällt
+weg und das Schiff füllt die Kachel. Das Titelleisten-Logo enthält 24, 36 und 48 Pixel für 100, 150 und 200 %
+Skalierung. Kein Startbild (Splash), kein Banner im Dashboard: Mit eingerichteten Quellen gehört der Platz den Daten.
+Eine ICO-Datei entsteht erst mit einem Windows-Installer; bis dahin reicht das Fenstersymbol für die Taskleiste.
+
+Sichtprüfung unter Windows: Taskleiste hell und dunkel, Anzeige 100, 150 und 200 % (Einstellungen › Anzeige ›
+Skalierung, danach App neu starten), Alt+Tab, Titelleiste. Das Schiff ist schräg und breit; bei 16 Pixeln soll es als
+helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsichtig.
 
 ## Quellen-Assistent
 
@@ -119,13 +142,13 @@ spring:
 
 | Bereich | Inhalt |
 |---|---|
-| Übersicht | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge |
+| Übersicht | Was fehlt (Konfiguration, Zugangsdaten), Quellen mit geprüftem Verbindungsstand, letzte Aufträge; ohne Quelle die Willkommensansicht mit dem Einstieg in den Assistenten |
 | Wissensquellen | Quelle hinzufügen, bearbeiten und entfernen (Assistent), Quelle wählen, Einstellungen ohne Geheimnisse, Fähigkeiten, Verbindung prüfen, Spaces live, Zugangsdaten für die Sitzung, Abgleich und Export starten |
 | Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
 | Aktivitäten | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |
 | Exporte | Space und Formate wählen, Export starten, letzte Exporte |
 | Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Quellen …“ beschränkt sie auf ausgewählte Quellen, „Weitere laden“ blättert weiter |
-| Einstellungen | Konfigurationsdatei, Hinweise, Ablage, Netz und Zertifikate, Embedding-Modell, Diagnose |
+| Einstellungen | Konfigurationsdatei, Hinweise, Ablage, Netz und Zertifikate, Embedding-Modell, Diagnose, Über Space Harvester |
 
 Lange Arbeit (Netz, Lucene, Export) läuft immer im Hintergrund; die Oberfläche zeigt „läuft …“ und bleibt bedienbar.
 Fehler erscheinen als verständliche Meldung mit Hinweis; Technische Details (Fehlerart, Code) lassen sich aufklappen,

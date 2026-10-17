@@ -13,6 +13,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ComicTheme;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiMetrics;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
 
 import javax.swing.BorderFactory;
@@ -89,6 +90,7 @@ public final class MainWindow implements AppContext.Navigator {
         ComicTheme.installMenuDefaults(Comic.PALETTE);
         JFrame frame = new JFrame("Space Harvester");
         frame.setUndecorated(true);
+        ApplicationIcons.apply(frame);
         frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         JPanel surface = content(() -> frame.dispatchEvent(new WindowEvent(frame, WindowEvent.WINDOW_CLOSING)),
                 () -> frame.setState(Frame.ICONIFIED));
@@ -126,6 +128,8 @@ public final class MainWindow implements AppContext.Navigator {
         JLabel title = new JLabel("Space Harvester");
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
+        title.setIcon(ApplicationIcons.titleLogo());
+        title.setIconTextGap(8);
         top.setOpaque(false);
         top.setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 10));
         top.add(title, BorderLayout.WEST);
