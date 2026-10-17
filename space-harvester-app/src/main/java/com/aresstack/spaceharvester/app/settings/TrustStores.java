@@ -119,6 +119,32 @@ public final class TrustStores {
         return manager;
     }
 
+    /**
+     * Ein Trust-Manager mit Endpunktprüfung. Weil {@link Deferred} selbst „extended“ ist, wickelt das JDK ihn nicht
+     * mehr ein; ein schlichter {@link X509TrustManager} darunter (wie der Verbund aus win-trust-java) prüfte über
+     * {@code SSLEngine} (WebClient) sonst den Hostnamen nicht. Daher werden seine Vertrauensanker in einen
+     * PKIX-Trust-Manager der Java-Laufzeit übernommen, der Kette, Gültigkeit und Hostnamen prüft.
+     */
+    static X509ExtendedTrustManager extended(X509TrustManager manager) throws GeneralSecurityException {
+        if (manager instanceof X509ExtendedTrustManager extended) {
+            return extended;
+        }
+        KeyStore anchors = KeyStore.getInstance(KeyStore.getDefaultType());
+        try {
+            anchors.load(null, null);
+        } catch (IOException e) {
+            throw new GeneralSecurityException("leerer Truststore nicht anlegbar", e);
+        }
+        int index = 0;
+        for (X509Certificate issuer : manager.getAcceptedIssuers()) {
+            anchors.setCertificateEntry("anchor-" + index++, issuer);
+        }
+        if (trustManager(anchors) instanceof X509ExtendedTrustManager extended) {
+            return extended;
+        }
+        throw new GeneralSecurityException("kein X.509-Trust-Manager mit Endpunktprüfung");
+    }
+
     static boolean windows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     }
@@ -130,21 +156,21 @@ public final class TrustStores {
     static final class Deferred extends X509ExtendedTrustManager {
 
         private final Supplier<X509TrustManager> factory;
-        private volatile X509TrustManager delegate;
+        private volatile X509ExtendedTrustManager delegate;
 
         Deferred(Supplier<X509TrustManager> factory) {
             this.factory = factory;
         }
 
-        private X509TrustManager delegate() throws CertificateException {
-            X509TrustManager current = delegate;
+        private X509ExtendedTrustManager delegate() throws CertificateException {
+            X509ExtendedTrustManager current = delegate;
             if (current == null) {
                 synchronized (this) {
                     current = delegate;
                     if (current == null) {
                         try {
-                            current = factory.get();
-                        } catch (RuntimeException e) {
+                            current = extended(factory.get());
+                        } catch (RuntimeException | GeneralSecurityException e) {
                             throw new CertificateException("Vertrauensquellen nicht nutzbar ("
                                     + e.getClass().getSimpleName() + ")", e);
                         }
@@ -163,21 +189,13 @@ public final class TrustStores {
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket)
                 throws CertificateException {
-            if (delegate() instanceof X509ExtendedTrustManager extended) {
-                extended.checkServerTrusted(chain, authType, socket);
-            } else {
-                delegate().checkServerTrusted(chain, authType);
-            }
+            delegate().checkServerTrusted(chain, authType, socket);
         }
 
         @Override
         public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
                 throws CertificateException {
-            if (delegate() instanceof X509ExtendedTrustManager extended) {
-                extended.checkServerTrusted(chain, authType, engine);
-            } else {
-                delegate().checkServerTrusted(chain, authType);
-            }
+            delegate().checkServerTrusted(chain, authType, engine);
         }
 
         @Override
@@ -188,21 +206,13 @@ public final class TrustStores {
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket)
                 throws CertificateException {
-            if (delegate() instanceof X509ExtendedTrustManager extended) {
-                extended.checkClientTrusted(chain, authType, socket);
-            } else {
-                delegate().checkClientTrusted(chain, authType);
-            }
+            delegate().checkClientTrusted(chain, authType, socket);
         }
 
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
                 throws CertificateException {
-            if (delegate() instanceof X509ExtendedTrustManager extended) {
-                extended.checkClientTrusted(chain, authType, engine);
-            } else {
-                delegate().checkClientTrusted(chain, authType);
-            }
+            delegate().checkClientTrusted(chain, authType, engine);
         }
 
         @Override
