@@ -13,123 +13,214 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
-import javax.swing.DefaultListModel;
+import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JList;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
+import javax.swing.JSplitPane;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.JTextField;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
+import javax.swing.RowFilter;
+import javax.swing.RowSorter;
+import javax.swing.Scrollable;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SortOrder;
+import javax.swing.SwingConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
+import javax.swing.table.TableRowSorter;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
-import java.awt.GridLayout;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Insets;
+import java.awt.Rectangle;
+import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 /**
- * Wissensquellen: die konfigurierten Quellen mit geprüftem Verbindungsstand, ihre Einstellungen (Geheimnisse nur als
- * „gesetzt“), Fähigkeiten und Spaces. „Verbunden“ erscheint nur nach einer erfolgreichen Prüfung.
+ * Wissensquellen: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten,
+ * entfernen, mehr), rechts die Spaces der gewählten Quelle als Hauptinhalt, darunter ihre Einstellungen (Geheimnisse
+ * nur als „gesetzt“) und eingeklappt die technischen Fähigkeiten. „Verbunden“ erscheint nur nach einer erfolgreichen
+ * Prüfung.
  */
 public final class SourcesView implements View {
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout());
-    private final DefaultListModel<AppSettings.SourceEntry> sources = new DefaultListModel<>();
-    private final JList<AppSettings.SourceEntry> list = new JList<>(sources);
+    private final List<AppSettings.SourceEntry> sources = new ArrayList<>();
+    private final Map<String, SourceCard> cards = new LinkedHashMap<>();
+    private final CardsPanel cardsPanel = new CardsPanel();
+    private String selected;
     private final Feedback feedback = new Feedback();
     private final Facts facts = new Facts();
     private final Facts capabilities = new Facts();
+    private final JButton capabilitiesToggle = new JButton();
+    private boolean capabilitiesOpen;
     private final SpacesModel spacesModel = new SpacesModel();
     private final JTable spaces = Comic.table(new JTable(spacesModel));
+    private final TableRowSorter<SpacesModel> sorter = new TableRowSorter<>(spacesModel);
+    private final JTextField filter = Comic.field(14);
     private final JLabel spacesHint = Comic.muted(" ");
-    private final ComposerButton check = Comic.primary("Verbindung prüfen", "Lädt die Spaces live aus der Quelle");
-    private final ComposerButton secret = Comic.button("Zugangsdaten eingeben …",
-            "Passwort oder Token nur für diese Sitzung eingeben; es wird nicht gespeichert");
-    private final ComposerButton open = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
+    private final ComposerButton open = Comic.primary("Öffnen", "Seiten dieses Space ansehen (Doppelklick, Enter)");
     private final ComposerButton sync = Comic.button("Synchronisieren", "Space vollständig mit der Quelle abgleichen");
     private final ComposerButton export = Comic.button("Exportieren …", "Export dieses Space vorbereiten");
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
             "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
-    private final ComposerButton edit = Comic.button("Bearbeiten …", "Quelle im Assistenten ändern");
-    private final ComposerButton remove = Comic.button("Entfernen …",
-            "Quelle aus der Konfigurationsdatei entfernen; der lokale Bestand bleibt im Datenordner");
     private final JLabel title = new JLabel(" ");
+    private final JLabel address = Comic.muted(" ");
 
     public SourcesView(AppContext context) {
         this.context = context;
         root.setBackground(Comic.SURFACE);
 
-        list.setCellRenderer(this::renderSource);
-        list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        list.setBackground(Comic.SURFACE);
-        list.setFixedCellHeight(-1);
-        list.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                showSelected();
-            }
-        });
         JPanel left = new JPanel(new BorderLayout(0, 6));
         left.setBackground(Comic.SURFACE);
         left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
         left.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
-        left.add(Comic.scroll(list), BorderLayout.CENTER);
+        JScrollPane cardsScroll = Comic.scroll(cardsPanel);
+        cardsScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        cardsScroll.setBorder(BorderFactory.createEmptyBorder());
+        cardsScroll.getViewport().setBackground(Comic.SURFACE);
+        left.add(cardsScroll, BorderLayout.CENTER);
         add.addActionListener(e -> SourceWizard.open(root, context, this::select));
         JPanel south = new JPanel(new BorderLayout(0, 8));
         south.setOpaque(false);
         south.add(add, BorderLayout.NORTH);
         south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "der Assistent verschlüsselt ab; hier lassen sie sich auch für die Sitzung eingeben."),
-                BorderLayout.SOUTH);
+                + "der Assistent verschlüsselt ab."), BorderLayout.SOUTH);
         left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
-        check.addActionListener(e -> checkSelected());
-        secret.addActionListener(e -> askSecret());
-        edit.addActionListener(e -> editSelected());
-        remove.addActionListener(e -> removeSelected());
         open.addActionListener(e -> selectedSpace().ifPresent(space ->
                 context.navigator().openSpace(selectedId(), space.key())));
         sync.addActionListener(e -> selectedSpace().ifPresent(space -> startSync(space.key())));
         export.addActionListener(e -> selectedSpace().ifPresent(space ->
                 context.navigator().prepareExport(selectedId(), space.key())));
+        spaces.setRowSorter(sorter);
+        sorter.setSortKeys(List.of(new RowSorter.SortKey(0, SortOrder.ASCENDING)));
+        spaces.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         spaces.getSelectionModel().addListSelectionListener(e -> updateButtons());
         spaces.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2) {
+                if (e.getClickCount() == 2 && spaces.rowAtPoint(e.getPoint()) >= 0) {
                     open.doClick();
                 }
             }
         });
+        spaces.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openSpace");
+        spaces.getActionMap().put("openSpace", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                open.doClick();
+            }
+        });
+        filter.setToolTipText("Spaces nach Name oder Schlüssel filtern");
+        filter.getAccessibleContext().setAccessibleName("Spaces filtern");
+        filter.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                applyFilter();
+            }
 
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                applyFilter();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                applyFilter();
+            }
+        });
+
+        JPanel spacesTools = new JPanel(new BorderLayout(8, 0));
+        spacesTools.setOpaque(false);
+        JPanel search = new JPanel(new BorderLayout(6, 0));
+        search.setOpaque(false);
+        search.add(Comic.muted("Filter"), BorderLayout.WEST);
+        search.add(filter, BorderLayout.CENTER);
+        spacesTools.add(search, BorderLayout.CENTER);
+        spacesTools.add(Comic.row(open, sync, export), BorderLayout.EAST);
+        JPanel spacesTop = new JPanel(new BorderLayout(0, 6));
+        spacesTop.setOpaque(false);
+        spacesTop.add(spacesTools, BorderLayout.NORTH);
+        spacesTop.add(spacesHint, BorderLayout.SOUTH);
         JPanel spacesPanel = new JPanel(new BorderLayout(0, 6));
         spacesPanel.setOpaque(false);
-        JComponent table = Comic.scroll(spaces);
-        table.setPreferredSize(new java.awt.Dimension(400, 260));
-        spacesPanel.add(spacesHint, BorderLayout.NORTH);
+        spacesPanel.add(spacesTop, BorderLayout.NORTH);
+        JScrollPane table = Comic.scroll(spaces);
+        table.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        table.setPreferredSize(new Dimension(400, 220));
         spacesPanel.add(table, BorderLayout.CENTER);
-        spacesPanel.add(Comic.row(open, sync, export), BorderLayout.SOUTH);
 
-        JPanel header = new JPanel(new BorderLayout(0, 8));
+        JPanel header = new JPanel(new BorderLayout(0, 4));
         header.setOpaque(false);
+        header.setBorder(BorderFactory.createEmptyBorder(12, 14, 8, 14));
         header.add(title, BorderLayout.NORTH);
-        header.add(Comic.row(check, secret, edit, remove), BorderLayout.CENTER);
+        header.add(address, BorderLayout.CENTER);
         header.add(feedback, BorderLayout.SOUTH);
 
-        JPanel detail = new JPanel(new BorderLayout());
+        JPanel top = new JPanel(new BorderLayout());
+        top.setBackground(Comic.SURFACE);
+        top.add(header, BorderLayout.NORTH);
+        JPanel spacesPlate = Comic.plate("Spaces", Comic.ORANGE, spacesPanel);
+        JPanel spacesFrame = new JPanel(new BorderLayout());
+        spacesFrame.setOpaque(false);
+        spacesFrame.setBorder(BorderFactory.createEmptyBorder(0, 14, 8, 14));
+        spacesFrame.add(spacesPlate, BorderLayout.CENTER);
+        top.add(spacesFrame, BorderLayout.CENTER);
+
+        capabilitiesToggle.setContentAreaFilled(false);
+        capabilitiesToggle.setBorderPainted(false);
+        capabilitiesToggle.setFocusPainted(true);
+        capabilitiesToggle.setForeground(Comic.BLUE);
+        capabilitiesToggle.setFont(Comic.semiBold(12.5f));
+        capabilitiesToggle.setHorizontalAlignment(SwingConstants.LEFT);
+        capabilitiesToggle.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
+        capabilitiesToggle.addActionListener(e -> {
+            capabilitiesOpen = !capabilitiesOpen;
+            updateCapabilities();
+        });
+        JPanel capabilityPanel = new JPanel(new BorderLayout(0, 4));
+        capabilityPanel.setOpaque(false);
+        capabilityPanel.add(capabilitiesToggle, BorderLayout.NORTH);
+        capabilityPanel.add(capabilities, BorderLayout.CENTER);
+        JPanel settings = new JPanel(new BorderLayout(0, 10));
+        settings.setOpaque(false);
+        settings.add(facts, BorderLayout.CENTER);
+        settings.add(capabilityPanel, BorderLayout.SOUTH);
+        updateCapabilities();
+
+        JSplitPane detail = new JSplitPane(JSplitPane.VERTICAL_SPLIT, top,
+                Comic.column(Comic.plate("Einstellungen", Comic.PETROL, settings)));
+        detail.setResizeWeight(0.6);
+        detail.setContinuousLayout(true);
+        detail.setBorder(BorderFactory.createEmptyBorder());
+        detail.setDividerSize(8);
         detail.setBackground(Comic.SURFACE);
-        detail.add(Comic.column(header, Comic.plate("Einstellungen", Comic.PETROL, facts),
-                Comic.plate("Fähigkeiten", Comic.BLUE, capabilities),
-                Comic.plate("Spaces", Comic.ORANGE, spacesPanel)), BorderLayout.CENTER);
 
         root.add(new ComicSplitPane(left, detail, 240, 460), BorderLayout.CENTER);
         context.onChange(ignored -> refresh());
@@ -143,51 +234,65 @@ public final class SourcesView implements View {
 
     /** Wählt eine Quelle aus (z. B. von der Übersicht). */
     public void select(String sourceId) {
-        for (int i = 0; i < sources.size(); i++) {
-            if (sources.get(i).id().equals(sourceId)) {
-                list.setSelectedIndex(i);
-                return;
-            }
+        if (sourceId == null || !cards.containsKey(sourceId)) {
+            return;
         }
-    }
-
-    private void refresh() {
-        String selected = selectedId();
-        AppSettings settings = context.settings();
-        List<AppSettings.SourceEntry> entries = settings == null ? List.of() : settings.sources();
-        boolean same = entries.size() == sources.size();
-        for (int i = 0; same && i < entries.size(); i++) {
-            same = entries.get(i).equals(sources.get(i));
+        if (!sourceId.equals(selected)) {
+            selected = sourceId;
+            filter.setText("");
         }
-        if (!same) {
-            sources.clear();
-            entries.forEach(sources::addElement);
-        }
-        if (selected != null) {
-            select(selected);
-        }
-        if (list.getSelectedIndex() < 0 && !sources.isEmpty()) {
-            list.setSelectedIndex(0);
-        }
-        list.repaint();
+        cards.values().forEach(SourceCard::update);
+        cards.get(sourceId).scrollRectToVisible(new Rectangle(cards.get(sourceId).getSize()));
         showSelected();
     }
 
+    private void refresh() {
+        AppSettings settings = context.settings();
+        List<AppSettings.SourceEntry> entries = settings == null ? List.of() : settings.sources();
+        if (!entries.equals(sources)) {
+            sources.clear();
+            sources.addAll(entries);
+            cards.clear();
+            cardsPanel.removeAll();
+            for (AppSettings.SourceEntry entry : entries) {
+                SourceCard card = new SourceCard(entry);
+                cards.put(entry.id(), card);
+                cardsPanel.add(card);
+            }
+            cardsPanel.revalidate();
+            cardsPanel.repaint();
+        }
+        if (selected == null || !cards.containsKey(selected)) {
+            selected = sources.isEmpty() ? null : sources.get(0).id();
+        }
+        cards.values().forEach(SourceCard::update);
+        showSelected();
+    }
+
+    private AppSettings.SourceEntry selectedEntry() {
+        SourceCard card = selected == null ? null : cards.get(selected);
+        return card == null ? null : card.entry;
+    }
+
     private void showSelected() {
-        AppSettings.SourceEntry entry = list.getSelectedValue();
+        AppSettings.SourceEntry entry = selectedEntry();
         facts.reset();
         capabilities.reset();
         if (entry == null) {
             title.setText(sources.isEmpty() ? "Noch keine Wissensquelle eingerichtet" : " ");
+            address.setText(" ");
             spacesModel.set(List.of());
             spacesHint.setText(sources.isEmpty()
                     ? "„Quelle hinzufügen …“ führt durch die Einrichtung; alternativ die Konfigurationsdatei bearbeiten."
                     : " ");
+            feedback.clear();
             updateButtons();
             return;
         }
         SourceSettingsConfig config = entry.config();
         title.setText(config.title() == null ? config.id() : config.title() + "  (" + config.id() + ")");
+        address.setText(Texts.sourceType(config.type()) + (config.baseUrl() == null ? ""
+                : " · " + config.baseUrl()));
         facts.add("Typ", Texts.sourceType(config.type()));
         if (config.baseUrl() != null) {
             facts.add("Adresse", config.baseUrl().toString());
@@ -200,7 +305,7 @@ public final class SourcesView implements View {
                     context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)) ? "verschlüsselt gespeichert"
                             : session ? "für diese Sitzung eingegeben"
                             : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
-                            : "fehlt (im Assistenten unter Bearbeiten … eingeben)",
+                            : "fehlt (an der Karte unter „Weitere Aktionen“ eingeben)",
                     entry.secretMissing() && !session ? Comic.RED : Comic.INK);
         }
         SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
@@ -229,54 +334,76 @@ public final class SourcesView implements View {
 
         AppContext.Connection connection = context.connection(entry.id());
         spacesModel.set(connection.spaces());
-        switch (connection.state()) {
-            case NOT_CHECKED -> {
-                spacesHint.setText("Nicht geprüft. „Verbindung prüfen“ lädt die Spaces live.");
-                feedback.clear();
-            }
-            case CHECKING -> {
-                spacesHint.setText(" ");
-                feedback.working("Verbindung wird geprüft …");
-            }
-            case CONNECTED -> {
-                spacesHint.setText(Texts.count(connection.spaces().size(), "Space", "Spaces") + " sichtbar, geprüft "
-                        + Texts.time(connection.checkedAt()));
-                feedback.success("Verbunden");
-            }
-            case FAILED -> {
-                spacesHint.setText("Prüfung fehlgeschlagen " + Texts.time(connection.checkedAt()));
-                feedback.problem(connection.error());
+        // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
+        if (context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id())) {
+            spacesHint.setText("Die Quelle wartet auf Zugangsdaten; an der Karte unter „Weitere Aktionen“ eingeben.");
+            feedback.clear();
+        } else {
+            switch (connection.state()) {
+                case NOT_CHECKED -> {
+                    spacesHint.setText("Nicht geprüft. Das Prüfzeichen an der Karte lädt die Spaces live.");
+                    feedback.clear();
+                }
+                case CHECKING -> {
+                    spacesHint.setText("Spaces werden live geladen …");
+                    feedback.clear();
+                }
+                case CONNECTED -> {
+                    spacesHint.setText(Texts.count(connection.spaces().size(), "Space", "Spaces")
+                            + " sichtbar · live geprüft " + Texts.time(connection.checkedAt())
+                            + " · Doppelklick öffnet");
+                    feedback.clear();
+                }
+                case FAILED -> {
+                    spacesHint.setText("Prüfung fehlgeschlagen " + Texts.time(connection.checkedAt()));
+                    feedback.problem(connection.error());
+                }
             }
         }
+        applyFilter();
+        updateCapabilities();
         updateButtons();
     }
 
     private void updateButtons() {
-        AppSettings.SourceEntry entry = list.getSelectedValue();
+        AppSettings.SourceEntry entry = selectedEntry();
         boolean running = entry != null && context.runtime() != null
                 && !context.runtime().waitingForSecret().contains(entry.id());
-        check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
-        edit.setEnabled(entry != null);
-        remove.setEnabled(entry != null);
-        secret.setVisible(entry != null && entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE);
         boolean space = running && spaces.getSelectedRow() >= 0;
         open.setEnabled(space);
         sync.setEnabled(space);
         export.setEnabled(space);
     }
 
-    private void checkSelected() {
-        String id = selectedId();
-        if (id != null) {
-            context.checkConnection(id, () -> { });
-        }
+    private void updateCapabilities() {
+        capabilitiesToggle.setText("Technische Fähigkeiten");
+        capabilitiesToggle.setIcon(capabilitiesOpen ? Glyph.COLLAPSE : Glyph.EXPAND);
+        capabilitiesToggle.setToolTipText(capabilitiesOpen ? "Einklappen" : "Was die Quelle technisch unterstützt");
+        capabilities.setVisible(capabilitiesOpen);
+        capabilities.revalidate();
     }
 
-    private void askSecret() {
-        AppSettings.SourceEntry entry = list.getSelectedValue();
-        if (entry == null) {
-            return;
+    private void applyFilter() {
+        String text = filter.getText().trim().toLowerCase(Locale.ROOT);
+        sorter.setRowFilter(text.isEmpty() ? null : new RowFilter<>() {
+            @Override
+            public boolean include(Entry<? extends SpacesModel, ? extends Integer> row) {
+                Partition partition = spacesModel.rows.get(row.getIdentifier());
+                return partition.key().toLowerCase(Locale.ROOT).contains(text)
+                        || partition.name().toLowerCase(Locale.ROOT).contains(text);
+            }
+        });
+        if (spaces.getSelectedRow() < 0 && spaces.getRowCount() > 0) {
+            spaces.setRowSelectionInterval(0, 0);
         }
+        updateButtons();
+    }
+
+    private void check(AppSettings.SourceEntry entry) {
+        context.checkConnection(entry.id(), () -> { });
+    }
+
+    private void askSecret(AppSettings.SourceEntry entry) {
         boolean token = entry.config().auth().type() == SourceSettingsConfig.AuthType.PAT;
         char[] value = Dialogs.askSecret(root, (token ? "Token" : "Passwort") + " für " + entry.id(),
                 (token ? "Personal Access Token" : "Passwort für " + entry.config().auth().username())
@@ -291,11 +418,8 @@ public final class SourcesView implements View {
         context.reload(() -> { });
     }
 
-    private void editSelected() {
-        String id = selectedId();
-        if (id == null) {
-            return;
-        }
+    private void edit(AppSettings.SourceEntry entry) {
+        String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         SourceDraft.Editable editable;
         try {
@@ -307,11 +431,8 @@ public final class SourcesView implements View {
         SourceWizard.open(root, context, editable, this::select);
     }
 
-    private void removeSelected() {
-        String id = selectedId();
-        if (id == null) {
-            return;
-        }
+    private void remove(AppSettings.SourceEntry entry) {
+        String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         boolean plaintext;
         try {
@@ -371,7 +492,7 @@ public final class SourcesView implements View {
     }
 
     private String selectedId() {
-        AppSettings.SourceEntry entry = list.getSelectedValue();
+        AppSettings.SourceEntry entry = selectedEntry();
         return entry == null ? null : entry.id();
     }
 
@@ -380,64 +501,259 @@ public final class SourcesView implements View {
         return row < 0 ? Optional.empty() : Optional.of(spacesModel.rows.get(spaces.convertRowIndexToModel(row)));
     }
 
+    /** Die Karten untereinander, so breit wie der Sichtbereich: lange Namen brechen um, nichts scrollt waagerecht. */
+    private static final class CardsPanel extends JPanel implements Scrollable {
+
+        private static final int GAP = 8;
+
+        CardsPanel() {
+            super(null);
+            setBackground(Comic.SURFACE);
+        }
+
+        /** Höhen aus der tatsächlichen Breite: umbrechende Namen kennen ihre Höhe erst mit der Breite. */
+        @Override
+        public void doLayout() {
+            int y = 0;
+            for (Component c : getComponents()) {
+                int h = ((SourceCard) c).heightFor(getWidth());
+                c.setBounds(0, y, getWidth(), h);
+                y += h + GAP;
+            }
+            if (y != lastHeight) {
+                lastHeight = y;
+                revalidate();
+            }
+        }
+
+        private int lastHeight = -1;
+
+        @Override
+        public Dimension getPreferredSize() {
+            int width = getWidth() > 0 ? getWidth() : getParent() != null && getParent().getWidth() > 0
+                    ? getParent().getWidth() : 220;
+            int y = 0;
+            for (Component c : getComponents()) {
+                y += ((SourceCard) c).heightFor(width) + GAP;
+            }
+            return new Dimension(width, y);
+        }
+
+        @Override
+        public Dimension getPreferredScrollableViewportSize() {
+            return getPreferredSize();
+        }
+
+        @Override
+        public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction) {
+            return 24;
+        }
+
+        @Override
+        public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction) {
+            return Math.max(24, visible.height - 48);
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportWidth() {
+            return true;
+        }
+
+        @Override
+        public boolean getScrollableTracksViewportHeight() {
+            return getParent() != null && getParent().getHeight() > getPreferredSize().height;
+        }
+    }
+
     /**
-     * Eine Zeile der Quellenliste als ein HTML-Label: Name, Art und Ort, geprüfter Zustand. Ein einzelnes Label statt
-     * eines Panels mit Kindern, weil Listen Panels als Renderer ohne Layout malen und deren Text dann fehlt.
+     * Eine Quelle als Karte: Verbindungszeichen, Name (bricht um), Art und Ort, Zustand und die Aktionen als
+     * Symbolknöpfe mit Tooltip. Ein Klick auf die Karte wählt die Quelle; Tab erreicht die Knöpfe.
      */
-    private Component renderSource(JList<? extends AppSettings.SourceEntry> jlist, AppSettings.SourceEntry entry,
-                                   int index, boolean selected, boolean focus) {
-        SourceSettingsConfig config = entry.config();
-        String where = config.baseUrl() == null ? config.options().getOrDefault("directory", "")
+    private final class SourceCard extends JPanel {
+
+        private final AppSettings.SourceEntry entry;
+        private final StatusMark mark = new StatusMark();
+        private final JTextArea name = Comic.note("");
+        private final JTextArea where = Comic.note("");
+        private final JTextArea state = Comic.note("");
+        private final IconButton check = new IconButton(Glyph.REFRESH, "Verbindung prüfen (lädt die Spaces live)");
+        private final IconButton edit = new IconButton(Glyph.PENCIL, "Quelle bearbeiten");
+        private final IconButton remove = new IconButton(Glyph.TRASH,
+                "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
+        private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
+
+        private final JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+
+        SourceCard(AppSettings.SourceEntry entry) {
+            super(null);
+            this.entry = entry;
+            setOpaque(true);
+            SourceSettingsConfig config = entry.config();
+            name.setText(config.title() == null ? config.id() : config.title());
+            name.setFont(Comic.semiBold(13.5f));
+            name.setForeground(Comic.INK);
+            where.setText(Texts.sourceType(config.type()) + " · " + where(config));
+            where.setForeground(Comic.MUTED);
+            where.setFont(Comic.regular(12f));
+            state.setFont(Comic.regular(12f));
+
+            add(mark);
+            add(name);
+            add(where);
+            add(state);
+            actions.setOpaque(false);
+            actions.add(check);
+            actions.add(edit);
+            actions.add(remove);
+            actions.add(more);
+            add(actions);
+
+            check.addActionListener(e -> {
+                select(entry.id());
+                check(entry);
+            });
+            edit.addActionListener(e -> {
+                select(entry.id());
+                SourcesView.this.edit(entry);
+            });
+            remove.addActionListener(e -> {
+                select(entry.id());
+                SourcesView.this.remove(entry);
+            });
+            more.addActionListener(e -> {
+                select(entry.id());
+                menu().show(more, 0, more.getHeight());
+            });
+            MouseAdapter choose = new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    select(entry.id());
+                }
+            };
+            for (Component c : List.of(this, name, where, state, mark, actions)) {
+                c.addMouseListener(choose);
+            }
+            getAccessibleContext().setAccessibleName(name.getText());
+        }
+
+        private JPopupMenu menu() {
+            JPopupMenu menu = new JPopupMenu();
+            JMenuItem wizard = new JMenuItem("Assistent erneut öffnen …");
+            wizard.addActionListener(e -> SourcesView.this.edit(entry));
+            menu.add(wizard);
+            if (entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE) {
+                JMenuItem secret = new JMenuItem("Zugangsdaten für diese Sitzung eingeben …");
+                secret.setToolTipText("Passwort oder Token nur für diese Sitzung; es wird nicht gespeichert");
+                secret.addActionListener(e -> askSecret(entry));
+                menu.add(secret);
+            }
+            return menu;
+        }
+
+        /** Übernimmt Auswahl und Verbindungsstand; die Karte selbst bleibt dieselbe. */
+        void update() {
+            boolean chosen = entry.id().equals(selected);
+            setBackground(chosen ? Comic.YELLOW : Comic.SURFACE);
+            setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(chosen ? Comic.INK : Comic.LINE, chosen ? 2 : 1, true),
+                    BorderFactory.createEmptyBorder(chosen ? 7 : 8, chosen ? 7 : 8, chosen ? 5 : 6, chosen ? 7 : 8)));
+            AppContext.Connection connection = context.connection(entry.id());
+            boolean waiting = context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id());
+            String text;
+            Color color;
+            StatusMark.State mode;
+            if (waiting) {
+                text = "Zugangsdaten fehlen";
+                color = Comic.RED;
+                mode = StatusMark.State.FAILED;
+            } else {
+                switch (connection.state()) {
+                    case CONNECTED -> {
+                        text = "Verbunden · " + Texts.count(connection.spaces().size(), "Space", "Spaces");
+                        color = Comic.INK;
+                        mode = StatusMark.State.CONNECTED;
+                    }
+                    case FAILED -> {
+                        text = "Fehler: " + Problems.describe(connection.error()).title();
+                        color = Comic.RED;
+                        mode = StatusMark.State.FAILED;
+                    }
+                    case CHECKING -> {
+                        text = "Wird geprüft …";
+                        color = Comic.BLUE;
+                        mode = StatusMark.State.CHECKING;
+                    }
+                    default -> {
+                        text = "Nicht geprüft";
+                        color = Comic.MUTED;
+                        mode = StatusMark.State.UNCHECKED;
+                    }
+                }
+            }
+            state.setText(text);
+            state.setForeground(color);
+            mark.state(mode, text);
+            check.setEnabled(!waiting && context.runtime() != null && mode != StatusMark.State.CHECKING);
+            revalidate();
+            repaint();
+        }
+
+        private static final int MARK = 18;
+        private static final int GAP = 8;
+
+        /** Höhe der Karte bei dieser Breite; die Texte brechen in der Spalte neben dem Zeichen um. */
+        int heightFor(int width) {
+            return place(width, false);
+        }
+
+        @Override
+        public void doLayout() {
+            place(getWidth(), true);
+        }
+
+        private int place(int width, boolean apply) {
+            Insets in = getInsets();
+            int x = in.left + MARK + GAP;
+            int column = Math.max(60, width - x - in.right);
+            int y = in.top;
+            for (JTextArea area : List.of(name, where, state)) {
+                area.setSize(column, Short.MAX_VALUE);
+                int h = area.getPreferredSize().height;
+                if (apply) {
+                    area.setBounds(x, y, column, h);
+                }
+                y += h;
+            }
+            if (apply) {
+                mark.setBounds(in.left, in.top, MARK, MARK);
+            }
+            y += 4;
+            int h = actions.getPreferredSize().height;
+            if (apply) {
+                actions.setBounds(x - 2, y, column + 2, h);
+            }
+            return y + h + in.bottom;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            int width = getWidth() > 0 ? getWidth() : 220;
+            return new Dimension(width, heightFor(width));
+        }
+    }
+
+    /** Nur der letzte Ordnername; der volle Pfad steht rechts unter Einstellungen. */
+    private static String folder(String directory) {
+        String trimmed = directory.replaceAll("[/\\\\]+$", "");
+        int slash = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        return slash < 0 ? trimmed : trimmed.substring(slash + 1);
+    }
+
+    private static String where(SourceSettingsConfig config) {
+        return config.baseUrl() == null ? folder(config.options().getOrDefault("directory", ""))
                 : config.baseUrl().getHost() != null ? config.baseUrl().getHost()
                 : config.baseUrl().getRawAuthority() != null ? config.baseUrl().getRawAuthority()
                 : config.baseUrl().toString();
-        if (where.length() > 22) {
-            where = "…" + where.substring(where.length() - 21);
-        }
-        AppContext.Connection connection = context.connection(entry.id());
-        String state;
-        Color color;
-        if (context.runtime() != null && context.runtime().waitingForSecret().contains(entry.id())) {
-            state = "Zugangsdaten fehlen";
-            color = Comic.RED;
-        } else {
-            switch (connection.state()) {
-                case CONNECTED -> {
-                    state = "Verbunden · " + Texts.count(connection.spaces().size(), "Space", "Spaces");
-                    color = Comic.GREEN;
-                }
-                case FAILED -> {
-                    state = "Fehler: " + Problems.describe(connection.error()).title();
-                    color = Comic.RED;
-                }
-                case CHECKING -> {
-                    state = "Wird geprüft …";
-                    color = Comic.BLUE;
-                }
-                default -> {
-                    state = "Nicht geprüft";
-                    color = Comic.MUTED;
-                }
-            }
-        }
-        JLabel row = new JLabel("<html><b style='font-size:1.05em'>"
-                + html(config.title() == null ? config.id() : config.title()) + "</b><br>"
-                + "<span style='color:" + hex(Comic.MUTED) + "'>" + html(Texts.sourceType(config.type()) + " · " + where)
-                + "</span><br><span style='color:" + hex(color) + "'>" + html(state) + "</span></html>");
-        row.setFont(Comic.regular(12.5f));
-        row.setForeground(Comic.INK);
-        row.setOpaque(true);
-        row.setBackground(selected ? Comic.YELLOW : Comic.SURFACE);
-        row.setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
-        return row;
-    }
-
-    private static String html(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    private static String hex(Color color) {
-        return String.format("#%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue());
     }
 
     private static final class SpacesModel extends AbstractTableModel {
@@ -445,8 +761,7 @@ public final class SourcesView implements View {
         private List<Partition> rows = new ArrayList<>();
 
         void set(List<Partition> partitions) {
-            rows = partitions.stream().sorted((a, b) -> a.key().compareToIgnoreCase(b.key()))
-                    .collect(Collectors.toList());
+            rows = new ArrayList<>(partitions);
             fireTableDataChanged();
         }
 
@@ -462,13 +777,13 @@ public final class SourcesView implements View {
 
         @Override
         public String getColumnName(int column) {
-            return column == 0 ? "Key" : "Name";
+            return column == 0 ? "Name" : "Schlüssel";
         }
 
         @Override
         public Object getValueAt(int row, int column) {
             Partition partition = rows.get(row);
-            return column == 0 ? partition.key() : partition.name();
+            return column == 0 ? partition.name() : partition.key();
         }
     }
 }

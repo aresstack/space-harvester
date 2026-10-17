@@ -112,7 +112,7 @@ final class SourceWizard {
     final JTextField proxyPort = Comic.field(6);
     /** Proxy-Ausnahmen ({@code non-proxy-hosts}) als Tabelle, unter „Erweitert“ zunächst zugeklappt. */
     final HostListEditor proxyExceptions = new HostListEditor();
-    final ComposerButton advanced = Comic.button("Erweitert ▸", "Proxy-Ausnahmen anzeigen");
+    final ComposerButton advanced = Comic.button(Glyph.EXPAND, "Erweitert", "Proxy-Ausnahmen anzeigen");
     private boolean advancedOpen;
     final ComposerButton resolveProxy = Comic.button("Proxy auflösen",
             "Route zur Adresse mit den gewählten Proxy-Einstellungen bestimmen, ohne etwas zu speichern");
@@ -527,7 +527,8 @@ final class SourceWizard {
     /** Beschriftung von „Erweitert“: auf- oder zugeklappt und wie viele Ausnahmen darin stehen. */
     private void updateAdvanced() {
         int exceptions = proxyExceptions.count();
-        advanced.setText((advancedOpen ? "Erweitert ▾" : "Erweitert ▸")
+        advanced.setIcon(advancedOpen ? Glyph.COLLAPSE : Glyph.EXPAND);
+        advanced.setText("Erweitert"
                 + (exceptions == 0 ? "" : " (" + Texts.count(exceptions, "Proxy-Ausnahme", "Proxy-Ausnahmen") + ")"));
     }
 

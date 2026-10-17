@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.View;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
@@ -82,6 +83,9 @@ public final class ContentView implements View {
     private Batch loading;
     private String cursor;
     private boolean complete;
+    /** Nach „Öffnen“ aus Wissensquellen: ist der Bestand leer, einmal auf live wechseln. */
+    private boolean openedFresh;
+    private boolean liveFallback;
 
     public ContentView(AppContext context) {
         this.context = context;
@@ -195,11 +199,16 @@ public final class ContentView implements View {
         return root;
     }
 
-    /** Öffnet einen Space (z. B. aus „Wissensquellen“) und lädt seine Seiten aus dem Bestand. */
+    /**
+     * Öffnet einen Space (z. B. aus „Wissensquellen“) und lädt seine Seiten aus dem Bestand; ist der Bestand noch leer
+     * (neue, nicht abgeglichene Quelle), stattdessen die Seitenmetadaten live. Der volle Abgleich bleibt eine bewusste
+     * Aktion („Synchronisieren“).
+     */
     public void openSpace(String sourceId, String spaceKey) {
         selectSource(sourceId);
         space.setSelectedItem(spaceKey);
         cached.setSelected(true);
+        openedFresh = true;
         reload();
     }
 
@@ -261,6 +270,9 @@ public final class ContentView implements View {
         pagesModel.clear();
         cursor = null;
         complete = false;
+        liveFallback = openedFresh;
+        openedFresh = false;
+        feedback.clear();
         if (sourceId == null || spaceKey.isEmpty()) {
             status.setText("Quelle und Space wählen.");
             return;
@@ -292,7 +304,6 @@ public final class ContentView implements View {
         loading = batch;
         String from = cursor;
         status.setText(pagesModel.size() == 0 ? "Seiten werden geladen …" : pagesModel.size() + " Seiten, weitere werden geladen …");
-        feedback.clear();
         Background.run(() -> batch.live()
                         ? Result.of(runtime.workspace().liveMetadata(batch.sourceId(), batch.spaceKey(), from, BATCH))
                         : Result.of(runtime.workspace().cachedPages(batch.sourceId(), batch.spaceKey(), from, BATCH)),
@@ -301,6 +312,10 @@ public final class ContentView implements View {
                         return;
                     }
                     loading = null;
+                    if (result.rows().isEmpty() && fallBackToLive(batch, from)) {
+                        return;
+                    }
+                    liveFallback = false;
                     pagesModel.append(batch, result.rows());
                     cursor = result.nextCursor();
                     complete = result.complete();
@@ -314,9 +329,39 @@ public final class ContentView implements View {
                         return;
                     }
                     loading = null;
+                    // Nur der erwartete Fehlbestand führt zu live; ein beschädigter Bestand oder fehlende Rechte
+                    // bleiben als Problem sichtbar.
+                    if (cacheMiss(error) && fallBackToLive(batch, from)) {
+                        return;
+                    }
                     status.setText(pagesModel.size() + " Seiten geladen; Laden abgebrochen.");
                     feedback.problem(error);
                 });
+    }
+
+    /**
+     * Nach „Öffnen“ aus Wissensquellen: Bringt der erste Stapel aus dem Bestand nichts (noch nicht abgeglichen), lädt
+     * dieselbe Ansicht die Seitenmetadaten live. Gilt einmal; der volle Abgleich bleibt eine bewusste Aktion.
+     */
+    private boolean fallBackToLive(Batch batch, String from) {
+        if (!liveFallback || batch.live() || from != null) {
+            return false;
+        }
+        liveFallback = false;
+        live.setSelected(true);
+        reload();
+        feedback.info("Noch kein Bestand für " + batch.spaceKey() + ", die Seiten kommen live aus der Quelle.",
+                "„Synchronisieren“ unter Wissensquellen legt den lokalen Bestand an.");
+        return true;
+    }
+
+    private static boolean cacheMiss(Throwable error) {
+        for (Throwable e = error; e != null; e = e.getCause()) {
+            if (e instanceof CacheMissException) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean fitsOnScreen() {
