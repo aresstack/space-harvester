@@ -2,10 +2,9 @@
 
 Freigabebedingung für die öffentliche Weitergabe von `maltparser-de-gsd` über GitHub Releases. Die
 **Lizenz- und Risikoentscheidung ist getroffen**; das Rezept dokumentiert `license.approval=approved`.
-**Die technische Veröffentlichung ist davon getrennt:** Bis zum erfolgreichen Neuverpacken, Prüfen und manuellen
-Veröffentlichen bleibt das Modell ein Entwurfs-Release.
+**Die technische Veröffentlichung ist ebenfalls erfolgt:** [Modell v1.0.0](https://github.com/aresstack/space-harvester/releases/tag/maltparser-de-gsd-v1.0.0) wurde am 17.10.2026 öffentlich veröffentlicht. Der Veröffentlichungsworkflow [39041881358](https://github.com/aresstack/space-harvester/actions/runs/39041881358) war erfolgreich.
 
-**Status: freigegeben (Veröffentlichung technisch noch ausstehend).** Die Entscheidung und die verbliebenen
+**Status: freigegeben und am 17.10.2026 veröffentlicht.** Die Entscheidung und die verbliebenen
 Rechtsunsicherheiten sind im Abschnitt [Freigabeentscheidung](#freigabeentscheidung) dokumentiert.
 
 Diese Seite ist eine technische und rechtliche Einschätzung des Projekts, kein anwaltliches Gutachten. Sie betrachtet
@@ -238,23 +237,21 @@ Integritätsprüfungen und der manuellen Freigabe des Release-Entwurfs.
 
 | Feld | Eintrag |
 |---|---|
-| Status | **freigegeben** – öffentlicher Release noch nicht veröffentlicht |
+| Status | **freigegeben und öffentlich veröffentlicht** am 17.10.2026 |
 | Entschieden von | Projektverantwortliche Person, ausdrücklich in der Projektunterhaltung bestätigt (kein Klarname im öffentlichen Dokument eingetragen) |
 | Datum | 17.10.2026 |
 | Umfang | `maltparser-de-gsd-v1.0.0`, `.mco` SHA-256 `237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3`, **CC-BY-SA-4.0-Lizenzangebot nur für wirksam lizenzierbare Modellrechte**, keine Lizenzzusage für etwaige Dritttextrechte; öffentliche Weitergabe über GitHub Releases |
 | Getragene Restrisiken | **Bewusst akzeptierte Veröffentlichungsunsicherheiten:** Restrisiken 1 bis 4 aus „Bewertung und Restrisiken“, insbesondere Wortpaar-Rekonstruktion, Dritttextrechte, Datenbankrechte und internationale Rechtslagen. Nachnutzende Personen müssen eigene Nutzung und Rechte selbst beurteilen; das entbindet den Herausgeber nicht von möglicherweise bestehenden Drittansprüchen. |
-| Veröffentlichte ZIP | SHA-256 aus `SHA256SUMS` des veröffentlichten Release (nach dem Neuverpacken nachtragen) |
+| Veröffentlichte ZIP | `maltparser-de-gsd-v1.0.0.zip`, SHA-256 **`d779fb3296bd53753574e329c59b0194419683860883698480cc9788ccdaa959`** laut GitHub-Release-Asset-Digest (nicht unabhängig aus dem ZIP nachgerechnet); [Release](https://github.com/aresstack/space-harvester/releases/tag/maltparser-de-gsd-v1.0.0) |
 
 Die hier festgehaltene Freigabe wurde **nicht als Namensunterschrift oder externe anwaltliche Prüfung** ausgegeben.
-Vor dem öffentlichen Release ist das genehmigte Modellpaket mit Lizenzhinweis, Attributionsdatei, unveränderter
-Modell-SHA und den SHA256SUMS zu prüfen. Der Klarname kann bei Bedarf durch die verantwortliche Person in einem
+Der Veröffentlichungsworkflow hat die Paketierung, den Modell-Consumer-Test und die Quellenprüfsummen erfolgreich abgeschlossen. Beim Download die ZIP-Prüfsumme gegen den hier gepinnten Wert prüfen; Rechte Dritter werden dadurch nicht pauschal freigegeben. Der Klarname kann bei Bedarf durch die verantwortliche Person in einem
 separaten Commit ergänzt werden; hier wird keiner erfunden.
 
 ## Ablauf der Freigabe
 
 Das Modell wird dafür nicht neu trainiert; v1.0.0 stammt aus dem Trainingslauf
-[39025709576](https://github.com/aresstack/space-harvester/actions/runs/39025709576) vom 17.10.2026 und ist als
-Entwurfs-Release `maltparser-de-gsd-v1.0.0` gesichert (Lizenzstand dort noch `pending`).
+[39025709576](https://github.com/aresstack/space-harvester/actions/runs/39025709576) vom 17.10.2026 und ist zunächst als Entwurfs-Release `maltparser-de-gsd-v1.0.0` gesichert; dieser Entwurf wurde nach Freigabe neu verpackt und schließlich veröffentlicht.
 
 1. Freigabeentscheidung oben eintragen.
 2. Im Rezept `nlp-model-training/model/maltparser-de-gsd.properties` `license.approval=approved` setzen (per PR auf
@@ -264,5 +261,4 @@ Entwurfs-Release `maltparser-de-gsd-v1.0.0` gesichert (Lizenzstand dort noch `pe
    bekommen neue SHA-256) und aktualisiert den Entwurf ohne Warnhinweis.
 4. Entwurf unter Releases prüfen (Assets, Notizen, Messwerte, `mcoSha256` gleich dem Wert oben) und von Hand
    veröffentlichen. Erst danach ist das Modell ohne Token unter
-   `https://github.com/aresstack/space-harvester/releases/download/<tag>/<asset>` abrufbar. Die SHA-256 aus
-   `SHA256SUMS` des veröffentlichten Release ist der Wert, den Verbraucher (#98) pinnen; er gehört in die Tabelle oben.
+   `https://github.com/aresstack/space-harvester/releases/download/<tag>/<asset>` abrufbar. Der ZIP-SHA-256-Wert wird beim Verbraucher (#98) als fester Pin geführt; beim tatsächlichen Download ist seine Übereinstimmung zu prüfen.
