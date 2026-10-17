@@ -1,28 +1,36 @@
 name: Desktop-App-Release
 
-# Baut die Desktop-App (:space-harvester-app, #103) als ausführbares JAR. Ein Push auf main prüft die App und legt
-# das SNAPSHOT-JAR als Workflow-Artefakt ab. Ein Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand
-# baut dasselbe mit der Version aus dem Tag und erzeugt ein GitHub-Release mit JAR, SHA256SUMS und Release-Notizen;
-# Tags mit Vorabkennung (z. B. v0.1.0-alpha.1) werden als Pre-Release markiert. Ein vorhandenes Release wird nie
-# überschrieben. Alternativ legt ein manueller Start auf main mit Eingabe „tag“ Tag und Release in einem Lauf an.
-# Ablauf: docs/DESKTOP_APP.md („Releases“).
+# Baut die Desktop-App (:space-harvester-app, #103) als ausführbares JAR, prüft es (App-Tests, appJarCheck,
+# --version) und stellt es bereit:
+# - Push auf main: neues Pre-Release v<Basis>-<Kanal>.<N> (z. B. v0.1.0-beta.3), N zählt je Push hoch. Basis ist die
+#   Version aus build.gradle ohne -SNAPSHOT, Kanal steht unten in RELEASE_CHANNEL.
+# - Push auf einen anderen Branch: das rollierende Pre-Release „snapshot“ wird durch diesen Stand ersetzt.
+# - Tag v<Major>.<Minor>.<Patch>[-<Vorabkennung>] auf einem main-Stand oder manueller Start auf main mit Eingabe
+#   „tag“: Release genau mit dieser Version (ohne Vorabkennung = reguläres Release, „Latest“).
+# Versionierte Releases werden nie überschrieben. Ablauf: docs/DESKTOP_APP.md („Releases“).
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Neuer Release-Tag auf dem gewählten main-Stand, z. B. v0.1.0-alpha.2; leer: nur bauen'
+        description: 'Release-Tag auf dem gewählten main-Stand, z. B. v0.1.0; leer: wie ein Push auf den gewählten Branch'
         type: string
         required: false
 
 permissions:
   contents: read
 
+# main und Tags laufen nacheinander (fortlaufende Nummern); alle anderen Branches teilen sich das Snapshot-Release.
 concurrency:
-  group: desktop-app-release-${{ github.ref }}
+  group: desktop-app-release-${{ (github.ref_type == 'branch' && github.ref != 'refs/heads/main') && 'snapshot' || 'versioned' }}
   cancel-in-progress: false
+
+env:
+  # Vorabkanal für automatische main-Releases: alpha, beta oder rc
+  RELEASE_CHANNEL: beta
+  SNAPSHOT_TAG: snapshot
 
 jobs:
   app:
@@ -42,40 +50,52 @@ jobs:
       - name: Version bestimmen
         id: version
         run: |
+          base=$(sed -n "s/^ *version = '\(.*\)'$/\1/p" build.gradle)
+          base="${base%-SNAPSHOT}"
+          [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Basisversion $base aus build.gradle unbrauchbar"; exit 1; }
           tag=""
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            tag="$GITHUB_REF_NAME"
+            mode=tag; tag="$GITHUB_REF_NAME"
           elif [ -n "$INPUT_TAG" ]; then
             [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::Release-Tags nur von main aus anlegen"; exit 1; }
-            tag="$INPUT_TAG"
-            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-              echo "::error::Tag $tag gibt es schon"; exit 1
-            fi
+            mode=new-tag; tag="$INPUT_TAG"
+          elif [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            mode=new-tag
+            [[ "$RELEASE_CHANNEL" =~ ^(alpha|beta|rc)$ ]] || { echo "::error::RELEASE_CHANNEL $RELEASE_CHANNEL ungültig"; exit 1; }
+            prefix="v$base-$RELEASE_CHANNEL."
+            last=$(git tag -l "$prefix*" | sed "s/^${prefix//./\\.}//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+            tag="$prefix$(( ${last:-0} + 1 ))"
+          else
+            mode=snapshot
           fi
-          if [ -n "$tag" ]; then
+          if [ "$mode" = "snapshot" ]; then
+            version="$base-SNAPSHOT"
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "tag=$SNAPSHOT_TAG" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
             [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]] \
               || { echo "::error::Tag $tag folgt nicht v<Major>.<Minor>.<Patch>[-<Vorabkennung>]"; exit 1; }
             git fetch --no-tags origin main
             git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
               || { echo "::error::Tag $tag zeigt nicht auf einen Stand von main"; exit 1; }
+            if [ "$mode" = "new-tag" ] && git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::Tag $tag gibt es schon"; exit 1
+            fi
             if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               echo "::error::Release $tag gibt es schon und wird nie überschrieben"; exit 1
             fi
             version="${tag#v}"
             prerelease=false
             [[ "$version" == *-* ]] && prerelease=true
-            echo "release=true" >> "$GITHUB_OUTPUT"
-            echo "tag=$tag" >> "$GITHUB_OUTPUT"
             echo "args=-PappVersion=$version" >> "$GITHUB_OUTPUT"
-          else
-            version=$(sed -n "s/^ *version = '\(.*\)'$/\1/p" build.gradle)
-            prerelease=false
-            echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "jar=space-harvester-app-$version.jar" >> "$GITHUB_OUTPUT"
+          echo "Modus $mode, Version $version, Tag ${tag:-$SNAPSHOT_TAG}" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -122,24 +142,31 @@ jobs:
             space-harvester-app/build/test-results/
             space-harvester-app/build/app-jar-check/
           if-no-files-found: ignore
-      - if: steps.version.outputs.release == 'true'
-        uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v2
         with:
           subject-path: ${{ steps.dist.outputs.dir }}/${{ steps.version.outputs.jar }}
-      - name: Release anlegen
-        if: steps.version.outputs.release == 'true'
+      - name: Release-Notizen
         working-directory: ${{ steps.dist.outputs.dir }}
         env:
+          MODE: ${{ steps.version.outputs.mode }}
           TAG: ${{ steps.version.outputs.tag }}
           JAR: ${{ steps.version.outputs.jar }}
           VERSION: ${{ steps.version.outputs.version }}
           PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           sum=$(cut -d' ' -f1 SHA256SUMS)
-          kind="Release"
-          [ "$PRERELEASE" = "true" ] && kind="Vorabversion (nicht für den produktiven Einsatz)"
+          if [ "$MODE" = "snapshot" ]; then
+            intro="Rollierender Entwicklungsstand vom Branch \`$BRANCH\` (\`${GITHUB_SHA:0:12}\`). Wird beim nächsten Push auf einen Branch außer main ersetzt; zum Testen ein versioniertes Release nehmen."
+            ref="$GITHUB_SHA"
+          else
+            kind="Release"
+            [ "$PRERELEASE" = "true" ] && kind="Vorabversion zum Testen"
+            intro="Space Harvester Desktop $VERSION – $kind, gebaut aus \`${GITHUB_SHA:0:12}\` auf main."
+            ref="$TAG"
+          fi
           cat > "$RUNNER_TEMP/RELEASE_NOTES.md" <<NOTES
-          Space Harvester Desktop $VERSION – $kind, gebaut aus \`${GITHUB_SHA:0:12}\` auf main.
+          $intro
 
           **Start unter Windows** (Java 21, z. B. Eclipse Temurin 21):
 
@@ -148,11 +175,33 @@ jobs:
           3. \`java -jar $JAR\` starten; beim ersten Start **Wissensquellen › Quelle hinzufügen …** wählen.
 
           Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
-          Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$TAG/docs/DESKTOP_APP.md).
+          Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$ref/docs/DESKTOP_APP.md).
           NOTES
-          # Beim Tag-Push existiert der Tag schon; beim manuellen Start legt gh ihn auf dem gebauten Commit an
-          verify=--verify-tag
-          [ "$GITHUB_REF_TYPE" = "tag" ] || verify="--target=$GITHUB_SHA"
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$verify" --title "Space Harvester Desktop $VERSION" \
-            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" \
-            "$JAR" SHA256SUMS
+      - name: Snapshot ersetzen
+        if: steps.version.outputs.mode == 'snapshot'
+        working-directory: ${{ steps.dist.outputs.dir }}
+        env:
+          JAR: ${{ steps.version.outputs.jar }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          gh release delete "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          git push origin ":refs/tags/$SNAPSHOT_TAG" 2>/dev/null || true
+          gh release create "$SNAPSHOT_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Space Harvester Desktop Snapshot ($BRANCH)" --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" \
+            --prerelease --latest=false "$JAR" SHA256SUMS
+      - name: Release anlegen
+        if: steps.version.outputs.mode != 'snapshot'
+        working-directory: ${{ steps.dist.outputs.dir }}
+        env:
+          MODE: ${{ steps.version.outputs.mode }}
+          TAG: ${{ steps.version.outputs.tag }}
+          JAR: ${{ steps.version.outputs.jar }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          # Beim Tag-Push existiert der Tag schon; sonst legt gh ihn auf dem gebauten Commit an
+          ref=--verify-tag
+          [ "$MODE" = "tag" ] || ref="--target=$GITHUB_SHA"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ref" --title "Space Harvester Desktop $VERSION" \
+            --notes-file "$RUNNER_TEMP/RELEASE_NOTES.md" --prerelease="$PRERELEASE" \
+            --latest="$([ "$PRERELEASE" = true ] && echo false || echo true)" "$JAR" SHA256SUMS
