@@ -1,9 +1,13 @@
 package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -83,8 +87,23 @@ class HarvesterTest {
         }
     }
 
+    @Test
+    void theConfiguredPolicyGuardsSyncAndExport() {
+        try (Harvester harvester = harvester(Harvester.builder()
+                .accessPolicy((context, scope, kind) -> kind == AccessKind.METADATA ? AccessDecision.ALLOW
+                        : AccessDecision.DENY))) {
+            assertThatThrownBy(() -> harvester.sync("wiki", "DEV")).isInstanceOf(AccessDeniedException.class);
+            assertThatThrownBy(() -> harvester.export("wiki", "DEV", List.of()))
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+    }
+
     private Harvester harvester() {
-        return Harvester.builder()
+        return harvester(Harvester.builder());
+    }
+
+    private Harvester harvester(Harvester.Builder builder) {
+        return builder
                 .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", SERVER.baseUrl(),
                         SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
                 .dataDirectory(data)

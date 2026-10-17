@@ -14,8 +14,9 @@ java {
 }
 
 dependencies {
-    // Confluence- und Dateiquelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
-    implementation project(':enterprise-ai-sources')
+    // Confluence- und Dateiquelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md); api, weil
+    // öffentliche Typen der Quellenadapter (SourceAdapter, ProxyRoutes, Transporte) Typen der Kopie nennen
+    api project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
     implementation libs.win.proxy.java
     // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als HTTP-Client

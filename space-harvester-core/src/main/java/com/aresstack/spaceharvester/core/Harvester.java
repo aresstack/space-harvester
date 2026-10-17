@@ -3,7 +3,9 @@ package com.aresstack.spaceharvester.core;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -60,6 +62,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -88,6 +91,8 @@ import java.util.concurrent.TimeoutException;
  * <p>Rechte: Die Bibliothek läuft im Vertrauensbereich des einbettenden Programms. Ohne eigene {@link AccessPolicy}
  * darf der Aufrufer {@link #caller()} alles lesen, was die konfigurierten Zugangsdaten erreichen; wer Inhalte an Dritte
  * weitergibt, setzt mit {@link Builder#accessPolicy} eine Richtlinie (wie der Server mit seinen Client-Freigaben).
+ * {@link #sync}, {@link #export} und {@link #exportArtifact} prüfen sie wie die REST-Controller; wer die
+ * herausgegebenen Anwendungsfälle {@link #syncs()} oder {@link #exports()} direkt aufruft, prüft selbst.
  */
 public final class Harvester implements AutoCloseable {
 
@@ -98,6 +103,7 @@ public final class Harvester implements AutoCloseable {
 
     private final List<AutoCloseable> resources;
     private final AccessContext caller;
+    private final AccessGuard access;
     private final SourceQueries sources;
     private final SourceSnapshots snapshots;
     private final SpaceKeyCheck spaceKeys;
@@ -124,7 +130,13 @@ public final class Harvester implements AutoCloseable {
             opened.add(jobStore);
             ExecutorService executor = Executors.newThreadPerTaskExecutor(
                     Thread.ofVirtual().name("harvester-job-", 0).factory());
-            opened.add(executor::shutdownNow);
+            // Erst wenn kein Auftrag mehr läuft, dürfen Ablage, Cache und Quellen schließen.
+            opened.add(() -> {
+                executor.shutdownNow();
+                if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Aufträge laufen nach 30 s noch");
+                }
+            });
             this.jobs = new Jobs(jobStore, executor, builder.jobLimits, Clock.systemUTC());
             opened.add(jobs);
 
@@ -146,7 +158,7 @@ public final class Harvester implements AutoCloseable {
             this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
                     clock);
 
-            AccessGuard access = new AccessGuard(builder.accessPolicy);
+            this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
             LucenePageSearchIndex index = new LucenePageSearchIndex(cache, builder.searchTimeout);
             this.snapshots = new SourceSnapshots(catalog);
@@ -244,8 +256,14 @@ public final class Harvester implements AutoCloseable {
         return jobs;
     }
 
-    /** Startet den Abgleich eines Space, ohne zu warten. */
+    /**
+     * Startet den Abgleich eines Space, ohne zu warten.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie {@code SYNC}
+     *                                                                               nicht freigibt
+     */
     public JobStatus sync(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         return syncs.start(sourceId, spaceKey, OWNER);
     }
 
@@ -253,14 +271,30 @@ public final class Harvester implements AutoCloseable {
      * Startet einen Export, ohne zu warten; die Job-ID ist die Export-ID.
      *
      * @param formats zusätzliche Formate aus {@link Exports#formats()}, leer für nur das Raw-First-Artefakt
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie
+     *                                                                               {@code EXPORT} oder
+     *                                                                               {@code CONTENT} nicht freigibt
      */
     public JobStatus export(String sourceId, String spaceKey, List<String> formats) {
+        requireExport(sourceId, spaceKey);
         return exports.start(sourceId, spaceKey, OWNER, formats);
     }
 
-    /** Das fertige Artefakt eines Exports oder leer, solange es keines gibt. */
+    /**
+     * Das fertige Artefakt eines Exports oder leer, solange es keines gibt; die Richtlinie wird wie beim Start erneut
+     * geprüft, damit ein entzogenes Recht auch fertige Artefakte sperrt.
+     */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
+        JobStatus job = status(exportId);
+        requireExport(job.sourceId(), job.partitionKey());
         return exports.artifact(exportId, OWNER);
+    }
+
+    /** Wie der Server: Das Artefakt enthält die nativen Seiteninhalte, also EXPORT und CONTENT. */
+    private void requireExport(String sourceId, String spaceKey) {
+        ResourceScope space = ResourceScope.space(sourceId, spaceKey);
+        access.require(caller, space, AccessKind.EXPORT);
+        access.require(caller, space, AccessKind.CONTENT);
     }
 
     /** Zustand und Fortschritt eines Auftrags. */
