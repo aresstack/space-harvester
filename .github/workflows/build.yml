@@ -30,14 +30,14 @@ jobs:
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py build/test-results enterprise-ai-sources/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results enterprise-ai-sources/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: |
-            build/reports/tests/
-            build/test-results/
+            space-harvester-*/build/reports/tests/
+            space-harvester-*/build/test-results/
             enterprise-ai-sources/build/reports/tests/
             enterprise-ai-sources/build/test-results/
           if-no-files-found: ignore

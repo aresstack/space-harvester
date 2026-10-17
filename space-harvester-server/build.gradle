@@ -4,8 +4,6 @@ plugins {
     alias(libs.plugins.spring.dependency.management)
 }
 
-group = 'com.aresstack.spaceharvester'
-version = '0.1.0-SNAPSHOT'
 description = 'Space Harvester – erntet Wissensquellen (zunächst Confluence Data Center) und exportiert sie maschinenlesbar.'
 
 java {
@@ -53,8 +51,13 @@ dependencies {
 
 springBoot {
     // Liefert build.version/build.time für /actuator/info und die Service-Info unter /api/v1.
+    // Artefaktname wie vor der Aufteilung in Module (#100), damit /actuator/info und Jar-Name gleich bleiben.
     buildInfo {
         excludes = ['time']
+        properties {
+            artifact = 'space-harvester'
+            name = 'space-harvester'
+        }
     }
 }
 
@@ -69,8 +72,11 @@ tasks.withType(AbstractArchiveTask).configureEach {
     reproducibleFileOrder = true
 }
 
+// Tests, bootRun und demoConfluence laufen in der Repository-Wurzel: config/application-demo.yml und
+// docs/E2E.md werden dort relativ gelesen, wie vor der Aufteilung in Module (#100).
 tasks.named('test') {
     useJUnitPlatform()
+    workingDir = rootProject.projectDir
     // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
     systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
 }
@@ -78,6 +84,10 @@ tasks.named('test') {
 // Das einfache (nicht ausführbare) Jar wird nicht gebraucht; bootJar ist das Artefakt.
 tasks.named('jar') {
     enabled = false
+}
+
+tasks.named('bootJar') {
+    archiveBaseName = 'space-harvester'
 }
 
 // Wertet ein PAC-Skript im ausführbaren Spring-Boot-JAR aus (#34): GraalJS (js und regex) muss in den
@@ -174,4 +184,9 @@ tasks.register('demoConfluence', JavaExec) {
     mainClass = 'com.aresstack.spaceharvester.demo.DemoConfluence'
     jvmArgs '-Dstdout.encoding=UTF-8'
     javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    workingDir = rootProject.projectDir
+}
+
+tasks.named('bootRun') {
+    workingDir = rootProject.projectDir
 }

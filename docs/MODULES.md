@@ -111,9 +111,10 @@ Server; was beide brauchen, liegt in beiden.
    Netty und Spring WebFlux. Der Core darf diese BOM nicht in seine POM tragen; die Versionen stehen daher im
    Versionskatalog, abgestimmt auf Spring Boot 4.1.1, und der Server erzwingt weiter über die BOM dieselben.
 
-## 5. Java 8 für den Core? Befund und Empfehlung
+## 5. Java-Version: Java 21 (festgelegt)
 
-Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Pakete, 245 Dateien):
+Angelo hat am 17.10.2026 bestätigt, dass Space Harvester komplett auf Java 21 läuft, Core eingeschlossen. Der
+folgende Befund bleibt als Begründung stehen. Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Pakete, 245 Dateien):
 
 | Hindernis | Umfang |
 | --- | --- |
@@ -128,7 +129,7 @@ Geprüft wurde, was ein Java-8-Core kosten würde (Zählung über die Core-Paket
 Ein Java-8-Core wäre damit ein Neubau großer Teile von Cache, Suche, Transport und Domänenmodell, mit hohem Risiko
 für die festgelegten Hashes (`page-metadata/v1`, `page-attributes/v1`), die Konverter-Versionen und das Indexformat.
 
-**Empfehlung und Festlegung:** Der Core bleibt Java 21 (Toolchain und `release 21`). Java-8-Anwendungen
+**Festlegung:** Der Core bleibt Java 21 (Toolchain und `release 21`). Java-8-Anwendungen
 (MainframeMate, askai-java8) binden Space Harvester über die REST-API an; der gemeinsame Java-8-Boden bleibt die
 Upstream-Bibliothek in enterprise-ai-client, aus der `enterprise-ai-sources` kopiert ist. Sollte später ein
 Java-8-Client nötig sein, wäre ein kleines eigenes Modul mit den API-DTOs und einem HTTP-Client der richtige Weg,

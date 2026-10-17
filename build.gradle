@@ -1,0 +1,11 @@
+// Gradle-Wurzel: nur Aggregator. Der Dienst liegt in space-harvester-server, die Upstream-Kopie in
+// enterprise-ai-sources; Zuordnung und Gründe stehen in docs/MODULES.md (#100).
+plugins {
+    alias(libs.plugins.spring.boot) apply false
+    alias(libs.plugins.spring.dependency.management) apply false
+}
+
+allprojects {
+    group = 'com.aresstack.spaceharvester'
+    version = '0.1.0-SNAPSHOT'
+}
