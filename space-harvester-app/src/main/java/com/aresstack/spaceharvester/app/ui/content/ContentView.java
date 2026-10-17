@@ -310,6 +310,9 @@ public final class ContentView implements View {
                     }
                 },
                 error -> {
+                    if (loading != batch) {
+                        return;
+                    }
                     loading = null;
                     status.setText(pagesModel.size() + " Seiten geladen; Laden abgebrochen.");
                     feedback.problem(error);

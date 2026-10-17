@@ -134,11 +134,18 @@ public final class AppContext {
         fire();
         Background.run(() -> current.workspace().spaces(sourceId),
                 spaces -> {
+                    // Ergebnis einer inzwischen ersetzten Laufzeit (Neu laden) verwerfen.
+                    if (runtime != current) {
+                        return;
+                    }
                     connections.put(sourceId, new Connection(Connection.State.CONNECTED, Instant.now(), spaces, null));
                     fire();
                     done.run();
                 },
                 error -> {
+                    if (runtime != current) {
+                        return;
+                    }
                     connections.put(sourceId, new Connection(Connection.State.FAILED, Instant.now(), List.of(), error));
                     fire();
                     done.run();

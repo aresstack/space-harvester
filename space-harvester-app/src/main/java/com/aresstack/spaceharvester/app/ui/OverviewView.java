@@ -73,6 +73,11 @@ public final class OverviewView implements View {
                         + " zur Konfiguration: " + context.settings().problems().get(0),
                         AppContext.Section.SETTINGS, "Alle ansehen");
             }
+            if (!runtime.rejectedSources().isEmpty()) {
+                note(Texts.count(runtime.rejectedSources().size(), "Quelle fehlt", "Quellen fehlen")
+                        + " wegen fehlerhafter Einstellungen: " + runtime.rejectedSources().get(0),
+                        AppContext.Section.SETTINGS, "Alle ansehen");
+            }
             for (String id : runtime.waitingForSecret()) {
                 note("Für „" + id + "“ fehlen die Zugangsdaten.", AppContext.Section.SOURCES, "Zugangsdaten eingeben");
             }

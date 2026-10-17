@@ -164,6 +164,34 @@ class WorkspaceTest {
         assertThat(runtime.workspace().spaces("wiki")).extracting(Partition::key).containsExactly("DEV");
     }
 
+    @Test
+    void anInvalidSourceIsLeftOutAndTheOthersStart() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Path config = home.resolve("kaputt.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: ohne-adresse
+                      type: confluence
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: %s
+                    - id: unbekannt
+                      type: sharepoint
+                """.formatted(home.resolve("data"), files));
+        AppSettings settings = new AppSettingsLoader(new Placeholders(name -> null), home).load(config);
+
+        runtime = AppRuntime.start(settings, new AppRuntime.SessionSecrets(), "test");
+
+        assertThat(runtime.workspace().sources()).extracting(HarvestSource::id).containsExactly("handbuch");
+        assertThat(runtime.rejectedSources()).hasSize(2)
+                .anySatisfy(p -> assertThat(p).contains("ohne-adresse"))
+                .anySatisfy(p -> assertThat(p).contains("unbekannt"));
+    }
+
     private AppRuntime start() throws Exception {
         runtime = AppRuntime.start(settings(Map.of("WIKI_TOKEN", TOKEN,
                 "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)), new AppRuntime.SessionSecrets(), "test");

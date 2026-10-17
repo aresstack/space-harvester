@@ -104,6 +104,9 @@ public final class SettingsView implements View {
         if (settings != null) {
             settings.problems().forEach(problem -> text.append("• ").append(problem).append('\n'));
         }
+        if (context.runtime() != null) {
+            context.runtime().rejectedSources().forEach(problem -> text.append("• ").append(problem).append('\n'));
+        }
         problems.setText(text.toString().strip());
         problems.setVisible(!text.isEmpty());
 

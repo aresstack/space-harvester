@@ -8,15 +8,20 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.embedding.onnx.E5Defaults;
 import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingSettings;
+import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Baut aus den gelesenen Einstellungen und den nur in dieser Sitzung eingegebenen Geheimnissen den Harvester und die
@@ -27,13 +32,18 @@ public final class AppRuntime implements AutoCloseable {
     private final AppSettings settings;
     private final Harvester harvester;
     private final Workspace workspace;
-    private final Set<String> waitingForSecret;
+    private static final Pattern SOURCE_POSITION = Pattern.compile("sources\\[(\\d+)]");
 
-    private AppRuntime(AppSettings settings, Harvester harvester, Workspace workspace, Set<String> waitingForSecret) {
+    private final Set<String> waitingForSecret;
+    private final List<String> rejectedSources;
+
+    private AppRuntime(AppSettings settings, Harvester harvester, Workspace workspace, Set<String> waitingForSecret,
+                       List<String> rejectedSources) {
         this.settings = settings;
         this.harvester = harvester;
         this.workspace = workspace;
         this.waitingForSecret = waitingForSecret;
+        this.rejectedSources = rejectedSources;
     }
 
     /**
@@ -52,8 +62,39 @@ public final class AppRuntime implements AutoCloseable {
                 waiting.add(entry.id());
             }
         }
-        Set<String> ids = new LinkedHashSet<>();
-        sources.forEach(source -> ids.add(source.id()));
+        // Eine fehlerhafte Quelle soll die übrigen nicht verhindern: Der Core prüft alle Quellen und nennt jede mit
+        // ihrer Position; die genannten fallen weg, der Rest startet. Andere Fehler (Proxy, Ablage) brechen ab.
+        List<String> rejected = new ArrayList<>();
+        Harvester harvester = null;
+        AccessPolicy policy = null;
+        while (harvester == null) {
+            Set<String> ids = new LinkedHashSet<>();
+            sources.forEach(source -> ids.add(source.id()));
+            // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
+            policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
+            try {
+                harvester = builder(settings, sources, policy, version).build();
+            } catch (InvalidSourceConfigurationException e) {
+                Set<Integer> invalid = new TreeSet<>(Comparator.reverseOrder());
+                for (String problem : e.problems()) {
+                    Matcher position = SOURCE_POSITION.matcher(problem);
+                    if (!position.lookingAt()) {
+                        throw e;
+                    }
+                    invalid.add(Integer.parseInt(position.group(1)));
+                    rejected.add(problem);
+                }
+                invalid.forEach(index -> sources.remove((int) index));
+            }
+        }
+        ActivityLog activities = new ActivityLog(settings.storage().dataDirectory().resolve("app")
+                .resolve("activities.txt"));
+        return new AppRuntime(settings, harvester, new Workspace(harvester, new AccessGuard(policy), activities),
+                Collections.unmodifiableSet(waiting), List.copyOf(rejected));
+    }
+
+    private static Harvester.Builder builder(AppSettings settings, List<SourceSettingsConfig> sources,
+                                             AccessPolicy policy, String version) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
                 .dataDirectory(settings.storage().dataDirectory())
@@ -68,8 +109,6 @@ public final class AppRuntime implements AutoCloseable {
                 .searchTimeout(settings.storage().searchTimeout())
                 .maxTreeNodes(settings.storage().maxTreeNodes())
                 .pdfFont(settings.storage().pdfFont());
-        // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
-        AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
         builder.accessPolicy(policy);
         AppSettings.EmbeddingSettings embedding = settings.embedding();
         if (embedding.enabled()) {
@@ -79,11 +118,7 @@ public final class AppRuntime implements AutoCloseable {
                     embedding.acquireTimeout(), embedding.retryAfter(), E5Defaults.PASSAGE_PREFIX,
                     E5Defaults.QUERY_PREFIX, E5Defaults.PAD_TOKEN_ID), embedding.maxChunkChars());
         }
-        Harvester harvester = builder.build();
-        ActivityLog activities = new ActivityLog(settings.storage().dataDirectory().resolve("app")
-                .resolve("activities.txt"));
-        return new AppRuntime(settings, harvester, new Workspace(harvester, new AccessGuard(policy), activities),
-                Collections.unmodifiableSet(waiting));
+        return builder;
     }
 
     public AppSettings settings() {
@@ -92,6 +127,11 @@ public final class AppRuntime implements AutoCloseable {
 
     public Workspace workspace() {
         return workspace;
+    }
+
+    /** Was der Core an Quellen beanstandet hat, die deshalb fehlen; je Eintrag Position, ID und Grund. */
+    public List<String> rejectedSources() {
+        return rejectedSources;
     }
 
     /** Quellen, die auf Passwort oder Token für diese Sitzung warten. */
