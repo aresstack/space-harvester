@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import java.net.URI;
@@ -33,6 +34,11 @@ class JobErrorHandler {
     ProblemDetail tooManyJobs(JobCapacityExceededException e) {
         // Die Meldung stammt aus der eigenen Prüfung und nennt nur die Grenze.
         return problem(HttpStatus.TOO_MANY_REQUESTS, "too-many-jobs", "Zu viele Aufträge", e.getMessage());
+    }
+
+    @ExceptionHandler(ExportStorageFullException.class)
+    ProblemDetail exportStorageFull(ExportStorageFullException e) {
+        return problem(HttpStatus.INSUFFICIENT_STORAGE, "export-storage-full", "Exportablage voll", e.getMessage());
     }
 
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {

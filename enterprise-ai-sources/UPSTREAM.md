@@ -5,8 +5,8 @@ Unveränderte Kopie der Confluence-Quelle aus
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`74004987fa8c4e54ae7f0ea19111425b35f92160`, der Merge von enterprise-ai-client#173 (asynchrone Transport-Naht und
-asynchrone Seiten-Snapshots, #47) auf `main`.
+`cda2f171a3564f53722cce6b93d200b38257cebc`, der Merge von enterprise-ai-client#177 (Listen-Cursor lokaler Dateien
+an die Quelle gebunden; davor #176 lokale Dateien mit Partition, Metadaten und Original, #18) auf `main`.
 
 ## Inhalt
 
@@ -17,6 +17,9 @@ asynchrone Seiten-Snapshots, #47) auf `main`.
 | `proasteion/platform/network` | vollständig: `HttpRoutePort` |
 | `source-api` | vollständig: `KnowledgeSourcePort`, `KnowledgeSourceProvider`, `PageNavigationSource`, `PageViewSource`, `PartitionListingSource`, Test-Fixtures |
 | `proasteion/emporion/holkas/source-confluence` | vollständig: `ConfluenceRestClient`, `ConfluenceKnowledgeSource`, `FakeConfluence`-Fixtures |
+| `proasteion/emporion/deigma` | vollständig: Port für Dateityp-Erkennung und Text-Extraktion (nur JDK) |
+| `proasteion/emporion/deigma/document-tika` | nur `SimpleContentDetector` (Erkennung nach Endung, nur JDK), ohne Apache Tika |
+| `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
 | `LICENSE` | die Lizenz des Upstreams (MIT, AresStack), mitkopiert und mitgeprüft |
 
 Pakete und Klassennamen bleiben wie im Upstream (`com.aresstack.enterpriseai.*`), damit sich Änderungen

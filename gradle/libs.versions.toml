@@ -8,10 +8,14 @@ springdoc = "3.1.1"
 archunit = "1.4.1"
 # Spring Cloud Azure 7.4.x baut gegen Spring Boot 4.1 (spring-cloud-azure-autoconfigure 7.4.0 → Boot 4.1.0)
 springCloudAzure = "7.4.0"
+# Spring Cloud 2025.1 (Boot 4.0): für Boot 4.1 gibt es nur Meilensteine; nur der Config-Client, geprüft in ConfigServerImportTest
+springCloud = "2025.1.3"
 # Proxy-Route je Ziel-URL (PAC/WPAD), dieselbe Version wie im Upstream; bringt GraalJS 21.2 mit (#34)
 winProxy = "0.2.0"
 # Eingebetteter Seiten-Cache und Index (#26)
 lucene = "10.5.2"
+# PDF-Ausgabe (#30)
+pdfbox = "3.0.5"
 # enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
 gson = "2.10.1"
 jsoup = "1.17.2"
@@ -26,7 +30,9 @@ jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" 
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 win-proxy-java = { module = "com.aresstack:win-proxy-java", version.ref = "winProxy" }
 lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
+spring-cloud-dependencies = { module = "org.springframework.cloud:spring-cloud-dependencies", version.ref = "springCloud" }
 spring-cloud-azure-dependencies = { module = "com.azure.spring:spring-cloud-azure-dependencies", version.ref = "springCloudAzure" }
+pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

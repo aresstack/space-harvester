@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.Auth;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.AuthType;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +60,8 @@ class ConfiguredSourceCatalogTest {
                 .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems()).containsExactly(
                         "sources[0] (id=Bad Id): id fehlt oder ist ungültig (erlaubt: Kleinbuchstaben, Ziffern, "
                                 + "Bindestrich; z. B. 'confluence')",
-                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence)",
-                        "sources[1] (id=wiki): base-url fehlt",
+                        // Ohne bekannten Typ gibt es keine typeigenen Prüfungen (base-url gehört zu confluence).
+                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files)",
                         "sources[2] (id=basic): auth.type basic braucht auth.username und auth.password",
                         "sources[3] (id=pat): auth.username/auth.password passen nicht zu auth.type pat",
                         "sources[4] (id=none): auth.type ist none, aber Zugangsdaten sind gesetzt; auth.type basic "
@@ -70,7 +71,7 @@ class ConfiguredSourceCatalogTest {
                                 + "Felder",
                         // Doppelt ist doppelt, auch wenn die erste Quelle mit dieser ID selbst fehlerhaft ist.
                         "sources[7] (id=basic): id ist doppelt vergeben")
-                        .hasSize(9));
+                        .hasSize(8));
     }
 
     @Test
@@ -87,6 +88,58 @@ class ConfiguredSourceCatalogTest {
                 .isInstanceOf(InvalidSourceConfigurationException.class)
                 .hasMessageContaining("sources[0] (id=wiki): ")
                 .hasMessageContaining("pageSize");
+    }
+
+    @Test
+    void additionalSourceTypesComeFromAdapters() {
+        SourceAdapter adapter = new SourceAdapter() {
+            @Override
+            public String type() {
+                return "probe";
+            }
+
+            @Override
+            public List<String> check(SourceSettingsConfig config) {
+                return config.options().containsKey("kaputt") ? List.of("options.kaputt ist nicht erlaubt") : List.of();
+            }
+
+            @Override
+            public OpenedSource open(SourceSettingsConfig config, Context context) {
+                throw new InvalidSourceConfigurationException(List.of("nicht erreichbar"));
+            }
+        };
+
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
+                new SourceSettingsConfig("eins", "probe", null, null, null, Map.of("kaputt", "ja")),
+                new SourceSettingsConfig("zwei", "probe", null, null, null, Map.of()),
+                new SourceSettingsConfig("drei", "confluence", null, BASE, null, Map.of())), "test",
+                TrustBundles.NONE, ProxySettings.disabled(), ConfiguredSourceCatalog.AsyncTransport.DISABLED,
+                List.of(adapter)))
+                .isInstanceOf(InvalidSourceConfigurationException.class)
+                .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems()).containsExactly(
+                        "sources[0] (id=eins): options.kaputt ist nicht erlaubt",
+                        "sources[1] (id=zwei): nicht erreichbar",
+                        // Nur die übergebenen Adapter zählen.
+                        "sources[2] (id=drei): type fehlt oder ist unbekannt (bekannt: probe)"));
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(), "test", TrustBundles.NONE,
+                ProxySettings.disabled(), ConfiguredSourceCatalog.AsyncTransport.DISABLED, List.of(adapter, adapter)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("probe");
+    }
+
+    @Test
+    void aFilesSourceRejectsConnectionSettings() {
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
+                new SourceSettingsConfig("docs", "files", null, BASE, new Auth(AuthType.PAT, null, null, "t"),
+                        Map.of())), "test"))
+                .isInstanceOf(InvalidSourceConfigurationException.class)
+                .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems()).containsExactly(
+                        "sources[0] (id=docs): base-url passt nicht zu type files; das Verzeichnis steht unter "
+                                + "options.directory",
+                        "sources[0] (id=docs): auth passt nicht zu type files (lokale Dateien haben keine "
+                                + "Anmeldung)"));
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
+                new SourceSettingsConfig("docs", "files", null, null, null, Map.of())), "test"))
+                .hasMessageContaining("sources[0] (id=docs): options.directory: fehlt");
     }
 
     @Test

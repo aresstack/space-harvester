@@ -166,6 +166,74 @@ space-harvester:
 nichts herauskommt; dass ein fremder, aber existierender Auftrag verborgen bleibt, prüfen die Tests der jeweiligen
 Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API-Tests).
 
+## Durchsicht von main (2026-10-17)
+
+Durchgesehen nach dem Zusammenführen aller Stränge: alle Routen unter `/api` (Seiten, Baum, Suche, Metadaten,
+Anreicherungen, Confluence-Fassade, Exporte samt Downloads, Syncs), die Weboberfläche `/ui/`, Logs, Fehlerantworten,
+Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft nach ihrem Merge: die Anhangsliste (#9,
+#76) und die Converter-Ausgaben der Exporte (#30, #68).
+
+**Ohne Befund**
+
+- Jede Route verlangt ein Token und prüft über den `AccessGuard`; Listen, Baum, Suche, Fassade und Live-Metadaten
+  filtern je Seite, eine verweigerte Seite antwortet wie eine fehlende. Exporte und Syncs prüfen den Eigentümer, ein
+  fremder Auftrag ist 404. Endnutzer bekommen nur `metadata` und `content`.
+- Keine Zugangsdaten in Logs, `toString()`, Antworten, Exporten oder dem Lucene-Index; Fehlerantworten haben feste
+  Texte. Das Endnutzer-Token liest nur der Quellenadapter (ArchUnit).
+- Dateien: Export-IDs und Dateinamen nur nach Whitelist, Normalisierung mit Präfixprüfung, Rohdateien mit `CREATE_NEW`;
+  Index- und Exportverzeichnisse nur aus der Konfiguration. Keine Route nimmt eine URL zum Abrufen an (kein SSRF).
+- Größen: `limit` höchstens 100, Suchbegriffe und Filter begrenzt, Baum nach Tiefe und Knotenzahl, Antworten der Quelle
+  höchstens 20 MiB (Endnutzer-Prüfung 1 MiB), Weiterleitungen nur zum selben Host.
+- `/ui/`: eigene Filterkette nur für `/ui`, `/ui/**`, strenge CSP (`default-src 'self'`, `object-src 'none'`,
+  `frame-ancestors 'none'`), `Referrer-Policy: no-referrer`, kein `innerHTML`, Token nur im `sessionStorage`. API-
+  Antworten tragen `nosniff`, `Cache-Control: no-store` und `X-Frame-Options: DENY`.
+
+- Anhangsliste `GET …/pages/{pageId}/attachments`: verlangt `metadata`, verdeckt wie die Einzelseiten-Metadaten (ohne
+  Freigabe für alle Spaces erst nach dem Lesen mit dem Space aus der Quelle geprüft, sonst 404); die Seiten-ID prüft der
+  Adapter, die Liste ist auf `MAX_ATTACHMENTS` begrenzt und gehört nachweislich zur angefragten Seite. Sie liefert nur
+  Metadaten und die Adresse in der Quelle, keine Inhalte und keine Download-Freigabe.
+- Converter Markdown, Word, PDF (#79): kein XXE (jsoup ohne DTD/Entitäten), kein Nachladen externer Ressourcen,
+  keine Zugangsdaten; Word escaped Text und Attribute, externe Beziehungen nur für `http(s)`/`mailto`-Links, feste
+  Zip-Einträge; PDF ohne JavaScript-Aktionen, Links nur `http(s)`/`mailto`.
+- Lokale Dateiquelle (#77): Wurzel nur aus der Konfiguration, IDs kanonisch Base64url und normalisiert, realer Pfad muss
+  in der Wurzel liegen, Symlinks führen nicht hinaus; keine Anmeldedaten; Rechte wie bei jeder Quelle über den
+  `AccessGuard`.
+- Converter: ein Format wird erst nach der Export-Freigabe angenommen, unbekannte ergeben 400; Dateinamen nur nach
+  Whitelist, nie überschreibend (`CREATE_NEW`), Größe begrenzt (`max-converted-bytes`), Download nur für den Eigentümer
+  mit `export` und `content`.
+
+**Behoben**
+
+| Befund | Behebung |
+|---|---|
+| Job-Fehler übernahmen die Meldung des Transports (interne URLs, Hosts, Proxy-Route) in Status und Job-Store | fester Text je Grund (`SOURCE_<REASON>`), `JobsTest` |
+| Ein Client konnte alle Auftragsplätze belegen | `space-harvester.jobs.max-open-per-owner` (Standard 4), darüber 429 |
+| Anreicherungen neu berechnen (schreibt in den Index) ging mit reiner Lesefreigabe, auch für Endnutzer | verlangt zusätzlich `sync` für den Space, `EnrichmentApiTest` |
+| Fassade: unbegrenztes `start` ließ eine Anfrage den ganzen Space lesen und prüfen | `start` höchstens 10 000, darüber 400 |
+| Keine Tomcat-Grenzen für Formular- und verworfene Bodies | `max-http-form-post-size` 64 KB, `max-swallow-size` 1 MB |
+| Config-Server-Zugang in der URL möglich | `docs/CONFIGURATION.md`: Zugang nur über `username`/`password` |
+| Markdown-Export: Backticks im Inline-Code oder in der Code-Sprache beendeten den Code früher, Seiteninhalt wurde rohes HTML; `javascript:`/`data:`-Links und eingebettete externe Bilder (laden beim Öffnen nach) | Zaun länger als jede Backtick-Folge, Sprache nur `[A-Za-z0-9_+.#-]`, Links nur `http(s)`, `mailto`, Seiten- und Anhangsverweise, externe Bilder nur als Link; `MarkdownConverterTest` |
+| PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
+| Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
+| Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
+
+**Bewusst offen**
+
+- `parentPageId` einer sichtbaren Seite nennt auch einen Elternteil, den ein Endnutzer in Confluence nicht sehen darf
+  (nur die ID, kein Titel oder Inhalt). Confluence vererbt Leseeinschränkungen auf Unterseiten, der Fall ist daher
+  selten. Der Baum blendet solche Elternteile schon aus.
+- Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
+- Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
+- PDF: Seitenbaum und Objekte wachsen im Speicher vor `max-converted-bytes` (Streams cacht PDFBox in einer
+  temporären Datei); eine Grenze für Seiten oder Tabellen fehlt noch;
+  sehr tiefe Verschachtelung im Storage-Format kann den Parser per `StackOverflowError` abbrechen, was nur den Auftrag
+  beendet.
+- Lokale Dateiquelle, in Arbeit bei Strang A (upstream enterprise-ai-client#178): Dateien in versteckten Verzeichnissen
+  (`.git/…`) werden gelistet, bis 2000 MB je Datei ganz gelesen (im Harvester künftig Standard 20 MB, höchstens 64 MB),
+  der absolute Serverpfad steht in den Metadaten.
+- Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
+  Space existiert.
+
 ## Noch offen
 
 - Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; Live-Test gegen Confluence (#24). Ein

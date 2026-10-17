@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.sources;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -18,6 +20,19 @@ public interface HarvestSource {
 
     /** Anzeigename. */
     String title();
+
+    /**
+     * Was die Quelle kann (#18). Standard: Partitionen und beide Metadatenabfragen, Originale nur, wenn die Quelle
+     * {@link #storedPage} überschreibt und das hier meldet.
+     */
+    default Set<SourceCapability> capabilities() {
+        Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS, SourceCapability.PAGE_LISTING,
+                SourceCapability.PAGE_METADATA);
+        if (asyncStoredPages()) {
+            capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        return capabilities;
+    }
 
     /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
@@ -82,5 +97,31 @@ public interface HarvestSource {
     default CompletionStage<StoredPage> storedPageAsync(String pageId) {
         return CompletableFuture.failedFuture(new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann native Seitenantworten nicht asynchron liefern", null));
+    }
+
+    /**
+     * Alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit den nativen Listenantworten (#9). Lädt keine
+     * Dateien. Eine Liste, die die Quelle nicht vollständig liefern kann, scheitert, statt kürzer zurückzukommen;
+     * einzelne unbrauchbare Einträge stehen in {@link PageAttachments#warnings()}.
+     *
+     * @param pageId ID der Seite in der Quelle
+     * @throws SourceAccessException wie {@link #storedPage(String)}
+     */
+    default PageAttachments attachments(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhangslisten nicht liefern", null);
+    }
+
+    /**
+     * Lädt einen Anhang aus {@link #attachments(String)} über die Anmeldung und den Netzweg der Quelle herunter (#19).
+     * Nur Anhänge der Quelle selbst, nie fremde URLs. Eine Datei über der Größengrenze der Quelle scheitert mit
+     * {@code INVALID_RESPONSE} und wird nie gekürzt.
+     *
+     * @throws SourceAccessException wie {@link #storedPage(String)}; {@code NOT_FOUND} auch für einen gelöschten
+     *                               Anhang
+     */
+    default AttachmentFile attachmentFile(PageAttachment attachment) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Anhänge nicht herunterladen", null);
     }
 }

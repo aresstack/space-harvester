@@ -1,25 +1,39 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
+import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
+import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
+import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
+import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -34,12 +48,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final String type;
     private final String title;
     private final KnowledgeSourcePort port;
+    private final InFlightLimit inFlight;
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
+        this(id, type, title, port, null);
+    }
+
+    /** @param inFlight Grenze gleichzeitiger asynchroner Abrufe; {@code null} = unbegrenzt */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight) {
         this.id = id;
         this.type = type;
         this.title = title;
         this.port = port;
+        this.inFlight = inFlight;
     }
 
     @Override
@@ -55,6 +77,27 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    @Override
+    public Set<SourceCapability> capabilities() {
+        Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS);
+        if (port instanceof PartitionListingSource) {
+            capabilities.add(SourceCapability.PAGE_LISTING);
+        }
+        if (port instanceof ResourceMetadataSource) {
+            capabilities.add(SourceCapability.PAGE_METADATA);
+        }
+        if (port instanceof StoredContentSource) {
+            capabilities.add(SourceCapability.STORED_PAGE);
+        }
+        if (port instanceof AsyncStoredContentSource) {
+            capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        if (port instanceof AttachmentListSource) {
+            capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
+        }
+        return capabilities;
     }
 
     @Override
@@ -121,7 +164,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (!(port instanceof AsyncStoredContentSource stored)) {
             return HarvestSource.super.storedPageAsync(pageId);
         }
-        CompletableFuture<StoredContent> request = stored.storedContentAsync(pageId).toCompletableFuture();
+        CompletableFuture<StoredContent> request = inFlight == null
+                ? stored.storedContentAsync(pageId).toCompletableFuture()
+                : inFlight.submit(() -> stored.storedContentAsync(pageId).toCompletableFuture());
         CompletableFuture<StoredPage> result = new CompletableFuture<>();
         request.whenComplete((content, error) -> {
             if (error != null) {
@@ -149,6 +194,59 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 content.nativeFormat(), content.retrievedAt());
     }
 
+    @Override
+    public PageAttachments attachments(String pageId) {
+        if (!(port instanceof AttachmentListSource listing)) {
+            return HarvestSource.super.attachments(pageId);
+        }
+        StoredAttachmentList list;
+        try {
+            list = listing.storedAttachments(pageId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
+                .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    @Override
+    public AttachmentFile attachmentFile(PageAttachment attachment) {
+        if (!(port instanceof PageViewSource files)) {
+            return HarvestSource.super.attachmentFile(attachment);
+        }
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(attachment.resourceId());
+        } catch (IllegalArgumentException e) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Keine Ressourcen-ID", null);
+        }
+        if (!files.isAttachment(resourceId)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Kein Anhang der Quelle",
+                    null);
+        }
+        SourceFile file;
+        try {
+            file = files.loadAttachmentFile(resourceId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        PageAttachment described = attachment(file.resource());
+        if (!described.attachmentId().equals(attachment.attachmentId())) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Download gehört zu einem anderen Anhang", null);
+        }
+        return new AttachmentFile(described, file.content(), Instant.now());
+    }
+
+    private static PageAttachment attachment(KnowledgeResource resource) {
+        String size = resource.metadata().asMap().get(KnowledgeMetadata.FILE_SIZE);
+        String version = resource.revision().version();
+        return new PageAttachment(lastSegment(resource.id()), resource.id().value(), resource.title(),
+                resource.contentType(), size == null ? null : Long.valueOf(size),
+                version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
+                resource.location().orElse(null));
+    }
+
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */
     private PageMetadata withSpace(KnowledgeResource resource) {
         if (resource.scope() == null || resource.scope().isEmpty()) {
@@ -158,14 +256,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return pageMetadata(resource, resource.scope());
     }
 
-    private static PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
+    private PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
         String version = resource.revision().version();
         return new PageMetadata(
                 nativeId(resource.id()),
                 resource.id().value(),
                 resource.title(),
                 resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
-                resource.parentId().map(KnowledgeSourceHarvestSource::nativeId).orElse(null),
+                resource.parentId().map(this::nativeId).orElse(null),
                 version == null || version.isEmpty() ? null : version,
                 resource.revision().modifiedAt().orElse(null),
                 resource.location().orElse(null),
@@ -185,8 +283,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return attributes;
     }
 
-    /** Die ID der Quelle: letztes Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}). */
-    private static String nativeId(KnowledgeResourceId id) {
+    /**
+     * Die ID der Seite in der Quelle: die lokale ID des Adapters ({@link ResourceMetadataSource#localId}), sonst das
+     * letzte Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}).
+     */
+    private String nativeId(KnowledgeResourceId id) {
+        if (port instanceof ResourceMetadataSource single) {
+            String local = single.localId(id);
+            if (local != null && !local.isEmpty()) {
+                return local;
+            }
+        }
+        return lastSegment(id);
+    }
+
+    /** Letzter Pfadteil der Ressourcen-ID, bei Confluence die Content-ID (Seiten und Anhänge). */
+    private static String lastSegment(KnowledgeResourceId id) {
         String part = id.schemeSpecificPart();
         return part.substring(part.lastIndexOf('/') + 1);
     }
@@ -197,6 +309,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     private SourceAccessException accessFailure(KnowledgeSourceException e) {
+        if (e instanceof RateLimitedException) {
+            return new SourceAccessException(id, SourceAccessException.Reason.RATE_LIMITED, e.getMessage(), e);
+        }
         SourceAccessException.Reason reason = switch (e.kind()) {
             case NOT_FOUND -> SourceAccessException.Reason.NOT_FOUND;
             case UNAVAILABLE -> SourceAccessException.Reason.UNAVAILABLE;

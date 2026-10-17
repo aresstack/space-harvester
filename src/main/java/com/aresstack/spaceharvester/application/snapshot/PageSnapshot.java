@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.MetadataHash;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -20,6 +21,10 @@ import java.util.Objects;
  */
 public record PageSnapshot(PageKey key, PageMetadata metadata, String metadataHash, String attributesHash,
                            NativePayload payload, Instant retrievedAt) {
+
+    /** Version dieses Modells, beschrieben in {@code docs/PAGE_SNAPSHOT.md}. */
+    public static final String SCHEMA = "page-snapshot/v1";
+    private static final String COMPLETE_SUFFIX = ".complete";
 
     public PageSnapshot {
         Objects.requireNonNull(key, "key");
@@ -57,5 +62,18 @@ public record PageSnapshot(PageKey key, PageMetadata metadata, String metadataHa
     /** Elternseite oder {@code null} für eine Wurzelseite. */
     public String parentPageId() {
         return metadata.parentPageId();
+    }
+
+    /**
+     * Warnungen zu diesem Snapshot, abgeleitet aus den Kopfdaten derselben Antwort und deshalb mit ihnen gespeichert:
+     * je Attribut, das die Quelle als unvollständig meldet ({@code <name>.complete=false}), eine
+     * {@link SnapshotWarning#ATTRIBUTES_INCOMPLETE} mit dem Attributnamen. Leer, wenn nichts fehlt.
+     */
+    public List<SnapshotWarning> warnings() {
+        return metadata.attributes().entrySet().stream()
+                .filter(entry -> entry.getKey().endsWith(COMPLETE_SUFFIX) && "false".equals(entry.getValue()))
+                .map(entry -> new SnapshotWarning(SnapshotWarning.ATTRIBUTES_INCOMPLETE,
+                        entry.getKey().substring(0, entry.getKey().length() - COMPLETE_SUFFIX.length())))
+                .toList();
     }
 }

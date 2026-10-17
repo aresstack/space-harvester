@@ -33,6 +33,9 @@ import java.util.Objects;
  */
 public class ContentListing {
 
+    /** Höchster Offset; begrenzt die Arbeit einer Anfrage. */
+    static final int MAX_START = 10_000;
+
     /** Höchstes {@code limit}; größere Werte werden wie bei Confluence auf diesen Wert gesenkt. */
     public static final int MAX_LIMIT = PageSearch.MAX_LIMIT;
 
@@ -82,6 +85,10 @@ public class ContentListing {
     private Slice slice(AccessContext caller, PageSearchQuery query, String title, int start, int limit) {
         if (start < 0) {
             throw new InvalidQueryException("start darf nicht negativ sein");
+        }
+        if (start > MAX_START) {
+            // Jede übersprungene Seite wird gelesen und auf Rechte geprüft; tiefer blättert man über die Seitenliste.
+            throw new InvalidQueryException("start darf höchstens " + MAX_START + " sein");
         }
         if (limit < 0) {
             throw new InvalidQueryException("limit darf nicht negativ sein");

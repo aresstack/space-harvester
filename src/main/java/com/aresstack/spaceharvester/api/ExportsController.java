@@ -34,6 +34,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -67,11 +68,19 @@ public class ExportsController {
             produces = MediaType.APPLICATION_JSON_VALUE)
     @Operation(summary = "Export eines Space aus dem Cache starten",
             description = "Antwortet sofort mit 202 und dem Auftrag; Fortschritt unter Location. Das Artefakt ist "
-                    + "nur vollständig (complete=true), wenn die Cache-Generation bestätigt ist und keine Seite fehlt.")
+                    + "nur vollständig (complete=true), wenn die Cache-Generation bestätigt ist und keine Seite fehlt. "
+                    + "Mit format entstehen zusätzlich abgeleitete Dateien aus denselben Seiten (json: pages.json); "
+                    + "ihre Herkunft steht im Manifest unter conversions.")
     @ApiResponse(responseCode = "202", description = "Export angenommen")
+    @ApiResponse(responseCode = "400", description = "Unbekanntes Format (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine Freigabe export und content für diesen Space "
             + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "507", description = "Exportablage voll (export-storage-full)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "429", description = "Zu viele offene Aufträge (too-many-jobs)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
@@ -79,9 +88,12 @@ public class ExportsController {
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
-            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey) {
+            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
+            @Parameter(description = "Zusätzliche Formate, wiederholbar; ohne nur das Raw-First-Artefakt",
+                    example = "json")
+            @RequestParam(name = "format", required = false) List<String> formats) {
         requireExport(caller, sourceId, spaceKey);
-        JobStatus job = exports.start(sourceId, spaceKey, owner(caller));
+        JobStatus job = exports.start(sourceId, spaceKey, owner(caller), formats == null ? List.of() : formats);
         return ResponseEntity.accepted().location(URI.create(EXPORTS + "/" + job.id()))
                 .body(ExportResponse.of(job, null));
     }
@@ -117,8 +129,8 @@ public class ExportsController {
 
     @GetMapping(path = EXPORTS + "/{exportId}/artifact/**")
     @Operation(summary = "Eine Datei des fertigen Artefakts herunterladen",
-            description = "Dateinamen aus files im Zustand (pages.ndjson, tree.json, manifest.json) oder raw/<Datei> "
-                    + "aus dem Seiten-Array; Rohdaten Byte für Byte.")
+            description = "Dateinamen aus files im Zustand (pages.ndjson, tree.json, manifest.json, konvertierte "
+                    + "Dateien wie pages.json) oder raw/<Datei> aus dem Seiten-Array; Rohdaten Byte für Byte.")
     @ApiResponse(responseCode = "200", description = "Dateiinhalt")
     @ApiResponse(responseCode = "404", description = "Kein eigener Export, noch kein Artefakt oder keine solche "
             + "Datei (job-not-found, artifact-not-found)",
@@ -132,12 +144,26 @@ public class ExportsController {
         String name = path.startsWith(prefix) ? path.substring(prefix.length()) : "";
         InputStream content = exports.artifactFile(exportId, owner(caller), name)
                 .orElseThrow(() -> new ArtifactNotFoundException(exportId));
-        MediaType type = name.endsWith(".ndjson") ? MediaType.parseMediaType("application/x-ndjson")
-                : name.endsWith(".json") ? MediaType.APPLICATION_JSON : MediaType.APPLICATION_OCTET_STREAM;
+        MediaType type = mediaType(name);
         String fileName = name.substring(name.lastIndexOf('/') + 1);
         return ResponseEntity.ok().contentType(type)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                // Konvertierte Dateien (Markdown, PDF, Word) enthalten Seiteninhalt: im Browser nie ausführbar.
+                .header("Content-Security-Policy", "sandbox; default-src 'none'")
                 .body(new InputStreamResource(content));
+    }
+
+    private static MediaType mediaType(String name) {
+        String extension = name.substring(name.lastIndexOf('.') + 1);
+        return switch (extension) {
+            case "ndjson" -> MediaType.parseMediaType("application/x-ndjson");
+            case "json" -> MediaType.APPLICATION_JSON;
+            case "md" -> MediaType.parseMediaType("text/markdown;charset=UTF-8");
+            case "docx" -> MediaType.parseMediaType(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+            case "pdf" -> MediaType.APPLICATION_PDF;
+            default -> MediaType.APPLICATION_OCTET_STREAM;
+        };
     }
 
     /** Eigener Export, für dessen Space der Aufrufer noch export und content hat. */

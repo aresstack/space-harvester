@@ -15,6 +15,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import org.junit.jupiter.api.Test;
 
 /** Aufbau des Snapshots aus der Antwort der Quelle, unabhängig vom Quellentyp. */
@@ -50,12 +52,49 @@ class SourceSnapshotsTest {
         assertThat(page.toString()).doesNotContain("geheim").contains("bytes");
     }
 
+    @Test
+    void anAsyncSourceIsAskedAsynchronouslyAndTheCallerSeesTheSameSnapshot() {
+        byte[] bytes = "{\"id\":\"7\"}".getBytes(StandardCharsets.UTF_8);
+        CompletableFuture<StoredPage> pending = new CompletableFuture<>();
+        SourceSnapshots snapshots = snapshots(null, pending);
+
+        CompletionStage<PageSnapshot> stage = snapshots.fetchAsync("wiki", "7");
+        assertThat(stage.toCompletableFuture()).isNotDone();
+        pending.complete(new StoredPage(page("7"), bytes, "application/json", "test+json", RETRIEVED));
+
+        assertThat(stage.toCompletableFuture().join().payload())
+                .isEqualTo(new NativePayload(bytes, "application/json", "test+json"));
+        assertThat(snapshots.fetch("wiki", "7").key()).isEqualTo(new PageKey("wiki", "7"));
+    }
+
+    @Test
+    void anAsyncFailureReachesTheBlockingCallerUnwrapped() {
+        SourceSnapshots snapshots = snapshots(null, CompletableFuture.failedFuture(new SourceAccessException("wiki",
+                SourceAccessException.Reason.NOT_FOUND, "weg", null)));
+
+        assertThatThrownBy(() -> snapshots.fetch("wiki", "7")).isInstanceOfSatisfying(SourceAccessException.class,
+                e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.NOT_FOUND));
+    }
+
+    @Test
+    void cancellingTheSnapshotCancelsTheRequest() {
+        CompletableFuture<StoredPage> pending = new CompletableFuture<>();
+
+        snapshots(null, pending).fetchAsync("wiki", "7").toCompletableFuture().cancel(true);
+
+        assertThat(pending).isCancelled();
+    }
+
     private static PageMetadata page(String pageId) {
         return new PageMetadata(pageId, "test:" + pageId, "Titel", "DEV", null, "1", null, null,
                 PageMetadata.sorted(Map.of()));
     }
 
     private static SourceSnapshots snapshots(StoredPage answer) {
+        return snapshots(answer, null);
+    }
+
+    private static SourceSnapshots snapshots(StoredPage answer, CompletableFuture<StoredPage> async) {
         HarvestSource source = new HarvestSource() {
             @Override
             public String id() {
@@ -89,7 +128,20 @@ class SourceSnapshotsTest {
 
             @Override
             public StoredPage storedPage(String pageId) {
+                if (async != null) {
+                    throw new AssertionError("eine asynchrone Quelle wird asynchron gefragt");
+                }
                 return answer;
+            }
+
+            @Override
+            public boolean asyncStoredPages() {
+                return async != null;
+            }
+
+            @Override
+            public CompletionStage<StoredPage> storedPageAsync(String pageId) {
+                return async;
             }
         };
         return new SourceSnapshots(new SourceCatalog() {

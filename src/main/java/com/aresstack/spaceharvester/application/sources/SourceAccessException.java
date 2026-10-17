@@ -14,6 +14,8 @@ public class SourceAccessException extends RuntimeException {
         ACCESS_DENIED,
         /** Quelle nicht erreichbar (Netz, Zeitüberschreitung, Wartung). */
         UNAVAILABLE,
+        /** Die Quelle drosselt Anfragen (bei Confluence HTTP 429), auch nach den konfigurierten Wiederholungen. */
+        RATE_LIMITED,
         /** Das angefragte Objekt (z. B. ein Space) gibt es in der Quelle nicht oder es ist nicht sichtbar. */
         NOT_FOUND,
         /** Die Quelle hat unerwartet geantwortet. */

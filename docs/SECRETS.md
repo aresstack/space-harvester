@@ -94,9 +94,8 @@ Secret-Werte erscheinen weder in Logs, Fehlermeldungen, Actuator noch in API-Ant
 ## Spring Cloud Config Server
 
 Ein Config Server liefert nur YAML. Platzhalter darin löst der Harvester selbst auf, mit Profil `azure-keyvault`
-also aus dem Vault; der Config Server muss das Secret nicht kennen. Der Config-Client selbst ist noch nicht
-eingebaut (#3): Der Spring-Cloud-Release-Train für Spring Boot 4.1 (2026.0) ist bisher nur als Meilenstein
-veröffentlicht, und eine ungeprüfte Kombination mit 2025.1 (Boot 4.0) wird nicht festgeschrieben.
+also aus dem Vault; der Config Server muss das Secret nicht kennen. Einbindung und Reihenfolge:
+[CONFIGURATION.md](CONFIGURATION.md).
 
 ## Live-Test
 

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
@@ -66,10 +67,12 @@ public class PageQueryController {
     static final String PAGE_CHECKED_AT = "X-Page-Checked-At";
 
     private final PageQueries queries;
+    private final Enrichments enrichments;
     private final ObjectMapper json;
 
-    public PageQueryController(PageQueries queries, ObjectMapper json) {
+    public PageQueryController(PageQueries queries, Enrichments enrichments, ObjectMapper json) {
         this.queries = queries;
+        this.enrichments = enrichments;
         this.json = json;
     }
 
@@ -163,7 +166,8 @@ public class PageQueryController {
                     + "Body. Cache-Stand und Revision stehen in Headern; ETag ist rawSha256 der Payload, "
                     + "If-None-Match ergibt 304. view=extended: JSON-Container mit data (die Payload als JSON, "
                     + "semantisch gleich, aber nicht bytegenau), metadata (aktuelle Kopfdaten, Hashes, Herkunft der "
-                    + "Payload) und enrichments (folgt mit #29, bis dahin leer); Metadaten werden nie in data "
+                    + "Payload) und enrichments (abgeleitete Angaben der Prozessoren mit Version, Eingabe-Hash und "
+                    + "Aktualität, #29); Metadaten werden nie in data "
                     + "geschrieben. Beide Ansichten verlangen die content-Freigabe. "
                     + "Kanonische Route ohne Space-Key: eine verschobene Seite behält ihre pageId. "
                     + "refresh=true prüft die Seite vor der Auslieferung gegen die Quelle und liefert nie stattdessen "
@@ -277,7 +281,8 @@ public class PageQueryController {
             return ResponseEntity.ok()
                     .cacheControl(CacheControl.noCache().cachePrivate())
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(ExtendedPageResponse.of(sourceId, page, data(page.snapshot().payload())));
+                    .body(ExtendedPageResponse.of(sourceId, page, data(page.snapshot().payload()),
+                            EnrichmentController.entries(enrichments.view(page.snapshot()), json)));
         }
         PageSnapshot snapshot = page.snapshot();
         NativePayload payload = snapshot.payload();
@@ -430,7 +435,8 @@ public class PageQueryController {
      * @param data        die gespeicherte Payload als JSON, unverändert in der Struktur; bytegenau nur über
      *                    {@code view=native}
      * @param metadata    Kopfdaten und Herkunft der Payload
-     * @param enrichments Anreicherungen (#29); bis dahin immer leer
+     * @param enrichments Anreicherungen (#29) aller Prozessoren, aufsteigend nach Prozessor, mit ihrer Aktualität
+     *                    gegenüber {@code data}
      */
     public record ExtendedPageResponse(String sourceId,
                                        @Schema(allowableValues = {"cache", "live"}) String origin,
@@ -440,17 +446,19 @@ public class PageQueryController {
                                        RefreshResponse refresh,
                                        @Schema(type = "object", description = "Native Antwort der Quelle als JSON")
                                        JsonNode data,
-                                       ExtendedMetadata metadata, List<Object> enrichments) {
+                                       ExtendedMetadata metadata,
+                                       List<EnrichmentController.EnrichmentEntry> enrichments) {
 
-        static ExtendedPageResponse of(String sourceId, DeliveredPage page, JsonNode data) {
+        static ExtendedPageResponse of(String sourceId, DeliveredPage page, JsonNode data,
+                                       List<EnrichmentController.EnrichmentEntry> enrichments) {
             CacheResponse cache = page.generation() == null ? null : CacheResponse.of(page.generation());
             if (cache != null && page.live()) {
                 cache = new CacheResponse(cache.generation(), "stale", cache.syncedAt(), cache.lastCheckedAt());
             }
             RefreshResponse refresh = page.refresh() == null ? null
                     : new RefreshResponse(PageQueryController.refresh(page.refresh()), page.checkedAt());
-            return new ExtendedPageResponse(sourceId, PageQueryController.origin(page), cache, refresh, data, ExtendedMetadata.of(page),
-                    List.of());
+            return new ExtendedPageResponse(sourceId, PageQueryController.origin(page), cache, refresh, data,
+                    ExtendedMetadata.of(page), enrichments);
         }
     }
 

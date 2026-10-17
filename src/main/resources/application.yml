@@ -13,10 +13,18 @@ spring:
       keyvault:
         secret:
           property-source-enabled: false
+    # Spring Cloud Config Server nur über spring.config.import bzw. Profil config-server (#3, docs/CONFIGURATION.md).
+    config:
+      import-check:
+        enabled: false
 
 server:
   port: ${SPACE_HARVESTER_PORT:8080}
   shutdown: graceful
+  # Keine Route nimmt einen Formular- oder großen Body an; kleine Grenzen gegen Ressourcenverbrauch (Durchsicht, docs/SECURITY.md).
+  tomcat:
+    max-http-form-post-size: 64KB
+    max-swallow-size: 1MB
 
 management:
   endpoints:
@@ -38,8 +46,8 @@ space-harvester:
   network:
     proxy:
       mode: disabled
-    # disabled = alles synchron; web-client = Seiten-Snapshots zusätzlich nicht blockierend (#47, ADR 0001).
-    async-transport: disabled
+    # web-client = Seiten-Snapshots nicht blockierend (#47, ADR 0001); disabled = Rückfall auf den synchronen Transport.
+    async-transport: web-client
   # Optionale Weboberfläche unter /ui/ (#17); spricht nur die REST-API mit Bearer-Token an.
   ui:
     enabled: true

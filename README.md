@@ -66,6 +66,8 @@ space-harvester:
         token: ${CONFLUENCE_TOKEN}
       options:                        # weitere Einstellungen des Confluence-Adapters
         pageSize: 100
+        maxRetries: 2                 # Standard 2: Netzfehler, 5xx und 429 wiederholen, 401/403/404 nie
+        retryBackoffMillis: 1000      # erste Wartezeit, verdoppelt je Versuch, gestreut, höchstens maxRetryBackoffMillis
     - id: team-wiki
       type: confluence
       base-url: https://wiki.example.org
@@ -116,7 +118,36 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server (#3). Proxy und PAC: siehe nächsten Abschnitt.
+- **Spring Cloud Config Server:** optional über das Profil `config-server` (`SPRING_CLOUD_CONFIG_URI`); ohne
+  erreichbaren Server startet der Dienst mit der lokalen Konfiguration. Reihenfolge der Quellen und Fallstricke:
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Proxy und PAC: siehe nächsten Abschnitt.
+
+### Weitere Quellentypen (#18)
+
+Jeder Quellentyp ist ein `SourceAdapter` (Paket `source`): er prüft seine Einstellungen und öffnet die Quelle über
+einen Provider aus `enterprise-ai-sources`; Fachlogik wie Partitionierung, Cursor und Größengrenzen liegt upstream im
+Enterprise AI Client. Mitgeliefert sind `confluence` und `files`. Ein weiterer Typ ist eine Spring-Bean vom Typ
+`SourceAdapter`; Routen, Freigaben, Sync und Export bleiben unverändert, weil sie nur die Partitionen, Seiten-IDs und
+Fähigkeiten der Quelle sehen. `GET /api/v1/sources` zeigt je Quelle `capabilities`, etwa `stored-page` (Original
+abrufbar) oder `async-stored-page`.
+
+`type: files` liest ein lokales Verzeichnis, ohne Netz, Anmeldung und Zertifikat:
+
+```yaml
+space-harvester:
+  sources:
+    - id: handbuch
+      type: files
+      title: Betriebshandbuch
+      options:
+        directory: /srv/handbuch       # Pflicht
+        include: "*.md, *.txt, *.pdf"  # optional; außerdem exclude, maxDepth (20), maxFileMegabytes (50)
+```
+
+Das Verzeichnis ist eine Partition mit der Quellen-ID als Schlüssel (`/spaces/handbuch/...`). Die Seiten-ID ist der
+relative Pfad als Base64url ohne Auffüllung (`start.md` → `c3RhcnQubWQ`), das Original die Datei Byte für Byte
+(`nativeFormat` `file`). Eine Datei, die sich während des Lesens ändert, gilt als nicht verfügbar, eine zu große als
+fehlgeschlagen; gekürzt wird nie.
 
 ## Proxy und PAC/WPAD
 
@@ -175,18 +206,16 @@ java -Dloader.main=com.aresstack.spaceharvester.source.network.ProxyDiagnosticsM
      --mode=pac-url-powershell https://confluence.example.org/
 ```
 
-Standardmäßig nutzt der Adapter den synchronen `HttpURLConnection`-Transport des übernommenen Confluence-Adapters.
-Daneben gibt es den asynchronen `WebClientConfluenceTransport` (Spring WebClient auf Reactor Netty, #47) mit derselben
-Route je Ziel-URL, demselben Client-Zertifikat und denselben Grenzen. Mit
+Native Seiten-Snapshots laden standardmäßig nicht blockierend über den asynchronen `WebClientConfluenceTransport`
+(Spring WebClient auf Reactor Netty, #47) mit derselben Route je Ziel-URL, demselben Client-Zertifikat und denselben
+Grenzen wie der synchrone `HttpURLConnection`-Transport des übernommenen Confluence-Adapters; alle anderen Abrufe
+bleiben vorerst synchron. Rückfall, falls der asynchrone Weg im Unternehmensnetz scheitert:
 
 ```yaml
 space-harvester:
   network:
-    async-transport: web-client   # Standard: disabled
-```
-
-laden native Seiten-Snapshots zusätzlich nicht blockierend darüber (`HarvestSource.storedPageAsync`); alle anderen
-Abrufe bleiben synchron. `disabled` ist der Rückfallpfad. Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
+    async-transport: disabled   # Standard: web-client
+``` Entscheidungen und Nachweise stehen in [ADR 0001](docs/adr/0001-ausgehender-http-transport.md).
 `--fetch=async` ruft jede Ziel-URL der Diagnose zusätzlich ohne Anmeldung über diesen Transport ab und zeigt nur
 Status und Größe.
 
@@ -234,8 +263,14 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/attachments` | Alle Anhänge einer Seite als Metadaten, live, auch nicht eingebettete, ohne Dateiinhalte; `complete=false` mit `warnings`, wenn die Quelle Einträge auslassen musste (#9) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets` | Anhänge einer Seite mit Art (`DIAGRAM` vor `VECTOR` vor `IMAGE` vor `OTHER`), Bezug Vorschaubild → draw.io-Diagramm (`previewOf`) und abgelegtem Stand; lädt nichts (#19) |
+| `POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/harvest` | Alle Anhänge der Seite über die Anmeldung der Quelle herunterladen und versioniert ablegen; gleiche Versionen werden nicht erneut übertragen; verlangt `sync` (#19) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/content` | Ein Anhang in seiner aktuellen Version Byte für Byte, aus der Ablage oder bei Bedarf nachgeladen; immer als Download, `ETag` = SHA-256; verlangt `content` (#19) |
+| `GET`/`POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/description` | Maschinelle Beschreibung eines Bildes (`provenance=machine-generated`), je Bildinhalt und Modellversion gecacht; `POST` erzeugt sie bei Bedarf und verlangt zusätzlich `sync`; ohne konfigurierten Beschreiber `image-description-unavailable` (503) (#19) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments`; `refresh=true` prüft gegen die Quelle |
 | `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre URL (`?pageId=…`, `/spaces/KEY/pages/ID`, Kurzlink `/x/…`) |
+| `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
@@ -247,7 +282,9 @@ space-harvester:
 
 Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet, außer unter `/api/compat/confluence`, wo sie den Fehlerkörper von Confluence haben. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
-abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
+abgelehnt), `source-unavailable` (503, nicht erreichbar), `source-rate-limited` (429, die Quelle drosselt auch nach den
+Wiederholungen), `source-object-not-found` (404, auch für Seiten, die das Konto nicht sehen darf) und
+`source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
 
 **Zugriffsschutz:** Alle Pfade unter `/api/**` verlangen `Authorization: Bearer <token>` eines konfigurierten
@@ -296,7 +333,8 @@ gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den
 `view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
 Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
 samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
-können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+können neuer sein als die Payload) und `enrichments` die Anreicherungen (siehe unten). Harvester-Angaben stehen nie
+in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` prüft die Einzelseite vor der Auslieferung gegen die Quelle und liefert nie stattdessen den
 Cache-Stand: Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
@@ -313,6 +351,17 @@ anderen Servers als der bekannten Seiten-URL `cache-miss`. Was nicht im Cache li
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
+
+**Anreicherungen (#29).** Deterministische Prozessoren ohne KI leiten aus einer konservativen Textprojektion des
+Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfallen, nichts wird ausgeführt oder
+aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
+`outline` (Gliederung mit Wortzahlen). Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
+und Warnungen und liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten
+Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten
+gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In
+`view=extended` steht je Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich
+geändert haben). Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`.
+Embeddings und Reranking sind als nächste Stufe vorbereitet (Schnittstellen ohne Modell, [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
@@ -361,6 +410,33 @@ alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu vie
 `too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
+
+**Ausgabeformate (#30):** `?format=json` (wiederholbar) erzeugt am Ende des Exports zusätzlich abgeleitete Dateien aus
+denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
+`rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum; `markdown` schreibt `pages.md` aus dem
+Storage-Format, `docx` `pages.docx` und `pdf` `pages.pdf`, Bilder und Anhänge jeweils nur als Verweise
+([Formate und Formatverluste](docs/CONVERTERS.md)). Converter lesen nur die exportierten
+Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
+`conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
+ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
+`space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
+`CONVERSION_TOO_LARGE`, statt abzuschneiden. Alle Artefakte zusammen belegen höchstens
+`space-harvester.export.max-total-bytes` (Standard 20 GiB); ist die Ablage voll, lehnt der Start mit
+`export-storage-full` (507) ab, ein laufender Export scheitert mit `EXPORT_STORAGE_FULL`.
+
+**Assets (#19):** Anhänge und referenzierte Bilder werden getrennt vom Seiten-JSON und nur auf Anfrage geladen, über
+dieselbe Anmeldung, dieselben Zertifikate und denselben Proxy wie die Seiten; fremde URLs (`ri:url`) werden nie
+abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Space der Seite; ein Anhang, der nicht zur
+Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
+(Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
+Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
+(Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502). Fehler je Anhang stehen mit festem Code im
+Ernteergebnis und im Log; drosselt die Quelle, werden die übrigen Anhänge nicht mehr angefragt. Für Diagramme sind die
+draw.io-Daten (`DIAGRAM`) und SVG (`VECTOR`) dem Vorschaubild vorzuziehen, das erst eine KI beschreiben müsste.
+Bildbeschreibungen erzeugt ein optionaler `ImageDescriber` (z. B. ein Vision-Modell); sie hängen am Bild, nicht an der
+Seite, gelten nur für genau diese Bildbytes und diese Modellversion und werden bei geändertem Bild oder Modell neu
+erzeugt. Sie sind kein bestätigter Teil der Seite und so geschützt wie das Bild. Diagrammdaten und Dokumente werden nicht
+beschrieben (`asset-not-an-image`).
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#27](https://github.com/aresstack/space-harvester/issues/27)).

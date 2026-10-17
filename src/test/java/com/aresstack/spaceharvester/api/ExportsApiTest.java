@@ -158,6 +158,71 @@ class ExportsApiTest {
     }
 
     @Test
+    void requestedFormatIsDownloadableNextToTheRawFirstArtifact() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=json", null)).path("id")
+                .asString();
+
+        JsonNode done = awaitFinished(id);
+
+        assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
+                .containsExactly("pages.ndjson", "tree.json", "pages.json", "manifest.json");
+        HttpResponse<byte[]> pages = send("GET", "/api/v1/exports/" + id + "/artifact/pages.json", null);
+        assertThat(pages.statusCode()).isEqualTo(200);
+        assertThat(pages.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("application/json"));
+        assertThat(pages.headers().firstValue("Content-Disposition")).hasValueSatisfying(
+                value -> assertThat(value).startsWith("attachment"));
+        assertThat(pages.headers().firstValue("Content-Security-Policy")).hasValueSatisfying(
+                value -> assertThat(value).contains("sandbox"));
+        assertThat(pages.headers().firstValue("X-Content-Type-Options")).contains("nosniff");
+        assertThat(body(pages)).extracting(page -> page.path("header").path("pageId").asString())
+                .containsExactly("100", "101", "200");
+        assertThat(body(pages).get(1).path("content")).isEqualTo(json.readTree(PRETTY));
+        // Andere Clients bekommen auch die konvertierte Datei nicht.
+        assertThat(send("GET", "/api/v1/exports/" + id + "/artifact/pages.json", OTHER_TOKEN).statusCode())
+                .isEqualTo(404);
+    }
+
+    @Test
+    void markdownIsServedAsText() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=markdown&format=json", null))
+                .path("id").asString();
+
+        JsonNode done = awaitFinished(id);
+
+        assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
+                .containsExactly("pages.ndjson", "tree.json", "pages.md", "pages.json", "manifest.json");
+        HttpResponse<byte[]> markdown = send("GET", "/api/v1/exports/" + id + "/artifact/pages.md", null);
+        assertThat(markdown.statusCode()).isEqualTo(200);
+        assertThat(markdown.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("text/markdown"));
+        assertThat(new String(markdown.body(), StandardCharsets.UTF_8)).contains("<a id=\"page-101\"></a>");
+    }
+
+    @Test
+    void wordAndPdfAreServedWithTheirMediaTypes() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=docx&format=pdf", null))
+                .path("id").asString();
+
+        assertThat(awaitFinished(id).path("state").asString()).isEqualTo("completed");
+        HttpResponse<byte[]> docx = send("GET", "/api/v1/exports/" + id + "/artifact/pages.docx", null);
+        assertThat(docx.headers().firstValue("Content-Type")).contains(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        assertThat(docx.body()).startsWith((byte) 'P', (byte) 'K');
+        HttpResponse<byte[]> pdf = send("GET", "/api/v1/exports/" + id + "/artifact/pages.pdf", null);
+        assertThat(pdf.headers().firstValue("Content-Type")).contains("application/pdf");
+        assertThat(new String(pdf.body(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+    }
+
+    @Test
+    void unknownFormatIsRejected() throws Exception {
+        HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(body(response).path("type").asString()).endsWith("/invalid-request");
+    }
+
+    @Test
     void foreignExportIsNotFoundForAnotherClient() throws Exception {
         String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null)).path("id").asString();
         awaitFinished(id);

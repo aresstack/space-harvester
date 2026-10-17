@@ -3,7 +3,9 @@ package com.aresstack.spaceharvester.application.export;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Optional;
 import java.util.Set;
 
@@ -14,8 +16,21 @@ import java.util.Set;
  */
 public interface ExportArtifactWriter {
 
-    /** Beginnt ein neues, noch unsichtbares Artefakt. */
+    /**
+     * Beginnt ein neues, noch unsichtbares Artefakt. Jede Schreibmethode der Sitzung kann
+     * {@link ExportStorageFullException} werfen, wenn die Ablage ihre Gesamtgrenze erreicht.
+     *
+     * @throws ExportStorageFullException wenn die Ablage schon voll ist
+     */
     Session begin(String exportId, ExportScope scope);
+
+    /**
+     * Prüft vor der Annahme eines Exports, ob die Ablage noch Platz hat.
+     *
+     * @throws ExportStorageFullException wenn nicht
+     */
+    default void requireCapacity() {
+    }
 
     /** Das veröffentlichte Artefakt oder leer, wenn es (noch) keines gibt. */
     Optional<ExportArtifact> find(String exportId);
@@ -51,10 +66,25 @@ public interface ExportArtifactWriter {
          */
         void page(PageHeader header, PageSnapshot snapshot);
 
+        /**
+         * Legt eine aus den Seiten abgeleitete Datei ab (#30) und nimmt ihre Herkunft ins Manifest auf.
+         *
+         * @param content schreibt den Inhalt; scheitert er, wird das ganze Artefakt verworfen
+         * @throws IOException aus {@code content}
+         */
+        ExportArtifact.File converted(Conversion conversion, Content content) throws IOException;
+
         /** Schreibt Baum und Manifest und macht das Artefakt sichtbar. */
         ExportArtifact publish(PageTree tree, ExportSummary summary);
 
         @Override
         void close();
+    }
+
+    /** Schreibt den Inhalt einer Datei in einen Strom, den der Writer öffnet und schließt. */
+    @FunctionalInterface
+    interface Content {
+
+        void write(OutputStream out) throws IOException;
     }
 }

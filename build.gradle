@@ -23,6 +23,9 @@ dependencies {
     // Azure Key Vault als optionale PropertySource (#22); ohne Aktivierung kein Azure-Kontakt, siehe docs/SECRETS.md
     implementation platform(libs.spring.cloud.azure.dependencies)
     implementation 'com.azure.spring:spring-cloud-azure-starter-keyvault-secrets'
+    // Optionaler Spring Cloud Config Server nur über spring.config.import (docs/CONFIGURATION.md, #3)
+    implementation platform(libs.spring.cloud.dependencies)
+    implementation 'org.springframework.cloud:spring-cloud-starter-config'
     // Confluence-Quelle aus enterprise-ai-client (Kopie, siehe enterprise-ai-sources/UPSTREAM.md)
     implementation project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
@@ -32,6 +35,10 @@ dependencies {
     implementation 'io.projectreactor.netty:reactor-netty-http'
     // Seiten-Cache und Index, nur im Paket persistence (#26)
     implementation libs.lucene.core
+    // Storage-Format (XHTML mit ac:/ri:-Elementen) lesen für Ausgabe-Converter (#30); dieselbe Version wie die Kopie
+    implementation libs.jsoup
+    // PDF-Ausgabe (#30), nur im Paket output.convert
+    implementation libs.pdfbox
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5

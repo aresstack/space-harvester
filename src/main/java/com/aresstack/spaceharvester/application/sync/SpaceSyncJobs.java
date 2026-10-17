@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +44,7 @@ public class SpaceSyncJobs {
     private final SourceQueries queries;
     private final SpaceSync sync;
     private final PlanApplier applier;
+    private final List<SyncCommitted> afterCommit;
     private final Map<String, String> activeBySpace = new ConcurrentHashMap<>();
     private final Map<String, SyncSummary> summaries = new ConcurrentHashMap<>();
 
@@ -52,6 +54,16 @@ public class SpaceSyncJobs {
      */
     public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
                          Clock clock) {
+        this(jobs, queries, store, fetcher, clock, List.of());
+    }
+
+    /**
+     * @param afterCommit Folgearbeit nach jeder bestätigten Generation, der Reihe nach; ihr Scheitern wird nur
+     *                    protokolliert
+     */
+    public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
+                         Clock clock, List<SyncCommitted> afterCommit) {
+        this.afterCommit = List.copyOf(afterCommit);
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.queries = Objects.requireNonNull(queries, "queries");
         this.sync = store == null || fetcher == null ? null : new SpaceSync(queries, store, clock);
@@ -139,6 +151,15 @@ public class SpaceSyncJobs {
             LOG.log(System.Logger.Level.INFO, "Abgleich {0}/{1}: keine Generation bestätigt ({2})", sourceId,
                     spaceKey, run.notConfirmed());
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
+        }
+        for (SyncCommitted next : afterCommit) {
+            try {
+                next.committed(run);
+            } catch (RuntimeException e) {
+                // Folgearbeit ist neu berechenbar und darf den bestätigten Abgleich nicht scheitern lassen.
+                LOG.log(System.Logger.Level.WARNING, "Folgearbeit nach Abgleich {0}/{1} scheiterte ({2})", sourceId,
+                        spaceKey, e.getClass().getName());
+            }
         }
         if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
             throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()

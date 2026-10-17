@@ -30,7 +30,8 @@ public class SpaceKeyCheck {
      * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException wenn die Quelle nicht konfiguriert
      *                                                                                 ist
      * @throws SourceAccessException  mit {@link SourceAccessException.Reason#NOT_FOUND}, wenn die Quelle den Space
-     *                                nicht kennt oder er für das Dienstkonto nicht sichtbar ist
+     *                                nicht kennt oder er für das Dienstkonto nicht sichtbar ist, und mit jedem
+     *                                anderen Grund außer {@link SourceAccessException.Reason#UNAVAILABLE}
      */
     public void requireExisting(String sourceId, String spaceKey) {
         if (spaceKey == null || !SPACE_KEY.matcher(spaceKey).matches()) {
@@ -40,7 +41,9 @@ public class SpaceKeyCheck {
             // Ein Eintrag genügt: Die Listung meldet NOT_FOUND für einen unbekannten Space.
             queries.pageMetadata(sourceId, spaceKey, null, 1);
         } catch (SourceAccessException e) {
-            if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
+            // Nur eine gerade nicht erreichbare Quelle hält den Start nicht auf; der Auftrag meldet den Fehler dann
+            // selbst. Fehlende Rechte, kaputte Antworten oder nicht unterstützte Quellen scheitern sofort.
+            if (e.reason() != SourceAccessException.Reason.UNAVAILABLE) {
                 throw e;
             }
         }

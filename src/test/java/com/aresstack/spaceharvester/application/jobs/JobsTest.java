@@ -114,6 +114,25 @@ class JobsTest {
     }
 
     @Test
+    void oneClientCannotTakeAllSlots() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 5, Duration.ofHours(1), Duration.ofDays(1), 2), clock);
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
+
+        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "C", "client-a", JobTask.blocking(context -> { })))
+                .isInstanceOf(JobCapacityExceededException.class)
+                .hasMessageContaining("dieses Clients");
+        assertThat(jobs.submit(JobType.EXPORT, "confluence", "C", "client-b", JobTask.blocking(context -> { })).state())
+                .isEqualTo(JobState.QUEUED);
+        assertThat(jobs.submit(JobType.SYNC, "confluence", "D", null, JobTask.blocking(context -> { })).state())
+                .isEqualTo(JobState.QUEUED);
+
+        executor.runNext();
+        assertThat(jobs.submit(JobType.EXPORT, "confluence", "E", "client-a", JobTask.blocking(context -> { })).state())
+                .isEqualTo(JobState.QUEUED);
+    }
+
+    @Test
     void cancellingAQueuedJobEndsItWithoutRunningIt() {
         Jobs jobs = jobs(1, 5);
         jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
@@ -194,8 +213,22 @@ class JobsTest {
 
         executor.runNext();
 
-        assertThat(jobs.status(job.id()).error())
-                .isEqualTo(new JobError("SOURCE_UNAVAILABLE", "Quelle confluence nicht erreichbar"));
+        JobError error = jobs.status(job.id()).error();
+        assertThat(error.code()).isEqualTo("SOURCE_UNAVAILABLE");
+        assertThat(error.message()).contains("UNAVAILABLE").doesNotContain("Quelle confluence");
+    }
+
+    @Test
+    void sourceFailureNeverPublishesTransportMessages() {
+        Jobs jobs = jobs(1, 5);
+        JobStatus job = jobs.submit(JobType.HARVEST, "confluence", "A", "client-a", JobTask.blocking(context -> {
+            throw new SourceAccessException("confluence", SourceAccessException.Reason.UNAVAILABLE,
+                    "Connection refused: https://wiki.intern.example:8443/rest/api/content?cql=space=DEV", null);
+        }));
+
+        executor.runNext();
+
+        assertThat(jobs.status(job.id()).error().message()).doesNotContain("wiki.intern", "cql", "8443");
     }
 
     @Test
