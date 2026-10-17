@@ -53,6 +53,13 @@ weg und das Schiff füllt die Kachel. Das Titelleisten-Logo enthält 24, 36 und 
 Skalierung. Kein Startbild (Splash), kein Banner im Dashboard: Mit eingerichteten Quellen gehört der Platz den Daten.
 Eine ICO-Datei entsteht erst mit einem Windows-Installer; bis dahin reicht das Fenstersymbol für die Taskleiste.
 
+Alle Fenster sind rahmenlos im Comic-Stil wie im Enterprise AI Client: Hauptfenster, Quellen-Assistent, Rückfragen,
+Token-Abfrage und „Über Space Harvester“ haben statt der Windows-Titelleiste eine eigene Kopfzeile (zum Verschieben
+ziehen, am Rand vergrößern) mit rundem ✕; Escape bricht ab. Das ✕ steckt in einem eigenen Halter und behält seine
+quadratische Größe (24 Pixel), damit der Ring bei jeder Skalierung kreisrund bleibt. Im Hauptfenster minimiert ein
+kurzer Klick, Gedrückthalten schließt. Unten rechts öffnet **AresStack** in „© 2026 AresStack“ die Release-Übersicht
+https://github.com/aresstack/space-harvester/releases im Standardbrowser (beim Darüberfahren blau unterstrichen).
+
 Sichtprüfung unter Windows: Taskleiste hell und dunkel, Anzeige 100, 150 und 200 % (Einstellungen › Anzeige ›
 Skalierung, danach App neu starten), Alt+Tab, Titelleiste. Das Schiff ist schräg und breit; bei 16 Pixeln soll es als
 helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsichtig.
@@ -61,20 +68,29 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
 
 **Wissensquellen › Quelle hinzufügen …** legt eine Quelle in der Konfigurationsdatei an:
 
-1. **Art:** Confluence (Data Center/Server) oder lokaler Ordner, dazu ID (Kleinbuchstaben, Ziffern, Bindestrich) und Titel.
-2. **Adresse:** Basis-URL ohne `/rest` bzw. Ordner und Dateimuster.
-3. **Anmeldung** (Confluence): Personal Access Token, Benutzer und Passwort oder ohne. In die Datei kommt nur der
+1. **Quelle:** zuerst Art und Adresse (Basis-URL ohne `/rest`) bzw. Ordner und Dateimuster. Daraus schlägt der
+   Assistent **Anzeigename** (wie die Quelle in der App heißt) und **Technische Kennung** (Kleinbuchstaben, Ziffern,
+   Bindestrich; steht in Aufträgen, Exporten und der Datei) vor, z. B. `https://confluence.example.org` →
+   `confluence-example`; ist die Kennung schon vergeben, kommt `-2` dazu. Beides nur ändern, wenn nötig; selbst
+   Eingetragenes bleibt stehen. Bleibt die Adresse leer, gilt die öffentliche Confluence-Hilfe von Atlassian
+   `https://confluence.atlassian.com` (Platzhalter im Feld) mit „Ohne Anmeldung“: so lässt sich die App sofort
+   ausprobieren.
+2. **Anmeldung** (Confluence): Personal Access Token, Benutzer und Passwort oder ohne. In die Datei kommt nur der
    Platzhalter der Umgebungsvariable, z. B. `token: ${WIKI_TOKEN}`. Ein hier eingegebener Wert gilt nur für den Test
    und bis zum Schließen der App.
-4. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher oder als PKCS#12-Datei,
+3. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher oder als PKCS#12-Datei,
    jeweils mit Alias (Fingerabdruck optional zur zusätzlichen Prüfung; PKCS#12-Passwort nur als Umgebungsvariable), Vertrauen über ein vorhandenes
    `spring.ssl.bundle`. Der Proxy gilt für alle Quellen und bleibt in der Datei (`space-harvester.network.proxy`).
-5. **Prüfen und speichern:** Vorschau des Eintrags. **Verbindung testen** startet einen eigenen Harvester nur mit der
+4. **Prüfen und speichern:** Vorschau des Eintrags. **Verbindung testen** startet einen eigenen Harvester nur mit der
    neuen Quelle in einem leeren Arbeitsordner und lädt die Spaces live; der Bestand der laufenden App bleibt
    unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources` an, lässt Kommentare und den Rest der Datei
    unverändert, legt die vorige Fassung als `<datei>.bak` ab und lädt neu.
 
-**Bearbeiten …** öffnet denselben Assistenten mit den Angaben der gewählten Quelle (ID und Art bleiben fest) und
+Fehlt etwas oder passt es nicht, steht der Hinweis rot direkt unter dem Feld (statt des grauen Hinweises); der Dialog
+behält seine Größe, und Tippen im Feld nimmt den Hinweis wieder weg. Ergebnisse von **Verbindung testen** und
+**Speichern** erscheinen auf der Prüfseite.
+
+**Bearbeiten …** öffnet denselben Assistenten mit den Angaben der gewählten Quelle (Kennung und Art bleiben fest) und
 ersetzt den Eintrag an seiner Stelle. Optionen, die der Assistent nicht abfragt (z. B. `connectTimeoutMillis`),
 bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht im
 bearbeiteten Eintrag ein Passwort, Token oder Zertifikatspasswort im Klartext, ersetzt der Assistent es durch den

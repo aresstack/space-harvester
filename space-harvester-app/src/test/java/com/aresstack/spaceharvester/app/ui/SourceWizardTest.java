@@ -68,16 +68,22 @@ class SourceWizardTest {
                 savedId.set(id);
                 saved.countDown();
             });
-            wizard[0].kind.setSelectedIndex(1);
-            assertThat(wizard[0].next()).as("ID fehlt").isFalse();
-            wizard[0].id.setText("handbuch");
-            assertThat(wizard[0].next()).as("ID vergeben").isFalse();
-            wizard[0].id.setText("notizen");
-            assertThat(wizard[0].next()).isTrue();
-            assertThat(wizard[0].step()).isEqualTo(SourceWizard.Step.ADDRESS);
-            assertThat(wizard[0].next()).as("Ordner fehlt").isFalse();
-            wizard[0].directory.setText(notizen.toString());
-            assertThat(wizard[0].next()).isTrue();
+            SourceWizard w = wizard[0];
+            w.kind.setSelectedIndex(1);
+            assertThat(w.next()).as("Ordner und Kennung fehlen").isFalse();
+            assertThat(w.error(w.directory)).isEqualTo("Bitte einen Ordner wählen.");
+            assertThat(w.error(w.id)).startsWith("Bitte eine Kennung");
+            w.directory.setText(handbuch.toString());
+            assertThat(w.error(w.directory)).as("Tippen nimmt den Hinweis weg").isNull();
+            assertThat(w.id.getText()).as("Kennung aus dem Ordner, schon vergeben").isEqualTo("handbuch-2");
+            assertThat(w.title.getText()).isEqualTo("handbuch");
+            w.id.setText("handbuch");
+            assertThat(w.next()).as("Kennung vergeben").isFalse();
+            assertThat(w.error(w.id)).isEqualTo("Diese Kennung ist schon vergeben.");
+            w.id.setText("");
+            w.directory.setText(notizen.toString());
+            assertThat(w.id.getText()).isEqualTo("notizen");
+            assertThat(w.next()).isTrue();
             assertThat(wizard[0].step()).as("Dateien brauchen keine Anmeldung").isEqualTo(SourceWizard.Step.CHECK);
         });
 
@@ -126,9 +132,10 @@ class SourceWizardTest {
             assertThat(w.id.isEditable()).isFalse();
             assertThat(w.title.getText()).isEqualTo("Alt");
             w.title.setText("Neu");
-            assertThat(w.next()).as("ID ist schon vergeben, aber die eigene").isTrue();
             w.directory.setText(neu.toString());
+            assertThat(w.id.getText()).as("Beim Bearbeiten bleibt die Kennung").isEqualTo("handbuch");
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             w.save();
         });
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
@@ -166,7 +173,6 @@ class SourceWizardTest {
         SwingUtilities.invokeAndWait(() -> {
             SourceWizard w = new SourceWizard(context, editable);
             w.onSaved(id -> saved.countDown());
-            assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
             w.auth.setSelectedItem("Benutzer und Passwort");
             w.username.setText("angelo");
@@ -219,7 +225,6 @@ class SourceWizardTest {
             SourceWizard w = new SourceWizard(context, editable);
             w.onSaved(id -> saved.countDown());
             assertThat(w.next()).isTrue();
-            assertThat(w.next()).isTrue();
             w.auth.setSelectedItem("Personal Access Token");
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
@@ -241,10 +246,16 @@ class SourceWizardTest {
             SourceWizard w = new SourceWizard(context);
             w.id.setText("Wiki.Neu");
             assertThat(w.next()).as("ID wie im Core").isFalse();
+            assertThat(w.error(w.id)).startsWith("Nur Kleinbuchstaben");
             w.id.setText("wiki");
-            assertThat(w.next()).isTrue();
-            assertThat(w.next()).as("Adresse fehlt").isFalse();
+            w.baseUrl.setText("ftp://wiki.example.org");
+            assertThat(w.next()).as("Adresse falsch").isFalse();
+            assertThat(w.error(w.baseUrl)).isEqualTo("Die Adresse beginnt mit https://.");
+            assertThat(w.error(w.id)).isNull();
             w.baseUrl.setText("https://wiki.example.org");
+            assertThat(w.id.getText()).as("selbst eingetragen, bleibt").isEqualTo("wiki");
+            assertThat(w.title.getText()).isEqualTo("wiki.example.org");
+            assertThat(w.auth.getSelectedItem()).isEqualTo("Personal Access Token");
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.AUTH);
             assertThat(w.variable.getText()).isEqualTo("WIKI_TOKEN");
@@ -261,6 +272,39 @@ class SourceWizardTest {
                     .doesNotContain("geheim-123");
             w.back();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.SECURITY);
+        });
+    }
+
+    @Test
+    void anEmptyAddressMeansThePublicConfluenceHelpWithoutLogin() throws Exception {
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), home.resolve("app.yml"),
+                "test");
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.SOURCE);
+            assertThat(w.baseUrl.getText()).isEmpty();
+            assertThat(w.baseUrl.placeholder()).isEqualTo("https://confluence.atlassian.com");
+            assertThat(w.id.getText()).isEqualTo("confluence-atlassian");
+            assertThat(w.title.getText()).isEqualTo("Confluence-Hilfe (Atlassian)");
+            assertThat(w.auth.getSelectedItem()).isEqualTo("Ohne Anmeldung");
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
+            assertThat(w.draft().baseUrl()).isEqualTo("https://confluence.atlassian.com");
+            assertThat(w.draft().yaml("")).contains("confluence.atlassian.com", "confluence-atlassian");
+
+            w.back();
+            w.back();
+            w.back();
+            w.baseUrl.setText("https://www.confluence.example.org/wiki");
+            assertThat(w.id.getText()).isEqualTo("confluence-example");
+            assertThat(w.title.getText()).isEqualTo("confluence.example.org");
+            assertThat(w.auth.getSelectedItem()).as("eigene Instanz: mit Token").isEqualTo("Personal Access Token");
+            w.auth.setSelectedItem("Ohne Anmeldung");
+            w.baseUrl.setText("https://confluence.atlassian.com/");
+            w.baseUrl.setText("https://intern.example.org");
+            assertThat(w.auth.getSelectedItem()).as("Gewählte Anmeldung bleibt").isEqualTo("Ohne Anmeldung");
         });
     }
 }
