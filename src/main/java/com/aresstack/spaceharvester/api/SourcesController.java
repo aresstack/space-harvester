@@ -201,11 +201,20 @@ public class SourcesController {
         return PageAttachmentsResponse.of(list);
     }
 
-    /** Eine konfigurierte Quelle. */
-    public record SourceResponse(String id, String type, String title) {
+
+    /**
+     * Eine konfigurierte Quelle.
+     *
+     * @param capabilities was die Quelle kann ({@code partitions}, {@code page-listing}, {@code page-metadata},
+     *                     {@code stored-page}, {@code async-stored-page}, {@code page-attachments}); fehlt eine,
+     *                     antwortet die Abfrage mit 400 ({@code source-unsupported})
+     */
+    public record SourceResponse(String id, String type, String title, List<String> capabilities) {
 
         static SourceResponse of(HarvestSource source) {
-            return new SourceResponse(source.id(), source.type(), source.title());
+            return new SourceResponse(source.id(), source.type(), source.title(), source.capabilities().stream()
+                    .sorted().map(capability -> capability.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'))
+                    .toList());
         }
     }
 

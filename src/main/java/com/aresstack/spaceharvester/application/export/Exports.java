@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
@@ -393,6 +394,13 @@ public class Exports {
         @Override
         public PageTree tree() {
             return tree;
+        }
+
+        @Override
+        public List<PageHeader> headers() {
+            List<PageHeader> headers = new ArrayList<>(exported.size());
+            walk(tree, (pageId, depth) -> headers.add(exported.get(pageId).header()));
+            return headers;
         }
 
         @Override
