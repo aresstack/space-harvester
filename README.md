@@ -141,12 +141,13 @@ space-harvester:
       title: Betriebshandbuch
       options:
         directory: /srv/handbuch       # Pflicht
-        include: "*.md, *.txt, *.pdf"  # optional; außerdem exclude, maxDepth (20), maxFileMegabytes (50)
+        include: "*.md, *.txt, *.pdf"  # optional; außerdem exclude, maxDepth (20), maxFileMegabytes (20, höchstens 64)
 ```
 
 Das Verzeichnis ist eine Partition mit der Quellen-ID als Schlüssel (`/spaces/handbuch/...`). Die Seiten-ID ist der
 relative Pfad als Base64url ohne Auffüllung (`start.md` → `c3RhcnQubWQ`), das Original die Datei Byte für Byte
-(`nativeFormat` `file`). Eine Datei, die sich während des Lesens ändert, gilt als nicht verfügbar, eine zu große als
+(`nativeFormat` `file`). Versteckte Dateien und Ordner (`.git`, `.ssh`) bleiben außen vor; Metadaten nennen nur den
+relativen Pfad, nie den Serverpfad. Eine Datei, die sich während des Lesens ändert, gilt als nicht verfügbar, eine zu große als
 fehlgeschlagen; gekürzt wird nie.
 
 ## Proxy und PAC/WPAD

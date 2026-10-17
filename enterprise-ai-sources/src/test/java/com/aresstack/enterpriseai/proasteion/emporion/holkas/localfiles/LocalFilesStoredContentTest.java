@@ -68,6 +68,8 @@ public class LocalFilesStoredContentTest {
         write("a/x y.md", "Leerzeichen");
         write("c/d/e.txt", "tief");
         write(".versteckt.txt", "nein");
+        write(".docker/config.txt", "geheim");
+        write("a/.git/HEAD.txt", "geheim");
         write("bild.bin", "kein Dokument");
         source = new LocalFilesKnowledgeSource(SOURCE, root, DETECTOR, new ExtractionRegistry(), 1024);
     }
@@ -123,6 +125,32 @@ public class LocalFilesStoredContentTest {
     public void unknownPartitionsAndForeignCursorsAreRejected() {
         assertKind(Kind.NOT_FOUND, () -> source.resources("anderes", "", 10));
         assertKind(Kind.UNSUPPORTED, () -> source.resources("handbuch", "p1.xyz.3", 10));
+    }
+
+    @Test
+    public void filesInHiddenFoldersAreNeitherListedNorReadable() throws Exception {
+        List<String> listed = paths(source.resources("handbuch", "", 100).resources());
+
+        assertTrue(listed.toString(), !listed.toString().contains("geheim") && !listed.contains(".docker/config.txt")
+                && !listed.contains("a/.git/HEAD.txt"));
+        assertKind(Kind.NOT_FOUND, () -> source.storedContent(id(".docker/config.txt")));
+        assertKind(Kind.NOT_FOUND, () -> source.resourceMetadata(id("a/.git/HEAD.txt")));
+        for (KnowledgeResource resource : source.discover(SourceScope.builder().startPoints(".").maxDepth(20)
+                .build())) {
+            assertTrue(resource.id().value(), !resource.id().value().contains("/."));
+        }
+    }
+
+    @Test
+    public void harvesterMetadataCarryNoAbsoluteServerPath() throws Exception {
+        for (KnowledgeResource resource : source.resources("handbuch", "", 100).resources()) {
+            assertTrue(resource.id().value(), !resource.location().isPresent());
+        }
+        assertTrue(!source.resourceMetadata(id("b.md")).location().isPresent());
+        assertTrue(!source.storedContent(id("b.md")).resource().location().isPresent());
+        // Der Desktop-Pfad (discover) behält die Datei-URI zum Öffnen.
+        assertTrue(source.discover(SourceScope.builder().startPoints(".").maxDepth(20).build()).get(0).location()
+                .isPresent());
     }
 
     @Test

@@ -24,6 +24,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
 
     public static final String TYPE = LocalFilesSourceProvider.TYPE_ID;
 
+    /** Standard für {@code options.maxFileMegabytes}: dieselben 20 MiB wie bei Confluence-Antworten (ADR 0002). */
+    static final int DEFAULT_MAX_FILE_MEGABYTES = 20;
+    /** Obergrenze im Dienst: ein Original wird ganz in den Speicher gelesen. */
+    static final int MAX_FILE_MEGABYTES = 64;
+
     private final LocalFilesSourceProvider provider =
             new LocalFilesSourceProvider(new SimpleContentDetector(), new ExtractionRegistry());
 
@@ -49,6 +54,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
         }
         if (config.options().containsKey("title")) {
             problems.add("options.title ist nicht erlaubt; dafür gibt es title");
+        }
+        String megabytes = config.options().get("maxFileMegabytes");
+        if (megabytes != null && megabytes.trim().matches("\\d{1,9}")
+                && Integer.parseInt(megabytes.trim()) > MAX_FILE_MEGABYTES) {
+            problems.add("options.maxFileMegabytes darf höchstens " + MAX_FILE_MEGABYTES + " sein");
         }
         if (problems.isEmpty()) {
             provider.validate(settings(config)).forEach(problem -> problems.add(withKey(problem)));
@@ -77,6 +87,7 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
 
     private static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());
+        values.putIfAbsent("maxFileMegabytes", Integer.toString(DEFAULT_MAX_FILE_MEGABYTES));
         if (config.title() != null) {
             values.put("title", config.title());
         }
