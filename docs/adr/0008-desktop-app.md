@@ -42,4 +42,8 @@ Benutzerführung; die Weboberfläche (#17) bleibt getrennt.
 - Ein zweiter Bedienweg auf denselben Anwendungsfällen; neue Core-Funktionen brauchen eine App-Aktion und eine Zeile
   in der Rückverfolgbarkeitstabelle.
 - Das JAR ist groß (ONNX Runtime, GraalJS, PDFBox), weil es alles enthält, was der Core braucht.
-- Offen: Bildbeschreibung von Anhängen (#19) und ein Assistent, der Quellen in die YAML-Datei schreibt.
+- Der Quellen-Assistent ändert die Konfigurationsdatei zeilenweise statt sie neu zu schreiben: SnakeYAML verliert
+  beim Schreiben Kommentare und Platzhalter. Er hängt nur an `space-harvester.sources` an, liest das Ergebnis vor dem
+  Schreiben wie beim Start und verweigert Dateien, die er nicht sicher ergänzen kann (Listen in einer Zeile).
+  Geheimnisse stehen nur als `${NAME}` in der Datei.
+- Offen: Bildbeschreibung von Anhängen (#19).

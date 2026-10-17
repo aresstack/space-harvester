@@ -5,12 +5,16 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.embedding.onnx.E5Defaults;
 import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingSettings;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -22,6 +26,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Baut aus den gelesenen Einstellungen und den nur in dieser Sitzung eingegebenen Geheimnissen den Harvester und die
@@ -73,7 +78,7 @@ public final class AppRuntime implements AutoCloseable {
             // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
             policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
             try {
-                harvester = builder(settings, sources, policy, version).build();
+                harvester = builder(settings, settings.storage(), sources, policy, version, true).build();
             } catch (InvalidSourceConfigurationException e) {
                 Set<Integer> invalid = new TreeSet<>(Comparator.reverseOrder());
                 for (String problem : e.problems()) {
@@ -93,25 +98,80 @@ public final class AppRuntime implements AutoCloseable {
                 Collections.unmodifiableSet(waiting), List.copyOf(rejected));
     }
 
-    private static Harvester.Builder builder(AppSettings settings, List<SourceSettingsConfig> sources,
-                                             AccessPolicy policy, String version) {
+    /**
+     * Prüft eine noch nicht gespeicherte Quelle: startet einen eigenen Harvester nur mit ihr in einem leeren
+     * Arbeitsordner (der Datenordner der laufenden App bleibt gesperrt und unberührt) und lädt die Spaces live.
+     *
+     * @param settings       die Konfiguration mit der neuen Quelle, z. B. aus {@code ConfigFileEditor.draft}
+     * @param sessionSecrets Passwort bzw. Token, falls die Umgebungsvariable (noch) nicht gesetzt ist
+     * @param scratch        leerer Arbeitsordner; wird danach gelöscht
+     * @return die sichtbaren Spaces
+     */
+    public static List<Partition> probe(AppSettings settings, String sourceId, SessionSecrets sessionSecrets,
+                                        String version, Path scratch) {
+        AppSettings.SourceEntry entry = settings.sources().stream().filter(s -> s.id().equals(sourceId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Die Quelle " + sourceId + " ist nicht eingerichtet."));
+        SourceSettingsConfig source;
+        if (!entry.secretMissing()) {
+            source = entry.config();
+        } else if (sessionSecrets.has(sourceId)) {
+            source = sessionSecrets.apply(entry.config());
+        } else {
+            throw new IllegalStateException("Für den Test fehlt " + (entry.config().auth().type()
+                    == SourceSettingsConfig.AuthType.PAT ? "das Token" : "das Passwort") + ": Die Umgebungsvariable "
+                    + entry.secretVariable() + " ist nicht gesetzt. Den Wert für diese Sitzung eingeben oder die "
+                    + "Variable setzen und die App neu starten.");
+        }
+        AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
+                scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
+                settings.storage().maxTreeNodes(), null);
+        AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
+        try (Harvester harvester = builder(settings, storage, List.of(source), policy, version, false).build()) {
+            Workspace workspace = new Workspace(harvester, new AccessGuard(policy),
+                    new ActivityLog(scratch.resolve("activities.txt")));
+            return workspace.spaces(sourceId);
+        } finally {
+            deleteQuietly(scratch);
+        }
+    }
+
+    private static void deleteQuietly(Path directory) {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(directory)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                    // Ein Rest im Temp-Ordner ist harmlos; er enthält keine Geheimnisse.
+                }
+            });
+        } catch (IOException ignored) {
+            // wie oben
+        }
+    }
+
+    private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
+                                             List<SourceSettingsConfig> sources, AccessPolicy policy, String version,
+                                             boolean withEmbedding) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
-                .dataDirectory(settings.storage().dataDirectory())
-                .exportDirectory(settings.storage().exportDirectory())
-                .assetDirectory(settings.storage().assetDirectory())
-                .maxAssetBytes(settings.storage().maxAssetBytes())
+                .dataDirectory(storage.dataDirectory())
+                .exportDirectory(storage.exportDirectory())
+                .assetDirectory(storage.assetDirectory())
+                .maxAssetBytes(storage.maxAssetBytes())
                 .userAgent("space-harvester-app/" + version)
                 .proxy(settings.proxy())
                 .trustBundles(TrustStores.of(settings.trustStores()))
                 .asyncTransport(settings.asyncTransport())
                 .jobLimits(settings.jobLimits())
-                .searchTimeout(settings.storage().searchTimeout())
-                .maxTreeNodes(settings.storage().maxTreeNodes())
-                .pdfFont(settings.storage().pdfFont());
+                .searchTimeout(storage.searchTimeout())
+                .maxTreeNodes(storage.maxTreeNodes())
+                .pdfFont(storage.pdfFont());
         builder.accessPolicy(policy);
         AppSettings.EmbeddingSettings embedding = settings.embedding();
-        if (embedding.enabled()) {
+        if (withEmbedding && embedding.enabled()) {
             builder.embedding(new OnnxEmbeddingSettings(embedding.modelFile(), embedding.tokenizerFile(),
                     embedding.modelSha256(), embedding.tokenizerSha256(), embedding.modelId(), embedding.dimensions(),
                     embedding.maxTokens(), embedding.batchSize(), embedding.threads(), embedding.maxConcurrent(),

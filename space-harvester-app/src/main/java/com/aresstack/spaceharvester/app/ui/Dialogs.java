@@ -66,7 +66,7 @@ public final class Dialogs {
         return result[0];
     }
 
-    private static JDialog dialog(Component parent, String title) {
+    static JDialog dialog(Component parent, String title) {
         Window owner = parent == null ? null : SwingUtilities.getWindowAncestor(parent);
         JDialog dialog = new JDialog(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
         dialog.getRootPane().registerKeyboardAction(e -> dialog.dispose(),
@@ -74,7 +74,7 @@ public final class Dialogs {
         return dialog;
     }
 
-    private static void show(JDialog dialog, String title, JComponent body, ComposerButton... buttons) {
+    static void show(JDialog dialog, String title, JComponent body, ComposerButton... buttons) {
         JPanel content = new JPanel(new BorderLayout(0, 12));
         content.setBackground(Comic.SURFACE);
         content.setBorder(BorderFactory.createCompoundBorder(ComicBorder.windowBorder(Comic.PALETTE, 2),

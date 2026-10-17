@@ -51,6 +51,8 @@ public final class SourcesView implements View {
     private final ComposerButton open = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
     private final ComposerButton sync = Comic.button("Synchronisieren", "Space vollständig mit der Quelle abgleichen");
     private final ComposerButton export = Comic.button("Exportieren …", "Export dieses Space vorbereiten");
+    private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
+            "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
     private final JLabel title = new JLabel(" ");
 
     public SourcesView(AppContext context) {
@@ -71,8 +73,13 @@ public final class SourcesView implements View {
         left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
         left.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
         left.add(Comic.scroll(list), BorderLayout.CENTER);
-        left.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Zugangsdaten kommen aus "
+        add.addActionListener(e -> SourceWizard.open(root, context, this::select));
+        JPanel south = new JPanel(new BorderLayout(0, 8));
+        south.setOpaque(false);
+        south.add(add, BorderLayout.NORTH);
+        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Zugangsdaten kommen aus "
                 + "Umgebungsvariablen oder werden hier für die Sitzung eingegeben."), BorderLayout.SOUTH);
+        left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
         title.setForeground(Comic.INK);
@@ -163,7 +170,7 @@ public final class SourcesView implements View {
             title.setText(sources.isEmpty() ? "Noch keine Wissensquelle eingerichtet" : " ");
             spacesModel.set(List.of());
             spacesHint.setText(sources.isEmpty()
-                    ? "Eine Quelle in der Konfigurationsdatei eintragen (Einstellungen › Konfigurationsdatei öffnen)."
+                    ? "„Quelle hinzufügen …“ führt durch die Einrichtung; alternativ die Konfigurationsdatei bearbeiten."
                     : " ");
             updateButtons();
             return;

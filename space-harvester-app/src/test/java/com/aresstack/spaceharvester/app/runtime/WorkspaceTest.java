@@ -6,7 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -18,6 +20,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -138,6 +141,34 @@ class WorkspaceTest {
         runtime = null;
 
         assertThat(start().workspace().jobs()).extracting(JobStatus::id).containsExactly(id);
+    }
+
+    @Test
+    void theWizardTestsANewSourceBeforeSavingWhileTheAppKeepsRunning() throws Exception {
+        Workspace running = start().workspace();
+        Path config = home.resolve("space-harvester-app.yml");
+        String before = Files.readString(config);
+        AppSettingsLoader loader = new AppSettingsLoader(new Placeholders(Map.of(
+                "WIKI_TOKEN", TOKEN, "CLIENT_PASSWORD", TestCertificates.CLIENT_PASSWORD)::get), home);
+        SourceDraft source = new SourceDraft("neu", SourceDraft.CONFLUENCE, "Neues Wiki", server.baseUrl().toString(),
+                null, null, SourceSettingsConfig.AuthType.PAT, null, "NEU_TOKEN",
+                SourceSettingsConfig.CertificateStoreType.PKCS12, certificates.client.toString(), "CLIENT_PASSWORD",
+                TestCertificates.CLIENT_ALIAS, null, "test");
+        ConfigFileEditor.Draft draft = new ConfigFileEditor(loader).draft(config, source);
+        assertThat(draft.text()).contains("token: ${NEU_TOKEN}").doesNotContain(TOKEN);
+
+        Path scratch = Files.createTempDirectory(home, "probe");
+        assertThatThrownBy(() -> AppRuntime.probe(draft.settings(), "neu", new AppRuntime.SessionSecrets(), "test",
+                scratch)).isInstanceOf(IllegalStateException.class).hasMessageContaining("NEU_TOKEN");
+
+        AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        secrets.put("neu", TOKEN.toCharArray());
+        Path second = Files.createTempDirectory(home, "probe");
+        assertThat(AppRuntime.probe(draft.settings(), "neu", secrets, "test", second))
+                .extracting(Partition::key).containsExactly("DEV");
+        assertThat(second).doesNotExist();
+        assertThat(Files.readString(config)).isEqualTo(before);
+        assertThat(running.spaces("wiki")).extracting(Partition::key).containsExactly("DEV");
     }
 
     @Test
