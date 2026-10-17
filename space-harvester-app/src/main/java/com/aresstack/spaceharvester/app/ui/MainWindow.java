@@ -49,7 +49,7 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel deck = new JPanel(cards);
     private final Map<AppContext.Section, View> views = new EnumMap<>(AppContext.Section.class);
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
-    private final ComicSearchBar search = new ComicSearchBar("Im Bestand suchen …", "Titel im lokalen Bestand suchen",
+    private final ComicSearchBar search = new ComicSearchBar("Suchen …", "Titel und Inhalt in den Quellen suchen",
             Comic.PALETTE);
     private final JLabel status = Comic.muted(" ");
     private final JPanel top = new JPanel(new BorderLayout(12, 0));

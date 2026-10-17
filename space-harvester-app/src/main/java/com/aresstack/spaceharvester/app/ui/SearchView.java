@@ -38,8 +38,10 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Globale Suche über den lokalen Bestand: Titelwörter, optional nach Quelle und Space gefiltert, sortiert nach Titel,
- * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Nur Bedienung und Darstellung: Suche, Sortierung,
+ * Globale Suche: Mit Suchtext sucht der Core live in den Quellen über Titel und Inhalt, lädt fehlende Treffer nach und
+ * liefert sie aus dem Index (ADR 0010 Punkt 9); ohne erreichbare Quelle bleibt es bei der Titelsuche im Index.
+ * Optional nach Quelle und Space gefiltert, sortiert nach Titel, Änderung oder Relevanz (semantisch nur mit
+ * eingerichtetem Modell, immer im Index). Nur Bedienung und Darstellung: Suche, Sortierung,
  * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, {@code RelevanceSearch}, #114), ohne gewählte Quelle als
  * eine globale Suche über alle Quellen. Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne
  * {@code sourceIds}, eine einzelne Quelle mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die
@@ -61,7 +63,7 @@ public final class SearchView implements View {
     private final JPanel sourcesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
     private final JCheckBox all = checkBox("Alle", "Alle freigegebenen Quellen durchsuchen (ohne sourceIds)");
     private final Map<String, JCheckBox> boxes = new LinkedHashMap<>();
-    private final ComposerButton run = Comic.primary("Suchen", "Im lokalen Bestand suchen");
+    private final ComposerButton run = Comic.primary("Suchen", "In den angehakten Quellen suchen (Titel und Inhalt)");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
@@ -85,7 +87,7 @@ public final class SearchView implements View {
         sorts.add(byModified);
         sorts.add(byRelevance);
         byTitle.setSelected(true);
-        query.setToolTipText("Wörter im Titel; bei Relevanz auch freier Text");
+        query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
         query.addActionListener(e -> search());
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
@@ -118,8 +120,10 @@ public final class SearchView implements View {
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
         head.add(lines, BorderLayout.NORTH);
-        head.add(Comic.note("Gesucht wird nur im lokalen Bestand, also in Seiten, die ein Abgleich oder ein Seitenabruf "
-                + "gespeichert hat. Doppelklick öffnet die Seite unter Inhalte."), BorderLayout.CENTER);
+        head.add(Comic.note("Mit Suchtext sortiert nach Titel oder Neueste suchen Quellen mit Volltextsuche live über "
+                + "Titel und Inhalt; Treffer werden dabei übernommen. Relevanz und eine Suche ohne Text nutzen den "
+                + "lokalen Bestand. Die Zeile unter der Liste sagt, woher die Treffer stammen. Doppelklick öffnet die "
+                + "Seite unter Inhalte."), BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
@@ -247,7 +251,7 @@ public final class SearchView implements View {
             PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text.isEmpty() ? null : text, null, null,
                     null, null, null, sort);
             SearchResults results = runtime.workspace().search(q, null, LIMIT);
-            return new Outcome(q, hits(results), results.nextCursor(), null);
+            return new Outcome(q, hits(results), results.nextCursor(), null, results.live());
         }, outcome -> {
             if (id != request) {
                 return;
@@ -258,8 +262,9 @@ public final class SearchView implements View {
             if (outcome.semanticNote() != null) {
                 feedback.info("Relevanz ohne Modell", outcome.semanticNote());
             } else if (outcome.hits().isEmpty()) {
-                feedback.info("Keine Treffer", "Im Bestand passt keine Seite. Vielleicht ist der Space noch nicht "
-                        + "abgeglichen.");
+                feedback.info("Keine Treffer", outcome.live()
+                        ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
+                        : "Im lokalen Bestand passt keine Seite.");
             } else {
                 feedback.clear();
             }
@@ -327,6 +332,7 @@ public final class SearchView implements View {
         nextCursor = outcome.nextCursor();
         more.setEnabled(nextCursor != null);
         status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
+                + (outcome.live() ? " · live in den Quellen gesucht" : outcome.query() != null ? " · aus dem Bestand" : "")
                 + (nextCursor != null ? " · weitere vorhanden" : ""));
     }
 
@@ -344,7 +350,11 @@ public final class SearchView implements View {
      * @param query      Anfrage der Titelsuche für „Weitere laden“ oder {@code null}
      * @param nextCursor Cursor des Core oder {@code null}, wenn alle Treffer geladen sind
      */
-    private record Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor, String semanticNote) {
+    private record Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor, String semanticNote,
+                           boolean live) {
+        Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor, String semanticNote) {
+            this(query, hits, nextCursor, semanticNote, false);
+        }
     }
 
     /** Ein Stapel von „Weitere laden“; {@code restarted}: die erste Seite nach geändertem Index. */
