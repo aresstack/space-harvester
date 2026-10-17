@@ -30,13 +30,13 @@ Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu lad
 
 **Wissensquellen › Quelle hinzufügen …** legt eine Quelle in der Konfigurationsdatei an:
 
-1. **Art:** Confluence (Data Center/Server) oder lokaler Ordner, dazu ID und Titel.
+1. **Art:** Confluence (Data Center/Server) oder lokaler Ordner, dazu ID (Kleinbuchstaben, Ziffern, Bindestrich) und Titel.
 2. **Adresse:** Basis-URL ohne `/rest` bzw. Ordner und Dateimuster.
 3. **Anmeldung** (Confluence): Personal Access Token, Benutzer und Passwort oder ohne. In die Datei kommt nur der
    Platzhalter der Umgebungsvariable, z. B. `token: ${WIKI_TOKEN}`. Ein hier eingegebener Wert gilt nur für den Test
    und bis zum Schließen der App.
-4. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher (Fingerabdruck oder
-   Alias) oder als PKCS#12-Datei (Passwort ebenfalls nur als Umgebungsvariable), Vertrauen über ein vorhandenes
+4. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher oder als PKCS#12-Datei,
+   jeweils mit Alias (Fingerabdruck optional zur zusätzlichen Prüfung; PKCS#12-Passwort nur als Umgebungsvariable), Vertrauen über ein vorhandenes
    `spring.ssl.bundle`. Der Proxy gilt für alle Quellen und bleibt in der Datei (`space-harvester.network.proxy`).
 5. **Prüfen und speichern:** Vorschau des Eintrags. **Verbindung testen** startet einen eigenen Harvester nur mit der
    neuen Quelle in einem leeren Arbeitsordner und lädt die Spaces live; der Bestand der laufenden App bleibt

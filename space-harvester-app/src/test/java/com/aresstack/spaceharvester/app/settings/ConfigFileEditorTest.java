@@ -128,7 +128,7 @@ class ConfigFileEditorTest {
         SourceDraft basic = new SourceDraft("intern", "confluence", null, "https://intern.example.org", null, null,
                 SourceSettingsConfig.AuthType.BASIC, "svc-harvester", "INTERN_PASSWORD",
                 SourceSettingsConfig.CertificateStoreType.PKCS12, "C:/certs/client.p12", "INTERN_CLIENT_PASSWORD",
-                null, null, null);
+                "client", null, null);
         assertThat(basic.problems()).isEmpty();
         assertThat(basic.yaml("")).contains("password: ${INTERN_PASSWORD}", "password: ${INTERN_CLIENT_PASSWORD}",
                 "username: \"svc-harvester\"");
@@ -142,7 +142,7 @@ class ConfigFileEditorTest {
     private static SourceDraft wiki() {
         return new SourceDraft("wiki", "confluence", "Wiki", "https://wiki.example.org", null, null,
                 SourceSettingsConfig.AuthType.PAT, null, "WIKI_TOKEN",
-                SourceSettingsConfig.CertificateStoreType.WINDOWS_MY, null, null, null, "AB:CD", "firma");
+                SourceSettingsConfig.CertificateStoreType.WINDOWS_MY, null, null, "confluence-client", "AB:CD", "firma");
     }
 
     private static SourceDraft files(String id, String directory) {

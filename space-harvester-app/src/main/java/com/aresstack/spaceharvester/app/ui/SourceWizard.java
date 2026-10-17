@@ -134,7 +134,7 @@ final class SourceWizard {
 
         Form kindForm = new Form();
         kindForm.row("Art", kind);
-        kindForm.row("ID", id, "Kurzer, fester Name, z. B. wiki; erscheint in Aufträgen und Exporten");
+        kindForm.row("ID", id, "Kleinbuchstaben, Ziffern, Bindestrich, z. B. wiki; erscheint in Aufträgen und Exporten");
         kindForm.row("Titel", title, "Anzeigename, optional");
 
         address.row("Adresse", baseUrl, "z. B. https://confluence.example.org (ohne /rest)");
@@ -150,8 +150,8 @@ final class SourceWizard {
                 "Optional: für den Test und bis zum Schließen der App; wird nie gespeichert");
 
         security.row("Client-Zertifikat", certificate, "mTLS zusätzlich zur Anmeldung");
-        security.row("Fingerabdruck", thumbprint, "SHA-1 oder SHA-256 (kein Geheimnis)");
-        security.row("Alias", alias, "optional");
+        security.row("Alias", alias, "Name des Zertifikats im Speicher bzw. in der Datei");
+        security.row("Fingerabdruck", thumbprint, "optional, SHA-1 oder SHA-256; prüft zusätzlich (kein Geheimnis)");
         security.row("PKCS#12-Datei", row(certificatePath, browse(certificatePath, false)), null);
         security.row("Passwort-Variable", certificatePasswordVariable, "Umgebungsvariable mit dem Zertifikatspasswort");
         security.row("Vertrauen", trust, "Eigene Zertifizierungsstellen stehen unter spring.ssl.bundle");

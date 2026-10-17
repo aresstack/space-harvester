@@ -100,6 +100,8 @@ class SourceWizardTest {
                 "test");
         SwingUtilities.invokeAndWait(() -> {
             SourceWizard w = new SourceWizard(context);
+            w.id.setText("Wiki.Neu");
+            assertThat(w.next()).as("ID wie im Core").isFalse();
             w.id.setText("wiki");
             assertThat(w.next()).isTrue();
             assertThat(w.next()).as("Adresse fehlt").isFalse();
@@ -110,8 +112,9 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.SECURITY);
             w.certificate.setSelectedIndex(1);
-            assertThat(w.next()).as("Fingerabdruck oder Alias fehlt").isFalse();
             w.thumbprint.setText("0123456789abcdef0123456789abcdef01234567");
+            assertThat(w.next()).as("Alias fehlt").isFalse();
+            w.alias.setText("confluence-client");
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             w.sessionValue.setText("geheim-123");

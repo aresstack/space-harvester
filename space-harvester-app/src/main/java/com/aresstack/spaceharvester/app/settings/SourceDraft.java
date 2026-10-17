@@ -31,7 +31,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
     public static final String CONFLUENCE = "confluence";
     public static final String FILES = "files";
 
-    private static final Pattern ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
+    /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
+    private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
     private static final Pattern VARIABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,127}");
 
     public SourceDraft {
@@ -70,7 +71,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         if (id == null) {
             problems.add("Die ID fehlt.");
         } else if (!ID.matcher(id).matches()) {
-            problems.add("Die ID darf nur Buchstaben, Ziffern, Punkt, Binde- und Unterstrich enthalten.");
+            problems.add("Die ID darf nur Kleinbuchstaben, Ziffern und Bindestrich enthalten (höchstens 63 Zeichen).");
         }
         if (confluence()) {
             if (baseUrl == null) {
@@ -95,9 +96,9 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                     problems.add("Die Umgebungsvariable für das Zertifikatspasswort fehlt oder ist kein gültiger Name.");
                 }
             }
-            if (certificateType == SourceSettingsConfig.CertificateStoreType.WINDOWS_MY && thumbprint == null
-                    && certificateAlias == null) {
-                problems.add("Für den Windows-Zertifikatsspeicher Fingerabdruck oder Alias angeben.");
+            if (certificateType != null && certificateAlias == null) {
+                // Der Core verlangt den Alias immer; der Fingerabdruck prüft nur zusätzlich.
+                problems.add("Der Alias des Client-Zertifikats fehlt.");
             }
         } else if (FILES.equals(type)) {
             if (directory == null) {
