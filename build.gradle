@@ -35,6 +35,10 @@ dependencies {
     implementation 'io.projectreactor.netty:reactor-netty-http'
     // Seiten-Cache und Index, nur im Paket persistence (#26)
     implementation libs.lucene.core
+    // Storage-Format (XHTML mit ac:/ri:-Elementen) lesen für Ausgabe-Converter (#30); dieselbe Version wie die Kopie
+    implementation libs.jsoup
+    // PDF-Ausgabe (#30), nur im Paket output.convert
+    implementation libs.pdfbox
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation libs.archunit.junit5

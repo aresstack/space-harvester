@@ -25,11 +25,15 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -44,12 +48,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final String type;
     private final String title;
     private final KnowledgeSourcePort port;
+    private final InFlightLimit inFlight;
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
+        this(id, type, title, port, null);
+    }
+
+    /** @param inFlight Grenze gleichzeitiger asynchroner Abrufe; {@code null} = unbegrenzt */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight) {
         this.id = id;
         this.type = type;
         this.title = title;
         this.port = port;
+        this.inFlight = inFlight;
     }
 
     @Override
@@ -65,6 +77,27 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public String title() {
         return title;
+    }
+
+    @Override
+    public Set<SourceCapability> capabilities() {
+        Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS);
+        if (port instanceof PartitionListingSource) {
+            capabilities.add(SourceCapability.PAGE_LISTING);
+        }
+        if (port instanceof ResourceMetadataSource) {
+            capabilities.add(SourceCapability.PAGE_METADATA);
+        }
+        if (port instanceof StoredContentSource) {
+            capabilities.add(SourceCapability.STORED_PAGE);
+        }
+        if (port instanceof AsyncStoredContentSource) {
+            capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        if (port instanceof AttachmentListSource) {
+            capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
+        }
+        return capabilities;
     }
 
     @Override
@@ -131,7 +164,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (!(port instanceof AsyncStoredContentSource stored)) {
             return HarvestSource.super.storedPageAsync(pageId);
         }
-        CompletableFuture<StoredContent> request = stored.storedContentAsync(pageId).toCompletableFuture();
+        CompletableFuture<StoredContent> request = inFlight == null
+                ? stored.storedContentAsync(pageId).toCompletableFuture()
+                : inFlight.submit(() -> stored.storedContentAsync(pageId).toCompletableFuture());
         CompletableFuture<StoredPage> result = new CompletableFuture<>();
         request.whenComplete((content, error) -> {
             if (error != null) {
@@ -206,7 +241,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static PageAttachment attachment(KnowledgeResource resource) {
         String size = resource.metadata().asMap().get(KnowledgeMetadata.FILE_SIZE);
         String version = resource.revision().version();
-        return new PageAttachment(nativeId(resource.id()), resource.id().value(), resource.title(),
+        return new PageAttachment(lastSegment(resource.id()), resource.id().value(), resource.title(),
                 resource.contentType(), size == null ? null : Long.valueOf(size),
                 version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
                 resource.location().orElse(null));
@@ -221,14 +256,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return pageMetadata(resource, resource.scope());
     }
 
-    private static PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
+    private PageMetadata pageMetadata(KnowledgeResource resource, String partitionKey) {
         String version = resource.revision().version();
         return new PageMetadata(
                 nativeId(resource.id()),
                 resource.id().value(),
                 resource.title(),
                 resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
-                resource.parentId().map(KnowledgeSourceHarvestSource::nativeId).orElse(null),
+                resource.parentId().map(this::nativeId).orElse(null),
                 version == null || version.isEmpty() ? null : version,
                 resource.revision().modifiedAt().orElse(null),
                 resource.location().orElse(null),
@@ -248,8 +283,22 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return attributes;
     }
 
-    /** Die ID der Quelle: letztes Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}). */
-    private static String nativeId(KnowledgeResourceId id) {
+    /**
+     * Die ID der Seite in der Quelle: die lokale ID des Adapters ({@link ResourceMetadataSource#localId}), sonst das
+     * letzte Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}).
+     */
+    private String nativeId(KnowledgeResourceId id) {
+        if (port instanceof ResourceMetadataSource single) {
+            String local = single.localId(id);
+            if (local != null && !local.isEmpty()) {
+                return local;
+            }
+        }
+        return lastSegment(id);
+    }
+
+    /** Letzter Pfadteil der Ressourcen-ID, bei Confluence die Content-ID (Seiten und Anhänge). */
+    private static String lastSegment(KnowledgeResourceId id) {
         String part = id.schemeSpecificPart();
         return part.substring(part.lastIndexOf('/') + 1);
     }
