@@ -119,11 +119,24 @@ class SearchViewTest {
     void allSourcesCanBeRestrictedToChosenSources() throws Exception {
         start();
         SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        // Sichtbare Häkchen: „Alle“ ist vorgegeben; die Space-Auswahl zeigt die Spaces beider Quellen mit Quelle.
+        List<javax.swing.JCheckBox> boxes = find(view[0].component(), javax.swing.JCheckBox.class);
+        assertThat(boxes).extracting(javax.swing.JCheckBox::getText).containsExactly("Alle", "alpha", "beta");
+        assertThat(boxes.get(0).isSelected()).isTrue();
+        javax.swing.JComboBox<?> spaces = find(view[0].component(), javax.swing.JComboBox.class).get(0);
+        await(() -> spaces.getItemCount() == 3);
+        assertThat(spaces.getItemAt(1).toString()).endsWith("(alpha)");
+        assertThat(spaces.getItemAt(2).toString()).endsWith("(beta)");
         SwingUtilities.invokeAndWait(() -> {
-            view[0] = new SearchView(context);
-            view[0].restrictTo(List.of("beta"));
+            boxes.get(2).doClick();
             view[0].search("seite");
         });
+        assertThat(boxes.get(0).isSelected()).isFalse();
+        assertThat(view[0].chosenSources()).containsExactly("beta");
+        // Nur noch die Spaces der angehakten Quelle, ohne Quellenzusatz.
+        assertThat(spaces.getItemCount()).isEqualTo(2);
+        assertThat(spaces.getItemAt(1).toString()).doesNotContain("(beta)");
         JTable table = find(view[0].component(), JTable.class).get(0);
         AbstractButton more = button(view[0].component(), "Weitere laden");
         await(() -> table.getRowCount() == PAGES_PER_SOURCE);
@@ -135,12 +148,14 @@ class SearchViewTest {
             }
         });
         assertThat(sourcesSeen).containsExactly("beta");
-        assertThat(button(view[0].component(), "Quellen: 1")).isNotNull();
 
+        // „Alle“ hebt die Auswahl auf: Suche ohne sourceIds.
         SwingUtilities.invokeAndWait(() -> {
-            view[0].restrictTo(List.of());
+            boxes.get(0).doClick();
             view[0].search("seite");
         });
+        assertThat(view[0].chosenSources()).isEmpty();
+        assertThat(boxes.get(2).isSelected()).isFalse();
         await(() -> table.getRowCount() == 100 && more.isEnabled());
     }
 

@@ -175,7 +175,7 @@ spring:
 
 | Bereich | Inhalt |
 |---|---|
-| Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Quellen …“ beschränkt sie auf ausgewählte Quellen, „Weitere laden“ blättert weiter |
+| Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; unter der Suchzeile je Quelle ein Häkchen: „Alle“ (Vorgabe) ist die globale Suche des Core ohne `sourceIds` (ADR 0009), eine angehakte Quelle sucht mit `sourceId`, mehrere mit `sourceIds`; die Space-Auswahl zeigt die Spaces der angehakten Quellen, bei mehreren mit Quellenname, leer heißt alle Spaces; „Weitere laden“ blättert weiter |
 | Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen: Kreispfeil gleicht den rechts gewählten Space vollständig mit der Quelle ab (ohne Auswahl bittet er um eine), Stift öffnet die Einstellungen, Papierkorb entfernt nach Rückfrage, ⋯ mit Assistent, Verbindung prüfen, Exportieren und Zugangsdaten für die Sitzung. Rechts Textreiter: **Spaces** mit Filter (Doppelklick oder Enter öffnet unter Inhalte), **Einstellungen** ohne Geheimnisse (Anzeigename, Adresse und Ordner direkt mit dem Stift, Enter übernimmt, Escape verwirft; Token oder Passwort per Dialog, unter Windows verschlüsselt gespeichert; Anmeldung, Zertifikat, Vertrauen und Proxy im Assistenten auf der passenden Seite), **Fähigkeiten** |
 | Inhalte | Wissensquelle → Space → Seiten → Seiteninhalt (siehe „Inhalte“ unten): Seiten sofort nach der Space-Wahl, aus dem Bestand oder ohne Bestand live, Liste oder Seitenbaum, Suchfeld; eine gewählte Seite lädt sofort; „Space synchronisieren“ übernimmt den Space in den Bestand; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen und Erweitert (Technische Angaben, Analyse, Originaldaten, Aktualität prüfen, Original speichern) |
 | Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
@@ -270,7 +270,7 @@ synchronisieren.
 | `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
 | `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
 | `GET …/pages/{pageId}?view=extended` (`acronyms`) | `PageAcronyms.read` | Seite › Inhalt: Akronyme markiert, Tooltip, Alt+→ | `ReaderAcronymsTest`, `PageAcronymsTest` |
-| `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | `PageSearch.search` (ohne Quelle global, #114) | Suche (Titel, Neueste) mit „Quellen …“ und „Weitere laden“ über den Core-Cursor, Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `SearchViewTest`, `MainWindowTest` |
+| `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | `PageSearch.search` (ohne Quelle global, #114) | Suche (Titel, Neueste) mit Quellen-Häkchen und „Weitere laden“ über den Core-Cursor, Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `SearchViewTest`, `MainWindowTest` |
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` (ein Fenster über alle Quellen) | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aufträge | `WorkspaceTest.harvestsBrowses…` |

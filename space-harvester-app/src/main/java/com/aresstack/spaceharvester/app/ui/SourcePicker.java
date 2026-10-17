@@ -5,11 +5,18 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 
 import javax.swing.JComboBox;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Auswahl von Quelle und Space für Exporte und Suche. Die Space-Liste füllt sich aus der Verbindungsprüfung (beim
- * ersten Wählen einer Quelle automatisch); ein Space-Key lässt sich auch eintippen.
+ * ersten Wählen einer Quelle automatisch); ein Space-Key lässt sich auch eintippen. Ohne einzelne Quelle („Alle
+ * Quellen“ oder mehrere über {@link #spaceScope}) zeigt die Liste die Spaces aller betroffenen Quellen, bei mehr als
+ * einer Quelle mit deren Namen.
  */
 public final class SourcePicker {
 
@@ -17,8 +24,10 @@ public final class SourcePicker {
     private final boolean anySource;
     private final boolean anySpace;
     private final JComboBox<Item> source = Comic.combo();
-    private final JComboBox<String> space = Comic.combo();
+    private final JComboBox<Object> space = Comic.combo();
     private boolean filling;
+    /** Quellen, deren Spaces ohne einzelne Quelle erscheinen; leer für alle. */
+    private final Set<String> scope = new LinkedHashSet<>();
 
     /**
      * @param anySource ob „Alle Quellen“ wählbar ist
@@ -40,7 +49,7 @@ public final class SourcePicker {
         return source;
     }
 
-    public JComboBox<String> spaceBox() {
+    public JComboBox<Object> spaceBox() {
         return space;
     }
 
@@ -53,7 +62,31 @@ public final class SourcePicker {
     /** Der gewählte oder eingetippte Space-Key, leer wenn keiner. */
     public String spaceKey() {
         Object item = space.getEditor().getItem();
-        return item == null ? "" : item.toString().trim();
+        if (item instanceof SpaceItem chosen) {
+            return chosen.key();
+        }
+        String text = item == null ? "" : item.toString().trim();
+        for (int i = 0; i < space.getItemCount(); i++) {
+            if (space.getItemAt(i) instanceof SpaceItem known && known.toString().equals(text)) {
+                return known.key();
+            }
+        }
+        return text;
+    }
+
+    /**
+     * Ohne einzelne Quelle: die Quellen, deren Spaces die Liste anbietet; leer für alle. Noch nicht geprüfte Quellen
+     * werden dabei geprüft, damit ihre Spaces erscheinen.
+     */
+    public void spaceScope(Collection<String> sourceIds) {
+        scope.clear();
+        scope.addAll(sourceIds);
+        for (String id : scopeIds()) {
+            if (context.connection(id).state() == AppContext.Connection.State.NOT_CHECKED) {
+                context.checkConnection(id, () -> fillSpaces(spaceKey()));
+            }
+        }
+        fillSpaces(spaceKey());
     }
 
     public void select(String sourceId, String spaceKey) {
@@ -64,8 +97,7 @@ public final class SourcePicker {
             }
         }
         if (spaceKey != null) {
-            space.setSelectedItem(spaceKey);
-            space.getEditor().setItem(spaceKey);
+            show(spaceKey);
         }
     }
 
@@ -103,19 +135,72 @@ public final class SourcePicker {
         fillSpaces(spaceKey());
     }
 
+    private List<String> scopeIds() {
+        String id = sourceId();
+        if (id != null) {
+            return List.of(id);
+        }
+        if (!anySource) {
+            return List.of();
+        }
+        List<String> all = allSourceIds();
+        return scope.isEmpty() ? all : all.stream().filter(scope::contains).toList();
+    }
+
     private void fillSpaces(String keep) {
+        List<String> ids = scopeIds();
+        boolean several = ids.size() > 1;
+        filling = true;
         space.removeAllItems();
         if (anySpace) {
             space.addItem("");
         }
-        String id = sourceId();
-        if (id != null) {
+        AppRuntime runtime = context.runtime();
+        for (String id : ids) {
+            String title = runtime == null ? id : runtime.workspace().sources().stream()
+                    .filter(s -> s.id().equals(id)).findFirst()
+                    .map(s -> s.title() == null || s.title().isBlank() ? s.id() : s.title()).orElse(id);
             for (Partition partition : context.connection(id).spaces()) {
-                space.addItem(partition.key());
+                space.addItem(new SpaceItem(partition.key(), partition.name(), several ? title : null));
             }
         }
-        space.setSelectedItem(keep == null ? "" : keep);
-        space.getEditor().setItem(keep == null ? "" : keep);
+        filling = false;
+        show(keep == null ? "" : keep);
+    }
+
+    /** Zeigt einen Key: den passenden Eintrag, wenn es genau einen gibt, sonst den Key als Text. */
+    private void show(String key) {
+        List<SpaceItem> matches = new ArrayList<>();
+        for (int i = 0; i < space.getItemCount(); i++) {
+            if (space.getItemAt(i) instanceof SpaceItem item && item.key().equals(key)) {
+                matches.add(item);
+            }
+        }
+        Object shown = matches.isEmpty() ? key : matches.get(0);
+        space.setSelectedItem(shown);
+        space.getEditor().setItem(shown);
+    }
+
+    /**
+     * Ein Space der Liste: Key, Name und, wenn mehrere Quellen betroffen sind, die Quelle. Gefiltert wird nach dem
+     * Key; derselbe Key in zwei Quellen filtert in beiden.
+     */
+    public record SpaceItem(String key, String name, String source) {
+        @Override
+        public String toString() {
+            String label = name == null || name.isBlank() || name.equals(key) ? key : key + " · " + name;
+            return source == null ? label : label + " (" + source + ")";
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof SpaceItem item && item.key.equals(key) && Objects.equals(item.source, source);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(key, source);
+        }
     }
 
     /** Eintrag der Quellenauswahl; {@code id == null} für „Alle Quellen“. */
