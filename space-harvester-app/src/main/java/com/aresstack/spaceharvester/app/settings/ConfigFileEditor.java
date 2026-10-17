@@ -23,8 +23,11 @@ import java.util.stream.Stream;
  */
 public final class ConfigFileEditor {
 
-    private static final Pattern ROOT = Pattern.compile("space-harvester:\\s*(#.*)?");
-    private static final Pattern SOURCES = Pattern.compile("( +)sources:\\s*(\\[\\s*])?\\s*(#.*)?");
+    // Schlüssel locker wie beim Laden: space-harvester, space_harvester, spaceHarvester; sources, Sources.
+    private static final Pattern ROOT = Pattern.compile("([A-Za-z_-]+):\\s*(#.*)?");
+    private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
+    private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
+    private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
     private static final String HEADER = """
             # Space Harvester Desktop – Konfiguration (angelegt vom Quellen-Assistenten)
             # Geheimnisse nie hier eintragen, sondern als Umgebungsvariable referenzieren: ${NAME}.
@@ -122,7 +125,10 @@ public final class ConfigFileEditor {
         return SourceDraft.from(raw);
     }
 
-    /** Ob der Eintrag Passwort, Token oder Zertifikatspasswort im Klartext statt als Platzhalter enthält. */
+    /**
+     * Ob der Eintrag Passwort, Token oder Zertifikatspasswort im Klartext enthält, auch als Standardwert eines
+     * Platzhalters ({@code ${TOKEN:geheim}}) oder in einem abgeschalteten Client-Zertifikat.
+     */
     public boolean hasPlaintextSecret(Path file, String sourceId) throws IOException {
         Map<?, ?> raw = rawSource(Files.readString(file, StandardCharsets.UTF_8), sourceId);
         Map<?, ?> auth = AppSettingsLoader.map(AppSettingsLoader.get(raw, "auth"));
@@ -130,7 +136,7 @@ public final class ConfigFileEditor {
         return Stream.of(AppSettingsLoader.get(auth, "password"), AppSettingsLoader.get(auth, "token"),
                         AppSettingsLoader.get(certificate, "password"))
                 .filter(value -> value != null && !String.valueOf(value).isBlank())
-                .anyMatch(value -> !String.valueOf(value).strip().matches("\\$\\{[^}]+}"));
+                .anyMatch(value -> !SourceDraft.isBarePlaceholder(String.valueOf(value)));
     }
 
     /** Schreibt den Entwurf; die bisherige Datei bleibt als {@code .bak} erhalten. */
@@ -176,11 +182,11 @@ public final class ConfigFileEditor {
         }
         int root = -1;
         for (int i = 0; i < lines.size(); i++) {
-            if (ROOT.matcher(lines.get(i)).matches()) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
                 root = i;
                 break;
             }
-            if (lines.get(i).startsWith("space-harvester:")) {
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
                 throw unsupported("space-harvester steht in einer Zeile");
             }
         }
@@ -208,12 +214,12 @@ public final class ConfigFileEditor {
             }
             if (indent == childIndent) {
                 Matcher matcher = SOURCES.matcher(line);
-                if (matcher.matches()) {
+                if (matcher.matches() && AppSettingsLoader.normalize(matcher.group(2)).equals("sources")) {
                     sources = end;
-                    if (matcher.group(2) != null) {
-                        lines.set(end, " ".repeat(indent) + "sources:");
+                    if (matcher.group(3) != null) {
+                        lines.set(end, " ".repeat(indent) + matcher.group(2) + ":");
                     }
-                } else if (line.strip().startsWith("sources:")) {
+                } else if (isKey(SOURCES_INLINE, line, 1, "sources")) {
                     throw unsupported("sources steht in einer Zeile");
                 }
             }
@@ -289,7 +295,7 @@ public final class ConfigFileEditor {
         }
         int root = -1;
         for (int i = 0; i < lines.size() && root < 0; i++) {
-            if (ROOT.matcher(lines.get(i)).matches()) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
                 root = i;
             }
         }
@@ -307,7 +313,7 @@ public final class ConfigFileEditor {
             if (childIndent < 0) {
                 childIndent = indent;
             }
-            if (indent == childIndent && SOURCES.matcher(line).matches()) {
+            if (indent == childIndent && isKey(SOURCES, line, 2, "sources")) {
                 sources = i;
             }
         }
@@ -375,6 +381,11 @@ public final class ConfigFileEditor {
             }
         }
         throw new IllegalArgumentException("Die Quelle " + sourceId + " steht nicht in der Konfigurationsdatei.");
+    }
+
+    private static boolean isKey(Pattern pattern, String line, int group, String normalized) {
+        Matcher matcher = pattern.matcher(line);
+        return matcher.matches() && AppSettingsLoader.normalize(matcher.group(group)).equals(normalized);
     }
 
     private static void add(List<String> lines, int at, String block) {

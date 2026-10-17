@@ -340,8 +340,9 @@ final class SourceWizard {
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         Background.run(() -> {
-            editor.save(context.configFile(), write(source),
-                    editing == null || editing.plaintextSecrets().isEmpty());
+            // Ob die bisherige Fassung ein Geheimnis enthält, entscheidet der Rohtext, nicht die gelesenen Angaben.
+            boolean backup = editing == null || !editor.hasPlaintextSecret(context.configFile(), source.id());
+            editor.save(context.configFile(), write(source), backup);
             return source.id();
         }, savedId -> {
             if (value.length > 0 && source.authType() != SourceSettingsConfig.AuthType.NONE) {

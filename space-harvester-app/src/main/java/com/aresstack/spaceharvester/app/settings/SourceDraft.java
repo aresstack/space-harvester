@@ -136,8 +136,13 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         SourceSettingsConfig.CertificateStoreType certificateType = null;
         String certificatePasswordVariable = null;
-        if (!certificate.isEmpty() && Boolean.parseBoolean(String.valueOf(AppSettingsLoader.get(certificate,
-                "enabled")))) {
+        boolean certificateEnabled = Boolean.parseBoolean(String.valueOf(AppSettingsLoader.get(certificate, "enabled")));
+        if (!certificate.isEmpty() && !certificateEnabled) {
+            // Der Assistent kennt kein abgeschaltetes Zertifikat; die ruhenden Angaben gingen beim Speichern verloren.
+            throw new IllegalArgumentException("Der Eintrag enthält ein abgeschaltetes Client-Zertifikat "
+                    + "(client-certificate.enabled: false); bitte in der Datei bearbeiten (Einstellungen › Datei öffnen).");
+        }
+        if (certificateEnabled) {
             String storeType = text(certificate, "type");
             certificateType = storeType == null ? null : SourceSettingsConfig.CertificateStoreType.valueOf(
                     storeType.toUpperCase(Locale.ROOT).replace('-', '_'));
@@ -174,13 +179,25 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return value == null ? null : trim(String.valueOf(value));
     }
 
-    /** Name der Variable, wenn der Wert genau ein Platzhalter ist, sonst {@code null}. */
+    /**
+     * Name der Variable, wenn der Wert genau ein Platzhalter ohne Standardwert ist, sonst {@code null}. Ein
+     * Standardwert ({@code ${TOKEN:geheim}}) gilt als Klartext.
+     */
     private static String placeholderName(String value) {
-        if (value == null) {
+        if (!isBarePlaceholder(value)) {
             return null;
         }
         Matcher matcher = PLACEHOLDER.matcher(value.strip());
         return matcher.matches() ? matcher.group(1) : null;
+    }
+
+    /** {@code ${NAME}} oder {@code ${NAME:}}, also ein Verweis ohne mitgeschriebenen Wert. */
+    static boolean isBarePlaceholder(String value) {
+        if (value == null) {
+            return false;
+        }
+        Matcher matcher = PLACEHOLDER.matcher(value.strip());
+        return matcher.matches() && (matcher.group(2) == null || matcher.group(2).length() == 1);
     }
 
     public boolean confluence() {

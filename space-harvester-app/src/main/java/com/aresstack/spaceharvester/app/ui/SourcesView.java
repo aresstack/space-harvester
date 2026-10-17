@@ -352,8 +352,10 @@ public final class SourcesView implements View {
     private Component renderSource(JList<? extends AppSettings.SourceEntry> jlist, AppSettings.SourceEntry entry,
                                    int index, boolean selected, boolean focus) {
         SourceSettingsConfig config = entry.config();
-        String where = config.baseUrl() != null ? config.baseUrl().getHost()
-                : config.options().getOrDefault("directory", "");
+        String where = config.baseUrl() == null ? config.options().getOrDefault("directory", "")
+                : config.baseUrl().getHost() != null ? config.baseUrl().getHost()
+                : config.baseUrl().getRawAuthority() != null ? config.baseUrl().getRawAuthority()
+                : config.baseUrl().toString();
         if (where.length() > 22) {
             where = "…" + where.substring(where.length() - 21);
         }

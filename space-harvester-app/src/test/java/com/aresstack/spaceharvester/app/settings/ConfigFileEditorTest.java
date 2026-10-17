@@ -228,6 +228,44 @@ class ConfigFileEditorTest {
         assertThatThrownBy(() -> editor.editable(file, "zwei")).hasMessageContaining("enabled");
     }
 
+    @Test
+    void relaxedKeySpellingsAreFoundLikeTheLoaderDoes() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE.replace("space-harvester:", "space_harvester:").replace("  sources:", "  Sources:"));
+        assertThat(loader.load(file).sources()).hasSize(3);
+
+        editor.save(file, editor.remove(file, "drei"));
+        editor.save(file, editor.draft(file, files("vier", "/tmp/vier")));
+
+        String text = Files.readString(file);
+        assertThat(text).containsOnlyOnce("space_harvester:").contains("  Sources:");
+        assertThat(loader.load(file).sources()).extracting(AppSettings.SourceEntry::id)
+                .containsExactly("eins", "zwei", "vier");
+    }
+
+    @Test
+    void aDefaultInsideAPlaceholderCountsAsPlaintext() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE.replace("${ZWEI_TOKEN}", "${ZWEI_TOKEN:standard-geheim}"));
+        assertThat(editor.hasPlaintextSecret(file, "zwei")).isTrue();
+        assertThat(editor.hasPlaintextSecret(file, "eins")).isFalse();
+        SourceDraft.Editable editable = editor.editable(file, "zwei");
+        assertThat(editable.plaintextSecrets()).containsExactly("auth.token");
+        assertThat(editable.draft().secretVariable()).isEqualTo("ZWEI_TOKEN");
+    }
+
+    @Test
+    void aDisabledCertificateIsNotDroppedByTheWizard() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, THREE.replace("      options:\n        connectTimeoutMillis",
+                "      client-certificate:\n        enabled: false\n        type: pkcs12\n"
+                        + "        path: /certs/c.p12\n        password: alt-geheim\n"
+                        + "      options:\n        connectTimeoutMillis"));
+        assertThat(Files.readString(file)).contains("enabled: false");
+        assertThat(editor.hasPlaintextSecret(file, "zwei")).isTrue();
+        assertThatThrownBy(() -> editor.editable(file, "zwei")).hasMessageContaining("abgeschaltet");
+    }
+
     private static SourceDraft wiki() {
         return new SourceDraft("wiki", "confluence", "Wiki", "https://wiki.example.org", null, null,
                 SourceSettingsConfig.AuthType.PAT, null, "WIKI_TOKEN",
