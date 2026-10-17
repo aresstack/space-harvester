@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -70,6 +71,11 @@ public final class PdfConverter implements ExportConverter {
     private static final float MARGIN = 56;
     /** Mindestbreite für Text, auch bei tiefer Verschachtelung oder vielen Tabellenspalten. */
     private static final float MIN_TEXT_WIDTH = 40;
+    /**
+     * Höchste Seitenzahl einer PDF-Datei (#90): Seitenbaum, Gliederung und Verweise wachsen im Speicher, bevor
+     * {@code max-converted-bytes} greift; darüber scheitert nur dieser Export ({@code CONVERSION_TOO_LARGE}).
+     */
+    static final int MAX_PAGES = 20_000;
     private static final float BODY = 10.5f;
     private static final float CODE = 8.5f;
     private static final float[] HEADINGS = {18, 15.5f, 13.5f, 12, 11, 10.5f};
@@ -81,6 +87,7 @@ public final class PdfConverter implements ExportConverter {
     private static final Color BAR = new Color(0x44, 0x72, 0xC4);
 
     private final Path font;
+    private final int maxPages;
 
     /** Mit den Standardschriften. */
     public PdfConverter() {
@@ -89,7 +96,12 @@ public final class PdfConverter implements ExportConverter {
 
     /** @param font TrueType-Schrift zum Einbetten oder {@code null} für die Standardschriften */
     public PdfConverter(Path font) {
+        this(font, MAX_PAGES);
+    }
+
+    PdfConverter(Path font, int maxPages) {
         this.font = font;
+        this.maxPages = maxPages;
     }
 
     @Override
@@ -116,7 +128,7 @@ public final class PdfConverter implements ExportConverter {
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         try (PDDocument document = new PDDocument(IOUtils.createTempFileOnlyStreamCache())) {
-            Layout layout = new Layout(document, fonts(document));
+            Layout layout = new Layout(document, fonts(document), maxPages);
             PDDocumentInformation info = new PDDocumentInformation();
             info.setTitle("Space " + input.spaceKey() + " (" + input.sourceId() + ")");
             info.setProducer("space-harvester " + VERSION);
@@ -256,8 +268,11 @@ public final class PdfConverter implements ExportConverter {
         /** Linke Ränder offener Kästen, für deren senkrechten Strich. */
         private final List<Float> bars = new ArrayList<>();
 
-        Layout(PDDocument document, Fonts fonts) {
+        private final int maxPages;
+
+        Layout(PDDocument document, Fonts fonts, int maxPages) {
             this.document = document;
+            this.maxPages = maxPages;
             this.fonts = fonts;
             document.getDocumentCatalog().setDocumentOutline(outline);
         }
@@ -651,6 +666,9 @@ public final class PdfConverter implements ExportConverter {
         }
 
         private void newPage() throws IOException {
+            if (document.getNumberOfPages() >= maxPages) {
+                throw ConversionLimitExceededException.pages("pages.pdf", maxPages);
+            }
             if (content != null) {
                 content.close();
             }

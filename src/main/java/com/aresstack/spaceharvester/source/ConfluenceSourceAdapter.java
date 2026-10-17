@@ -31,10 +31,11 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     static final String DEFAULT_MAX_RETRIES = "2";
 
     /**
-     * Standard für {@code options.foreignFileRedirects}: Weiterleitungen beim Datei-Download auf einen anderen Host
-     * werden nicht verfolgt (Upstream-Standard {@code true} gilt für den Desktop-Client).
+     * {@code options.foreignFileRedirects} ist im Dienst immer {@code false}: Weiterleitungen beim Datei-Download auf
+     * einen anderen Host werden nie verfolgt (Upstream-Standard {@code true} gilt für den Desktop-Client). Der Dienst
+     * läuft im internen Netz; eine Quelle könnte ihn sonst auf beliebige interne Ziele schicken (SSRF, #90).
      */
-    static final String DEFAULT_FOREIGN_FILE_REDIRECTS = "false";
+    static final String FOREIGN_FILE_REDIRECTS = "false";
 
     private static final Pattern UNRESOLVED = Pattern.compile("\\$\\{[^}]*}");
 
@@ -69,6 +70,11 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             if (RESERVED_OPTIONS.contains(key)) {
                 problems.add("options." + key + " ist nicht erlaubt; dafür gibt es eigene Felder");
             }
+        }
+        String foreign = config.options().get("foreignFileRedirects");
+        if (foreign != null && !FOREIGN_FILE_REDIRECTS.equalsIgnoreCase(foreign.trim())) {
+            problems.add("options.foreignFileRedirects ist im Dienst nicht einschaltbar; Weiterleitungen auf fremde Hosts"
+                    + " werden nie verfolgt");
         }
         return problems;
     }
@@ -211,9 +217,8 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         // Der Dienst läuft unbeaufsichtigt: kurze Netzfehler, 5xx und 429 werden standardmäßig zweimal wiederholt
         // (Upstream-Standard 0 gilt für den Desktop-Client). 401, 403, 404 und zu große Antworten nie.
         values.putIfAbsent("maxRetries", DEFAULT_MAX_RETRIES);
-        // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird dort anonym geladen; das erlaubt
-        // nur, wer es für die Quelle ausdrücklich einschaltet.
-        values.putIfAbsent("foreignFileRedirects", DEFAULT_FOREIGN_FILE_REDIRECTS);
+        // Ein Anhang, der auf einen fremden Host (CDN, Objektspeicher) umleitet, wird nie dort geladen.
+        values.put("foreignFileRedirects", FOREIGN_FILE_REDIRECTS);
         values.put("baseUrl", config.baseUrl().toString());
         if (config.title() != null) {
             values.put("title", config.title());

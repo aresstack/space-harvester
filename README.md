@@ -68,7 +68,7 @@ space-harvester:
         pageSize: 100
         maxRetries: 2                 # Standard 2: Netzfehler, 5xx und 429 wiederholen, 401/403/404 nie
         retryBackoffMillis: 1000      # erste Wartezeit, verdoppelt je Versuch, gestreut, höchstens maxRetryBackoffMillis
-        foreignFileRedirects: false   # Standard false: Datei-Weiterleitungen auf fremde Hosts (CDN) nicht verfolgen
+        foreignFileRedirects: false   # immer false: Datei-Weiterleitungen auf fremde Hosts werden nie verfolgt
     - id: team-wiki
       type: confluence
       base-url: https://wiki.example.org
@@ -435,7 +435,8 @@ Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien ü
 (Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
 dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
 darüber `asset-store-full` (507), ohne etwas zu verdrängen. Leitet die Quelle einen Download auf einen anderen Host um,
-wird dem nur mit `options.foreignFileRedirects: true` gefolgt, dann anonym. Fehler je Anhang stehen mit festem Code im
+wird dem nie gefolgt, der Anhang gilt dann als fehlgeschlagen; `options.foreignFileRedirects: true` ist ein
+Konfigurationsfehler. Fehler je Anhang stehen mit festem Code im
 Ernteergebnis und im Log; drosselt die Quelle, werden die übrigen Anhänge nicht mehr angefragt. Für Diagramme sind die
 draw.io-Daten (`DIAGRAM`) und SVG (`VECTOR`) dem Vorschaubild vorzuziehen, das erst eine KI beschreiben müsste.
 Bildbeschreibungen erzeugt ein optionaler `ImageDescriber` (z. B. ein Vision-Modell); sie hängen am Bild, nicht an der

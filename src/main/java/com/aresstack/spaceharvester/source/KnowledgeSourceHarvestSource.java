@@ -46,6 +46,9 @@ import java.util.concurrent.CompletionStage;
 /** {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}. */
 final class KnowledgeSourceHarvestSource implements HarvestSource {
 
+    /** Schema der öffentlichen Ressourcen-ID von Dateiquellen. */
+    static final String FILES_SCHEME = "files";
+
     private final String id;
     private final String type;
     private final String title;
@@ -105,7 +108,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     @Override
     public List<Partition> partitions() {
         try {
-            return port.partitions().stream().map(KnowledgeSourceHarvestSource::partition).toList();
+            return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -265,7 +268,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         String version = resource.revision().version();
         return new PageMetadata(
                 nativeId(resource.id()),
-                resource.id().value(),
+                publicResourceId(resource.id()),
                 resource.title(),
                 resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
                 resource.parentId().map(this::nativeId).orElse(null),
@@ -308,9 +311,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return part.substring(part.lastIndexOf('/') + 1);
     }
 
-    private static Partition partition(SourcePartition partition) {
+    private Partition partition(SourcePartition partition) {
         return new Partition(partition.key(), partition.title(),
-                partition.homeResource() == null ? null : partition.homeResource().value());
+                partition.homeResource() == null ? null : publicResourceId(partition.homeResource()));
+    }
+
+    /**
+     * Die Ressourcen-ID, wie sie die API zeigt. Die Dateiquelle bildet ihre ID upstream aus dem Verzeichnis auf dem
+     * Server ({@code file:/srv/handbuch/start.md}); nach außen gilt stattdessen {@code files:<Quelle>/<Seiten-ID>}
+     * (#90), undurchsichtig und so stabil wie die Seiten-ID (der relative Pfad als Base64url). Zurückgelesen wird die
+     * Ressourcen-ID einer Seite nie, aufgelöst wird immer über die Seiten-ID.
+     */
+    private String publicResourceId(KnowledgeResourceId resourceId) {
+        return LocalFilesSourceAdapter.TYPE.equals(type) ? FILES_SCHEME + ":" + id + "/" + nativeId(resourceId)
+                : resourceId.value();
     }
 
     private SourceAccessException accessFailure(KnowledgeSourceException e) {
@@ -324,6 +338,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             case INVALID_RESPONSE -> SourceAccessException.Reason.INVALID_RESPONSE;
             case UNSUPPORTED -> SourceAccessException.Reason.UNSUPPORTED;
         };
+        if (LocalFilesSourceAdapter.TYPE.equals(type)) {
+            // Meldungen der Dateiquelle nennen Pfade auf dem Server; sie reichen bis in Sync-Ergebnisse und Logs.
+            return new SourceAccessException(id, reason, "Dateiquelle: " + reason, null);
+        }
         return new SourceAccessException(id, reason, e.getMessage(), e);
     }
 }
