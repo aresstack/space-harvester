@@ -318,11 +318,14 @@ public class Jobs implements AutoCloseable {
                     open.remove(jobId);
                     job.finish(JobState.CANCELLED, null, clock.instant());
                 }
+                // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
+                // könnte eine Löschung dazwischen eines verwaist zurücklassen.
+                job.emit(wasQueued, wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO,
+                        JobEvent.Category.JOB, COMPONENT, wasQueued ? "CANCELLED" : null,
+                        wasQueued ? "Auftrag vor dem Start abgebrochen" : "Abbruch angefordert", null, null, null,
+                        null);
                 JobStatus status = job.snapshot();
                 store.save(status);
-                job.emit(wasQueued ? JobEvent.Severity.WARNING : JobEvent.Severity.INFO, JobEvent.Category.JOB,
-                        COMPONENT, wasQueued ? "CANCELLED" : null, wasQueued ? "Auftrag vor dem Start abgebrochen"
-                                : "Abbruch angefordert", null, null, null, null);
                 return status;
             }
         }
