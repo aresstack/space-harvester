@@ -132,7 +132,9 @@ jobs:
           info=$(unzip -p "$dist/space-harvester-$VERSION.jar" META-INF/build-info.properties)
           echo "$info"
           grep -qx "build.version=$VERSION" <<< "$info" || { echo "::error::Server-build-info nennt nicht $VERSION"; exit 1; }
-          unzip -l "$dist/space-harvester-core-$VERSION.jar" | grep -q 'BOOT-INF/' && { echo "::error::Core-JAR ist ein Fat-JAR"; exit 1; }
+          # Listing erst vollständig lesen: grep -q am Pipe-Ende würde unzip per SIGPIPE abbrechen (pipefail)
+          core=$(unzip -Z1 "$dist/space-harvester-core-$VERSION.jar")
+          if grep -q '^BOOT-INF/' <<< "$core"; then echo "::error::Core-JAR ist ein Fat-JAR"; exit 1; fi
           (cd "$dist" && sha256sum *.jar > SHA256SUMS && cat SHA256SUMS)
           echo "dir=$dist" >> "$GITHUB_OUTPUT"
           {
