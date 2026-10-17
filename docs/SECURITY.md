@@ -221,6 +221,7 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
 | Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
+| Lokale Dateiquelle listete versteckte Ordner (`.git`, `.ssh`), las Dateien bis 2000 MB ganz und nannte den absoluten Serverpfad als `url` | versteckte Dateien und Ordner ausgeschlossen, Standard 20 MB, höchstens 64 MB, keine `url` (#85, upstream enterprise-ai-client#178) |
 | Asset-Inhalt: schon `content` legte beim ersten Lesen in der Ablage ab, jeder Leser konnte so die Platte füllen | ablegen nur mit `sync`, sonst nur ausliefern; höchstens 4 Downloads gleichzeitig, sonst 429; `AssetsTest` |
 | Asset-Dateiname: Richtungs- und Formatzeichen (U+202E, U+2028) blieben im `Content-Disposition` und konnten eine Endung vortäuschen | alle Zeichen der Klasse `\p{C}` ersetzt, `AssetsApiTest` |
 | Asset-Ablage: ein manipulierter Eintrag konnte auf eine Datei außerhalb der Blobs zeigen; `X-Asset-Version` ungeprüft | Hash vor dem Pfad geprüft (`FileSystemAssetStoreTest`), Version nur `[0-9A-Za-z._-]` |
@@ -236,9 +237,8 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
   temporären Datei); eine Grenze für Seiten oder Tabellen fehlt noch;
   sehr tiefe Verschachtelung im Storage-Format kann den Parser per `StackOverflowError` abbrechen, was nur den Auftrag
   beendet.
-- Lokale Dateiquelle, in Arbeit bei Strang A (upstream enterprise-ai-client#178): Dateien in versteckten Verzeichnissen
-  (`.git/…`) werden gelistet, bis 2000 MB je Datei ganz gelesen (im Harvester künftig Standard 20 MB, höchstens 64 MB),
-  der absolute Serverpfad steht in den Metadaten.
+- Lokale Dateiquelle: die `resourceId` folgt dem Upstream-Format `file:<Verzeichnis>/<Pfad>` und nennt damit den
+  Verzeichnispfad auf dem Server (nur für Clients mit `metadata`, `url` ist leer).
 - Assets, bei Strang B: keine Gesamtgrenze der Ablage auf der Platte (wie `export.max-total-bytes`); der Download
   aus der Quelle wird erst nach dem vollständigen Lesen an der Grenze gemessen (Abbruch beim Streamen gehört in den
   Transport, upstream); Weiterleitungen beim Anhang-Download sind upstream noch nicht auf den Host der Quelle
