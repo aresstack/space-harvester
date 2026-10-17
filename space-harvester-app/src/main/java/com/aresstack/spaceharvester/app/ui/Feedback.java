@@ -79,6 +79,18 @@ public final class Feedback extends JPanel {
                 problem.technical());
     }
 
+    /** Wie {@link #problem(Throwable, Problems.Step)}; {@code subject} nennt, worum es ging (z. B. den Space). */
+    public void problem(Throwable error, Problems.Step step, String subject) {
+        Problems.Problem problem = Problems.describe(error, step, subject);
+        show(Comic.RED, problem.title(), problem.message() + (problem.hint() == null ? "" : "\n" + problem.hint()),
+                problem.technical());
+    }
+
+    /** Für Tests: Überschrift und Text der Meldung. */
+    public String text() {
+        return title.getText() + "\n" + message.getText();
+    }
+
     public void clear() {
         setVisible(false);
     }
