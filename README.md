@@ -372,7 +372,9 @@ jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischens
 
 **Ausgabeformate (#30):** `?format=json` (wiederholbar) erzeugt am Ende des Exports zusätzlich abgeleitete Dateien aus
 denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
-`rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum. Converter lesen nur die exportierten
+`rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum; `markdown` schreibt `pages.md` aus dem
+Storage-Format, `docx` `pages.docx` und `pdf` `pages.pdf`, Bilder und Anhänge jeweils nur als Verweise
+([Formate und Formatverluste](docs/CONVERTERS.md)). Converter lesen nur die exportierten
 Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
 `conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
 ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens

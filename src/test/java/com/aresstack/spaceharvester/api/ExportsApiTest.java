@@ -179,6 +179,37 @@ class ExportsApiTest {
     }
 
     @Test
+    void markdownIsServedAsText() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=markdown&format=json", null))
+                .path("id").asString();
+
+        JsonNode done = awaitFinished(id);
+
+        assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
+                .containsExactly("pages.ndjson", "tree.json", "pages.md", "pages.json", "manifest.json");
+        HttpResponse<byte[]> markdown = send("GET", "/api/v1/exports/" + id + "/artifact/pages.md", null);
+        assertThat(markdown.statusCode()).isEqualTo(200);
+        assertThat(markdown.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("text/markdown"));
+        assertThat(new String(markdown.body(), StandardCharsets.UTF_8)).contains("<a id=\"page-101\"></a>");
+    }
+
+    @Test
+    void wordAndPdfAreServedWithTheirMediaTypes() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=docx&format=pdf", null))
+                .path("id").asString();
+
+        assertThat(awaitFinished(id).path("state").asString()).isEqualTo("completed");
+        HttpResponse<byte[]> docx = send("GET", "/api/v1/exports/" + id + "/artifact/pages.docx", null);
+        assertThat(docx.headers().firstValue("Content-Type")).contains(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        assertThat(docx.body()).startsWith((byte) 'P', (byte) 'K');
+        HttpResponse<byte[]> pdf = send("GET", "/api/v1/exports/" + id + "/artifact/pages.pdf", null);
+        assertThat(pdf.headers().firstValue("Content-Type")).contains("application/pdf");
+        assertThat(new String(pdf.body(), 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+    }
+
+    @Test
     void unknownFormatIsRejected() throws Exception {
         HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
 
