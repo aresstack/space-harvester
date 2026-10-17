@@ -72,6 +72,50 @@ class SourcesViewTest {
     }
 
     @Test
+    void settingsAreEditedInPlaceWithThePencil() throws Exception {
+        start();
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        Container root = (Container) view[0].component();
+        EditableProperty[] name = new EditableProperty[1];
+        SwingUtilities.invokeAndWait(() -> {
+            name[0] = find(root, EditableProperty.class).stream().filter(p -> p.name().equals("Anzeigename"))
+                    .findFirst().orElseThrow();
+            name[0].edit();
+        });
+        assertThat(name[0].editing()).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            name[0].field().setText("Neuer Name");
+            name[0].field().postActionEvent();
+        });
+        Path config = home.resolve("app.yml");
+        await(() -> {
+            try {
+                return Files.readString(config).contains("title: \"Neuer Name\"");
+            } catch (java.io.IOException e) {
+                return false;
+            }
+        });
+        await(() -> find(root, javax.swing.JTextArea.class).stream().anyMatch(a -> "Neuer Name".equals(a.getText())));
+        // Die übrige Datei bleibt, wie sie war; die zweite Quelle ist unverändert.
+        assertThat(Files.readString(config)).contains("Kurz");
+
+        // Ungültiges bleibt im Feld stehen, der Grund steht darunter, die Datei ändert sich nicht.
+        String before = Files.readString(config);
+        EditableProperty[] folder = new EditableProperty[1];
+        SwingUtilities.invokeAndWait(() -> {
+            folder[0] = find(root, EditableProperty.class).stream().filter(p -> p.name().equals("Ordner"))
+                    .findFirst().orElseThrow();
+            folder[0].edit();
+            folder[0].field().setText("");
+            folder[0].field().postActionEvent();
+        });
+        await(() -> folder[0].error() != null);
+        assertThat(folder[0].editing()).isTrue();
+        assertThat(Files.readString(config)).isEqualTo(before);
+    }
+
+    @Test
     void longNamesWrapInsteadOfWideningTheCard() throws Exception {
         start();
         SourcesView[] view = new SourcesView[1];

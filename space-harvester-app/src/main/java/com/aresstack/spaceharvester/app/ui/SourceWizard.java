@@ -306,7 +306,19 @@ final class SourceWizard {
 
     /** Wie {@link #open(Component, AppContext, Consumer)}, aber zum Bearbeiten eines bestehenden Eintrags. */
     static void open(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
+        open(parent, context, editing, null, saved);
+    }
+
+    /**
+     * Zum Bearbeiten direkt auf einer Seite, z. B. „Anmeldung“ vom Stift an der Einstellung; die übrigen Seiten bleiben
+     * über „Zurück“ und „Weiter“ erreichbar.
+     */
+    static void open(Component parent, AppContext context, SourceDraft.Editable editing, Step start,
+                     Consumer<String> saved) {
         SourceWizard wizard = new SourceWizard(context, editing);
+        if (start != null && wizard.steps().contains(start)) {
+            wizard.show(start);
+        }
         String heading = editing == null ? "Wissensquelle hinzufügen" : "Wissensquelle bearbeiten";
         JDialog dialog = Dialogs.dialog(parent, heading);
         wizard.saved = saved;

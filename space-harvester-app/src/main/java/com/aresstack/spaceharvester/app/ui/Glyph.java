@@ -15,11 +15,12 @@ import java.awt.geom.RoundRectangle2D;
 
 /**
  * Kleine Vektorsymbole für Icon-Knöpfe (16 × 16, skaliert mit der Bildschirmauflösung): Aktualisieren, Stift,
- * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
+ * Papierkorb, Schlüssel, Mehr, Aufklappen (Pfeil rechts), Zuklappen (Pfeil unten),
+ * Übernehmen (Haken), Verwerfen (Kreuz). Gemalt in der Vordergrundfarbe der Komponente, damit Hover und deaktiviert stimmen.
  */
 enum Glyph implements Icon {
 
-    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE;
+    REFRESH, PENCIL, TRASH, KEY, MORE, EXPAND, COLLAPSE, ACCEPT, CANCEL;
 
     private static final int SIZE = 16;
 
@@ -81,6 +82,17 @@ enum Glyph implements Icon {
                     arrow.lineTo(8, 10.5);
                     arrow.lineTo(12, 6);
                     g.draw(arrow);
+                }
+                case ACCEPT -> {
+                    Path2D tick = new Path2D.Double();
+                    tick.moveTo(3, 8.5);
+                    tick.lineTo(6.5, 12);
+                    tick.lineTo(13, 4.5);
+                    g.draw(tick);
+                }
+                case CANCEL -> {
+                    g.draw(new Line2D.Double(4, 4, 12, 12));
+                    g.draw(new Line2D.Double(12, 4, 4, 12));
                 }
                 case MORE -> {
                     for (double cx : new double[] {3, 8, 13}) {

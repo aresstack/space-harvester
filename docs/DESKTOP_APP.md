@@ -176,7 +176,7 @@ spring:
 | Bereich | Inhalt |
 |---|---|
 | Suche | Titel- und Metadatensuche im Bestand über alle oder eine Quelle, sortiert nach Titel, Änderung oder Relevanz; „Alle Quellen“ ist die globale Suche des Core (ADR 0009), „Quellen …“ beschränkt sie auf ausgewählte Quellen, „Weitere laden“ blättert weiter |
-| Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten, entfernen, weitere Aktionen: Assistent, Zugangsdaten für die Sitzung); rechts die Spaces mit Filter, Öffnen, Abgleich und Export, darunter die Einstellungen ohne Geheimnisse und eingeklappt die technischen Fähigkeiten |
+| Wissensquellen | Je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten, entfernen, weitere Aktionen: Assistent, Zugangsdaten für die Sitzung); rechts die Spaces mit Filter, Öffnen, Abgleich und Export, darunter die Einstellungen ohne Geheimnisse: Anzeigename, Adresse und Ordner direkt mit dem Stift (Enter übernimmt, Escape verwirft), Token oder Passwort per Dialog (unter Windows verschlüsselt gespeichert), Anmeldung, Zertifikat, Vertrauen und Proxy im Assistenten auf der passenden Seite; eingeklappt die technischen Fähigkeiten |
 | Inhalte | Seiten eines Space aus dem Bestand oder live, stückweise geladen, als Liste oder Baum, Titelfilter; Seite per ID oder Adresse öffnen; Seite mit Inhalt, Eigenschaften, Anhängen, Analyse, Originaldaten und Technik |
 | Exportieren | Space und Formate wählen, Export starten, letzte Exporte |
 | Aufträge | Abgleiche und Exporte mit Fortschritt, Ergebnis je Kategorie, Teilfehlern, Abbruch, erneutem Abgleich und Speichern der Exportdateien |

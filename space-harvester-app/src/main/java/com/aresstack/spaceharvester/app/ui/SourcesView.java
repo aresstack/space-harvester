@@ -44,6 +44,8 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Insets;
+import java.awt.GridBagLayout;
+import java.awt.GridBagConstraints;
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.awt.event.KeyEvent;
@@ -56,6 +58,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.UnaryOperator;
+import java.util.function.Consumer;
+import java.util.Arrays;
 
 /**
  * Wissensquellen: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (prüfen, bearbeiten,
@@ -72,7 +77,9 @@ public final class SourcesView implements View {
     private final CardsPanel cardsPanel = new CardsPanel();
     private String selected;
     private final Feedback feedback = new Feedback();
-    private final Facts facts = new Facts();
+    private final JPanel properties = new JPanel(new GridBagLayout());
+    private final Map<String, EditableProperty> rows = new LinkedHashMap<>();
+    private AppSettings.SourceEntry shown;
     private final Facts capabilities = new Facts();
     private final JButton capabilitiesToggle = new JButton();
     private boolean capabilitiesOpen;
@@ -210,7 +217,8 @@ public final class SourcesView implements View {
         capabilityPanel.add(capabilities, BorderLayout.CENTER);
         JPanel settings = new JPanel(new BorderLayout(0, 10));
         settings.setOpaque(false);
-        settings.add(facts, BorderLayout.CENTER);
+        properties.setOpaque(false);
+        settings.add(properties, BorderLayout.CENTER);
         settings.add(capabilityPanel, BorderLayout.SOUTH);
         updateCapabilities();
 
@@ -276,9 +284,9 @@ public final class SourcesView implements View {
 
     private void showSelected() {
         AppSettings.SourceEntry entry = selectedEntry();
-        facts.reset();
         capabilities.reset();
         if (entry == null) {
+            showProperties(null);
             title.setText(sources.isEmpty() ? "Noch keine Wissensquelle eingerichtet" : " ");
             address.setText(" ");
             spacesModel.set(List.of());
@@ -293,31 +301,7 @@ public final class SourcesView implements View {
         title.setText(config.title() == null ? config.id() : config.title() + "  (" + config.id() + ")");
         address.setText(Texts.sourceType(config.type()) + (config.baseUrl() == null ? ""
                 : " · " + config.baseUrl()));
-        facts.add("Typ", Texts.sourceType(config.type()));
-        if (config.baseUrl() != null) {
-            facts.add("Adresse", config.baseUrl().toString());
-        }
-        config.options().forEach((key, value) -> facts.add("Option " + key, value));
-        facts.add("Anmeldung", Texts.auth(config.auth()));
-        if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-            boolean session = context.secrets().has(entry);
-            facts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry)) ? "verschlüsselt gespeichert"
-                            : session ? "für diese Sitzung eingegeben"
-                            : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
-                            : "fehlt (an der Karte unter „Weitere Aktionen“ eingeben)",
-                    entry.secretMissing() && !session ? Comic.RED : Comic.INK);
-        }
-        SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
-        facts.add("Client-Zertifikat", !certificate.enabled() ? "aus"
-                : (certificate.type() == SourceSettingsConfig.CertificateStoreType.WINDOWS_MY
-                ? "Windows-Zertifikatsspeicher (CurrentUser\\My)" : "PKCS#12-Datei " + certificate.path())
-                + (certificate.alias() == null ? "" : ", Alias " + certificate.alias())
-                + (certificate.thumbprint() == null ? "" : ", Fingerabdruck " + certificate.thumbprint()));
-        facts.add("Vertrauen", config.trustBundle() == null ? "Zertifikate der Java-Laufzeit"
-                : TrustStores.WINDOWS.equals(config.trustBundle()) ? SourceWizard.WINDOWS_TRUST
-                : "SSL-Bundle " + config.trustBundle());
-        facts.add("Proxy", context.settings().proxy().mode().name().toLowerCase().replace('_', '-'));
+        showProperties(entry);
 
         AppRuntime runtime = context.runtime();
         Optional<HarvestSource> source = runtime == null ? Optional.empty() : runtime.workspace().sources().stream()
@@ -363,6 +347,158 @@ public final class SourcesView implements View {
         applyFilter();
         updateCapabilities();
         updateButtons();
+    }
+
+    /**
+     * Die Einstellungen der Quelle als Zeilen mit Stift. Eine laufende Bearbeitung bleibt stehen, solange dieselbe
+     * Quelle gezeigt wird; Verbindungsmeldungen bauen die Zeilen sonst neu.
+     */
+    private void showProperties(AppSettings.SourceEntry entry) {
+        if (entry != null && entry.equals(shown) && rows.values().stream().anyMatch(EditableProperty::editing)) {
+            return;
+        }
+        shown = entry;
+        rows.clear();
+        properties.removeAll();
+        if (entry != null) {
+            SourceSettingsConfig config = entry.config();
+            boolean confluence = SourceDraft.CONFLUENCE.equals(config.type());
+            row(EditableProperty.view("Typ", Texts.sourceType(config.type()), Comic.INK));
+            row(EditableProperty.text("Anzeigename", config.title(), config.title(), "Anzeigenamen ändern",
+                    (value, ok, failed) -> saveField(entry, d -> with(d, value, d.baseUrl(), d.directory()), ok,
+                            failed)));
+            if (confluence || config.baseUrl() != null) {
+                String url = config.baseUrl() == null ? "" : config.baseUrl().toString();
+                row(EditableProperty.text("Adresse", url, url, "Adresse der Quelle ändern",
+                        (value, ok, failed) -> saveField(entry, d -> with(d, d.title(), value, d.directory()), ok,
+                                failed)));
+            }
+            config.options().forEach((key, value) -> {
+                if ("directory".equals(key)) {
+                    row(EditableProperty.text("Ordner", value, value, "Ordner der Quelle ändern",
+                            (typed, ok, failed) -> saveField(entry, d -> with(d, d.title(), d.baseUrl(), typed), ok,
+                                    failed)));
+                } else {
+                    row(EditableProperty.view("Option " + key, value, Comic.INK));
+                }
+            });
+            if (confluence) {
+                row(EditableProperty.action("Anmeldung", Texts.auth(config.auth()), Comic.INK,
+                        "Anmeldeart und Benutzer ändern (öffnet „Anmeldung“)",
+                        () -> edit(entry, SourceWizard.Step.AUTH)));
+            } else {
+                row(EditableProperty.view("Anmeldung", Texts.auth(config.auth()), Comic.INK));
+            }
+            if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
+                boolean session = context.secrets().has(entry);
+                boolean token = config.auth().type() == SourceSettingsConfig.AuthType.PAT;
+                row(EditableProperty.action(token ? "Token" : "Passwort",
+                        context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(entry))
+                                ? "verschlüsselt gespeichert"
+                                : session ? "für diese Sitzung eingegeben"
+                                : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
+                                : "fehlt",
+                        entry.secretMissing() && !session ? Comic.RED : Comic.INK,
+                        (token ? "Token" : "Passwort") + " neu eingeben", () -> storeSecret(entry)));
+            }
+            if (confluence) {
+                SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
+                row(EditableProperty.action("Client-Zertifikat", !certificate.enabled() ? "aus"
+                                : (certificate.type() == SourceSettingsConfig.CertificateStoreType.WINDOWS_MY
+                                ? "Windows-Zertifikatsspeicher (CurrentUser\\My)"
+                                : "PKCS#12-Datei " + certificate.path())
+                                + (certificate.alias() == null ? "" : ", Alias " + certificate.alias())
+                                + (certificate.thumbprint() == null ? ""
+                                : ", Fingerabdruck " + certificate.thumbprint()),
+                        Comic.INK, "Client-Zertifikat wählen (öffnet „Anmeldung“)",
+                        () -> edit(entry, SourceWizard.Step.AUTH)));
+                row(EditableProperty.action("Vertrauen", config.trustBundle() == null
+                                ? "Zertifikate der Java-Laufzeit"
+                                : TrustStores.WINDOWS.equals(config.trustBundle()) ? SourceWizard.WINDOWS_TRUST
+                                : "SSL-Bundle " + config.trustBundle(), Comic.INK,
+                        "Vertrauen ändern (öffnet „Proxy und Netzwerk“)",
+                        () -> edit(entry, SourceWizard.Step.NETWORK)));
+                row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode()) + " · gilt für alle Quellen",
+                        Comic.INK, "Netzwerkeinstellungen öffnen (Proxy für alle Quellen)",
+                        () -> edit(entry, SourceWizard.Step.NETWORK)));
+            }
+        }
+        properties.revalidate();
+        properties.repaint();
+    }
+
+    private void row(EditableProperty property) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = rows.size();
+        c.weightx = 1;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.anchor = GridBagConstraints.NORTHWEST;
+        rows.put(property.name(), property);
+        properties.add(property, c);
+    }
+
+    /**
+     * Ändert ein Feld der Quelle in der Konfigurationsdatei (kommentarschonend, mit .bak) und lädt neu. Enthält der
+     * Eintrag ein Geheimnis im Klartext, bleibt die Datei unverändert: Das Speichern ersetzte es durch einen
+     * Platzhalter; das übernimmt der Assistent mit Rückfrage.
+     */
+    private void saveField(AppSettings.SourceEntry entry, UnaryOperator<SourceDraft> change, Runnable ok,
+                           Consumer<Throwable> failed) {
+        ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+        Background.run(() -> {
+            SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
+            if (!editable.plaintextSecrets().isEmpty()) {
+                throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über „Weitere "
+                        + "Aktionen › Assistent erneut öffnen“ bearbeiten; der Assistent legt es sicher ab.");
+            }
+            boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
+            ConfigFileEditor.Draft draft = editor.replace(context.configFile(), change.apply(editable.draft()));
+            editor.save(context.configFile(), draft, backup);
+            return entry.id();
+        }, id -> {
+            ok.run();
+            context.reload(() -> select(id));
+        }, failed);
+    }
+
+    private static SourceDraft with(SourceDraft d, String title, String baseUrl, String directory) {
+        return new SourceDraft(d.id(), d.type(), title, baseUrl, directory, d.include(), d.authType(), d.username(),
+                d.secretVariable(), d.certificateType(), d.certificatePath(), d.certificatePasswordVariable(),
+                d.certificateAlias(), d.thumbprint(), d.trustBundle(), d.extraOptions());
+    }
+
+    /**
+     * Token oder Passwort neu eingeben: verschlüsselt im Tresor (Windows), sonst nur für die Sitzung. Die Datei bleibt
+     * unverändert; der Wert erscheint nirgends.
+     */
+    private void storeSecret(AppSettings.SourceEntry entry) {
+        boolean token = entry.config().auth().type() == SourceSettingsConfig.AuthType.PAT;
+        SecretVault vault = context.vault();
+        boolean persist = vault.available();
+        char[] value = Dialogs.askSecret(root, (token ? "Token" : "Passwort") + " für " + entry.id(),
+                (token ? "Personal Access Token" : "Passwort für " + entry.config().auth().username())
+                        + " der Quelle " + entry.id() + ". " + (persist
+                        ? "Wird " + vault.describe() + " abgelegt, nie in der Konfigurationsdatei."
+                        : "Gilt nur für diese Sitzung; auf diesem System gibt es keinen Tresor."),
+                persist ? "Speichern" : "Übernehmen");
+        if (value == null || value.length == 0) {
+            return;
+        }
+        String login = AppRuntime.SessionSecrets.login(entry);
+        feedback.working("Zugangsdaten werden übernommen …");
+        Background.execute(() -> {
+            if (persist) {
+                vault.store(entry.id(), login, Arrays.copyOf(value, value.length));
+            }
+        }, () -> {
+            context.secrets().put(entry.id(), login, value);
+            context.reload(() -> feedback.success(persist ? "Zugangsdaten verschlüsselt gespeichert"
+                    : "Zugangsdaten für diese Sitzung übernommen"));
+        }, error -> {
+            Arrays.fill(value, '\0');
+            feedback.problem(error);
+        });
     }
 
     private void updateButtons() {
@@ -419,6 +555,10 @@ public final class SourcesView implements View {
     }
 
     private void edit(AppSettings.SourceEntry entry) {
+        edit(entry, null);
+    }
+
+    private void edit(AppSettings.SourceEntry entry, SourceWizard.Step step) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         SourceDraft.Editable editable;
@@ -428,7 +568,7 @@ public final class SourcesView implements View {
             feedback.problem(e);
             return;
         }
-        SourceWizard.open(root, context, editable, this::select);
+        SourceWizard.open(root, context, editable, step, this::select);
     }
 
     private void remove(AppSettings.SourceEntry entry) {
@@ -577,7 +717,8 @@ public final class SourcesView implements View {
         private final JTextArea where = Comic.note("");
         private final JTextArea state = Comic.note("");
         private final IconButton check = new IconButton(Glyph.REFRESH, "Verbindung prüfen (lädt die Spaces live)");
-        private final IconButton edit = new IconButton(Glyph.PENCIL, "Quelle bearbeiten");
+        private final IconButton edit = new IconButton(Glyph.PENCIL,
+                "Anzeigenamen ändern; die übrigen Einstellungen rechts mit dem Stift am Feld");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
         private final IconButton more = new IconButton(Glyph.MORE, "Weitere Aktionen");
@@ -614,7 +755,10 @@ public final class SourcesView implements View {
             });
             edit.addActionListener(e -> {
                 select(entry.id());
-                SourcesView.this.edit(entry);
+                EditableProperty name = rows.get("Anzeigename");
+                if (name != null && !name.editing()) {
+                    name.edit();
+                }
             });
             remove.addActionListener(e -> {
                 select(entry.id());
