@@ -9,6 +9,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
+import java.awt.Point;
 import java.awt.event.MouseEvent;
 import java.awt.font.TextAttribute;
 import java.net.URI;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.swing.AbstractButton;
+import javax.swing.BorderFactory;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -153,6 +155,14 @@ class MainWindowTest {
             assertThat(find(dialog, ComicWindowCloseButton.class)).as("Dialog: eigene Kopfzeile mit rundem ✕")
                     .singleElement().satisfies(MainWindowTest::isSquare);
             assertThat(labelTexts(dialog)).contains("Wissensquelle hinzufügen");
+            // ComicWindowShape setzt beim Anzeigen den Rand der Fläche neu; der Innenabstand darf daran nicht hängen.
+            dialog.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+            Screenshots.write(dialog, home.resolve("dialog-shaped.png"));
+            Component close = find(dialog, ComicWindowCloseButton.class).get(0);
+            Point corner = SwingUtilities.convertPoint(close.getParent(), close.getLocation(), dialog);
+            assertThat(corner.y).as("Abstand oben").isGreaterThanOrEqualTo(6 + 8);
+            assertThat(dialog.getWidth() - corner.x - close.getWidth()).as("Abstand rechts")
+                    .isGreaterThanOrEqualTo(6 + 12);
 
             CopyrightLink copyright = new CopyrightLink(opened::add);
             assertThat(find(surface, CopyrightLink.class)).hasSize(1);

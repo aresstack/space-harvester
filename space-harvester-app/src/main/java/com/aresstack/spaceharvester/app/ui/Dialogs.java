@@ -108,10 +108,15 @@ public final class Dialogs {
 
     /** Der Inhalt von {@link #frame} ohne Fenster (auch ohne Bildschirm prüfbar). */
     static JPanel surface(String title, JComponent body, Runnable cancel) {
-        JPanel content = new JPanel(new BorderLayout(0, 10));
+        // Der Tintenrand gehört allein der äußeren Fläche: ComicWindowShape ersetzt ihn beim Anzeigen (rund oder
+        // eckig). Der Innenabstand sitzt deshalb auf einer eigenen Fläche darin und bleibt erhalten.
+        JPanel content = new JPanel(new BorderLayout());
         content.setBackground(Comic.SURFACE);
-        content.setBorder(BorderFactory.createCompoundBorder(ComicBorder.windowBorder(Comic.PALETTE, WINDOW_PADDING),
-                BorderFactory.createEmptyBorder(8, 18, 14, 12)));
+        content.setBorder(ComicBorder.windowBorder(Comic.PALETTE, WINDOW_PADDING));
+        JPanel padded = new JPanel(new BorderLayout(0, 10));
+        padded.setOpaque(false);
+        padded.setBorder(BorderFactory.createEmptyBorder(8, 18, 14, 12));
+        content.add(padded, BorderLayout.CENTER);
         JPanel header = new JPanel(new BorderLayout(8, 0));
         header.setOpaque(false);
         JLabel heading = new JLabel(title);
@@ -125,8 +130,8 @@ public final class Dialogs {
         inner.setOpaque(false);
         inner.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 6));
         inner.add(body, BorderLayout.CENTER);
-        content.add(header, BorderLayout.NORTH);
-        content.add(inner, BorderLayout.CENTER);
+        padded.add(header, BorderLayout.NORTH);
+        padded.add(inner, BorderLayout.CENTER);
         content.registerKeyboardAction(e -> cancel.run(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
                 JComponent.WHEN_IN_FOCUSED_WINDOW);
         ComicWindowResizer.install(content, RESIZE_GRIP);
