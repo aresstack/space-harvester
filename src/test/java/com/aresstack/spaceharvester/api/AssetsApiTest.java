@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.TestClient;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -19,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -30,7 +34,33 @@ import tools.jackson.databind.ObjectMapper;
  * einmal übertragen, draw.io vor Vorschaubild, Inhalte nur als Download und nur mit Freigabe.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
+@Import(AssetsApiTest.Describer.class)
 class AssetsApiTest {
+
+    /** Ein Bildbeschreiber ohne Modell: nennt nur die Größe. */
+    @TestConfiguration
+    static class Describer {
+
+        @Bean
+        ImageDescriber imageDescriber() {
+            return new ImageDescriber() {
+                @Override
+                public String id() {
+                    return "test";
+                }
+
+                @Override
+                public String modelVersion() {
+                    return "groesse-1";
+                }
+
+                @Override
+                public String describe(byte[] image, String mediaType) {
+                    return mediaType + " mit " + image.length + " Bytes";
+                }
+            };
+        }
+    }
 
     private static final String READER_TOKEN = "asset-reader-token-77a1";
     private static final FakeConfluence CONFLUENCE = new FakeConfluence();
@@ -190,6 +220,36 @@ class AssetsApiTest {
         assertThat(content.statusCode()).isIn(403, 404);
         assertThat(content.body()).doesNotContain("JPEG");
         assertThat(harvest.statusCode()).isIn(403, 404);
+    }
+
+    @Test
+    void imagesAreDescribedOnceAndMarkedAsMachineGenerated() throws Exception {
+        assertThat(send("GET", "/api/v1/sources/wiki/pages/101/assets/att2/description", TestClient.TOKEN)
+                .statusCode()).isEqualTo(404);
+
+        JsonNode first = json.readTree(send("POST", "/api/v1/sources/wiki/pages/101/assets/att2/description",
+                TestClient.TOKEN).body());
+        JsonNode again = json.readTree(send("POST", "/api/v1/sources/wiki/pages/101/assets/att2/description",
+                TestClient.TOKEN).body());
+        HttpResponse<String> read = send("GET", "/api/v1/sources/wiki/pages/101/assets/att2/description",
+                TestClient.TOKEN);
+
+        assertThat(first.get("generated").asBoolean()).isTrue();
+        assertThat(first.get("provenance").asString()).isEqualTo("machine-generated");
+        assertThat(first.get("modelVersion").asString()).isEqualTo("groesse-1");
+        assertThat(first.get("text").asString()).isEqualTo("image/png mit 12 Bytes");
+        assertThat(again.get("generated").asBoolean()).isFalse();
+        assertThat(read.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(read.body()).get("imageSha256").asString())
+                .isEqualTo(first.get("imageSha256").asString());
+        HttpResponse<String> diagram = send("POST", "/api/v1/sources/wiki/pages/101/assets/att1/description",
+                TestClient.TOKEN);
+        assertThat(diagram.statusCode()).isEqualTo(400);
+        assertThat(diagram.body()).contains("problems/asset-not-an-image");
+        assertThat(send("POST", "/api/v1/sources/wiki/pages/101/assets/att2/description", READER_TOKEN)
+                .statusCode()).isIn(403, 404);
+        assertThat(send("GET", "/api/v1/sources/wiki/pages/101/assets/att2/description", READER_TOKEN)
+                .statusCode()).isIn(403, 404);
     }
 
     private HttpResponse<String> send(String method, String path, String token) throws Exception {

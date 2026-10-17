@@ -267,6 +267,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets` | Anhänge einer Seite mit Art (`DIAGRAM` vor `VECTOR` vor `IMAGE` vor `OTHER`), Bezug Vorschaubild → draw.io-Diagramm (`previewOf`) und abgelegtem Stand; lädt nichts (#19) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/harvest` | Alle Anhänge der Seite über die Anmeldung der Quelle herunterladen und versioniert ablegen; gleiche Versionen werden nicht erneut übertragen; verlangt `sync` (#19) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/content` | Ein Anhang in seiner aktuellen Version Byte für Byte, aus der Ablage oder bei Bedarf nachgeladen; immer als Download, `ETag` = SHA-256; verlangt `content` (#19) |
+| `GET`/`POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/description` | Maschinelle Beschreibung eines Bildes (`provenance=machine-generated`), je Bildinhalt und Modellversion gecacht; `POST` erzeugt sie bei Bedarf und verlangt zusätzlich `sync`; ohne konfigurierten Beschreiber `image-description-unavailable` (503) (#19) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
@@ -420,6 +421,10 @@ Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien ü
 (Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502). Fehler je Anhang stehen mit festem Code im
 Ernteergebnis und im Log; drosselt die Quelle, werden die übrigen Anhänge nicht mehr angefragt. Für Diagramme sind die
 draw.io-Daten (`DIAGRAM`) und SVG (`VECTOR`) dem Vorschaubild vorzuziehen, das erst eine KI beschreiben müsste.
+Bildbeschreibungen erzeugt ein optionaler `ImageDescriber` (z. B. ein Vision-Modell); sie hängen am Bild, nicht an der
+Seite, gelten nur für genau diese Bildbytes und diese Modellversion und werden bei geändertem Bild oder Modell neu
+erzeugt. Sie sind kein bestätigter Teil der Seite und so geschützt wie das Bild. Diagrammdaten und Dokumente werden nicht
+beschrieben (`asset-not-an-image`).
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#27](https://github.com/aresstack/space-harvester/issues/27)).

@@ -32,9 +32,19 @@ public class Assets {
     private final AssetStore store;
     private final long maxBytes;
     private final Clock clock;
+    private final ImageDescriber describer;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
+        this(catalog, store, maxBytes, clock, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer) {
+        this.describer = describer;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -100,16 +110,86 @@ public class Assets {
      * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
      */
     public AssetContent content(PageAttachmentList list, String attachmentId) {
-        PageAttachment attachment = list.attachments().attachments().stream()
-                .filter(a -> a.attachmentId().equals(attachmentId))
-                .findFirst()
-                .orElseThrow(() -> new SourceAccessException(list.sourceId(), SourceAccessException.Reason.NOT_FOUND,
-                        "Anhang gehört nicht zur Seite", null));
+        PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
             return new AssetContent(stored.get(), store.read(stored.get()));
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment);
+    }
+
+    /**
+     * Die vorhandene Beschreibung des Bildes in seiner aktuellen, abgelegten Version durch das konfigurierte Modell;
+     * erzeugt nichts.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_AN_IMAGE} oder {@code NOT_FOUND}
+     */
+    public DescribedImage description(PageAttachmentList list, String attachmentId) {
+        ImageDescriber model = describer();
+        PageAttachment attachment = attachment(list, attachmentId);
+        requireImage(attachment.mediaType(), attachment.title());
+        return store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
+                .flatMap(asset -> store.description(asset.sha256(), model.id(), model.modelVersion())
+                        .map(description -> new DescribedImage(asset, description, false)))
+                .orElseThrow(() -> new ImageDescriptionException(ImageDescriptionException.Reason.NOT_FOUND,
+                        "Noch keine Beschreibung", null));
+    }
+
+    /**
+     * Beschreibt das Bild in seiner aktuellen Version, falls es für diese Bildbytes und dieses Modell noch keine
+     * Beschreibung gibt; lädt das Bild dafür bei Bedarf über die Quelle.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_AN_IMAGE} oder {@code FAILED}
+     */
+    public DescribedImage describe(PageAttachmentList list, String attachmentId) {
+        ImageDescriber model = describer();
+        PageAttachment attachment = attachment(list, attachmentId);
+        requireImage(attachment.mediaType(), attachment.title());
+        AssetContent content = content(list, attachmentId);
+        Asset asset = content.asset();
+        Optional<ImageDescription> existing = store.description(asset.sha256(), model.id(), model.modelVersion());
+        if (existing.isPresent()) {
+            return new DescribedImage(asset, existing.get(), false);
+        }
+        String text;
+        try {
+            text = model.describe(content.content(), asset.mediaType());
+        } catch (ImageDescriptionException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Beschreibung fehlgeschlagen",
+                    e);
+        }
+        if (text == null || text.isBlank()) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.FAILED, "Leere Beschreibung", null);
+        }
+        ImageDescription description = new ImageDescription(asset.sha256(), model.id(), model.modelVersion(),
+                text.strip(), clock.instant());
+        store.putDescription(description);
+        return new DescribedImage(asset, description, true);
+    }
+
+    private ImageDescriber describer() {
+        if (describer == null) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_CONFIGURED,
+                    "Kein Bildbeschreiber konfiguriert", null);
+        }
+        return describer;
+    }
+
+    private static void requireImage(String mediaType, String title) {
+        AssetKind kind = AssetKind.of(mediaType, title);
+        if (kind != AssetKind.IMAGE && kind != AssetKind.VECTOR) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_AN_IMAGE, "Kein Bild", null);
+        }
+    }
+
+    private static PageAttachment attachment(PageAttachmentList list, String attachmentId) {
+        return list.attachments().attachments().stream()
+                .filter(a -> a.attachmentId().equals(attachmentId))
+                .findFirst()
+                .orElseThrow(() -> new SourceAccessException(list.sourceId(), SourceAccessException.Reason.NOT_FOUND,
+                        "Anhang gehört nicht zur Seite", null));
     }
 
     private AssetContent download(HarvestSource source, String pageId, PageAttachment attachment) {
@@ -189,5 +269,13 @@ public class Assets {
         public String toString() {
             return "AssetContent[asset=" + asset + ", bytes=" + content.length + "]";
         }
+    }
+
+    /**
+     * Ein beschriebenes Bild.
+     *
+     * @param generated {@code true}, wenn die Beschreibung in diesem Aufruf entstand
+     */
+    public record DescribedImage(Asset asset, ImageDescription description, boolean generated) {
     }
 }

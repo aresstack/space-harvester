@@ -26,6 +26,12 @@ public interface AssetStore {
      */
     byte[] read(Asset asset);
 
+    /** Die Beschreibung genau dieser Bildbytes durch genau diesen Beschreiber und dieses Modell. */
+    Optional<ImageDescription> description(String imageSha256, String describer, String modelVersion);
+
+    /** Legt eine Beschreibung ab; eine vorhandene für dasselbe Bild und Modell wird ersetzt. */
+    void putDescription(ImageDescription description);
+
     /** Ablage für einen Dienst ohne Asset-Verzeichnis: findet nichts, jedes Schreiben scheitert. */
     static AssetStore unavailable() {
         return new AssetStore() {
@@ -41,6 +47,17 @@ public interface AssetStore {
 
             @Override
             public byte[] read(Asset asset) {
+                throw new AssetStoreException("Keine Asset-Ablage konfiguriert", null);
+            }
+
+            @Override
+            public Optional<ImageDescription> description(String imageSha256, String describer,
+                                                          String modelVersion) {
+                return Optional.empty();
+            }
+
+            @Override
+            public void putDescription(ImageDescription description) {
                 throw new AssetStoreException("Keine Asset-Ablage konfiguriert", null);
             }
         };

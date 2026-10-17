@@ -36,7 +36,13 @@ class AssetsTest {
 
     private final FakeSource source = new FakeSource();
 
+    private final CountingDescriber describer = new CountingDescriber();
+
     private Assets assets(long maxBytes) {
+        return assets(maxBytes, null);
+    }
+
+    private Assets assets(long maxBytes, ImageDescriber imageDescriber) {
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -48,7 +54,8 @@ class AssetsTest {
                 return "wiki".equals(sourceId) ? Optional.of(source) : Optional.empty();
             }
         };
-        return new Assets(catalog, new FileSystemAssetStore(directory), maxBytes, Clock.fixed(NOW, ZoneOffset.UTC));
+        return new Assets(catalog, new FileSystemAssetStore(directory), maxBytes, Clock.fixed(NOW, ZoneOffset.UTC),
+                imageDescriber);
     }
 
     @Test
@@ -140,6 +147,81 @@ class AssetsTest {
                 attachment("att5", "foto.png", "image/png", "1")));
 
         assertThat(previews).containsExactlyInAnyOrderEntriesOf(Map.of("att2", "att1", "att4", "att3"));
+    }
+
+    @Test
+    void descriptionsAreCachedPerImageBytesAndModelVersion() {
+        Assets assets = assets(1000, describer);
+        source.file("att1", "1", "bild-1");
+        PageAttachmentList v1 = list(attachment("att1", "a.png", "image/png", "1"));
+
+        assertThatThrownBy(() -> assets.description(v1, "att1")).isInstanceOfSatisfying(
+                ImageDescriptionException.class,
+                e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_FOUND));
+        Assets.DescribedImage first = assets.describe(v1, "att1");
+        Assets.DescribedImage again = assets.describe(v1, "att1");
+
+        assertThat(first.generated()).isTrue();
+        assertThat(again.generated()).isFalse();
+        assertThat(again.description().text()).isEqualTo("Bild mit 6 Bytes");
+        assertThat(assets.description(v1, "att1").description()).isEqualTo(first.description());
+        assertThat(describer.calls).isEqualTo(1);
+
+        source.file("att1", "2", "bild-zwei");
+        Assets.DescribedImage changed = assets.describe(list(attachment("att1", "a.png", "image/png", "2")), "att1");
+        assertThat(changed.generated()).isTrue();
+        assertThat(changed.description().imageSha256()).isNotEqualTo(first.description().imageSha256());
+
+        describer.version = "2";
+        assertThat(assets.describe(list(attachment("att1", "a.png", "image/png", "2")), "att1").generated())
+                .isTrue();
+        assertThat(describer.calls).isEqualTo(3);
+    }
+
+    @Test
+    void onlyImagesAreDescribedAndFailuresAreNotCached() {
+        source.file("att1", "1", "<mxfile/>");
+        source.file("att2", "1", "bild");
+
+        assertThatThrownBy(() -> assets(1000).describe(list(attachment("att2", "a.png", "image/png", "1")), "att2"))
+                .isInstanceOfSatisfying(ImageDescriptionException.class, e -> assertThat(e.reason())
+                        .isEqualTo(ImageDescriptionException.Reason.NOT_CONFIGURED));
+        Assets assets = assets(1000, describer);
+        assertThatThrownBy(() -> assets.describe(list(attachment("att1", "ablauf", "application/vnd.jgraph.mxfile",
+                "1")), "att1")).isInstanceOfSatisfying(ImageDescriptionException.class,
+                e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.NOT_AN_IMAGE));
+        describer.fail = true;
+        assertThatThrownBy(() -> assets.describe(list(attachment("att2", "a.png", "image/png", "1")), "att2"))
+                .isInstanceOfSatisfying(ImageDescriptionException.class,
+                        e -> assertThat(e.reason()).isEqualTo(ImageDescriptionException.Reason.FAILED));
+        describer.fail = false;
+        assertThat(assets.describe(list(attachment("att2", "a.png", "image/png", "1")), "att2").generated()).isTrue();
+    }
+
+    private static final class CountingDescriber implements ImageDescriber {
+
+        int calls;
+        String version = "1";
+        boolean fail;
+
+        @Override
+        public String id() {
+            return "test";
+        }
+
+        @Override
+        public String modelVersion() {
+            return "modell-" + version;
+        }
+
+        @Override
+        public String describe(byte[] image, String mediaType) {
+            calls++;
+            if (fail) {
+                throw new IllegalStateException("Modell weg");
+            }
+            return "Bild mit " + image.length + " Bytes";
+        }
     }
 
     private static PageAttachment attachment(String id, String title, String mediaType, String version) {

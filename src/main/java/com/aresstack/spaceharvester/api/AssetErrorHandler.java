@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
+import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import java.net.URI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,6 +33,25 @@ class AssetErrorHandler {
                 e.getCause() == null ? "-" : e.getCause().getClass().getName());
         return problem(HttpStatus.SERVICE_UNAVAILABLE, "asset-store-unavailable", "Asset-Ablage nicht verfügbar",
                 "Die Ablage für Anhänge kann gerade nicht lesen oder schreiben.");
+    }
+
+    @ExceptionHandler(ImageDescriptionException.class)
+    ProblemDetail description(ImageDescriptionException e) {
+        return switch (e.reason()) {
+            case NOT_CONFIGURED -> problem(HttpStatus.SERVICE_UNAVAILABLE, "image-description-unavailable",
+                    "Keine Bildbeschreibung verfügbar", "Für diesen Dienst ist kein Bildbeschreiber konfiguriert.");
+            case NOT_AN_IMAGE -> problem(HttpStatus.BAD_REQUEST, "asset-not-an-image", "Kein Bild",
+                    "Nur Bilder werden beschrieben; Diagrammdaten und Dokumente sind bereits lesbar.");
+            case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "image-description-not-found",
+                    "Keine Beschreibung vorhanden",
+                    "Für den aktuellen Stand des Bildes und das konfigurierte Modell gibt es noch keine Beschreibung.");
+            case FAILED -> {
+                LOG.warn("Bildbeschreibung fehlgeschlagen ({})",
+                        e.getCause() == null ? "-" : e.getCause().getClass().getName());
+                yield problem(HttpStatus.BAD_GATEWAY, "image-description-failed", "Bildbeschreibung fehlgeschlagen",
+                        "Das Modell hat keine verwertbare Beschreibung geliefert.");
+            }
+        };
     }
 
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {

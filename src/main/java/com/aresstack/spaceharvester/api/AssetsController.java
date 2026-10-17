@@ -121,6 +121,44 @@ public class AssetsController {
         return new ResponseEntity<>(content.content(), headers, HttpStatus.OK);
     }
 
+    @GetMapping("/{attachmentId}/description")
+    @Operation(summary = "Vorhandene Beschreibung eines Bildes",
+            description = "Maschinell erzeugt, kein bestätigter Teil der Seite. Gilt nur für die abgelegten Bildbytes "
+                    + "der aktuellen Version und das konfigurierte Modell; sonst image-description-not-found. "
+                    + "Freigabe content.")
+    @ApiResponse(responseCode = "200", description = "Beschreibung")
+    @ApiResponse(responseCode = "404", description = "Seite, Anhang oder Beschreibung unbekannt")
+    @ApiResponse(responseCode = "503", description = "Kein Bildbeschreiber konfiguriert")
+    public ImageDescriptionResponse description(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
+            @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId) {
+        return ImageDescriptionResponse.of(assets.description(visible(caller, sourceId, pageId, AccessKind.CONTENT),
+                attachmentId));
+    }
+
+    @PostMapping("/{attachmentId}/description")
+    @Operation(summary = "Bild beschreiben lassen",
+            description = "Liefert die vorhandene Beschreibung oder erzeugt sie mit dem konfigurierten Modell; das "
+                    + "Bild wird dafür bei Bedarf über die Quelle geladen. Neu erzeugt wird nur, wenn sich Bild oder "
+                    + "Modellversion geändert haben. Freigaben content und sync.")
+    @ApiResponse(responseCode = "200", description = "Beschreibung")
+    @ApiResponse(responseCode = "400", description = "Anhang ist kein Bild (asset-not-an-image)")
+    @ApiResponse(responseCode = "502", description = "Modell ohne verwertbare Antwort (image-description-failed)")
+    @ApiResponse(responseCode = "503", description = "Kein Bildbeschreiber konfiguriert")
+    public ImageDescriptionResponse describe(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
+            @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId) {
+        PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
+        access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return ImageDescriptionResponse.of(assets.describe(list, attachmentId));
+    }
+
     /** Liest die Anhangsliste und prüft die Freigabe für den aktuellen Space der Seite, verdeckt. */
     private PageAttachmentList visible(AccessContext caller, String sourceId, String pageId, AccessKind kind) {
         if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), kind)) {
@@ -198,6 +236,24 @@ public class AssetsController {
         static HarvestEntry of(AssetHarvest.Entry entry) {
             return new HarvestEntry(entry.attachmentId(), entry.status(),
                     entry.asset() == null ? null : StoredAsset.of(entry.asset()), entry.code());
+        }
+    }
+
+    /**
+     * Beschreibung eines Bildes.
+     *
+     * @param provenance immer {@code machine-generated}: keine Aussage des Seitenautors
+     * @param generated  {@code true}, wenn die Beschreibung in diesem Aufruf entstand
+     */
+    public record ImageDescriptionResponse(String attachmentId, @Schema(nullable = true) String version,
+                                           String imageSha256, String describer, String modelVersion,
+                                           String provenance, boolean generated, Instant createdAt, String text) {
+
+        static ImageDescriptionResponse of(Assets.DescribedImage described) {
+            return new ImageDescriptionResponse(described.asset().attachmentId(), described.asset().version(),
+                    described.description().imageSha256(), described.description().describer(),
+                    described.description().modelVersion(), "machine-generated", described.generated(),
+                    described.description().createdAt(), described.description().text());
         }
     }
 }
