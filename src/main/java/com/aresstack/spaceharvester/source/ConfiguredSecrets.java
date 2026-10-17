@@ -11,8 +11,9 @@ import java.util.Map;
  * {@link SecretProvider} für Zugangsdaten aus der Konfiguration (YAML, Umgebungsvariablen). Jede Quelle mit
  * Anmeldung bekommt die Referenz {@code source:<id>}: Basic als Benutzername und Passwort, ein Personal Access Token
  * ohne Benutzername (der Confluence-Adapter sendet es dann als {@code Bearer}). Das Geheimnis wird bei jeder
- * Auflösung als frische Kopie herausgegeben, die der Adapter nach Gebrauch löscht. Weitere Secret-Speicher (z. B. Azure Key Vault, #22) können
- * später als eigener {@link SecretProvider} daneben treten.
+ * Auflösung als frische Kopie herausgegeben, die der Adapter nach Gebrauch löscht. Azure Key Vault (#22) braucht keinen
+ * eigenen {@link SecretProvider}: Spring löst Platzhalter über die optionale Key-Vault-PropertySource auf, bevor die
+ * Werte hier ankommen.
  */
 final class ConfiguredSecrets implements SecretProvider {
 
