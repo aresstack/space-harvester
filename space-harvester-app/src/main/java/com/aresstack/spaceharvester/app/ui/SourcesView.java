@@ -283,11 +283,9 @@ public final class SourcesView implements View {
             return;
         }
         context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry.config().auth()), value);
-        if (!entry.secretMissing()) {
-            feedback.info("Eingabe gemerkt", "Die Konfiguration liefert bereits ein Geheimnis; es bleibt in Gebrauch.");
-            return;
-        }
-        feedback.working("Quelle wird mit den neuen Zugangsdaten gestartet …");
+        // Die Eingabe geht einer Property oder Variable vor und gilt sofort (Neustart der Quellen).
+        feedback.working(entry.secretMissing() ? "Quelle wird mit den neuen Zugangsdaten gestartet …"
+                : "Die Eingabe ersetzt für diese Sitzung den Wert aus Property/Umgebung; Quellen starten neu …");
         context.reload(() -> { });
     }
 

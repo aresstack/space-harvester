@@ -445,11 +445,24 @@ final class SourceWizard {
                 if (previous != null) {
                     Arrays.fill(previous, '\0');
                 }
+            } else if (!typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE)) {
+                // Auch hier erst der Tresor (verschlüsselt gemerkt), dann die Datei; scheitert sie, kommt er zurück.
+                String stored = vault.raw(source.id());
+                vault.remove(source.id());
+                try {
+                    editor.save(context.configFile(), draft, backup);
+                } catch (IOException | RuntimeException e) {
+                    if (stored != null) {
+                        try {
+                            vault.restore(source.id(), stored);
+                        } catch (IOException | RuntimeException restore) {
+                            e.addSuppressed(restore);
+                        }
+                    }
+                    throw e;
+                }
             } else {
                 editor.save(context.configFile(), draft, backup);
-                if (!typed && (loginChanged(source) || source.authType() == SourceSettingsConfig.AuthType.NONE)) {
-                    vault.remove(source.id());
-                }
             }
             return source.id();
         }, savedId -> {

@@ -42,10 +42,12 @@ class ConfigFileEditorTest {
         String text = Files.readString(file);
         assertThat(text).startsWith(example.substring(0, example.indexOf("space-harvester:")))
                 .contains("# - id: handbuch", "token: ${CONFLUENCE_TOKEN}", "token: ${WIKI_TOKEN}",
-                        "mode: pac-url-powershell", "thumbprint: \"AB:CD\"");
+                        "#   mode: pac-url-powershell", "thumbprint: \"AB:CD\"");
         assertThat(home.resolve("app.yml.bak")).hasContent(example);
         AppSettings settings = loader.load(file);
         assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("confluence", "wiki");
+        assertThat(settings.proxy().mode()).as("Beispiel läuft auch ohne Windows")
+                .isEqualTo(new AppSettingsLoader(new Placeholders(name -> null), home).defaultProxy().mode());
         AppSettings.SourceEntry wiki = settings.sources().get(1);
         assertThat(wiki.secretMissing()).isFalse();
         assertThat(wiki.config().baseUrl()).hasToString("https://wiki.example.org");

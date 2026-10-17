@@ -32,12 +32,13 @@ space-harvester:
     #     include: "*.md, *.txt, *.pdf"
 
   network:
-    proxy:
-      # Standard unter Windows (auch ohne diesen Abschnitt): PAC-Adresse der Interneteinstellungen per PowerShell.
-      mode: pac-url-powershell  # pac-url-powershell | pac-url-windows-settings | pac-url-wscript | windows-static-proxy
-                                # | pac-url-manual | manual-proxy | disabled
-      # pac-url: http://proxy.example.org/proxy.pac   # nur bei pac-url-manual
-      # non-proxy-hosts: [localhost, "*.intern"]
+    # Ohne Angabe gilt unter Windows pac-url-powershell (PAC-Adresse der Interneteinstellungen per PowerShell),
+    # sonst disabled. Der Assistent (Schritt "Proxy und Netzwerk") schreibt den Abschnitt bei Bedarf selbst.
+    # proxy:
+    #   mode: pac-url-powershell  # pac-url-powershell | pac-url-windows-settings | pac-url-wscript
+    #                             # | windows-static-proxy | pac-url-manual | manual-proxy | disabled
+    #   pac-url: http://proxy.example.org/proxy.pac   # nur bei pac-url-manual
+    #   non-proxy-hosts: [localhost, "*.intern"]
     async-transport: web-client
 
 # Eigene Zertifizierungsstellen (wie beim Dienst):
