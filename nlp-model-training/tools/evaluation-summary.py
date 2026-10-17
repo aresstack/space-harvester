@@ -69,12 +69,15 @@ def main():
                    f"Test {tagger['test']:.2f} %.")
         out.append("")
         relations = evaluation["sets"]["test.gold"]["relations"]
-        out.append("| Relation (Test, Gold-Wortarten) | Gold | Precision | Recall | F1 |")
-        out.append("|---|---:|---:|---:|---:|")
+        predicted = evaluation["sets"]["test.predicted"]["relations"]
+        out.append("| Relation (Test) | Gold | Precision | Recall | F1 | F1 mit OpenNLP-Wortarten |")
+        out.append("|---|---:|---:|---:|---:|---:|")
         for name in CORE:
             r = relations.get(name)
+            p = predicted.get(name) or {"f1": 0}
             if r and r["gold"]:
-                out.append(f"| {name} | {r['gold']} | {r['precision']:.1f} | {r['recall']:.1f} | {r['f1']:.1f} |")
+                out.append(f"| {name} | {r['gold']} | {r['precision']:.1f} | {r['recall']:.1f} | {r['f1']:.1f} | "
+                           f"{p['f1']:.1f} |")
         out.append("")
         ref, refp = evaluation["referenceGoldUpos"], evaluation["referencePredictedUpos"]
         out.append(f"Prüfsätze: {ref['passed']}/{ref['checks']} Kanten mit Gold-Wortarten, "

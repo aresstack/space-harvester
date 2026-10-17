@@ -54,6 +54,8 @@ def treebankDir = providers.gradleProperty('treebankDir')
         .map { layout.projectDirectory.dir(it) }
         .orElse(layout.buildDirectory.dir('treebank'))
 def trainingHeap = providers.gradleProperty('trainingHeap')
+// Verzeichnis mit fertigen Release-Assets für repackageGermanModel (Workflow-Artefakt, Entwurf, von Hand abgelegt)
+def sourceDir = providers.gradleProperty('sourceDir')
 def trainingCommit = providers.environmentVariable('GITHUB_SHA')
         .orElse(providers.exec { commandLine 'git', 'rev-parse', 'HEAD'; ignoreExitValue = true }
                 .standardOutput.asText.map { it.trim() })
@@ -73,6 +75,9 @@ def modelTask = { String name, String command, String text ->
         if (trainingHeap.isPresent()) {
             args '--heap', trainingHeap.get()
         }
+        if (sourceDir.isPresent()) {
+            args '--from', file(sourceDir.get()).absolutePath
+        }
         systemProperty 'training.commit', trainingCommit.getOrElse('unknown')
         systemProperty 'training.gradleVersion', gradle.gradleVersion
         outputs.upToDateWhen { false }
@@ -91,12 +96,14 @@ def pack = modelTask('packageGermanModel', 'package',
         'Verpackt Modell, Manifest, Evaluation, Lizenz und Attribution als Release-Assets mit SHA256SUMS.')
 def verify = modelTask('verifyGermanModel', 'verify',
         'Lädt das verpackte Modell wie ein Verbraucher (SHA-256, Manifest, Parsen ohne Training).')
+def repackage = modelTask('repackageGermanModel', 'repackage',
+        'Verpackt fertige Release-Assets aus -PsourceDir=… mit dem aktuellen Lizenzstand neu, ohne Treebank und Training.')
 
 validate.configure { dependsOn prepare }
 train.configure { dependsOn validate }
 evaluate.configure { mustRunAfter train }
 pack.configure { mustRunAfter evaluate }
-verify.configure { mustRunAfter pack }
+verify.configure { mustRunAfter pack, repackage }
 
 tasks.register('buildGermanModel') {
     group = 'model training'
