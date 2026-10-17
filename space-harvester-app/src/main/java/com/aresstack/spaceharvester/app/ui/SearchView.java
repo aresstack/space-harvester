@@ -16,22 +16,24 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
-import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
+import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -39,8 +41,9 @@ import java.util.TreeSet;
  * Globale Suche über den lokalen Bestand: Titelwörter, optional nach Quelle und Space gefiltert, sortiert nach Titel,
  * Änderung oder Relevanz (semantisch nur mit eingerichtetem Modell). Nur Bedienung und Darstellung: Suche, Sortierung,
  * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, {@code RelevanceSearch}, #114), ohne gewählte Quelle als
- * eine globale Suche über alle Quellen, mit gewählter Quelle mit demselben Anwendungsfall und {@code sourceId}.
- * Unter „Alle Quellen“ beschränkt „Quellen …“ die globale Suche auf ausgewählte Quellen ({@code sourceIds}).
+ * eine globale Suche über alle Quellen. Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne
+ * {@code sourceIds}, eine einzelne Quelle mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die
+ * Space-Auswahl bietet die Spaces der angehakten Quellen an.
  * „Weitere laden“ folgt dem Cursor des Core; hat ein Abgleich den Index inzwischen geändert, beginnt dieselbe Suche von
  * vorn. Nur die jeweils letzte Anfrage darf die Liste ändern.
  */
@@ -55,8 +58,9 @@ public final class SearchView implements View {
     private final ComposerToggleButton byTitle = toggle("Titel", "Nach Titel sortieren");
     private final ComposerToggleButton byModified = toggle("Neueste", "Zuletzt geänderte zuerst");
     private final ComposerToggleButton byRelevance = toggle("Relevanz", "Nach Ähnlichkeit zur Anfrage");
-    private final ComposerButton chooser = Comic.button("Quellen: alle", "Die Suche über alle Quellen auf einzelne "
-            + "Quellen beschränken");
+    private final JPanel sourcesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+    private final JCheckBox all = checkBox("Alle", "Alle freigegebenen Quellen durchsuchen (ohne sourceIds)");
+    private final Map<String, JCheckBox> boxes = new LinkedHashMap<>();
     private final ComposerButton run = Comic.primary("Suchen", "Im lokalen Bestand suchen");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
@@ -68,8 +72,9 @@ public final class SearchView implements View {
     private String nextCursor;
     /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
     private int request;
-    /** Quellen, auf die „Alle Quellen“ beschränkt ist; leer für alle. */
+    /** Angehakte Quellen; leer für alle. */
     private final Set<String> chosen = new TreeSet<>();
+    private boolean updating;
 
     public SearchView(AppContext context) {
         this.context = context;
@@ -85,8 +90,10 @@ public final class SearchView implements View {
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
-        chooser.addActionListener(e -> chooseSources());
-        picker.sourceBox().addActionListener(e -> chooser.setEnabled(picker.sourceId() == null));
+        all.addActionListener(e -> restrictTo(List.of()));
+        sourcesRow.setOpaque(false);
+        context.onChange(ignored -> refreshSources());
+        refreshSources();
         table.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -98,11 +105,19 @@ public final class SearchView implements View {
             }
         });
 
-        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Quelle"), picker.sourceBox(), chooser,
-                Comic.caption("Space"), picker.spaceBox(), byTitle, byModified, byRelevance, run);
+        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Space"), picker.spaceBox(), byTitle,
+                byModified, byRelevance, run);
+        JPanel lines = new JPanel(new BorderLayout(0, 6));
+        lines.setOpaque(false);
+        lines.add(bar, BorderLayout.NORTH);
+        JPanel scope = new JPanel(new BorderLayout(8, 0));
+        scope.setOpaque(false);
+        scope.add(Comic.caption("Quellen"), BorderLayout.WEST);
+        scope.add(sourcesRow, BorderLayout.CENTER);
+        lines.add(scope, BorderLayout.SOUTH);
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
-        head.add(bar, BorderLayout.NORTH);
+        head.add(lines, BorderLayout.NORTH);
         head.add(Comic.note("Gesucht wird nur im lokalen Bestand, also in Seiten, die ein Abgleich oder ein Seitenabruf "
                 + "gespeichert hat. Doppelklick öffnet die Seite unter Inhalte."), BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
@@ -135,35 +150,60 @@ public final class SearchView implements View {
         search();
     }
 
-    /** Beschränkt „Alle Quellen“ auf diese Quellen; leer hebt die Beschränkung auf. */
+    /** Beschränkt die Suche auf diese Quellen; leer sucht in allen. */
     void restrictTo(Collection<String> sourceIds) {
         chosen.clear();
         chosen.addAll(sourceIds);
-        chooser.setText(chosen.isEmpty() ? "Quellen: alle" : "Quellen: " + chosen.size());
+        chosen.retainAll(boxes.keySet());
+        updating = true;
+        all.setSelected(chosen.isEmpty());
+        boxes.forEach((id, box) -> box.setSelected(chosen.contains(id)));
+        updating = false;
+        picker.spaceScope(chosen);
     }
 
-    private void chooseSources() {
+    /** Die angehakten Quellen; leer heißt alle. */
+    Set<String> chosenSources() {
+        return Set.copyOf(chosen);
+    }
+
+    /** Ein Häkchen je laufender Quelle; entfernte Quellen fallen aus der Auswahl. */
+    private void refreshSources() {
         AppRuntime runtime = context.runtime();
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
-        // Entfernte Quellen fallen aus der Auswahl.
-        chosen.retainAll(sources.stream().map(HarvestSource::id).toList());
-        JPopupMenu menu = new JPopupMenu();
+        boxes.clear();
+        sourcesRow.removeAll();
+        sourcesRow.add(all);
         for (HarvestSource source : sources) {
-            JCheckBoxMenuItem item = new JCheckBoxMenuItem(source.title() == null || source.title().isBlank()
-                    ? source.id() : source.title(), chosen.contains(source.id()));
-            item.addActionListener(e -> {
+            JCheckBox box = checkBox(source.title() == null || source.title().isBlank() ? source.id() : source.title(),
+                    "Nur angehakte Quellen durchsuchen (" + source.id() + ")");
+            box.addActionListener(e -> {
+                if (updating) {
+                    return;
+                }
                 Set<String> next = new TreeSet<>(chosen);
-                if (item.isSelected()) {
+                if (box.isSelected()) {
                     next.add(source.id());
                 } else {
                     next.remove(source.id());
                 }
                 restrictTo(next);
             });
-            menu.add(item);
+            boxes.put(source.id(), box);
+            sourcesRow.add(box);
         }
-        restrictTo(chosen);
-        menu.show(chooser, 0, chooser.getHeight());
+        restrictTo(new ArrayList<>(chosen));
+        sourcesRow.revalidate();
+        sourcesRow.repaint();
+    }
+
+    private static JCheckBox checkBox(String text, String tooltip) {
+        JCheckBox box = new JCheckBox(text);
+        box.setOpaque(false);
+        box.setFont(Comic.regular(13f));
+        box.setForeground(Comic.INK);
+        box.setToolTipText(tooltip);
+        return box;
     }
 
     private void search() {
@@ -173,7 +213,8 @@ public final class SearchView implements View {
             return;
         }
         String text = query.getText().trim();
-        String sourceId = picker.sourceId();
+        // Eine angehakte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
+        String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
         String spaceKey = picker.spaceKey();
         boolean relevance = byRelevance.isSelected();
         SearchSort sort = byModified.isSelected() ? SearchSort.MODIFIED_DESC : SearchSort.TITLE;
@@ -186,7 +227,7 @@ public final class SearchView implements View {
             return;
         }
         List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
-        List<String> only = sourceId == null ? List.copyOf(chosen) : List.of();
+        List<String> only = chosen.size() > 1 ? List.copyOf(chosen) : List.of();
         int id = ++request;
         run.setEnabled(false);
         more.setEnabled(false);
