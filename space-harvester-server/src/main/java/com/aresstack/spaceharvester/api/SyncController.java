@@ -184,9 +184,9 @@ public class SyncController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<Void> deleteEvent(@Parameter(hidden = true) AccessContext caller,
-                                            @PathVariable String syncId, @PathVariable long sequence) {
+                                            @PathVariable String syncId, @PathVariable String sequence) {
         visible(caller, syncs.status(syncId, owner(caller)));
-        if (!syncs.deleteEvent(syncId, sequence, owner(caller))) {
+        if (!syncs.deleteEvent(syncId, EventNotFoundException.sequence(sequence), owner(caller))) {
             throw new EventNotFoundException();
         }
         return ResponseEntity.noContent().build();

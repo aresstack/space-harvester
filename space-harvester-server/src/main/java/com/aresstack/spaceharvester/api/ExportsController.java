@@ -197,9 +197,9 @@ public class ExportsController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<Void> deleteEvent(@Parameter(hidden = true) AccessContext caller,
-                                            @PathVariable String exportId, @PathVariable long sequence) {
+                                            @PathVariable String exportId, @PathVariable String sequence) {
         ownExport(caller, exportId);
-        if (!jobs.deleteEvent(exportId, sequence, owner(caller))) {
+        if (!jobs.deleteEvent(exportId, EventNotFoundException.sequence(sequence), owner(caller))) {
             throw new EventNotFoundException();
         }
         return ResponseEntity.noContent().build();
