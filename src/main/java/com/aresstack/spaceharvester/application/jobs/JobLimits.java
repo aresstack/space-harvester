@@ -10,14 +10,22 @@ import java.util.Objects;
  * @param maxQueued     höchstens wartende Aufträge; darüber hinaus wird ein neuer Auftrag abgelehnt
  * @param maxRunTime    Laufzeitgrenze je Auftrag ab Start; wird an jedem {@link JobContext#checkpoint()} geprüft
  * @param retention     wie lange ein beendeter Auftrag ab seinem Ende abrufbar bleibt
+ * @param maxOpenPerOwner höchstens offene (laufende und wartende) Aufträge je Auslöser, damit ein Client nicht alle
+ *                      Plätze belegt; interne Aufträge ohne Auslöser zählen nicht
  */
-public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention) {
+public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention,
+        int maxOpenPerOwner) {
 
     /** Standard für {@link #retention()}. */
     public static final Duration DEFAULT_RETENTION = Duration.ofDays(7);
 
     public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime) {
         this(maxConcurrent, maxQueued, maxRunTime, DEFAULT_RETENTION);
+    }
+
+    /** Ohne Grenze je Auslöser (nur die Gesamtgrenze). */
+    public JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, Duration retention) {
+        this(maxConcurrent, maxQueued, maxRunTime, retention, maxConcurrent + maxQueued);
     }
 
     public JobLimits {
@@ -34,6 +42,9 @@ public record JobLimits(int maxConcurrent, int maxQueued, Duration maxRunTime, D
         Objects.requireNonNull(retention, "retention");
         if (retention.isNegative() || retention.isZero()) {
             throw new IllegalArgumentException("retention muss positiv sein");
+        }
+        if (maxOpenPerOwner < 1) {
+            throw new IllegalArgumentException("maxOpenPerOwner muss mindestens 1 sein");
         }
     }
 }

@@ -160,4 +160,12 @@ class ContentListingTest {
         assertThatThrownBy(() -> listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, 0, -1))
                 .isInstanceOf(InvalidQueryException.class);
     }
+
+    @Test
+    void startBeyondTheCapIsInvalid() {
+        publish(confirmed("g1"), List.of(page("1", null, "a")));
+        assertThatThrownBy(() -> listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, ContentListing.MAX_START + 1, 25))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThat(listing(ALLOW_ALL).space(CALLER, "wiki", "DEV", null, ContentListing.MAX_START, 25).pages()).isEmpty();
+    }
 }

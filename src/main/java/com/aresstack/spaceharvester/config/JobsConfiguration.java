@@ -30,7 +30,7 @@ class JobsConfiguration {
     Jobs jobs(JobStore jobStore, JobsProperties properties) {
         return new ExecutorOwningJobs(jobStore,
                 new JobLimits(properties.maxConcurrent(), properties.maxQueued(), properties.maxRunTime(),
-                        properties.retention()));
+                        properties.retention(), properties.maxOpenPerOwner()));
     }
 
     /**

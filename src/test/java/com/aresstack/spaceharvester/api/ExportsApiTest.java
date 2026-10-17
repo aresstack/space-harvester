@@ -158,6 +158,35 @@ class ExportsApiTest {
     }
 
     @Test
+    void requestedFormatIsDownloadableNextToTheRawFirstArtifact() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=json", null)).path("id")
+                .asString();
+
+        JsonNode done = awaitFinished(id);
+
+        assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
+                .containsExactly("pages.ndjson", "tree.json", "pages.json", "manifest.json");
+        HttpResponse<byte[]> pages = send("GET", "/api/v1/exports/" + id + "/artifact/pages.json", null);
+        assertThat(pages.statusCode()).isEqualTo(200);
+        assertThat(pages.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("application/json"));
+        assertThat(body(pages)).extracting(page -> page.path("header").path("pageId").asString())
+                .containsExactly("100", "101", "200");
+        assertThat(body(pages).get(1).path("content")).isEqualTo(json.readTree(PRETTY));
+        // Andere Clients bekommen auch die konvertierte Datei nicht.
+        assertThat(send("GET", "/api/v1/exports/" + id + "/artifact/pages.json", OTHER_TOKEN).statusCode())
+                .isEqualTo(404);
+    }
+
+    @Test
+    void unknownFormatIsRejected() throws Exception {
+        HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
+
+        assertThat(response.statusCode()).isEqualTo(400);
+        assertThat(body(response).path("type").asString()).endsWith("/invalid-request");
+    }
+
+    @Test
     void foreignExportIsNotFoundForAnotherClient() throws Exception {
         String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null)).path("id").asString();
         awaitFinished(id);

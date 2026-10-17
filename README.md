@@ -263,6 +263,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/attachments` | Alle Anhänge einer Seite als Metadaten, live, auch nicht eingebettete, ohne Dateiinhalte; `complete=false` mit `warnings`, wenn die Quelle Einträge auslassen musste (#9) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
@@ -346,6 +347,7 @@ Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebni
 gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In
 `view=extended` steht je Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich
 geändert haben). Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`.
+Embeddings und Reranking sind als nächste Stufe vorbereitet (Schnittstellen ohne Modell, [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
@@ -394,6 +396,15 @@ alle anderen erhalten `job-not-found` (404) wie bei einer unbekannten ID. Zu vie
 `too-many-jobs` (429). Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
+
+**Ausgabeformate (#30):** `?format=json` (wiederholbar) erzeugt am Ende des Exports zusätzlich abgeleitete Dateien aus
+denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
+`rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum. Converter lesen nur die exportierten
+Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
+`conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version
+ergeben dieselbe Datei. Ein unbekanntes Format ergibt `invalid-request` (400). Jede konvertierte Datei darf höchstens
+`space-harvester.export.max-converted-bytes` groß werden (Standard 512 MiB), sonst scheitert der Export mit
+`CONVERSION_TOO_LARGE`, statt abzuschneiden.
 
 Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 ([#27](https://github.com/aresstack/space-harvester/issues/27)).

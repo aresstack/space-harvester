@@ -105,6 +105,7 @@ class SourcesApiTest {
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body())
                 .contains("\"id\":\"basic-wiki\"", "\"id\":\"pat-wiki\"", "\"type\":\"confluence\"")
+                .contains("\"stored-page\"", "\"async-stored-page\"", "\"page-attachments\"")
                 .doesNotContain(PASSWORD, TOKEN, "harvester", "127.0.0.1");
     }
 

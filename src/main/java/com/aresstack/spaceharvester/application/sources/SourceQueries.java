@@ -71,6 +71,24 @@ public class SourceQueries {
                 MetadataHash.of(source.id(), page), AttributesHash.of(source.id(), page)), clock.instant());
     }
 
+    /**
+     * Die vollständige Anhangsliste einer Seite, live aus der Quelle (#9), mit dem aktuellen Space der Seite für die
+     * Rechteprüfung. Lädt keine Dateien.
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SourceAccessException  wenn die Quelle nicht antworten kann oder die Seite nicht kennt
+     */
+    public PageAttachmentList attachments(String sourceId, String pageId) {
+        HarvestSource source = source(sourceId);
+        PageMetadata page = source.pageMetadata(pageId);
+        PageAttachments attachments = source.attachments(pageId);
+        if (!attachments.pageId().equals(page.pageId())) {
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.INVALID_RESPONSE,
+                    "Anhangsliste gehört zu einer anderen Seite", null);
+        }
+        return new PageAttachmentList(source.id(), page.partitionKey(), attachments, clock.instant());
+    }
+
     private HarvestSource source(String sourceId) {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
     }

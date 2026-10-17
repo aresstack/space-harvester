@@ -166,6 +166,51 @@ space-harvester:
 nichts herauskommt; dass ein fremder, aber existierender Auftrag verborgen bleibt, prüfen die Tests der jeweiligen
 Route mit einem echten Auftrag eines anderen Clients (`ExportsApiTest`, Sync-API-Tests).
 
+## Durchsicht von main (2026-10-17)
+
+Durchgesehen nach dem Zusammenführen aller Stränge: alle Routen unter `/api` (Seiten, Baum, Suche, Metadaten,
+Anreicherungen, Confluence-Fassade, Exporte samt Downloads, Syncs), die Weboberfläche `/ui/`, Logs, Fehlerantworten,
+Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Eine Anhangsroute und Converter-Ausgaben gab es zu
+diesem Zeitpunkt noch nicht; sie fallen bei ihrem Hinzukommen unter `ApiRouteCoverageTest` und die Regeln oben.
+
+**Ohne Befund**
+
+- Jede Route verlangt ein Token und prüft über den `AccessGuard`; Listen, Baum, Suche, Fassade und Live-Metadaten
+  filtern je Seite, eine verweigerte Seite antwortet wie eine fehlende. Exporte und Syncs prüfen den Eigentümer, ein
+  fremder Auftrag ist 404. Endnutzer bekommen nur `metadata` und `content`.
+- Keine Zugangsdaten in Logs, `toString()`, Antworten, Exporten oder dem Lucene-Index; Fehlerantworten haben feste
+  Texte. Das Endnutzer-Token liest nur der Quellenadapter (ArchUnit).
+- Dateien: Export-IDs und Dateinamen nur nach Whitelist, Normalisierung mit Präfixprüfung, Rohdateien mit `CREATE_NEW`;
+  Index- und Exportverzeichnisse nur aus der Konfiguration. Keine Route nimmt eine URL zum Abrufen an (kein SSRF).
+- Größen: `limit` höchstens 100, Suchbegriffe und Filter begrenzt, Baum nach Tiefe und Knotenzahl, Antworten der Quelle
+  höchstens 20 MiB (Endnutzer-Prüfung 1 MiB), Weiterleitungen nur zum selben Host.
+- `/ui/`: eigene Filterkette nur für `/ui`, `/ui/**`, strenge CSP (`default-src 'self'`, `object-src 'none'`,
+  `frame-ancestors 'none'`), `Referrer-Policy: no-referrer`, kein `innerHTML`, Token nur im `sessionStorage`. API-
+  Antworten tragen `nosniff`, `Cache-Control: no-store` und `X-Frame-Options: DENY`.
+
+**Behoben**
+
+| Befund | Behebung |
+|---|---|
+| Job-Fehler übernahmen die Meldung des Transports (interne URLs, Hosts, Proxy-Route) in Status und Job-Store | fester Text je Grund (`SOURCE_<REASON>`), `JobsTest` |
+| Ein Client konnte alle Auftragsplätze belegen | `space-harvester.jobs.max-open-per-owner` (Standard 4), darüber 429 |
+| Anreicherungen neu berechnen (schreibt in den Index) ging mit reiner Lesefreigabe, auch für Endnutzer | verlangt zusätzlich `sync` für den Space, `EnrichmentApiTest` |
+| Fassade: unbegrenztes `start` ließ eine Anfrage den ganzen Space lesen und prüfen | `start` höchstens 10 000, darüber 400 |
+| Keine Tomcat-Grenzen für Formular- und verworfene Bodies | `max-http-form-post-size` 64 KB, `max-swallow-size` 1 MB |
+| Config-Server-Zugang in der URL möglich | `docs/CONFIGURATION.md`: Zugang nur über `username`/`password` |
+
+**Bewusst offen**
+
+- `parentPageId` einer sichtbaren Seite nennt auch einen Elternteil, den ein Endnutzer in Confluence nicht sehen darf
+  (nur die ID, kein Titel oder Inhalt). Confluence vererbt Leseeinschränkungen auf Unterseiten, der Fall ist daher
+  selten. Der Baum blendet solche Elternteile schon aus.
+- Plattenplatz der Exporte: Artefakte bleiben bis zum Ende der Aufbewahrung; die Grenze je Client begrenzt nur
+  gleichzeitige Aufträge. Eine Gesamtgrenze in Bytes kommt mit dem Aufräumen (#11/#12).
+- Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
+- Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
+- Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
+  Space existiert.
+
 ## Noch offen
 
 - Durchreichung: Sammelprüfung großer Listen per CQL statt je Seite; Live-Test gegen Confluence (#24). Ein

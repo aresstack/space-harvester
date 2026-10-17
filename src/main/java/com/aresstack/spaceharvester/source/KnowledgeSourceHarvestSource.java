@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
@@ -10,9 +12,12 @@ import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
+import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -84,6 +89,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         if (port instanceof AsyncStoredContentSource) {
             capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
+        }
+        if (port instanceof AttachmentListSource) {
+            capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
         }
         return capabilities;
     }
@@ -182,6 +190,30 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 content.nativeFormat(), content.retrievedAt());
     }
 
+    @Override
+    public PageAttachments attachments(String pageId) {
+        if (!(port instanceof AttachmentListSource listing)) {
+            return HarvestSource.super.attachments(pageId);
+        }
+        StoredAttachmentList list;
+        try {
+            list = listing.storedAttachments(pageId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
+                .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    private static PageAttachment attachment(KnowledgeResource resource) {
+        String size = resource.metadata().asMap().get(KnowledgeMetadata.FILE_SIZE);
+        String version = resource.revision().version();
+        return new PageAttachment(lastSegment(resource.id()), resource.id().value(), resource.title(),
+                resource.contentType(), size == null ? null : Long.valueOf(size),
+                version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
+                resource.location().orElse(null));
+    }
+
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */
     private PageMetadata withSpace(KnowledgeResource resource) {
         if (resource.scope() == null || resource.scope().isEmpty()) {
@@ -229,6 +261,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 return local;
             }
         }
+        return lastSegment(id);
+    }
+
+    /** Letzter Pfadteil der Ressourcen-ID, bei Confluence die Content-ID (Seiten und Anhänge). */
+    private static String lastSegment(KnowledgeResourceId id) {
         String part = id.schemeSpecificPart();
         return part.substring(part.lastIndexOf('/') + 1);
     }

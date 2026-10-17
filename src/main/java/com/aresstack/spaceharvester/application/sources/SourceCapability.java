@@ -14,5 +14,7 @@ public enum SourceCapability {
     /** Native Antwort einer Seite Byte für Byte ({@link HarvestSource#storedPage}). */
     STORED_PAGE,
     /** Dieselbe Antwort nicht blockierend ({@link HarvestSource#storedPageAsync}). */
-    ASYNC_STORED_PAGE
+    ASYNC_STORED_PAGE,
+    /** Anhangsliste einer Seite als Metadaten ({@link HarvestSource#attachments}, #9). */
+    PAGE_ATTACHMENTS
 }
