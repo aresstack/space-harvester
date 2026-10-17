@@ -29,13 +29,38 @@ Die Treebank selbst (`*.conllu`) wird weder eingecheckt noch mit dem Modell ausg
 | Bestandteil | Lizenz | Quelle |
 |---|---|---|
 | UD German GSD, Annotationen (UPOS, Dependenzen) | CC BY-SA 4.0, seit v2.5 (2019-11-15) ohne NC | `LICENSE.txt` und README der Treebank, r2.18 |
-| UD German GSD, zugrunde liegende Sätze | keine Lizenz; Google beansprucht kein Eigentum und kein Urheberrecht, Sätze „as is“, in manchen Rechtsordnungen ggf. geschützt, gesammelt unter Schranken oder stillschweigender Erlaubnis | README der Treebank, Abschnitt „Licenses and terms-of-use“ |
+| UD German GSD, zugrunde liegende Sätze | **Keine pauschale Textlizenz durch die Treebank ausgewiesen.** Google beansprucht kein Eigentum oder Urheberrecht und stellt die Sätze „as is“ bereit; einzelne Texte können dennoch Rechte Dritter berühren. Das ist **nicht** gleichbedeutend mit „gemeinfrei“ oder „frei von Rechten“. | README der Treebank, Abschnitt „Licenses and terms-of-use“ |
 | Teile aus TIGER (CoNLL 2006) | Erlaubnis von Hans Uszkoreit für die Nutzung der Sätze in diesem Release | README der Treebank |
 | MaltParser 1.9.2 | BSD-3-Clause | POM `org.maltparser:maltparser:1.9.2` |
 | LIBLINEAR 1.8 (`de.bwaldvogel:liblinear`), LIBSVM 3.1 | BSD-3-Clause | POMs |
 | reload4j 1.2.26 (ersetzt log4j 1.2.16) | Apache-2.0 | POM |
 | Apache OpenNLP 2.5.12, `opennlp-models-pos-de` 1.3.0 | Apache-2.0 | POMs; nur für die Evaluation, nicht im Modell |
 | Trainings- und Ladecode in diesem Repository | MIT | `LICENSE` |
+
+## Reichweite der Lizenzhinweise: Rechte ausdrücklich trennen
+
+Das im Release angegebene **CC BY-SA 4.0** ist das **vorsorgliche Lizenzangebot für das abgeleitete Modell insoweit,
+wie das Projekt die entsprechenden Rechte selbst einräumen darf**. Diese Kennzeichnung ist **keine** Garantie, dass
+sämtliche im Trainingskorpus enthaltenen Texte oder eventuell aus Modellmerkmalen rekonstruierbaren Textfragmente
+von derselben Lizenz erfasst oder sonst frei nutzbar sind. Der rechtliche Schutzumfang gelernter Parameter und
+Merkmalstabellen wird mit der Lizenzangabe nicht abschließend entschieden.
+
+| Gegenstand | Was tatsächlich feststeht – und was nicht |
+|---|---|
+| Annotationen der UD-German-GSD-Treebank (z. B. UPOS, Dependenzlabels) | **CC BY-SA 4.0** laut Treebank; Lizenzbedingungen einschließlich Namensnennung/Share-Alike bei anwendbaren Bearbeitungen beachten. |
+| MaltParser-Modell: Gewichte, Featuremodell und erzeugte Symboltabellen | **CC BY-SA 4.0 als Lizenzangebot** des veröffentlichenden Projekts für die **von ihm kontrollierten und wirksam lizenzierbaren Rechte**, vorsorglich wegen der Herkunft aus CC-BY-SA-Annotationen. Ob und welche einzelnen Modellbestandteile überhaupt selbstständig schutzfähig sind, bleibt davon unberührt. |
+| Wortformen und ungeordnete Wortform-Paare aus den Trainingssätzen | Als technische Merkmale tatsächlich im Modell vorhanden. Einzelne gewöhnliche Wörter bzw. kurze Paare sind regelmäßig kein eigens geschützter Text; eine **pauschale Freigabe möglicher Rechte an rekonstruierbaren längeren Textteilen** lässt sich daraus jedoch nicht ableiten. |
+| Zugrunde liegende Original-Sätze der Treebank | **Keine umfassende Lizenz für die Sätze durch das UD-Projekt belegt.** Möglich sind Gemeinfreiheit, gesetzliche Schranken oder Rechte Dritter; die Rechtslage ist abhängig vom jeweiligen Text. Das Projekt räumt **keine Rechte Dritter** an solchen Texten ein. |
+| Trainings-/Ladecode und eigenständig erzeugte Software | **MIT** nach der Softwarelizenz des Repositories; die Modelllizenz ersetzt oder erweitert die Codelizenz nicht. |
+
+**Für nachnutzende Personen:** Wer Modell und Code nutzt, soll klar unterscheiden zwischen (a) einem unter
+CC BY-SA 4.0 angebotenen Modell, (b) MIT-lizenzierter Software und (c) **nicht pauschal mitlizenzierten
+Dritttexten**, sollten solche entgegen der Zielsetzung in rechtlich relevanter Form aus Modellmerkmalen
+rekonstruierbar sein. Ein Lizenzangebot kann fehlende Rechte Dritter **nicht heilen**. Weder der Vermerk
+„CC BY-SA“ noch das Fehlen ganzer Sätze im Modell ist eine uneingeschränkte Rechtsgarantie.
+
+Diese Klarstellung ändert **nicht** den Status `license.approval=pending` und ist **keine Freigabe**.
+Die im Abschnitt „Bewertung und Restrisiken“ beschriebenen Risiken bleiben vor der Veröffentlichung zu entscheiden.
 
 ## Prüfung des Modells v1.0.0
 
@@ -142,16 +167,18 @@ ab; für das Modell kommt es darauf an, ob es solche enthält. Datenbankrechte (
 Sammlung sind eine eigene Frage: Die Annotationen sind unter CC BY-SA 4.0 lizenziert, das nach Abschnitt 4 auch
 Datenbankrechte (Sui-generis-Rechte) einschließt; für die Textsammlung selbst ist das nicht geklärt.
 
-**Modell unter CC BY-SA 4.0, Code unter MIT.** Das Modell wird vorsichtshalber wie eine Bearbeitung der Annotationen
-behandelt und unter CC BY-SA 4.0 weitergegeben
+**Modell als eigenständiges Artefakt unter CC BY-SA 4.0 angeboten; Code unter MIT.** Das Projekt behandelt
+das trainierte Modell vorsorglich wie eine Bearbeitung der CC-BY-SA-Annotationen und bietet **seine dafür
+verfügbaren Rechte** unter CC BY-SA 4.0 an
 ([Legal Code](https://creativecommons.org/licenses/by-sa/4.0/legalcode.de),
-[Kurzfassung](https://creativecommons.org/licenses/by-sa/4.0/deed.de)), auch wenn gelernte Gewichte womöglich gar keine
-Bearbeitung sind. Pflichten bei der Weitergabe: Namensnennung, Lizenzverweis, Hinweis auf Änderungen, bei Bearbeitungen
-dieselbe Lizenz (Share-Alike). `LICENSE-MODEL.md`, `ATTRIBUTION.md`, `LICENSE-UD_German-GSD.txt` und `model-manifest.json`
-(Feld `license`) erfüllen das für das unveränderte Modell. Share-Alike erfasst das Modell und Bearbeitungen davon; eine
-Anwendung, die das Modell als getrennte Datei lädt, wird dadurch nicht zur Bearbeitung und bleibt MIT. Für jede denkbare
-Bündelung (z. B. Modell fest in ein Programmarchiv eingebaut) garantiert das diese Seite nicht. Die Lizenzdateien regeln
-nur die Rechte an den Annotationen; Rechte Dritter an Satztexten räumen sie nicht ein.
+[Kurzfassung](https://creativecommons.org/licenses/by-sa/4.0/deed.de)). Ob Gewichte oder Merkmaltabellen
+urheberrechtlich selbstständig geschützt oder eine lizenzpflichtige Bearbeitung sind, ist damit nicht entschieden.
+Bei anwendbaren Schutzrechten sind Namensnennung, Lizenzverweis, Änderungsvermerk und gegebenenfalls Share-Alike
+zu beachten. `LICENSE-MODEL.md`, `ATTRIBUTION.md`, `LICENSE-UD_German-GSD.txt` und `model-manifest.json`
+(Feld `license`) dokumentieren das **vorgesehene** Lizenzangebot und die Herkunft; sie ersetzen keine
+Rechteklärung zu möglicherweise geschützten Dritttexten. Eine Anwendung wird nicht allein dadurch zu einer
+Bearbeitung des Modells, dass sie dessen Datei separat lädt; konkrete Weitergabe- und Bündelungsformen sind
+jeweils gesondert zu beurteilen. **Keine Aussage über vollständige Rechtefreiheit aller Modellinhalte.**
 
 ### Bewertung und Restrisiken
 
@@ -209,7 +236,7 @@ dieses Dokument selbst sind keine Freigabe.
 | Status | ausstehend |
 | Entschieden von | – |
 | Datum | – |
-| Umfang | `maltparser-de-gsd-v1.0.0`, `.mco` SHA-256 `237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3`, Lizenz CC BY-SA 4.0, öffentliche Weitergabe über GitHub Releases |
+| Umfang | `maltparser-de-gsd-v1.0.0`, `.mco` SHA-256 `237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3`, **CC-BY-SA-4.0-Lizenzangebot nur für wirksam lizenzierbare Modellrechte**, keine Lizenzzusage für etwaige Dritttextrechte; öffentliche Weitergabe über GitHub Releases |
 | Getragene Restrisiken | Restrisiken 1 bis 4 aus „Bewertung und Restrisiken“ |
 | Veröffentlichte ZIP | SHA-256 aus `SHA256SUMS` des veröffentlichten Release (nach dem Neuverpacken nachtragen) |
 
