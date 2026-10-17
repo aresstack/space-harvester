@@ -59,10 +59,11 @@ public final class AppRuntime implements AutoCloseable {
         List<SourceSettingsConfig> sources = new ArrayList<>();
         Set<String> waiting = new LinkedHashSet<>();
         for (AppSettings.SourceEntry entry : settings.sources()) {
-            if (!entry.secretMissing()) {
-                sources.add(entry.config());
-            } else if (sessionSecrets.has(entry.id())) {
+            // Ein in der App eingegebener (oder aus dem Tresor geladener) Wert geht einer Property oder Variable vor.
+            if (sessionSecrets.has(entry.config())) {
                 sources.add(sessionSecrets.apply(entry.config()));
+            } else if (!entry.secretMissing()) {
+                sources.add(entry.config());
             } else {
                 waiting.add(entry.id());
             }
@@ -103,7 +104,7 @@ public final class AppRuntime implements AutoCloseable {
      * Arbeitsordner (der Datenordner der laufenden App bleibt gesperrt und unberührt) und lädt die Spaces live.
      *
      * @param settings       die Konfiguration mit der neuen Quelle, z. B. aus {@code ConfigFileEditor.draft}
-     * @param sessionSecrets Passwort bzw. Token, falls die Umgebungsvariable (noch) nicht gesetzt ist
+     * @param sessionSecrets Passwort bzw. Token aus dem Assistenten; geht einer Property oder Variable vor
      * @param scratch        leerer Arbeitsordner; wird danach gelöscht
      * @return die sichtbaren Spaces
      */
@@ -112,15 +113,14 @@ public final class AppRuntime implements AutoCloseable {
         AppSettings.SourceEntry entry = settings.sources().stream().filter(s -> s.id().equals(sourceId)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Die Quelle " + sourceId + " ist nicht eingerichtet."));
         SourceSettingsConfig source;
-        if (!entry.secretMissing()) {
-            source = entry.config();
-        } else if (sessionSecrets.has(sourceId)) {
+        if (sessionSecrets.has(entry.config())) {
             source = sessionSecrets.apply(entry.config());
+        } else if (!entry.secretMissing()) {
+            source = entry.config();
         } else {
             throw new IllegalStateException("Für den Test fehlt " + (entry.config().auth().type()
-                    == SourceSettingsConfig.AuthType.PAT ? "das Token" : "das Passwort") + ": Die Umgebungsvariable "
-                    + entry.secretVariable() + " ist nicht gesetzt. Den Wert für diese Sitzung eingeben oder die "
-                    + "Variable setzen und die App neu starten.");
+                    == SourceSettingsConfig.AuthType.PAT ? "das Token" : "das Passwort") + " (Platzhalter "
+                    + entry.secretVariable() + "). Bitte im Schritt Anmeldung eingeben.");
         }
         AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
@@ -204,13 +204,33 @@ public final class AppRuntime implements AutoCloseable {
         harvester.close();
     }
 
-    /** Geheimnisse, die der Bediener in dieser Sitzung eingegeben hat; sie werden nie gespeichert. */
+    /**
+     * Geheimnisse der Quellen im Speicher: in dieser Sitzung eingegeben oder beim Start aus dem Tresor geladen. Diese
+     * Klasse schreibt sie nie irgendwohin.
+     */
     public static final class SessionSecrets {
 
-        private final Map<String, String> secrets = Collections.synchronizedMap(new HashMap<>());
+        private record Value(String login, String secret) {
+        }
 
-        public void put(String sourceId, char[] secret) {
-            secrets.put(sourceId, new String(secret));
+        private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
+
+        /**
+         * Wofür ein Wert gilt: Anmeldeart und (bei Basic) Benutzer. Ändert sich das in der Datei, passt ein alter
+         * Wert nicht mehr (ein Token taugt nicht als Passwort) und bleibt unbenutzt.
+         */
+        public static String login(SourceSettingsConfig.AuthType type, String username) {
+            return type == SourceSettingsConfig.AuthType.BASIC ? "basic:" + (username == null ? "" : username.strip())
+                    : String.valueOf(type).toLowerCase(java.util.Locale.ROOT);
+        }
+
+        public static String login(SourceSettingsConfig.Auth auth) {
+            return login(auth.type(), auth.username());
+        }
+
+        /** @param login {@link #login} der Anmeldung, für die der Wert gilt */
+        public void put(String sourceId, String login, char[] secret) {
+            secrets.put(sourceId, new Value(login, new String(secret)));
             java.util.Arrays.fill(secret, '\0');
         }
 
@@ -218,12 +238,24 @@ public final class AppRuntime implements AutoCloseable {
             return secrets.containsKey(sourceId);
         }
 
+        /** Ob ein Wert für genau diese Anmeldung der Quelle da ist. */
+        public boolean has(SourceSettingsConfig config) {
+            return config.auth().type() != SourceSettingsConfig.AuthType.NONE
+                    && has(config.id(), login(config.auth()));
+        }
+
+        /** Ob ein Wert für die Anmeldung {@code login} ({@link #login}) da ist. */
+        public boolean has(String sourceId, String login) {
+            Value value = secrets.get(sourceId);
+            return value != null && value.login().equals(login);
+        }
+
         public void remove(String sourceId) {
             secrets.remove(sourceId);
         }
 
         SourceSettingsConfig apply(SourceSettingsConfig config) {
-            String secret = secrets.get(config.id());
+            String secret = secrets.get(config.id()).secret();
             SourceSettingsConfig.Auth auth = config.auth();
             SourceSettingsConfig.Auth filled = switch (auth.type()) {
                 case NONE -> auth;

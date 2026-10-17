@@ -75,16 +75,28 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
    Eingetragenes bleibt stehen. Bleibt die Adresse leer, gilt die öffentliche Confluence-Hilfe von Atlassian
    `https://confluence.atlassian.com` (Platzhalter im Feld) mit „Ohne Anmeldung“: so lässt sich die App sofort
    ausprobieren.
-2. **Anmeldung** (Confluence): Personal Access Token, Benutzer und Passwort oder ohne. In die Datei kommt nur der
-   Platzhalter der Umgebungsvariable, z. B. `token: ${WIKI_TOKEN}`. Ein hier eingegebener Wert gilt nur für den Test
-   und bis zum Schließen der App.
-3. **Zertifikate und Netz** (Confluence): Client-Zertifikat aus dem Windows-Zertifikatsspeicher oder als PKCS#12-Datei,
-   jeweils mit Alias (Fingerabdruck optional zur zusätzlichen Prüfung; PKCS#12-Passwort nur als Umgebungsvariable), Vertrauen über ein vorhandenes
-   `spring.ssl.bundle`. Der Proxy gilt für alle Quellen und bleibt in der Datei (`space-harvester.network.proxy`).
-4. **Prüfen und speichern:** Vorschau des Eintrags. **Verbindung testen** startet einen eigenen Harvester nur mit der
-   neuen Quelle in einem leeren Arbeitsordner und lädt die Spaces live; der Bestand der laufenden App bleibt
-   unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources` an, lässt Kommentare und den Rest der Datei
-   unverändert, legt die vorige Fassung als `<datei>.bak` ab und lädt neu.
+2. **Anmeldung** (Confluence), wie im Enterprise AI Client: ohne Anmeldung, Personal Access Token oder Benutzer und
+   Passwort. Token bzw. Passwort direkt eingeben; in die Datei kommt nur der Platzhalter, z. B.
+   `token: ${WIKI_TOKEN}`. Den Wert legt die App unter Windows mit DPAPI verschlüsselt für das angemeldete Konto ab
+   (`<Konfigurationsordner>\secrets\<kennung>.secret`, nur dieses Konto auf diesem Rechner kann ihn lesen) und setzt
+   ihn beim Start selbst; eine Umgebungsvariable ist nicht nötig (eine Java-Property oder Variable gleichen Namens
+   geht weiter). Der Wert gilt nur für die Anmeldung, für die er eingegeben wurde (Anmeldeart, bei Basic der
+   Benutzer); wird die Datei von Hand umgestellt, fragt die App neu. Ohne Windows gilt der Wert bis zum Schließen der
+   App. Auf derselben Seite das optionale **Client-Zertifikat** (mTLS): aus dem Windows-Zertifikatsspeicher mit
+   **Wählen …** (nur Zertifikate mit privatem Schlüssel; Tabelle mit Alias, Inhaber,
+   „Gültig bis“, Status; abgelaufene auf Wunsch) oder als PKCS#12-Datei mit Passwort-Platzhalter; Fingerabdruck
+   optional zur zusätzlichen Prüfung.
+3. **Proxy und Netzwerk** (Confluence), gilt für **alle Quellen** (`space-harvester.network.proxy`): die sieben Modi
+   des Cores (win-proxy-java), Standard unter Windows `pac-url-powershell` (PAC-Adresse der Interneteinstellungen per
+   PowerShell, wie im Enterprise AI Client; gilt auch ohne Abschnitt in der Datei), dazu PAC-Adresse, fester Proxy
+   (Host und Port) und Hosts ohne Proxy; Vertrauen über ein vorhandenes `spring.ssl.bundle`. **Proxy auflösen** zeigt
+   mit den gewählten Einstellungen jeden Schritt der Auflösung zur Adresse aus Schritt 1, ohne etwas zu speichern.
+4. **Prüfen und speichern:** Vorschau des Eintrags (und des Proxys, wenn er sich ändert; die Prüfseite sagt dann,
+   dass das alle Quellen betrifft). **Verbindung testen** startet einen eigenen Harvester nur mit der neuen Quelle in
+   einem leeren Arbeitsordner und genau den gewählten Einstellungen (Quelle, Anmeldung, Proxy) und lädt die Spaces
+   live; der Bestand der laufenden App bleibt unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources`
+   an, ersetzt bei Bedarf nur den Block `proxy:`, lässt Kommentare und den Rest der Datei unverändert, legt die vorige
+   Fassung als `<datei>.bak` ab und lädt neu.
 
 Fehlt etwas oder passt es nicht, steht der Hinweis rot direkt unter dem Feld (statt des grauen Hinweises); der Dialog
 behält seine Größe, und Tippen im Feld nimmt den Hinweis wieder weg. Ergebnisse von **Verbindung testen** und
@@ -126,7 +138,7 @@ space-harvester:
       trust-bundle: firma                       # optional, Name unter spring.ssl.bundle
   network:
     proxy:
-      mode: pac-url-windows-settings            # wie beim Dienst; PAC-Fehler fallen nie auf DIRECT zurück
+      mode: pac-url-powershell                  # Standard unter Windows; PAC-Fehler fallen nie auf DIRECT zurück
     async-transport: web-client
 
 spring:
@@ -139,11 +151,12 @@ spring:
 ```
 
 - **Geheimnisse** (Passwort, Token, Zertifikatspasswort) nie in die Datei schreiben, sondern als Platzhalter
-  `${NAME}` referenzieren. Platzhalter kommen aus Java-Systemeigenschaften (`-DNAME=…`), dann aus
-  Umgebungsvariablen. Unter Windows dauerhaft: `setx CONFLUENCE_TOKEN "…"`, danach die App neu starten.
+  `${NAME}` referenzieren. Token und Passwort gibt man im Assistenten ein; die App legt sie verschlüsselt ab (siehe
+  [Quellen-Assistent](#quellen-assistent)) und setzt sie beim Start selbst. Sonst kommen Platzhalter aus
+  Java-Systemeigenschaften (`-DNAME=…`), dann aus Umgebungsvariablen. Der Core liest selbst keine Umgebung.
 - **Fehlt ein Token oder Passwort**, startet die Quelle nicht, die App läuft aber weiter: Wissensquellen zeigt
-  „Zugangsdaten fehlen“, und **Zugangsdaten eingeben …** fragt den Wert verdeckt ab. Er bleibt nur bis zum Schließen
-  der App im Speicher und wird nie gespeichert.
+  „Zugangsdaten fehlen“; **Bearbeiten …** nimmt den Wert dauerhaft auf, **Zugangsdaten eingeben …** nur für die
+  Sitzung.
 - **Fehler in der Datei** verhindern den Start nicht: Die betroffene Quelle fehlt, Übersicht und Einstellungen nennen
   Quelle und Feld. YAML-Fehler nennen nur die Zeile, nie den Inhalt.
 - **Azure Key Vault** und **Config Server** sind Spring-Profile des Dienstes; die App liest sie nicht direkt.

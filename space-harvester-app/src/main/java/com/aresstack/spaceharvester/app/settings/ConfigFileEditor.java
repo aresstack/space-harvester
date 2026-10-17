@@ -34,7 +34,7 @@ public final class ConfigFileEditor {
             "apikey", "keypassword", "storepassword");
     private static final String HEADER = """
             # Space Harvester Desktop – Konfiguration (angelegt vom Quellen-Assistenten)
-            # Geheimnisse nie hier eintragen, sondern als Umgebungsvariable referenzieren: ${NAME}.
+            # Geheimnisse nie hier eintragen: Hier steht nur ${NAME}; den Wert legt die App verschlüsselt ab.
             """;
 
     private final AppSettingsLoader loader;
@@ -204,6 +204,117 @@ public final class ConfigFileEditor {
         } finally {
             Files.deleteIfExists(temp);
         }
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuen Proxy-Einstellungen unter {@code space-harvester.network.proxy}; sie gelten
+     * für alle Quellen. Nur der Block {@code proxy:} wird ersetzt (fehlt er, angelegt); Kommentare und alles andere
+     * bleiben.
+     */
+    public Draft withProxy(Path file, Draft base, ProxyDraft proxy) {
+        List<String> problems = proxy.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = proxy(base.text(), proxy);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.proxy().equals(proxy.settings())) {
+            throw new IllegalArgumentException("Die Proxy-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.network.proxy von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Ersetzt oder ergänzt {@code space-harvester.network.proxy}. */
+    static String proxy(String text, ProxyDraft proxy) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
+                throw unsupported("space-harvester steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            lines.add("");
+            lines.add("space-harvester:");
+            lines.add("  network:");
+            add(lines, lines.size(), proxy.yaml("    "));
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int network = child(lines, root, rootEnd, childIndent, "network");
+        if (network < 0) {
+            lines.add(root + 1, " ".repeat(childIndent) + "network:");
+            add(lines, root + 2, proxy.yaml(" ".repeat(childIndent * 2)));
+            return String.join(newline, lines) + newline;
+        }
+        int networkEnd = blockEnd(lines, network, childIndent);
+        int proxyIndent = childIndent(lines, network, networkEnd, childIndent * 2);
+        int block = child(lines, network, networkEnd, proxyIndent, "proxy");
+        if (block < 0) {
+            add(lines, network + 1, proxy.yaml(" ".repeat(proxyIndent)));
+            return String.join(newline, lines) + newline;
+        }
+        int end = blockEnd(lines, block, proxyIndent);
+        lines.subList(block, end).clear();
+        add(lines, block, proxy.yaml(" ".repeat(proxyIndent)));
+        return String.join(newline, lines) + newline;
+    }
+
+    /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */
+    private static int blockEnd(List<String> lines, int start, int indent) {
+        int last = start;
+        for (int i = start + 1; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line)) {
+                continue;
+            }
+            if (indent(line) <= indent) {
+                break;
+            }
+            last = i;
+        }
+        return last + 1;
+    }
+
+    private static int childIndent(List<String> lines, int start, int end, int fallback) {
+        for (int i = start + 1; i < end; i++) {
+            if (!blankOrComment(lines.get(i))) {
+                return indent(lines.get(i));
+            }
+        }
+        return fallback;
+    }
+
+    /** Zeile des Schlüssels {@code key} mit Einrückung {@code indent} im Block; -1, wenn er fehlt. */
+    private static int child(List<String> lines, int start, int end, int indent, String key) {
+        for (int i = start + 1; i < end; i++) {
+            String line = lines.get(i);
+            if (blankOrComment(line) || indent(line) != indent) {
+                continue;
+            }
+            Matcher matcher = SOURCES.matcher(line);
+            if (matcher.matches() && AppSettingsLoader.normalize(matcher.group(2)).equals(key)) {
+                if (matcher.group(3) != null) {
+                    lines.set(i, " ".repeat(indent) + matcher.group(2) + ":");
+                }
+                return i;
+            }
+            if (isKey(SOURCES_INLINE, line, 1, key)) {
+                throw unsupported(key + " steht in einer Zeile");
+            }
+        }
+        return -1;
     }
 
     /** Fügt den Eintrag am Ende von {@code space-harvester.sources} ein; legt fehlende Schlüssel an. */

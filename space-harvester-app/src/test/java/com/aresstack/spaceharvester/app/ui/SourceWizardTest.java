@@ -6,8 +6,11 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.settings.SecretVault;
+import com.aresstack.spaceharvester.app.settings.SecretVaultTest;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
@@ -166,7 +169,7 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "sitzungs-token".toCharArray());
+        context.secrets().put("wiki", "pat", "sitzungs-token".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         CountDownLatch saved = new CountDownLatch(1);
@@ -176,17 +179,20 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             w.auth.setSelectedItem("Benutzer und Passwort");
             w.username.setText("angelo");
+            assertThat(w.sessionSecrets(w.draft()).has("wiki")).as("Verbindungstest ohne altes Token").isFalse();
+            assertThat(w.next()).as("Token taugt nicht als Passwort").isFalse();
+            assertThat(w.error(w.sessionValue)).isEqualTo("Bitte das Passwort eingeben.");
+            w.sessionValue.setText("neues-passwort");
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.checkNotes.getText()).contains("KEINE .bak").doesNotContain("bleibt als .bak");
-            assertThat(w.sessionSecrets(w.draft()).has("wiki")).as("Verbindungstest ohne altes Token").isFalse();
             w.save();
         });
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(Files.readString(config)).doesNotContain("alt-klartext").contains("type: basic");
+        assertThat(Files.readString(config)).doesNotContain("alt-klartext", "neues-passwort").contains("type: basic");
         assertThat(home.resolve("app.yml.bak")).doesNotExist();
-        assertThat(context.secrets().has("wiki")).as("Token taugt nicht als Passwort").isFalse();
+        assertThat(context.secrets().has("wiki")).as("das neue Passwort").isTrue();
     }
 
     @Test
@@ -216,7 +222,7 @@ class SourceWizardTest {
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
         assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
-        context.secrets().put("wiki", "sitzungs-passwort".toCharArray());
+        context.secrets().put("wiki", "basic:angelo", "sitzungs-passwort".toCharArray());
 
         SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "wiki");
         assertThat(editable.plaintextSecrets()).isEmpty();
@@ -226,6 +232,9 @@ class SourceWizardTest {
             w.onSaved(id -> saved.countDown());
             assertThat(w.next()).isTrue();
             w.auth.setSelectedItem("Personal Access Token");
+            assertThat(w.next()).as("Passwort taugt nicht als Token").isFalse();
+            assertThat(w.error(w.sessionValue)).isEqualTo("Bitte das Token eingeben.");
+            w.sessionValue.setText("neues-token");
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
             assertThat(w.checkNotes.getText()).as("Geheimnis der anderen Quelle").contains("KEINE .bak")
@@ -233,9 +242,8 @@ class SourceWizardTest {
             w.save();
         });
         assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(Files.readString(config)).contains("type: pat", "anderes-klartext");
+        assertThat(Files.readString(config)).contains("type: pat", "anderes-klartext").doesNotContain("neues-token");
         assertThat(home.resolve("app.yml.bak")).doesNotExist();
-        assertThat(context.secrets().has("wiki")).as("Passwort taugt nicht als Token").isFalse();
     }
 
     @Test
@@ -259,19 +267,25 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.AUTH);
             assertThat(w.variable.getText()).isEqualTo("WIKI_TOKEN");
-            assertThat(w.next()).isTrue();
-            assertThat(w.step()).isEqualTo(SourceWizard.Step.SECURITY);
+            assertThat(w.next()).as("Token fehlt").isFalse();
+            assertThat(w.error(w.sessionValue)).isEqualTo("Bitte das Token eingeben.");
+            w.sessionValue.setText("geheim-123");
+            // Das Zertifikat gehört zur Anmeldung, auf derselben Seite.
             w.certificate.setSelectedIndex(1);
+            assertThat(w.chooseCertificate.isVisible()).isTrue();
             w.thumbprint.setText("0123456789abcdef0123456789abcdef01234567");
             assertThat(w.next()).as("Alias fehlt").isFalse();
+            assertThat(w.error(w.alias)).isEqualTo("Bitte den Alias wählen oder eintragen.");
             w.alias.setText("confluence-client");
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.NETWORK);
+            assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
-            w.sessionValue.setText("geheim-123");
             assertThat(w.draft().yaml("")).contains("token: ${WIKI_TOKEN}", "type: windows-my")
                     .doesNotContain("geheim-123");
+            assertThat(w.checkNotes.getText()).contains("nur für diese Sitzung").doesNotContain("setx");
             w.back();
-            assertThat(w.step()).isEqualTo(SourceWizard.Step.SECURITY);
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.NETWORK);
         });
     }
 
@@ -306,5 +320,136 @@ class SourceWizardTest {
             w.baseUrl.setText("https://intern.example.org");
             assertThat(w.auth.getSelectedItem()).as("Gewählte Anmeldung bleibt").isEqualTo("Ohne Anmeldung");
         });
+    }
+
+    @Test
+    void theProxyIsEditableTestedWithTheChoiceAndSavedForAllSources() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                # Kommentar bleibt
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources: []
+                  network:
+                    proxy:
+                      mode: disabled
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        SourceWizard[] wizard = new SourceWizard[1];
+        CountDownLatch resolved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            wizard[0] = w;
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).as("öffentliche Hilfe: ohne Anmeldung").isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.NETWORK);
+            assertThat(w.proxyMode.getSelectedItem()).isEqualTo(SourceWizard.proxyLabel(ProxySettings.Mode.DISABLED));
+            assertThat(w.proxyMode.getItemCount()).as("alle Modi des Cores").isEqualTo(7);
+            w.resolveProxy(resolved::countDown);
+        });
+        assertThat(resolved.await(30, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].proxyLog.getText())
+                .contains("confluence.atlassian.com", "Mode: disabled", "Result:"));
+
+        CountDownLatch windowsOnly = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = wizard[0];
+            w.proxyMode.setSelectedItem(SourceWizard.proxyLabel(ProxySettings.Mode.PAC_URL_POWERSHELL));
+            w.resolveProxy(windowsOnly::countDown);
+        });
+        assertThat(windowsOnly.await(30, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].proxyLog.getText()).as("Linux im Test")
+                .contains("nur unter Windows"));
+
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = wizard[0];
+            w.onSaved(id -> saved.countDown());
+            w.proxyMode.setSelectedItem(SourceWizard.proxyLabel(ProxySettings.Mode.MANUAL_PROXY));
+            assertThat(w.next()).as("Host und Port fehlen").isFalse();
+            assertThat(w.error(w.proxyHost)).isEqualTo("Der Proxy-Host fehlt.");
+            assertThat(w.error(w.proxyPort)).startsWith("Der Proxy-Port");
+            w.proxyHost.setText("proxy.firma.de");
+            w.proxyPort.setText("3128");
+            w.nonProxyHosts.setText("localhost, *.intern");
+            assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
+            assertThat(w.checkNotes.getText()).contains("ALLE Quellen", "manual-proxy");
+            w.save();
+        });
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).startsWith("# Kommentar bleibt")
+                .contains("mode: manual-proxy", "proxy-host: \"proxy.firma.de\"", "- id: \"confluence-atlassian\"");
+        assertThat(context.settings().proxy().proxyHost()).isEqualTo("proxy.firma.de");
+        assertThat(context.settings().proxy().nonProxyHosts()).containsExactly("localhost", "*.intern");
+    }
+
+    @Test
+    void aTypedTokenIsStoredInTheVaultAndUnlocksTheSourceAtTheNextStart() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SecretVault vault = new SecretVault(home.resolve("secrets"), new SecretVaultTest.FakeDpapi());
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            w.onSaved(id -> saved.countDown());
+            w.baseUrl.setText("https://wiki.example.invalid");
+            assertThat(w.next()).isTrue();
+            assertThat(w.auth.getSelectedItem()).isEqualTo("Personal Access Token");
+            w.sessionValue.setText("mein-token");
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).isTrue();
+            assertThat(w.checkNotes.getText()).contains("verschlüsselt", "die App setzt es beim Start selbst");
+            w.save();
+        });
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("token: ${WIKI_EXAMPLE_TOKEN}").doesNotContain("mein-token");
+        assertThat(vault.has("wiki-example")).isTrue();
+        assertThat(Files.readString(home.resolve("secrets").resolve("wiki-example.secret"))).doesNotContain("mein-token");
+
+        // Neuer Start ohne Sitzungswert und ohne Umgebungsvariable: Der Tresor liefert das Token.
+        context.shutdown();
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        CountDownLatch again = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(again::countDown));
+        assertThat(again.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).isEmpty();
+        assertThat(context.secrets().has("wiki-example")).isTrue();
+
+        // Von Hand auf Benutzer und Passwort umgestellt: Das gespeicherte Token gilt nicht als Passwort.
+        String yaml = Files.readString(config);
+        Files.writeString(config, yaml.replaceFirst("type: pat\\s+token: \\$\\{WIKI_EXAMPLE_TOKEN}",
+                "type: basic\n        username: angelo\n        password: \\${WIKI_EXAMPLE_PASSWORD}"));
+        assertThat(Files.readString(config)).contains("type: basic");
+        CountDownLatch basic = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(basic::countDown));
+        assertThat(basic.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).containsExactly("wiki-example");
+        SourceDraft.Editable basicSource = new ConfigFileEditor(context.loader()).editable(config, "wiki-example");
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context, basicSource);
+            assertThat(w.next()).isTrue();
+            assertThat(w.next()).as("altes Token zählt nicht als Passwort").isFalse();
+            assertThat(w.error(w.sessionValue)).isNotNull();
+        });
+        context.shutdown();
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        CountDownLatch fresh = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(fresh::countDown));
+        assertThat(fresh.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.runtime().waitingForSecret()).containsExactly("wiki-example");
     }
 }

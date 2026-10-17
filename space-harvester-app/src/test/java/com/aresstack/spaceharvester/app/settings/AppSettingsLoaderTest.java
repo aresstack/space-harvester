@@ -117,4 +117,17 @@ class AppSettingsLoaderTest {
         assertThat(settings.sources()).isEmpty();
         assertThat(settings.problems()).isEmpty();
     }
+
+    @Test
+    void withoutAProxySectionWindowsUsesThePacAddressViaPowerShell() throws Exception {
+        Path file = home.resolve("ohne-proxy.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, true).load(file).proxy().mode())
+                .isEqualTo(ProxySettings.Mode.PAC_URL_POWERSHELL);
+        assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, false).load(file).proxy())
+                .isEqualTo(ProxySettings.disabled());
+        Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
+        assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, true).load(file).proxy().mode())
+                .as("ausdrücklich gesetzt gilt").isEqualTo(ProxySettings.Mode.DISABLED);
+    }
 }

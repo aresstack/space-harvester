@@ -4,10 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,10 +42,12 @@ class ConfigFileEditorTest {
         String text = Files.readString(file);
         assertThat(text).startsWith(example.substring(0, example.indexOf("space-harvester:")))
                 .contains("# - id: handbuch", "token: ${CONFLUENCE_TOKEN}", "token: ${WIKI_TOKEN}",
-                        "mode: disabled", "thumbprint: \"AB:CD\"");
+                        "#   mode: pac-url-powershell", "thumbprint: \"AB:CD\"");
         assertThat(home.resolve("app.yml.bak")).hasContent(example);
         AppSettings settings = loader.load(file);
         assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("confluence", "wiki");
+        assertThat(settings.proxy().mode()).as("Beispiel läuft auch ohne Windows")
+                .isEqualTo(new AppSettingsLoader(new Placeholders(name -> null), home).defaultProxy().mode());
         AppSettings.SourceEntry wiki = settings.sources().get(1);
         assertThat(wiki.secretMissing()).isFalse();
         assertThat(wiki.config().baseUrl()).hasToString("https://wiki.example.org");
@@ -286,6 +290,96 @@ class ConfigFileEditorTest {
                 """);
         assertThat(editor.fileHasPlaintextSecret(file)).as("Vertrauensspeicher mit Standardwert").isTrue();
         assertThat(editor.fileHasPlaintextSecret(home.resolve("fehlt.yml"))).isFalse();
+    }
+
+    @Test
+    void replacesOnlyTheProxyBlockAndKeepsCommentsAndNeighbours() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                # Kopf bleibt
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: /daten
+                  network:
+                    # Proxy der Firma
+                    proxy:
+                      mode: disabled   # alter Wert
+                      resolve-timeout: 7s
+                    # danach bleibt
+                    async-transport: web-client
+                """);
+        ConfigFileEditor.Draft base = editor.draft(file, files("notizen", "/notizen"));
+        ProxyDraft proxy = new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.firma.de", "3128",
+                "localhost, *.intern", Duration.ofSeconds(7), null, null);
+
+        ConfigFileEditor.Draft draft = editor.withProxy(file, base, proxy);
+        editor.save(file, draft);
+
+        String text = Files.readString(file);
+        assertThat(text).startsWith("# Kopf bleibt").contains("    # Proxy der Firma\n    proxy:\n",
+                "mode: manual-proxy", "proxy-host: \"proxy.firma.de\"", "proxy-port: 3128", "- \"*.intern\"",
+                "resolve-timeout: 7000ms", "    # danach bleibt\n    async-transport: web-client", "- id: \"notizen\"")
+                .doesNotContain("alter Wert", "mode: disabled");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.proxy()).isEqualTo(proxy.settings());
+        assertThat(settings.proxy().resolveTimeout()).isEqualTo(Duration.ofSeconds(7));
+        assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("handbuch", "notizen");
+    }
+
+    @Test
+    void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
+        ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
+                null, null, null, null, null);
+        String withoutNetwork = ConfigFileEditor.proxy("""
+                space-harvester:
+                  sources: []
+                """, pac);
+        assertThat(withoutNetwork).isEqualTo("""
+                space-harvester:
+                  network:
+                    proxy:
+                      mode: pac-url-manual
+                      pac-url: "http://proxy.firma.de/proxy.pac"
+                  sources: []
+                """);
+        String withoutProxy = ConfigFileEditor.proxy("""
+                space-harvester:
+                  network:
+                    async-transport: web-client
+                """, pac);
+        assertThat(withoutProxy).contains("""
+                  network:
+                    proxy:
+                      mode: pac-url-manual
+                """).contains("    async-transport: web-client");
+        String empty = ConfigFileEditor.proxy("", new ProxyDraft(ProxySettings.Mode.DISABLED, null, null, null, null,
+                null, null, null));
+        assertThat(loader.read(home.resolve("x.yml"), empty).proxy()).isEqualTo(ProxySettings.disabled());
+        assertThatThrownBy(() -> ConfigFileEditor.proxy("""
+                space-harvester:
+                  network: {proxy: {mode: disabled}}
+                """, pac)).hasMessageContaining("network steht in einer Zeile");
+    }
+
+    @Test
+    void anIncompleteProxyIsRejectedBeforeAnythingIsWritten() throws Exception {
+        Path file = home.resolve("app.yml");
+        ConfigFileEditor.Draft base = editor.draft(file, files("notizen", "/notizen"));
+        assertThatThrownBy(() -> editor.withProxy(file, base, new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null,
+                null, "99999", null, null, null, null))).hasMessageContaining("Proxy-Host")
+                .hasMessageContaining("Proxy-Port");
+        assertThat(file).doesNotExist();
+        for (String pac : new String[] {"http://bad host/proxy.pac", "http://[invalid"}) {
+            assertThat(new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, pac, null, null, null, null, null, null)
+                    .problems()).as(pac).containsExactly(
+                            "Die PAC-Adresse ist keine gültige Adresse (Leerzeichen oder Sonderzeichen?).");
+        }
+        assertThat(new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "file:///C:/proxy.pac", null, null, null, null,
+                null, null).problems()).isEmpty();
     }
 
     private static SourceDraft wiki() {

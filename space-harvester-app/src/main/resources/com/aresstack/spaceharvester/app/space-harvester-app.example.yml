@@ -1,10 +1,9 @@
 # Space Harvester Desktop – Konfiguration
 #
 # Dieselben Schlüssel wie der Dienst (space-harvester: …), dazu space-harvester-app: für die App.
-# Geheimnisse nie hier eintragen, sondern als Umgebungsvariable referenzieren: ${NAME}. Fehlt eine Variable,
-# fragt die App das Passwort bzw. Token beim Start ab und hält es nur bis zum Schließen im Speicher.
-#
-# Unter Windows Umgebungsvariablen z. B. setzen mit:  setx CONFLUENCE_TOKEN "…"   (danach App neu starten)
+# Geheimnisse nie hier eintragen; hier steht nur der Platzhalter ${NAME}. Den Wert gibt man im Quellen-Assistenten
+# ein (Wissensquellen › Bearbeiten …): Die App legt ihn unter Windows verschlüsselt für das Benutzerkonto ab (DPAPI)
+# und setzt ihn beim Start selbst. Eine Java-Property oder Umgebungsvariable gleichen Namens geht auch.
 
 space-harvester-app:
   # Lokaler Bestand (Lucene), Aufträge und Analysen; Standard: <Benutzerordner>/.space-harvester/data
@@ -33,9 +32,13 @@ space-harvester:
     #     include: "*.md, *.txt, *.pdf"
 
   network:
-    proxy:
-      mode: disabled            # disabled | manual-proxy | pac-url-manual | pac-url-windows-settings | …
-      # pac-url: http://proxy.example.org/proxy.pac
+    # Ohne Angabe gilt unter Windows pac-url-powershell (PAC-Adresse der Interneteinstellungen per PowerShell),
+    # sonst disabled. Der Assistent (Schritt "Proxy und Netzwerk") schreibt den Abschnitt bei Bedarf selbst.
+    # proxy:
+    #   mode: pac-url-powershell  # pac-url-powershell | pac-url-windows-settings | pac-url-wscript
+    #                             # | windows-static-proxy | pac-url-manual | manual-proxy | disabled
+    #   pac-url: http://proxy.example.org/proxy.pac   # nur bei pac-url-manual
+    #   non-proxy-hosts: [localhost, "*.intern"]
     async-transport: web-client
 
 # Eigene Zertifizierungsstellen (wie beim Dienst):

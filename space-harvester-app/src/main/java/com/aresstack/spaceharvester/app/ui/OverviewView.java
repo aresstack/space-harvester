@@ -132,8 +132,8 @@ public final class OverviewView implements View {
         text.add(AboutDialog.heading(AboutDialog.TAGLINE), c);
         c.insets = new Insets(0, 0, 18, 0);
         text.add(Comic.note("Noch ist keine Wissensquelle eingerichtet. Der Assistent fragt Adresse, Anmeldung und "
-                + "Netz ab, prüft die Verbindung und trägt die Quelle in die Konfigurationsdatei ein; Passwörter und "
-                + "Token stehen dort nur als Verweis auf eine Umgebungsvariable."), c);
+                + "Proxy ab, prüft die Verbindung und trägt die Quelle in die Konfigurationsdatei ein; Passwörter und "
+                + "Token legt die App verschlüsselt ab, nie in der Datei."), c);
         c.fill = GridBagConstraints.NONE;
         c.insets = new Insets(0, 0, 0, 0);
         text.add(add, c);

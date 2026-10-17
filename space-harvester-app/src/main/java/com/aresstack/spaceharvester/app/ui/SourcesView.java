@@ -5,6 +5,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
+import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -83,8 +84,9 @@ public final class SourcesView implements View {
         JPanel south = new JPanel(new BorderLayout(0, 8));
         south.setOpaque(false);
         south.add(add, BorderLayout.NORTH);
-        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Zugangsdaten kommen aus "
-                + "Umgebungsvariablen oder werden hier für die Sitzung eingegeben."), BorderLayout.SOUTH);
+        south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
+                + "der Assistent verschlüsselt ab; hier lassen sie sich auch für die Sitzung eingeben."),
+                BorderLayout.SOUTH);
         left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
@@ -192,12 +194,12 @@ public final class SourcesView implements View {
         config.options().forEach((key, value) -> facts.add("Option " + key, value));
         facts.add("Anmeldung", Texts.auth(config.auth()));
         if (config.auth().type() != SourceSettingsConfig.AuthType.NONE) {
-            boolean session = context.secrets().has(entry.id());
+            boolean session = context.secrets().has(config);
             facts.add(config.auth().type() == SourceSettingsConfig.AuthType.PAT ? "Token" : "Passwort",
-                    !entry.secretMissing() ? "gesetzt (Konfiguration/Umgebung)"
+                    context.vault().has(entry.id(), AppRuntime.SessionSecrets.login(config.auth())) ? "verschlüsselt gespeichert"
                             : session ? "für diese Sitzung eingegeben"
-                            : "fehlt" + (entry.secretVariable() == null ? "" : " (Umgebungsvariable "
-                            + entry.secretVariable() + ")"),
+                            : !entry.secretMissing() ? "gesetzt (Property/Umgebung)"
+                            : "fehlt (im Assistenten unter Bearbeiten … eingeben)",
                     entry.secretMissing() && !session ? Comic.RED : Comic.INK);
         }
         SourceSettingsConfig.ClientCertificate certificate = config.clientCertificate();
@@ -219,7 +221,7 @@ public final class SourcesView implements View {
                 capabilities.add(Texts.capability(capability), has ? "ja" : "nein", has ? Comic.INK : Comic.MUTED);
             }
         } else {
-            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry.id())
+            capabilities.add("Stand", entry.secretMissing() && !context.secrets().has(entry.config())
                     ? "wartet auf Zugangsdaten" : "nicht gestartet");
         }
 
@@ -280,12 +282,10 @@ public final class SourcesView implements View {
         if (value == null || value.length == 0) {
             return;
         }
-        context.secrets().put(entry.id(), value);
-        if (!entry.secretMissing()) {
-            feedback.info("Eingabe gemerkt", "Die Konfiguration liefert bereits ein Geheimnis; es bleibt in Gebrauch.");
-            return;
-        }
-        feedback.working("Quelle wird mit den neuen Zugangsdaten gestartet …");
+        context.secrets().put(entry.id(), AppRuntime.SessionSecrets.login(entry.config().auth()), value);
+        // Die Eingabe geht einer Property oder Variable vor und gilt sofort (Neustart der Quellen).
+        feedback.working(entry.secretMissing() ? "Quelle wird mit den neuen Zugangsdaten gestartet …"
+                : "Die Eingabe ersetzt für diese Sitzung den Wert aus Property/Umgebung; Quellen starten neu …");
         context.reload(() -> { });
     }
 
@@ -331,8 +331,25 @@ public final class SourcesView implements View {
             return;
         }
         feedback.working("Quelle wird entfernt …");
-        Background.execute(() -> editor.save(context.configFile(), editor.remove(context.configFile(), id),
-                !plaintext), () -> {
+        Background.execute(() -> {
+            // Gehört zur Entfernung: Ein späterer Eintrag mit derselben ID erbt sonst das gespeicherte Geheimnis.
+            // Erst der Tresor (verschlüsselt gemerkt), dann die Datei; scheitert die Datei, kommt er zurück.
+            SecretVault vault = context.vault();
+            String stored = vault.raw(id);
+            vault.remove(id);
+            try {
+                editor.save(context.configFile(), editor.remove(context.configFile(), id), !plaintext);
+            } catch (IOException | RuntimeException e) {
+                if (stored != null) {
+                    try {
+                        vault.restore(id, stored);
+                    } catch (IOException | RuntimeException restore) {
+                        e.addSuppressed(restore);
+                    }
+                }
+                throw e;
+            }
+        }, () -> {
             context.secrets().remove(id);
             context.reload(() -> feedback.success("Quelle " + id + " entfernt"));
         }, feedback::problem);
