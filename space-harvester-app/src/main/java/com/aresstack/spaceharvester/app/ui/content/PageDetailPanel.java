@@ -489,9 +489,10 @@ public final class PageDetailPanel extends JPanel {
         assetsHint.setText("Anhänge werden live geladen …");
         String source = sourceId;
         String id = pageId;
-        int current = request;
+        // Eigene Gültigkeit statt request: Eine Neuberechnung der Analysen verwirft die Anhangsliste nicht.
+        DeliveredPage shown = page;
         Background.run(() -> runtime.workspace().assets(source, id), overview -> {
-            if (current != request) {
+            if (shown != page) {
                 return;
             }
             assetsModel.set(overview);
@@ -499,7 +500,7 @@ public final class PageDetailPanel extends JPanel {
                     + (overview.listComplete() ? "" : " (Liste unvollständig)") + " · live, "
                     + Texts.time(overview.retrievedAt()));
         }, error -> {
-            if (current != request) {
+            if (shown != page) {
                 return;
             }
             assetsLoaded = false;

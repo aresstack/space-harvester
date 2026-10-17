@@ -340,6 +340,12 @@ public final class ContentView implements View {
     /** Leert Liste, Baum und Seitenansicht und verwirft laufende Ladevorgänge. */
     private void reset(String hint) {
         epoch++;
+        // Ein laufender Abgleich des vorigen Space läuft weiter (Aktivitäten); der Knopf gilt dem neuen Space.
+        if (syncWatch != null) {
+            syncWatch.stop();
+            syncWatch = null;
+        }
+        sync.setEnabled(true);
         loading = null;
         cursor = null;
         complete = false;
@@ -529,10 +535,16 @@ public final class ContentView implements View {
         feedback.working("Space " + spaceKey + " wird in den lokalen Bestand übernommen …");
         int current = epoch;
         Background.run(() -> runtime.workspace().startSync(sourceId, spaceKey),
-                started -> watchSync(runtime, started, current, spaceKey),
+                started -> {
+                    if (current == epoch) {
+                        watchSync(runtime, started, current, spaceKey);
+                    }
+                },
                 error -> {
-                    sync.setEnabled(true);
-                    feedback.problem(error);
+                    if (current == epoch) {
+                        sync.setEnabled(true);
+                        feedback.problem(error);
+                    }
                 });
     }
 
