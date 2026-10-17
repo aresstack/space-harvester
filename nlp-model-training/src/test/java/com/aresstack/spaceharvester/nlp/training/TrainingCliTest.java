@@ -45,7 +45,10 @@ class TrainingCliTest {
             if (line.startsWith("treebank.file.")) {
                 continue;
             }
-            recipe.add(line.startsWith("training.heap=") ? "training.heap=512m" : line);
+            // Dieser Test beginnt absichtlich mit einem nicht freigegebenen Modell – unabhängig davon,
+            // ob das reale Release-Rezept inzwischen auf approved steht.
+            recipe.add(line.startsWith("training.heap=") ? "training.heap=512m"
+                    : line.startsWith("license.approval=") ? "license.approval=pending" : line);
         }
         for (String role : List.of("train", "dev", "test", "license", "readme")) {
             String name = switch (role) {
