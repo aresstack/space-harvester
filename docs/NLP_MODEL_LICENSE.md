@@ -5,7 +5,7 @@ Freigabebedingung für die öffentliche Weitergabe von `maltparser-de-gsd` über
 **Die technische Veröffentlichung ist davon getrennt:** Bis zum erfolgreichen Neuverpacken, Prüfen und manuellen
 Veröffentlichen bleibt das Modell ein Entwurfs-Release.
 
-**Status: freigegeben (Veröffentlichung technisch noch ausstehend).** Die Entscheidung und die verbliebenen
+**Status: freigegeben und veröffentlicht** (Release [maltparser-de-gsd-v1.0.0](https://github.com/aresstack/space-harvester/releases/tag/maltparser-de-gsd-v1.0.0), 17.10.2026). Die Entscheidung und die verbliebenen
 Rechtsunsicherheiten sind im Abschnitt [Freigabeentscheidung](#freigabeentscheidung) dokumentiert.
 
 Diese Seite ist eine technische und rechtliche Einschätzung des Projekts, kein anwaltliches Gutachten. Sie betrachtet
@@ -238,12 +238,12 @@ Integritätsprüfungen und der manuellen Freigabe des Release-Entwurfs.
 
 | Feld | Eintrag |
 |---|---|
-| Status | **freigegeben** – öffentlicher Release noch nicht veröffentlicht |
+| Status | **freigegeben** – veröffentlicht am 17.10.2026 als Release [maltparser-de-gsd-v1.0.0](https://github.com/aresstack/space-harvester/releases/tag/maltparser-de-gsd-v1.0.0) |
 | Entschieden von | Projektverantwortliche Person, ausdrücklich in der Projektunterhaltung bestätigt (kein Klarname im öffentlichen Dokument eingetragen) |
 | Datum | 17.10.2026 |
 | Umfang | `maltparser-de-gsd-v1.0.0`, `.mco` SHA-256 `237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3`, **CC-BY-SA-4.0-Lizenzangebot nur für wirksam lizenzierbare Modellrechte**, keine Lizenzzusage für etwaige Dritttextrechte; öffentliche Weitergabe über GitHub Releases |
 | Getragene Restrisiken | **Bewusst akzeptierte Veröffentlichungsunsicherheiten:** Restrisiken 1 bis 4 aus „Bewertung und Restrisiken“, insbesondere Wortpaar-Rekonstruktion, Dritttextrechte, Datenbankrechte und internationale Rechtslagen. Nachnutzende Personen müssen eigene Nutzung und Rechte selbst beurteilen; das entbindet den Herausgeber nicht von möglicherweise bestehenden Drittansprüchen. |
-| Veröffentlichte ZIP | SHA-256 aus `SHA256SUMS` des veröffentlichten Release (nach dem Neuverpacken nachtragen) |
+| Veröffentlichte ZIP | `maltparser-de-gsd-v1.0.0.zip` SHA-256 `d779fb3296bd53753574e329c59b0194419683860883698480cc9788ccdaa959`, Manifest `maltparser-de-gsd-v1.0.0.manifest.json` SHA-256 `3f6e7d794ce7b249cac6936e7bc45ce862f461c1edff56afe01b2718059e2fed` (neu verpackt ohne Training in Lauf [39041881358](https://github.com/aresstack/space-harvester/actions/runs/39041881358); Download ohne Token geprüft) |
 
 Die hier festgehaltene Freigabe wurde **nicht als Namensunterschrift oder externe anwaltliche Prüfung** ausgegeben.
 Vor dem öffentlichen Release ist das genehmigte Modellpaket mit Lizenzhinweis, Attributionsdatei, unveränderter
