@@ -4,8 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Cursor;
+import java.awt.Point;
+import java.awt.event.MouseEvent;
+import java.awt.font.TextAttribute;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -13,6 +20,8 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.swing.AbstractButton;
+import javax.swing.BorderFactory;
+import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
@@ -122,6 +131,72 @@ class MainWindowTest {
         assertThat(buttonTexts(surface[0])).contains("Erste Wissensquelle hinzufügen …");
         assertThat(labelTexts(surface[0])).contains("Space Harvester", AboutDialog.TAGLINE);
         assertThat(labelTexts(AboutDialog.body(context))).contains(AboutDialog.TAGLINE);
+    }
+
+    @Test
+    void closeRingsStayRoundAndTheCopyrightOpensTheReleases() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        List<URI> opened = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel surface = new MainWindow(context).content(() -> { }, () -> { });
+            surface.setSize(1280, 820);
+            Screenshots.write(surface, home.resolve("window.png"));
+            assertThat(find(surface, ComicWindowCloseButton.class)).as("Hauptfenster: Ring bleibt rund")
+                    .singleElement().satisfies(MainWindowTest::isSquare);
+
+            JPanel dialog = Dialogs.surface("Wissensquelle hinzufügen", new JPanel(), () -> { });
+            dialog.setSize(660, 560);
+            Screenshots.write(dialog, home.resolve("dialog.png"));
+            assertThat(find(dialog, ComicWindowCloseButton.class)).as("Dialog: eigene Kopfzeile mit rundem ✕")
+                    .singleElement().satisfies(MainWindowTest::isSquare);
+            assertThat(labelTexts(dialog)).contains("Wissensquelle hinzufügen");
+            // ComicWindowShape setzt beim Anzeigen den Rand der Fläche neu; der Innenabstand darf daran nicht hängen.
+            dialog.setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
+            Screenshots.write(dialog, home.resolve("dialog-shaped.png"));
+            Component close = find(dialog, ComicWindowCloseButton.class).get(0);
+            Point corner = SwingUtilities.convertPoint(close.getParent(), close.getLocation(), dialog);
+            assertThat(corner.y).as("Abstand oben").isGreaterThanOrEqualTo(6 + 8);
+            assertThat(dialog.getWidth() - corner.x - close.getWidth()).as("Abstand rechts")
+                    .isGreaterThanOrEqualTo(6 + 12);
+
+            CopyrightLink copyright = new CopyrightLink(opened::add);
+            assertThat(find(surface, CopyrightLink.class)).hasSize(1);
+            JLabel link = copyright.link();
+            assertThat(link.getToolTipText()).isEqualTo("https://github.com/aresstack/space-harvester/releases");
+            assertThat(link.getCursor().getType()).isEqualTo(Cursor.HAND_CURSOR);
+            Color grey = link.getForeground();
+            link.dispatchEvent(new MouseEvent(link, MouseEvent.MOUSE_ENTERED, 0, 0, 1, 1, 0, false));
+            assertThat(link.getForeground()).isEqualTo(Comic.BLUE);
+            assertThat(link.getFont().getAttributes().get(TextAttribute.UNDERLINE))
+                    .isEqualTo(TextAttribute.UNDERLINE_ON);
+            link.dispatchEvent(new MouseEvent(link, MouseEvent.MOUSE_CLICKED, 0, 0, 1, 1, 1, false));
+            link.dispatchEvent(new MouseEvent(link, MouseEvent.MOUSE_EXITED, 0, 0, 1, 1, 0, false));
+            assertThat(link.getForeground()).isEqualTo(grey);
+        });
+        assertThat(opened).containsExactly(URI.create("https://github.com/aresstack/space-harvester/releases"));
+    }
+
+    private static void isSquare(Component button) {
+        assertThat(button.getWidth()).isEqualTo(24);
+        assertThat(button.getHeight()).isEqualTo(24);
+    }
+
+    private static <T> List<T> find(Container container, Class<T> type) {
+        List<T> found = new ArrayList<>();
+        for (Component child : container.getComponents()) {
+            if (type.isInstance(child)) {
+                found.add(type.cast(child));
+            }
+            if (child instanceof Container nested) {
+                found.addAll(find(nested, type));
+            }
+        }
+        return found;
     }
 
     private static List<String> labelTexts(Container container) {

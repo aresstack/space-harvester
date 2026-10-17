@@ -138,7 +138,8 @@ public final class MainWindow implements AppContext.Navigator {
         searchHolder.setBorder(BorderFactory.createEmptyBorder(0, 80, 0, 80));
         searchHolder.add(search, BorderLayout.CENTER);
         top.add(searchHolder, BorderLayout.CENTER);
-        top.add(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24), BorderLayout.EAST);
+        top.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)),
+                BorderLayout.EAST);
         ComicWindowDragger.install(top);
 
         JPanel side = new JPanel();
@@ -172,7 +173,7 @@ public final class MainWindow implements AppContext.Navigator {
         foot.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
         foot.add(status, BorderLayout.WEST);
-        foot.add(Comic.muted("© 2026 AresStack"), BorderLayout.EAST);
+        foot.add(new CopyrightLink(), BorderLayout.EAST);
 
         JPanel middle = new JPanel(new BorderLayout());
         middle.setOpaque(false);

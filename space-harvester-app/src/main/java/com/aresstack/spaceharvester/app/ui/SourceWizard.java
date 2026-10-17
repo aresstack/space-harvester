@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
@@ -9,7 +8,6 @@ import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
-import javax.swing.BorderFactory;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -38,15 +36,17 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
- * Quellen-Assistent: legt eine Wissensquelle in der Konfigurationsdatei an oder ändert eine bestehende an ihrer Stelle. Schritte: Art, Adresse, Anmeldung,
- * Zertifikate und Netz, Prüfen und Speichern. Passwort und Token kommen nie in die Datei, dort steht nur der
+ * Quellen-Assistent: legt eine Wissensquelle in der Konfigurationsdatei an oder ändert eine bestehende an ihrer Stelle.
+ * Schritte: Quelle (Art und Adresse zuerst, Anzeigename und technische Kennung werden daraus vorgeschlagen), Anmeldung,
+ * Zertifikate und Netz, Prüfen und Speichern. Ohne eigene Adresse gilt die öffentliche Confluence-Hilfe von Atlassian,
+ * damit sich die App sofort ausprobieren lässt. Fehlende Angaben stehen direkt unter dem Feld. Passwort und Token kommen nie in die Datei, dort steht nur der
  * Platzhalter der Umgebungsvariable; ein hier eingegebener Wert gilt nur für den Test und diese Sitzung. Der
  * Verbindungstest läuft mit einem eigenen Harvester in einem leeren Arbeitsordner, bevor etwas gespeichert ist.
  */
 final class SourceWizard {
 
     enum Step {
-        KIND("Art der Quelle"), ADDRESS("Adresse"), AUTH("Anmeldung"), SECURITY("Zertifikate und Netz"),
+        SOURCE("Quelle"), AUTH("Anmeldung"), SECURITY("Zertifikate und Netz"),
         CHECK("Prüfen und speichern");
 
         private final String title;
@@ -65,6 +65,9 @@ final class SourceWizard {
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
     private static final String JAVA_TRUST = "Zertifikate der Java-Laufzeit";
+    /** Öffentliche Confluence-Instanz (Atlassian-Dokumentation), lesbar ohne Anmeldung: Vorgabe zum Ausprobieren. */
+    static final String DEFAULT_URL = "https://confluence.atlassian.com";
+    static final String DEFAULT_TITLE = "Confluence-Hilfe (Atlassian)";
 
     private final AppContext context;
     private final ConfigFileEditor editor;
@@ -77,7 +80,7 @@ final class SourceWizard {
     final JComboBox<String> kind = Comic.combo();
     final JTextField id = Comic.field(24);
     final JTextField title = Comic.field(24);
-    final JTextField baseUrl = Comic.field(32);
+    final PlaceholderField baseUrl = new PlaceholderField(32, DEFAULT_URL);
     final JTextField directory = Comic.field(32);
     final JTextField include = Comic.field(24);
     final JComboBox<String> auth = Comic.combo();
@@ -104,8 +107,12 @@ final class SourceWizard {
     final ComposerButton cancel = Comic.button("Abbrechen", null);
 
     private final SourceDraft.Editable editing;
-    private Step step = Step.KIND;
+    private Step step = Step.SOURCE;
     private String suggestedVariable;
+    private String suggestedId = "";
+    private String suggestedTitle = "";
+    private boolean authChosen;
+    private boolean deriving;
     private Runnable close = () -> { };
     private Consumer<String> saved = ignored -> { };
 
@@ -119,7 +126,7 @@ final class SourceWizard {
         this.editing = editing;
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
-        root.setPreferredSize(new Dimension(640, 470));
+        root.setPreferredSize(new Dimension(660, 470));
         Comic.style(sessionValue);
 
         kind.addItem(CONFLUENCE);
@@ -136,18 +143,24 @@ final class SourceWizard {
             settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
         include.setText("*.md, *.txt, *.pdf, *.docx, *.html");
-        kind.addActionListener(e -> updateVisibility());
-        auth.addActionListener(e -> updateVisibility());
+        kind.addActionListener(e -> {
+            updateVisibility();
+            derive();
+        });
+        auth.addActionListener(e -> {
+            authChosen |= !deriving;
+            updateVisibility();
+        });
         certificate.addActionListener(e -> updateVisibility());
 
-        Form kindForm = new Form();
-        kindForm.row("Art", kind);
-        kindForm.row("ID", id, "Kleinbuchstaben, Ziffern, Bindestrich, z. B. wiki; erscheint in Aufträgen und Exporten");
-        kindForm.row("Titel", title, "Anzeigename, optional");
-
-        address.row("Adresse", baseUrl, "z. B. https://confluence.example.org (ohne /rest)");
+        address.row("Art", kind);
+        address.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         address.row("Ordner", row(directory, browse(directory, true)), null);
         address.row("Dateien", include, "Muster, durch Komma getrennt");
+        address.row("Anzeigename", title, "So heißt die Quelle in der App");
+        address.row("Technische Kennung", id, "Wird aus der Adresse vorgeschlagen; nur ändern, wenn nötig");
+        onEdit(baseUrl, this::derive);
+        onEdit(directory, this::derive);
 
         login.row("Anmeldung", auth);
         login.row("Benutzer", username);
@@ -167,14 +180,18 @@ final class SourceWizard {
 
         JPanel check = new JPanel(new BorderLayout(0, 8));
         check.setOpaque(false);
-        check.add(checkNotes, BorderLayout.NORTH);
+        JPanel checkTop = new JPanel(new BorderLayout(0, 6));
+        checkTop.setOpaque(false);
+        checkTop.add(checkNotes, BorderLayout.NORTH);
+        // Ergebnis von Test und Speichern nur hier: Die Formularschritte behalten so ihre Höhe.
+        checkTop.add(feedback, BorderLayout.CENTER);
+        check.add(checkTop, BorderLayout.NORTH);
         JComponent scroll = Comic.scroll(preview);
         scroll.setPreferredSize(new Dimension(560, 200));
         check.add(scroll, BorderLayout.CENTER);
 
         pages.setOpaque(false);
-        pages.add(kindForm, Step.KIND.name());
-        pages.add(address, Step.ADDRESS.name());
+        pages.add(address, Step.SOURCE.name());
         pages.add(login, Step.AUTH.name());
         pages.add(security, Step.SECURITY.name());
         pages.add(check, Step.CHECK.name());
@@ -188,9 +205,8 @@ final class SourceWizard {
         buttons.add(test);
         buttons.add(next);
         buttons.add(save);
-        JPanel south = new JPanel(new BorderLayout(0, 6));
+        JPanel south = new JPanel(new BorderLayout());
         south.setOpaque(false);
-        south.add(feedback, BorderLayout.CENTER);
         south.add(buttons, BorderLayout.SOUTH);
 
         root.add(heading, BorderLayout.NORTH);
@@ -206,7 +222,8 @@ final class SourceWizard {
             prefill(editing.draft());
         }
         updateVisibility();
-        show(Step.KIND);
+        derive();
+        show(Step.SOURCE);
     }
 
     /** Öffnet den Assistenten modal; {@code saved} erhält nach Speichern und Neu laden die ID der neuen Quelle. */
@@ -221,25 +238,14 @@ final class SourceWizard {
         JDialog dialog = Dialogs.dialog(parent, heading);
         wizard.saved = saved;
         wizard.close = dialog::dispose;
-        JPanel content = new JPanel(new BorderLayout(0, 12));
-        content.setBackground(Comic.SURFACE);
-        content.setBorder(BorderFactory.createCompoundBorder(ComicBorder.windowBorder(Comic.PALETTE, 2),
-                BorderFactory.createEmptyBorder(14, 18, 14, 18)));
-        JLabel label = new JLabel(heading);
-        label.setFont(Comic.semiBold(16f));
-        label.setForeground(Comic.INK);
-        content.add(label, BorderLayout.NORTH);
-        content.add(wizard.component(), BorderLayout.CENTER);
-        dialog.setContentPane(content);
+        Dialogs.frame(dialog, heading, wizard.component(), dialog::dispose);
         dialog.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowClosed(java.awt.event.WindowEvent e) {
                 wizard.clearSecret();
             }
         });
-        dialog.pack();
-        dialog.setLocationRelativeTo(dialog.getOwner());
-        dialog.setVisible(true);
+        Dialogs.present(dialog, new Dimension(620, 480));
     }
 
     JComponent component() {
@@ -268,7 +274,7 @@ final class SourceWizard {
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
         String bundle = String.valueOf(trust.getSelectedItem());
         return new SourceDraft(id.getText(), confluence ? SourceDraft.CONFLUENCE : SourceDraft.FILES,
-                title.getText(), confluence ? baseUrl.getText() : null, confluence ? null : directory.getText(),
+                title.getText(), confluence ? address() : null, confluence ? null : directory.getText(),
                 confluence ? null : include.getText(), authType,
                 authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                 authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
@@ -279,11 +285,31 @@ final class SourceWizard {
                 editing == null ? null : editing.draft().extraOptions());
     }
 
-    /** Nächster Schritt, wenn die Eingaben dieses Schritts vollständig sind. */
+    /** Die eingetragene Adresse; leer heißt die öffentliche Confluence-Hilfe. */
+    private String address() {
+        return baseUrl.getText().isBlank() ? DEFAULT_URL : baseUrl.getText();
+    }
+
+    /** Nächster Schritt, wenn die Eingaben dieses Schritts vollständig sind; sonst steht der Hinweis am Feld. */
     boolean next() {
+        Form form = form(step);
+        if (form != null) {
+            form.clearErrors();
+        }
         List<String> problems = problems(step);
         if (!problems.isEmpty()) {
-            feedback.warning("Bitte ergänzen", String.join("\n", problems));
+            JComponent first = null;
+            for (String problem : problems) {
+                JComponent field = field(problem);
+                JComponent target = form != null && form.has(field) ? field : form == null ? null : form.first();
+                if (target != null) {
+                    form.error(target, shortly(problem));
+                    first = first == null ? target : first;
+                }
+            }
+            if (first != null) {
+                first.requestFocusInWindow();
+            }
             return false;
         }
         feedback.clear();
@@ -300,6 +326,10 @@ final class SourceWizard {
         int index = steps.indexOf(step);
         if (index > 0) {
             feedback.clear();
+            Form form = form(steps.get(index - 1));
+            if (form != null) {
+                form.clearErrors();
+            }
             show(steps.get(index - 1));
         }
     }
@@ -440,7 +470,7 @@ final class SourceWizard {
     private List<Step> steps() {
         return CONFLUENCE.equals(kind.getSelectedItem())
                 ? List.of(Step.values())
-                : List.of(Step.KIND, Step.ADDRESS, Step.CHECK);
+                : List.of(Step.SOURCE, Step.CHECK);
     }
 
     private List<String> problems(Step current) {
@@ -448,21 +478,184 @@ final class SourceWizard {
         List<String> all = source.problems();
         List<String> mine = new ArrayList<>();
         for (String problem : all) {
-            boolean kindStep = problem.startsWith("Die ID") || problem.startsWith("Die Art");
-            boolean addressStep = problem.startsWith("Die Adresse") || problem.startsWith("Der Ordner");
-            boolean authStep = problem.startsWith("Der Benutzername") || problem.startsWith("Die Umgebungsvariable für");
-            boolean securityStep = !kindStep && !addressStep && !authStep;
-            if ((current == Step.KIND && kindStep) || (current == Step.ADDRESS && addressStep)
-                    || (current == Step.AUTH && authStep) || (current == Step.SECURITY && securityStep)
-                    || current == Step.CHECK) {
+            Form form = form(current);
+            boolean other = !address.has(field(problem)) && !login.has(field(problem)) && !security.has(field(problem));
+            if (current == Step.CHECK || (form != null && form.has(field(problem)))
+                    || (current == Step.SECURITY && other)) {
                 mine.add(problem);
             }
         }
-        if (current == Step.KIND && editing == null && source.id() != null && context.settings() != null
+        if (current == Step.SOURCE && editing == null && source.id() != null && context.settings() != null
                 && context.settings().sources().stream().anyMatch(s -> s.id().equals(source.id()))) {
             mine.add("Eine Quelle mit der ID " + source.id() + " gibt es schon.");
         }
         return mine;
+    }
+
+    private Form form(Step target) {
+        return switch (target) {
+            case SOURCE -> address;
+            case AUTH -> login;
+            case SECURITY -> security;
+            case CHECK -> null;
+        };
+    }
+
+    /** Das Feld, an dem ein Problem aus {@link SourceDraft#problems()} steht. */
+    private JComponent field(String problem) {
+        if (problem.startsWith("Die ID") || problem.startsWith("Eine Quelle mit der ID")) {
+            return id;
+        } else if (problem.startsWith("Die Art")) {
+            return kind;
+        } else if (problem.startsWith("Die Adresse")) {
+            return baseUrl;
+        } else if (problem.startsWith("Der Ordner")) {
+            return directory;
+        } else if (problem.startsWith("Der Benutzername")) {
+            return username;
+        } else if (problem.startsWith("Die Umgebungsvariable für das Zertifikatspasswort")) {
+            return certificatePasswordVariable;
+        } else if (problem.startsWith("Die Umgebungsvariable für")) {
+            return variable;
+        } else if (problem.startsWith("Die PKCS#12-Datei")) {
+            return certificatePath;
+        } else if (problem.startsWith("Der Alias")) {
+            return alias;
+        }
+        return null;
+    }
+
+    /** Kurzer Hinweis für die Zeile unter dem Feld; die Zeile hat nur Platz für einen Satz. */
+    private static String shortly(String problem) {
+        if (problem.startsWith("Die ID fehlt")) {
+            return "Bitte eine Kennung eintragen, z. B. wiki.";
+        } else if (problem.startsWith("Die ID darf")) {
+            return "Nur Kleinbuchstaben, Ziffern und Bindestrich (höchstens 63 Zeichen).";
+        } else if (problem.startsWith("Eine Quelle mit der ID")) {
+            return "Diese Kennung ist schon vergeben.";
+        } else if (problem.startsWith("Die Adresse muss")) {
+            return "Die Adresse beginnt mit https://.";
+        } else if (problem.startsWith("Die Adresse darf")) {
+            return "Die Adresse darf keinen Platzhalter ${…} enthalten.";
+        } else if (problem.startsWith("Der Ordner")) {
+            return "Bitte einen Ordner wählen.";
+        } else if (problem.startsWith("Der Benutzername")) {
+            return "Bitte den Benutzernamen eintragen.";
+        } else if (problem.startsWith("Die Umgebungsvariable")) {
+            return "Name aus Großbuchstaben, Ziffern und Unterstrich, z. B. WIKI_TOKEN.";
+        } else if (problem.startsWith("Die PKCS#12-Datei")) {
+            return "Bitte die PKCS#12-Datei wählen.";
+        } else if (problem.startsWith("Der Alias")) {
+            return "Bitte den Alias des Zertifikats eintragen.";
+        }
+        return problem;
+    }
+
+    /**
+     * Schlägt Anzeigename und technische Kennung aus Adresse oder Ordner vor, solange niemand sie geändert hat; bei
+     * der öffentlichen Confluence-Hilfe zusätzlich „Ohne Anmeldung“. Beim Bearbeiten bleibt alles, wie es ist.
+     */
+    private void derive() {
+        if (editing != null || deriving) {
+            return;
+        }
+        deriving = true;
+        try {
+            boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
+            String proposedTitle = confluence ? titleFor(address()) : folderName(directory.getText());
+            String proposedId = unique(confluence ? idForUrl(address()) : slug(folderName(directory.getText())));
+            if (title.getText().isBlank() || title.getText().equals(suggestedTitle)) {
+                title.setText(proposedTitle);
+                suggestedTitle = proposedTitle;
+            }
+            if (id.getText().isBlank() || id.getText().equals(suggestedId)) {
+                id.setText(proposedId);
+                suggestedId = proposedId;
+            }
+            if (confluence && !authChosen) {
+                auth.setSelectedItem(DEFAULT_URL.equals(normalized(address())) ? NONE : PAT);
+            }
+        } finally {
+            deriving = false;
+        }
+    }
+
+    private static String normalized(String url) {
+        String trimmed = url.trim();
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed.toLowerCase(Locale.ROOT);
+    }
+
+    private static String host(String url) {
+        try {
+            String host = java.net.URI.create(url.trim()).getHost();
+            return host == null ? "" : host.toLowerCase(Locale.ROOT).replaceFirst("^www\\.", "");
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
+    static String titleFor(String url) {
+        return DEFAULT_URL.equals(normalized(url)) ? DEFAULT_TITLE : host(url);
+    }
+
+    /** {@code https://confluence.example.org} wird zu {@code confluence-example}: Rechnername ohne Endung. */
+    static String idForUrl(String url) {
+        String host = host(url);
+        if (host.matches("[0-9.]+")) {
+            return slug(host);
+        }
+        int dot = host.lastIndexOf('.');
+        return slug(dot > 0 ? host.substring(0, dot) : host);
+    }
+
+    private static String folderName(String path) {
+        String trimmed = path == null ? "" : path.trim().replaceAll("[\\\\/]+$", "");
+        int cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+        return trimmed.substring(cut + 1);
+    }
+
+    private static String slug(String text) {
+        String slug = java.text.Normalizer.normalize(text.toLowerCase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "").replace("ß", "ss").replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("^-+|-+$", "");
+        return slug.length() > 63 ? slug.substring(0, 63).replaceAll("-+$", "") : slug;
+    }
+
+    /** Hängt -2, -3 … an, wenn es die Kennung in der Datei schon gibt. */
+    private String unique(String base) {
+        if (base.isEmpty() || context.settings() == null) {
+            return base;
+        }
+        java.util.Set<String> taken = context.settings().sources().stream().map(AppSettings.SourceEntry::id)
+                .collect(Collectors.toSet());
+        String candidate = base;
+        for (int n = 2; taken.contains(candidate); n++) {
+            String suffix = "-" + n;
+            candidate = (base.length() + suffix.length() > 63 ? base.substring(0, 63 - suffix.length()) : base) + suffix;
+        }
+        return candidate;
+    }
+
+    private static void onEdit(JTextField field, Runnable action) {
+        field.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                action.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                action.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                action.run();
+            }
+        });
     }
 
     private void show(Step target) {
@@ -581,13 +774,16 @@ final class SourceWizard {
         return button;
     }
 
-    /** Formular mit Beschriftung, Feld und Hinweis je Zeile; Zeilen lassen sich ausblenden. */
+    /**
+     * Formular mit Beschriftung, Feld und Hinweiszeile je Zeile; Zeilen lassen sich ausblenden. Ein Fehler ersetzt
+     * den Hinweis in derselben Zeile (rot), so bleibt die Höhe gleich; Tippen im Feld nimmt ihn wieder weg.
+     */
     private static final class Form extends JPanel {
 
         private final List<Row> rows = new ArrayList<>();
         private final JPanel filler = new JPanel();
 
-        private record Row(JComponent key, JLabel label, JComponent field, JLabel hint) {
+        private record Row(JComponent key, JLabel label, JComponent field, JLabel hint, String text) {
         }
 
         Form() {
@@ -609,25 +805,30 @@ final class SourceWizard {
             left.gridx = 0;
             left.gridy = y;
             left.anchor = GridBagConstraints.WEST;
-            left.insets = new Insets(6, 0, 0, 14);
+            left.insets = new Insets(4, 0, 0, 14);
             add(label, left);
             GridBagConstraints right = new GridBagConstraints();
             right.gridx = 1;
             right.gridy = y;
             right.weightx = 1;
             right.fill = GridBagConstraints.HORIZONTAL;
-            right.insets = new Insets(6, 0, 0, 0);
+            right.insets = new Insets(4, 0, 0, 0);
             add(field, right);
-            JLabel hintLabel = Comic.muted(hint == null ? "" : hint);
+            // Die Hinweiszeile ist immer da (notfalls leer), damit ein Fehler Platz hat, ohne etwas zu verschieben.
+            JLabel hintLabel = Comic.muted(hint == null ? " " : hint);
             GridBagConstraints below = new GridBagConstraints();
             below.gridx = 1;
             below.gridy = y + 1;
             below.anchor = GridBagConstraints.WEST;
+            below.fill = GridBagConstraints.HORIZONTAL;
             add(hintLabel, below);
-            hintLabel.setVisible(hint != null);
             JComponent key = field instanceof JPanel panel && panel.getComponentCount() > 0
                     && panel.getComponent(0) instanceof JComponent inner ? inner : field;
-            rows.add(new Row(key, label, field, hint == null ? null : hintLabel));
+            Row row = new Row(key, label, field, hintLabel, hint == null ? " " : hint);
+            rows.add(row);
+            if (key instanceof JTextField textField) {
+                onEdit(textField, () -> clear(row));
+            }
             // Ein dehnbarer Rest unter der letzten Zeile hält das Formular oben.
             GridBagConstraints rest = new GridBagConstraints();
             rest.gridx = 0;
@@ -637,16 +838,60 @@ final class SourceWizard {
             add(filler, rest);
         }
 
+        boolean has(JComponent field) {
+            return field != null && rows.stream().anyMatch(row -> row.key() == field && row.field().isVisible());
+        }
+
+        JComponent first() {
+            return rows.stream().filter(row -> row.field().isVisible()).map(Row::key).findFirst().orElse(null);
+        }
+
+        void error(JComponent field, String message) {
+            for (Row row : rows) {
+                if (row.key() == field) {
+                    row.hint().setText(message);
+                    row.hint().setToolTipText(message);
+                    row.hint().setForeground(Comic.RED);
+                    row.label().setForeground(Comic.RED);
+                }
+            }
+        }
+
+        void clearErrors() {
+            rows.forEach(this::clear);
+        }
+
+        String error(JComponent field) {
+            return rows.stream().filter(row -> row.key() == field && row.hint().getForeground() == Comic.RED)
+                    .map(row -> row.hint().getText()).findFirst().orElse(null);
+        }
+
+        private void clear(Row row) {
+            row.hint().setText(row.text());
+            row.hint().setToolTipText(null);
+            row.hint().setForeground(Comic.MUTED);
+            row.label().setForeground(Comic.TEXT);
+        }
+
         void visible(JComponent field, boolean visible) {
             for (Row row : rows) {
                 if (row.key() == field || row.field() == field) {
                     row.label().setVisible(visible);
                     row.field().setVisible(visible);
-                    if (row.hint() != null) {
-                        row.hint().setVisible(visible);
-                    }
+                    row.hint().setVisible(visible);
                 }
             }
         }
+    }
+
+    /** Der Hinweis unter einem Feld, solange dort ein Fehler steht; sonst {@code null}. */
+    String error(JComponent field) {
+        for (Form form : List.of(address, login, security)) {
+            String error = form.error(field);
+            if (error != null) {
+                return error;
+            }
+        }
+        return null;
     }
 }
