@@ -5,7 +5,9 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
@@ -13,6 +15,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.RelationProc
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
+import java.util.ArrayList;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
@@ -28,10 +31,12 @@ import org.springframework.context.annotation.Configuration;
 class EnrichmentConfiguration {
 
     @Bean
-    Enrichments enrichments(ObjectProvider<EnrichmentStore> store) {
-        return new Enrichments(new ConfluenceStorageTextProjector(),
-                List.of(new AcronymProcessor(), new OutlineProcessor(), new EntityProcessor(),
-                        new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()),
+    Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding) {
+        List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
+                new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
+        // Embeddings nur mit konfiguriertem Modell (EmbeddingConfiguration, #89)
+        embedding.ifAvailable(processors::add);
+        return new Enrichments(new ConfluenceStorageTextProjector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC());
     }
 

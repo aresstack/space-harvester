@@ -1,19 +1,31 @@
 name: Embedding-Modell
 
-# Prüft den lokalen ONNX-Provider (#89) gegen das echte, fest gepinnte multilingual-e5-small. Die Modelldateien
-# kommen nie ins Repository; dieser Job lädt die gepinnte Revision, prüft die SHA-256 und vergleicht die Vektoren des
-# Harvesters mit den Referenzvektoren der PyTorch-Implementierung.
+# Prüft den lokalen ONNX-Provider (#89) gegen das echte, fest gepinnte multilingual-e5-small (docs/EMBEDDINGS.md).
+# Die Modelldateien kommen nie ins Repository: Der Job lädt die gepinnte Revision, prüft die SHA-256 und lässt
+# E5ReferenceTest die Vektoren des Harvesters mit den Referenzvektoren der PyTorch-Implementierung vergleichen.
 on:
   workflow_dispatch:
+    inputs:
+      regenerate:
+        description: 'Referenzvektoren mit PyTorch neu berechnen und ausgeben'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '41 5 * * 1'
   pull_request:
     paths:
       - '.github/workflows/embedding-model.yml'
       - 'tools/embedding/**'
       - 'src/main/java/com/aresstack/spaceharvester/embedding/**'
+      - 'src/test/java/com/aresstack/spaceharvester/embedding/**'
       - 'src/test/resources/embedding/**'
+      - 'gradle/libs.versions.toml'
 
 permissions:
   contents: read
+
+env:
+  REVISION: 614241f622f53c4eeff9890bdc4f31cfecc418b3
 
 jobs:
   model:
@@ -21,31 +33,34 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Revision und Dateien
+      - name: Gepinnte Modelldateien laden
         run: |
-          api=https://huggingface.co/api/models/intfloat/multilingual-e5-small
-          rev=$(curl -sSf "$api/revision/main" | python3 -c "import json,sys; print(json.load(sys.stdin)['sha'])")
-          echo "main $rev"
-          for path in "$api/tree/$rev" "$api/tree/$rev/onnx"; do
-            curl -sSf "$path" | python3 -c "
-          import json,sys
-          for e in json.load(sys.stdin):
-              print(e['path'], e.get('size'), (e.get('lfs') or {}).get('oid', e.get('oid')))"
-          done
-          echo "rev=$rev" >> "$GITHUB_ENV"
-      - name: Referenzvektoren (PyTorch)
+          base=https://huggingface.co/intfloat/multilingual-e5-small/resolve/$REVISION
+          mkdir -p "$RUNNER_TEMP/e5/onnx"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/e5/onnx/model.onnx" "$base/onnx/model.onnx"
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/e5/tokenizer.json" "$base/tokenizer.json"
+          cd "$RUNNER_TEMP/e5"
+          sha256sum -c <<'SUMS'
+          ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665  onnx/model.onnx
+          0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39  tokenizer.json
+          SUMS
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Vergleich mit den Referenzvektoren
+        env:
+          SPACE_HARVESTER_E5_DIR: ${{ runner.temp }}/e5
+        run: ./gradlew test --tests '*E5ReferenceTest' --tests '*OnnxEmbeddingProviderTest' --console=plain
+      - name: Referenzvektoren neu berechnen (PyTorch)
+        if: ${{ inputs.regenerate }}
         run: |
           pip install -q torch --index-url https://download.pytorch.org/whl/cpu
           pip install -q transformers==4.46.3 huggingface_hub sentencepiece
           python3 -c "
           from huggingface_hub import snapshot_download
-          snapshot_download('intfloat/multilingual-e5-small', revision='$rev', local_dir='$RUNNER_TEMP/e5',
+          snapshot_download('intfloat/multilingual-e5-small', revision='$REVISION', local_dir='$RUNNER_TEMP/e5pt',
               allow_patterns=['config.json','tokenizer.json','tokenizer_config.json','special_tokens_map.json',
-                              'sentencepiece.bpe.model','model.safetensors','onnx/model.onnx'])"
-          (cd "$RUNNER_TEMP/e5" && find . -type f -not -path './.cache/*' | sort | xargs sha256sum)
-          echo "----- Referenz -----"
-          python3 tools/embedding/e5_reference.py "$RUNNER_TEMP/e5"
-          echo "----- Ende -----"
+                              'sentencepiece.bpe.model','model.safetensors'])"
+          python3 tools/embedding/e5_reference.py "$RUNNER_TEMP/e5pt"

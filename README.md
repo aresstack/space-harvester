@@ -369,8 +369,10 @@ liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt vo
 bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten gelöscht; scheitert
 ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In `view=extended` steht je
 Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich geändert haben).
-Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`. Embeddings und Reranking
-sind als nächste Stufe vorbereitet (Schnittstellen ohne Modell, [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
+Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`. Embeddings sind optional:
+mit `space-harvester.embedding.provider=onnx` berechnet ein lokales Modell (`intfloat/multilingual-e5-small`, fest
+gepinnt, Dateien vom Betrieb) die Anreicherung `embedding`; ohne diese Einstellung ändert sich nichts
+([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md), [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel

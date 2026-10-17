@@ -6,6 +6,9 @@ Attention-Maske, L2-Normierung, Präfixe "query: " und "passage: " wie in der Mo
 stdout; liegt als src/test/resources/embedding/multilingual-e5-small/reference.json im Repository.
 
     python3 tools/embedding/e5_reference.py <modellverzeichnis> > reference.json
+
+Das Modellverzeichnis ist die gepinnte Revision (docs/EMBEDDINGS.md) mit config.json, Tokenizer-Dateien und
+model.safetensors; der Workflow embedding-model.yml erzeugt die Datei mit regenerate=true.
 """
 
 import json
