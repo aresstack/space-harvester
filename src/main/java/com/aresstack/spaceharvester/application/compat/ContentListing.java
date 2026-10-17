@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.application.compat;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
@@ -42,6 +44,17 @@ public class ContentListing {
         this.search = Objects.requireNonNull(search, "search");
         this.pages = Objects.requireNonNull(pages, "pages");
         this.access = Objects.requireNonNull(access, "access");
+    }
+
+    /**
+     * Prüft, ob der Aufrufer überhaupt Metadaten dieser Quelle sehen darf, bevor die Fassade Parameter bewertet: Ein
+     * Client ohne Freigabe erfährt nichts über die Route.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Freigabe für irgendeinen
+     *                                                                                Space der Quelle
+     */
+    public void requireSource(AccessContext caller, String sourceId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
     }
 
     /**

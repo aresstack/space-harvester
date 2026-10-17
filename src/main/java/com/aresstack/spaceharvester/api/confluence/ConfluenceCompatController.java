@@ -140,6 +140,7 @@ public class ConfluenceCompatController {
             @RequestParam(required = false) String expand,
             @RequestParam(defaultValue = "0") int start,
             @RequestParam(defaultValue = "" + DEFAULT_LIMIT) int limit) {
+        listing.requireSource(caller, sourceId);
         if (spaceKey == null || spaceKey.isBlank()) {
             throw new UnsupportedRequestException("spaceKey ist Pflicht; eine Liste über alle Spaces wird nicht "
                     + "unterstützt");
