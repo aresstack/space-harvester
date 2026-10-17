@@ -3,6 +3,8 @@
 **Stand:** 16.10.2026 · **Verbindliche Grundlage:** [Implementierungsplan](IMPLEMENTATION_PLAN.md) und [Roadmap #20](https://github.com/aresstack/space-harvester/issues/20).  
 **Zweck:** Den bisherigen M0–M8-Plan **nicht mehr als serielle Ticketwarteschlange** behandeln. Meilensteine bleiben für die Produktabnahme sinnvoll; Arbeit an unabhängigen Bausteinen läuft **gleichzeitig**.
 
+> **Module seit #100:** Die hier genannten Pakete liegen in `space-harvester-core` (`application`, `source`, `persistence`, `output`, `embedding`) oder `space-harvester-server` (`api`, `config`, `security`, UI). Zuordnung: [MODULES.md](MODULES.md).
+
 ## Arbeitsmodus: sieben aktive Stränge
 
 Die Kennungen A–G bezeichnen **Arbeitsstränge**, nicht automatisch bereits gestartete Claude-Code-Sessions oder fest zugewiesene Personen. Ein Strang arbeitet auf **eigenem Feature-Branch/Worktree**, ein verantwortlicher Thread koordiniert alle Änderungen an seinen Dateien. PRs einzeln reviewen und mergen; den Code der anderen Stränge nicht ungefragt umschreiben.

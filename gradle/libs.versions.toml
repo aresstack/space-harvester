@@ -20,6 +20,12 @@ pdfbox = "3.0.5"
 # Hugging-Face-Tokenizer von DJL, beide mit nativen Bibliotheken für Linux, Windows und macOS im Jar
 onnxruntime = "1.31.0"
 djlTokenizers = "0.38.0"
+# space-harvester-core (#100): ohne die Spring-Boot-BOM, deshalb hier fest; abgestimmt auf Spring Boot 4.1.1,
+# der Server erzwingt über die BOM dieselben Versionen
+jackson = "3.1.5"
+springFramework = "7.0.9"
+reactorNetty = "1.3.7"
+slf4j = "2.0.18"
 # Deutsches UD-Parsing (#98, ADR 0005), nur im Modul nlp-parser: MaltParser (BSD-3) mit reload4j statt Log4j 1.2.16,
 # Satz-, Token-, Wortarten- und Grundformmodelle von Apache OpenNLP (UD German GSD) aus Maven Central
 maltparser = "1.9.2"
@@ -36,6 +42,11 @@ jgraphx = "4.2.2"
 junit4 = "4.13.2"
 
 [libraries]
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
+spring-webflux = { module = "org.springframework:spring-webflux", version.ref = "springFramework" }
+reactor-netty-http = { module = "io.projectreactor.netty:reactor-netty-http", version.ref = "reactorNetty" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }

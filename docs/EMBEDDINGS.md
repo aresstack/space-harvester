@@ -127,14 +127,14 @@ Grob, auf einem aktuellen x86-Server, zu messen auf eigenen Daten (#89 Punkt 4):
 ## Prüfen
 
 - `OnnxEmbeddingProviderTest` (im Build) prüft Präfixe, Mean-Pooling, Normierung, Stapel, Abschneiden und das
-  Verhalten bei fehlenden oder falschen Dateien mit einem Spielzeugmodell (`src/test/resources/embedding/tiny`).
+  Verhalten bei fehlenden oder falschen Dateien mit einem Spielzeugmodell (`space-harvester-core/src/test/resources/embedding/tiny`).
 - `E5ReferenceTest` vergleicht die Vektoren und Token-IDs des Harvesters mit Referenzvektoren aus der
   PyTorch-Implementierung der Modellkarte (`tools/embedding/e5_reference.py`,
-  `src/test/resources/embedding/multilingual-e5-small/reference.json`; Kosinus > 0,9999). Er läuft im Workflow
+  `space-harvester-core/src/test/resources/embedding/multilingual-e5-small/reference.json`; Kosinus > 0,9999). Er läuft im Workflow
   `.github/workflows/embedding-model.yml`, der die gepinnte Revision lädt und die Prüfsummen prüft, oder lokal:
 
   ```bash
-  SPACE_HARVESTER_E5_DIR=/opt/space-harvester/models/e5 ./gradlew :test --tests '*E5ReferenceTest'
+  SPACE_HARVESTER_E5_DIR=/opt/space-harvester/models/e5 ./gradlew :space-harvester-core:test --tests '*E5ReferenceTest'
   ```
 
 Eine neue Revision des Modells verlangt neue Werte in `E5Defaults`, neue Referenzvektoren und einen Eintrag in

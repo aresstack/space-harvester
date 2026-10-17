@@ -87,3 +87,8 @@ def verifyUpstreamCopy = tasks.register('verifyUpstreamCopy') {
 tasks.named('check') {
     dependsOn verifyUpstreamCopy
 }
+
+// Veröffentlichung vorbereitet, weil space-harvester-core die Kopie braucht (#100, docs/MODULES.md); der Code bleibt
+// unverändert, nur diese Build-Datei gehört dem Harvester.
+ext.publishedArtifactId = 'space-harvester-enterprise-ai-sources'
+apply from: rootProject.file('gradle/publishing.gradle')

@@ -16,7 +16,7 @@ werden wiederverwendet (siehe [#2](https://github.com/aresstack/space-harvester/
 ## Bauen, testen, starten
 
 ```bash
-./gradlew build        # kompiliert, testet und baut space-harvester-server/build/libs/space-harvester-<version>.jar
+./gradlew build        # baut Core und Dienst, testet, Jar: space-harvester-server/build/libs/space-harvester-<version>.jar
 ./gradlew bootRun      # startet den Dienst auf http://localhost:8080
 ```
 
@@ -45,6 +45,40 @@ Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 ```bash
 SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 ```
+
+## Module und Nutzung als Bibliothek
+
+Der Build hat zwei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
+
+- `space-harvester-core`: Bibliothek ohne Spring Boot und ohne REST. Fachlogik, Quellenadapter (Confluence, Dateien),
+  Lucene-Cache, Abgleich, Suche, Export und Embeddings.
+- `space-harvester-server`: der Spring-Boot-Dienst mit REST-API, Confluence-Fassade, Weboberfläche und Sicherheit; er
+  verwendet den Core. `./gradlew bootRun` und das Jar oben starten ihn.
+
+Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
+Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,
+`exports()`, `assets()`, `enrichments()`, `jobs()`); Abgleich und Export laufen als Aufträge mit Fortschritt und
+Abbruch:
+
+```java
+try (Harvester harvester = Harvester.builder()
+        .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", URI.create("https://wiki.example.org"),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.PAT, null, null, token), Map.of()))
+        .dataDirectory(Path.of("data"))          // cache/, exports/, assets/
+        .build()) {
+    JobStatus sync = harvester.await(harvester.sync("wiki", "DOC").id(), Duration.ofMinutes(30));
+    PageListing pages = harvester.pages().pages(harvester.caller(), "wiki", "DOC", null, 100);
+    JobStatus export = harvester.await(harvester.export("wiki", "DOC", List.of("markdown")).id(),
+            Duration.ofMinutes(30));
+    ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
+}
+```
+
+Proxy/PAC (`proxy(...)`), Vertrauensquellen (`trustBundles(...)`), Rechte (`accessPolicy(...)`, Standard: der
+einbettende Aufrufer darf alles lesen), Auftragsgrenzen und ein lokales Embedding-Modell setzt der Builder. Die
+Veröffentlichung als `com.aresstack:space-harvester-core` ist vorbereitet (`./gradlew
+:space-harvester-core:publishMavenPublicationToLocalRepository` schreibt nach `space-harvester-core/build/repo`),
+aber noch nicht eingerichtet.
 
 ## Quellen konfigurieren
 
