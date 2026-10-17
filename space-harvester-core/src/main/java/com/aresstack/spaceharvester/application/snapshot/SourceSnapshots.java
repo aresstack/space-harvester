@@ -8,8 +8,8 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Lädt den nativen Snapshot einer Seite live aus ihrer Quelle: Payload und Kopfdaten aus derselben Antwort, Hashes
@@ -37,14 +37,22 @@ public class SourceSnapshots implements PageContentFetcher {
         if (!source.asyncStoredPages()) {
             return snapshot(source, pageId, source.storedPage(pageId));
         }
+        CompletableFuture<PageSnapshot> pending = fetchAsync(source, pageId).toCompletableFuture();
         try {
-            // Wartet der Aufrufer (Sync-Lauf, Job), nicht ein I/O-Thread: der Abruf selbst blockiert nicht.
-            return fetchAsync(source, pageId).toCompletableFuture().join();
-        } catch (CompletionException e) {
+            // Wartet der Aufrufer (Sync-Lauf, Job), nicht ein I/O-Thread: der Abruf selbst blockiert nicht. Unterbrechbar
+            // warten, damit ein beendeter Auftrag (Harvester.close, shutdownNow) nicht an einer Antwort hängt, die nie
+            // kommt.
+            return pending.get();
+        } catch (InterruptedException e) {
+            pending.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                    "Abruf der Seite unterbrochen", null);
+        } catch (ExecutionException e) {
             if (e.getCause() instanceof RuntimeException failure) {
                 throw failure;
             }
-            throw e;
+            throw new IllegalStateException("Abruf der Seite fehlgeschlagen", e.getCause());
         }
     }
 
