@@ -76,6 +76,9 @@ class MainWindowTest {
         }
         assertThat(buttonTexts(surface[0])).contains("Übersicht", "Wissensquellen", "Inhalte", "Aktivitäten",
                 "Exporte", "Suche", "Einstellungen");
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.OVERVIEW));
+        assertThat(labelTexts(surface[0])).as("„Zu erledigen“ steht im Dashboard, nicht in der Begrüßung")
+                .contains("Nichts offen.");
 
         String space = context.runtime().workspace().spaces("handbuch").get(0).key();
         String job = context.runtime().workspace().startSync("handbuch", space).id();
@@ -93,6 +96,45 @@ class MainWindowTest {
         });
         Thread.sleep(500);
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("export.png")));
+    }
+
+    @Test
+    void withoutSourcesTheOverviewWelcomesWithTheWayToTheFirstSource() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        JPanel[] surface = new JPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            MainWindow window = new MainWindow(context);
+            surface[0] = window.content(() -> { }, () -> { });
+            surface[0].setSize(1280, 820);
+            window.show(AppContext.Section.OVERVIEW);
+            Screenshots.write(surface[0], home.resolve("welcome.png"));
+        });
+        assertThat(home.resolve("welcome.png")).isNotEmptyFile();
+        assertThat(buttonTexts(surface[0])).contains("Erste Wissensquelle hinzufügen …");
+        assertThat(labelTexts(surface[0])).contains("Space Harvester", AboutDialog.TAGLINE);
+        assertThat(labelTexts(AboutDialog.body(context))).contains(AboutDialog.TAGLINE);
+    }
+
+    private static List<String> labelTexts(Container container) {
+        List<String> texts = new ArrayList<>();
+        for (Component child : container.getComponents()) {
+            if (child instanceof javax.swing.JLabel label && label.getText() != null) {
+                texts.add(label.getText());
+            }
+            if (child instanceof Container nested) {
+                texts.addAll(labelTexts(nested));
+            }
+        }
+        return texts;
     }
 
     private static List<String> buttonTexts(Container container) {

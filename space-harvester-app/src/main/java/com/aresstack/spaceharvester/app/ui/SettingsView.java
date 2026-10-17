@@ -39,6 +39,7 @@ public final class SettingsView implements View {
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Datenordner öffnen", "Ordner des lokalen Bestands öffnen");
+    private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
 
     public SettingsView(AppContext context) {
         this.context = context;
@@ -53,6 +54,7 @@ public final class SettingsView implements View {
                 open(context.settings().storage().dataDirectory());
             }
         });
+        about.addActionListener(e -> AboutDialog.open(root, context));
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -66,12 +68,16 @@ public final class SettingsView implements View {
         data.setOpaque(false);
         data.add(storage, BorderLayout.CENTER);
         data.add(Comic.row(openData), BorderLayout.SOUTH);
+        JPanel diagnosis = new JPanel(new BorderLayout(0, 8));
+        diagnosis.setOpaque(false);
+        diagnosis.add(runtime, BorderLayout.CENTER);
+        diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
         root.add(Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate("Netz und Zertifikate", Comic.ORANGE, network),
                 Comic.plate("Embedding-Modell", Comic.YELLOW, embedding),
-                Comic.plate("Diagnose", Comic.DARK, runtime)), BorderLayout.CENTER);
+                Comic.plate("Diagnose", Comic.DARK, diagnosis)), BorderLayout.CENTER);
         context.onChange(ignored -> render());
         render();
     }
