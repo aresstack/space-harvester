@@ -233,4 +233,7 @@ git tag -a v0.1.0-alpha.2 -m "Space Harvester Desktop 0.1.0-alpha.2"
 git push origin v0.1.0-alpha.2
 ```
 
+Ohne lokales Git geht es auch über GitHub: Actions › **Desktop-App-Release** › *Run workflow* auf `main`, Feld `tag`
+mit dem neuen Tag ausfüllen. Der Lauf legt Tag und Release auf dem gebauten Commit an.
+
 Lokal mit Release-Version bauen: `./gradlew :space-harvester-app:bootJar -PappVersion=0.1.0-alpha.2`.
