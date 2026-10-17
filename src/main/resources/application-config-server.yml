@@ -1,0 +1,5 @@
+# Optionaler Spring Cloud Config Server (#3, docs/CONFIGURATION.md). "optional:" startet auch ohne erreichbaren Server
+# mit der lokalen Konfiguration; fail-fast=true macht ihn verpflichtend.
+spring:
+  config:
+    import: "optional:configserver:${SPRING_CLOUD_CONFIG_URI:http://localhost:8888}"

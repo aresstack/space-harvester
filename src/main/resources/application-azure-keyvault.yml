@@ -1,0 +1,12 @@
+# Profil azure-keyvault: Azure Key Vault als zusätzliche PropertySource (#22). Platzhalter wie
+# ${confluence-api-token} in der Konfiguration werden dann aus dem Vault aufgelöst. Anmeldung über die Azure
+# Default-Credential-Kette (Managed Identity, Umgebungsvariablen, az login). Details: docs/SECRETS.md
+spring:
+  cloud:
+    azure:
+      keyvault:
+        secret:
+          property-source-enabled: true
+          property-sources:
+            - name: azure-key-vault
+              endpoint: ${AZURE_KEYVAULT_ENDPOINT}

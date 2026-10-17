@@ -115,7 +115,10 @@ public class SourcesController {
                     + "; die Quelle darf weniger liefern, auch wenn noch Seiten folgen")
             @RequestParam(defaultValue = "" + SourceQueries.MAX_PAGE_METADATA_LIMIT) int limit) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
-        return PageMetadataResponse.of(queries.pageMetadata(sourceId, spaceKey, cursor, limit));
+        PageMetadataListing listing = queries.pageMetadata(sourceId, spaceKey, cursor, limit);
+        // Je Seite, weil ein Endnutzer (#24) im freigegebenen Space nicht jede Seite sehen muss.
+        return PageMetadataResponse.of(listing, access.filter(caller, listing.entries(), AccessKind.METADATA,
+                entry -> ResourceScope.page(sourceId, entry.page().partitionKey(), entry.page().pageId())));
     }
 
     @GetMapping("/{sourceId}/pages/{pageId}/metadata")
@@ -202,10 +205,10 @@ public class SourcesController {
                                        List<PageMetadataEntry> pages,
                                        @Schema(nullable = true) String nextCursor, boolean complete) {
 
-        static PageMetadataResponse of(PageMetadataListing listing) {
+        static PageMetadataResponse of(PageMetadataListing listing, List<PageMetadataListing.Entry> visible) {
             return new PageMetadataResponse(listing.sourceId(), listing.partitionKey(), "live",
                     listing.retrievedAt(), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
-                    listing.entries().stream().map(PageMetadataEntry::of).toList(), listing.nextCursor(),
+                    visible.stream().map(PageMetadataEntry::of).toList(), listing.nextCursor(),
                     listing.complete());
         }
     }

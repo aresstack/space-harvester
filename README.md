@@ -35,6 +35,11 @@ SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew
 Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
 geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
 
+Unter `http://localhost:8080/ui/` liegt eine schlanke Weboberfläche: Quellen und Spaces ansehen, Abgleich und Export
+starten, Fortschritt, Warnungen und Fehler verfolgen, Export-Dateien herunterladen. Sie ruft nur die REST-API auf; das
+Bearer-Token gibt man im Browser ein, es bleibt im sessionStorage des Tabs. Abschalten mit
+`SPACE_HARVESTER_UI_ENABLED=false`.
+
 Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
 
 ```bash
@@ -85,7 +90,8 @@ space-harvester:
 
 - **Anmeldearten:** `none` (anonym, Standard), `basic` (Benutzername und Passwort als HTTP Basic) und `pat`
   (Personal Access Token als `Authorization: Bearer`). Die Zugangsdaten gehen über einen `SecretProvider` an den
-  Confluence-Adapter; weitere Secret-Speicher wie Azure Key Vault (#22) kommen später daneben.
+  Confluence-Adapter. Platzhalter können optional aus Azure Key Vault kommen (Profil `azure-keyvault`); ein
+  Platzhalter ohne Wert verhindert den Start. Varianten, Anmeldung und Live-Test: [docs/SECRETS.md](docs/SECRETS.md).
 - **Prüfung beim Start:** Fehlerhafte Quellen verhindern den Start; die Meldung nennt jede Quelle und jedes Feld.
   Eine nicht erreichbare Quelle verhindert den Start nicht, Verbindungen entstehen erst bei Anfragen.
 - **Keine Geheimnisse nach außen:** Passwort, Token und Zertifikatspasswort erscheinen weder in API-Antworten noch in Logs.
@@ -110,7 +116,9 @@ space-harvester:
           alias: confluence-client
           password: ${CONFLUENCE_CLIENT_KEYSTORE_PASSWORD}
   ```
-- **Noch nicht unterstützt:** OAuth und ein Spring Cloud Config Server. Proxy und PAC: siehe nächsten Abschnitt.
+- **Spring Cloud Config Server:** optional über das Profil `config-server` (`SPRING_CLOUD_CONFIG_URI`); ohne
+  erreichbaren Server startet der Dienst mit der lokalen Konfiguration. Reihenfolge der Quellen und Fallstricke:
+  [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Proxy und PAC: siehe nächsten Abschnitt.
 
 ## Proxy und PAC/WPAD
 
@@ -229,15 +237,17 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
+| `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search?sourceId=…` | Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise |
+| `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend und ohne Durchgriff auf Confluence; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
 | `GET /actuator/health` | Health; Probes unter `/actuator/health/liveness` und `/actuator/health/readiness` |
 | `GET /actuator/info` | Build-Informationen |
 
-Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet. Bei Quellen unterscheidet
+Fehler werden als Problem Details (RFC 9457, `application/problem+json`) beantwortet, außer unter `/api/compat/confluence`, wo sie den Fehlerkörper von Confluence haben. Bei Quellen unterscheidet
 `type` die Fälle: `access-denied` (403, keine Freigabe oder unbekannte Quellen-ID), `source-access-denied` (502, Anmeldung
 abgelehnt), `source-unavailable` (503, nicht erreichbar) und `source-invalid-response` (502). `detail` ist ein fester
 Text je Fall; Meldungen der Quelle oder des Netzwerks gehen nicht an Clients und stehen nur im DEBUG-Log.
@@ -288,7 +298,8 @@ gespeicherten Bytes unverändert zurück, Cache-Stand und Revision stehen in den
 `view=extended` liefert stattdessen einen JSON-Container: `data` ist die gespeicherte Payload als JSON (dieselbe
 Struktur, Zahlen ohne Stellenverlust, aber nicht bytegenau), `metadata` die aktuellen Kopfdaten wie in der Seitenliste
 samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObservedAt` und `nativeFormat` (Kopfdaten
-können neuer sein als die Payload), `enrichments` bleibt bis #29 leer. Harvester-Angaben stehen nie in `data`. Ist die
+können neuer sein als die Payload) und `enrichments` die Anreicherungen (siehe unten). Harvester-Angaben stehen nie
+in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
 `refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
 antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
@@ -296,6 +307,16 @@ antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cac
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`
 wie bei einer unbekannten Seite.
+
+**Anreicherungen (#29).** Deterministische Prozessoren ohne KI leiten aus einer konservativen Textprojektion des
+Storage-Formats (`confluence-storage-text/v1`: Makros, Bilder und Verweise entfallen, nichts wird ausgeführt oder
+aufgelöst) Hinweise ab: `acronyms` (Akronyme, Ausschreibung nur bei passenden Anfangsbuchstaben in Klammern) und
+`outline` (Gliederung mit Wortzahlen). Jedes Ergebnis trägt Prozessor, Version, `inputSha256`, Revision, Zeit, Status
+und Warnungen und liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt von der unveränderten
+Payload. Nach jedem bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten
+gelöscht; scheitert ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In
+`view=extended` steht je Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich
+geändert haben). Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`.
 
 **Suche (#28, erste Ausbaustufe):** `GET /api/v1/search?sourceId=…` sucht in den gespeicherten Kopfdaten einer
 Quelle, nie live und nie im Inhalt. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
