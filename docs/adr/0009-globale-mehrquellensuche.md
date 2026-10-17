@@ -28,8 +28,9 @@ liegen aber schon in **einem** Lucene-Index; `sourceId + pageId` (`PageKey`) ist
    mit `pageId` und dann `sourceId` (SortedSet-DocValues des vorhandenen `KeywordField`, UTF-8; Quellen-IDs sind ASCII,
    also gleich `String.compareTo`). In einer Quelle bleibt die Reihenfolge wie vor #114. **Keine Schemaänderung**
    (`page-cache/v3` bleibt), kein Neuaufbau des Index nötig.
-4. **Globale Generation und Cursor.** Für eine Quelle bleibt die Generation `s<n>`. Für mehrere ist sie `g<hex>`, ein
-   SHA-256 über die sortierten Paare „Quelle = Suchgeneration“ der indexierten Quellen des Umfangs, berechnet im selben
+4. **Globale Generation und Cursor.** Mit `sourceId` bleibt die Generation `s<n>`. Global ist sie immer `g<hex>`, auch
+   wenn nur eine Quelle sichtbar ist: ein SHA-256 über die sortierten Paare „Quelle = Suchgeneration“ der indexierten
+   Quellen des Umfangs (die Quellen-ID geht ein, damit ein Wechsel von Quelle A zu B mit gleichem Zähler auffällt), berechnet im selben
    Lucene-Commit wie die Treffer. Sie ändert sich, sobald sich eine dieser Quellen ändert oder eine Quelle des Umfangs in
    den Index kommt, und auch, wenn sich der sichtbare Umfang des Aufrufers ändert. Ein Cursor (`s1.`) bindet
    Fingerabdruck der Anfrage (mit Scope: global und jede Einzelquelle unterscheiden sich), Generation und Position des

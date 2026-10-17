@@ -297,6 +297,16 @@ class LucenePageSearchIndexTest {
         page("other", "300", "DEV", null, "Geändert", T0, "1");
         assertThat(index.state(scope).orElseThrow().generation()).isNotEqualTo(added.generation());
         assertThat(index.state(Set.of("nirgends", "auch-nicht"))).isEmpty();
+        // Auch eine Menge aus einer Quelle nennt die Quelle mit; die Einzelquellensuche behält s<n>.
+        assertThat(index.state(Set.of("wiki")).orElseThrow().generation()).startsWith("g")
+                .isNotEqualTo(index.state(Set.of("other")).orElseThrow().generation());
+        assertThat(index.state("wiki").orElseThrow().generation()).startsWith("s");
+        String single = index.state("wiki").orElseThrow().generation();
+        String scoped = index.state(Set.of("wiki")).orElseThrow().generation();
+        assertThat(index.search(all, Set.of("wiki"), single, null, 1)).hasSize(1);
+        assertThat(index.search(all, Set.of("wiki"), scoped, null, 1)).hasSize(1);
+        assertThatThrownBy(() -> index.search(all, Set.of("other"), single, null, 1))
+                .isInstanceOf(CacheGenerationChangedException.class);
     }
 
     @Test

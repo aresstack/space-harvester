@@ -37,15 +37,14 @@ public final class InMemorySearchIndex implements PageSearchIndex {
         sources.clear();
     }
 
-    /**
-     * Für eine Quelle deren Stand; für mehrere wie im Lucene-Index ein Stand aus den Generationen der indexierten
-     * Quellen der Menge.
-     */
+    @Override
+    public Optional<SearchIndexState> state(String sourceId) {
+        return Optional.ofNullable(sources.get(sourceId)).map(Source::state);
+    }
+
+    /** Wie im Lucene-Index ein Stand aus Quellen und Generationen der indexierten Quellen der Menge. */
     @Override
     public Optional<SearchIndexState> state(Set<String> sourceIds) {
-        if (sourceIds.size() == 1) {
-            return Optional.ofNullable(sources.get(sourceIds.iterator().next())).map(Source::state);
-        }
         StringBuilder generation = new StringBuilder("g");
         Instant committedAt = null;
         for (String sourceId : new TreeSet<>(sourceIds)) {
@@ -63,7 +62,9 @@ public final class InMemorySearchIndex implements PageSearchIndex {
     @Override
     public List<SearchHit> search(PageSearchQuery query, Set<String> sourceIds, String generation,
                                   String afterPosition, int limit) {
-        if (!state(sourceIds).map(SearchIndexState::generation).orElse("").equals(generation)) {
+        boolean single = sourceIds.size() == 1
+                && state(sourceIds.iterator().next()).map(SearchIndexState::generation).orElse("").equals(generation);
+        if (!single && !state(sourceIds).map(SearchIndexState::generation).orElse("").equals(generation)) {
             throw new CacheGenerationChangedException("Indexgeneration " + generation + " nicht mehr lesbar");
         }
         searches.incrementAndGet();

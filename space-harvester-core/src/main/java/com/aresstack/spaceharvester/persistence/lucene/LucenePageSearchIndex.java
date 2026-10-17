@@ -53,9 +53,10 @@ import org.apache.lucene.util.BytesRef;
 /**
  * Titel- und Metadatensuche (#28) über die aktuellen Kopfdaten im {@link LucenePageCache}.
  *
- * <p><b>Generation.</b> Je Quelle zählt der Cache eine Suchgeneration ({@code s<n>}), die jeder Commit erhöht, der
- * Seiten oder bestätigte Generationen dieser Quelle ändert. Über mehrere Quellen (#114) ist die Generation
- * {@code g<hex>}, ein Hash der sortierten Paare aus Quelle und Suchgeneration aller indexierten Quellen der Menge: Sie
+ * <p><b>Generation.</b> Je Quelle zählt der Cache eine Suchgeneration ({@code s<n>}, {@link #state(String)}), die
+ * jeder Commit erhöht, der Seiten oder bestätigte Generationen dieser Quelle ändert. Über eine Menge von Quellen (#114,
+ * {@link #state(Set)}, auch mit nur einer) ist die Generation {@code g<hex>}, ein Hash der sortierten Paare aus Quelle
+ * und Suchgeneration aller indexierten Quellen der Menge: Sie
  * ändert sich, sobald sich eine davon ändert oder eine Quelle der Menge in den Index kommt, und nur dann. Quellen
  * außerhalb der Menge (z. B. ohne Freigabe) gehen nicht ein und sind an ihr nicht zu erkennen. Eine Suche liest genau
  * einen Commit und prüft die Generation an ihm; passt die Generation des Aufrufers nicht mehr zu ihm, gilt der Cursor
@@ -92,6 +93,12 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
     }
 
     @Override
+    public Optional<SearchIndexState> state(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return guarded(() -> cache.read(searcher -> source(searcher, sourceId)));
+    }
+
+    @Override
     public Optional<SearchIndexState> state(Set<String> sourceIds) {
         Set<String> sources = sources(sourceIds);
         return guarded(() -> cache.read(searcher -> state(searcher, sources)));
@@ -114,8 +121,11 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         Object[] after = afterPosition == null ? null : decode(afterPosition, query.sort(), query.sourceId());
         long deadline = System.nanoTime() + timeout.toNanos();
         return guarded(() -> cache.read(committed -> {
+            // Gültig ist die Generation der Menge oder, für genau eine Quelle, deren eigene (Einzelquellensuche).
             String current = state(committed, sources).map(SearchIndexState::generation).orElse(null);
-            if (!generation.equals(current)) {
+            String single = sources.size() == 1 ? source(committed, sources.iterator().next())
+                    .map(SearchIndexState::generation).orElse(null) : null;
+            if (!generation.equals(current) && !generation.equals(single)) {
                 throw new CacheGenerationChangedException("Suchgeneration " + generation + " von "
                         + String.join(",", sources) + " ist nicht mehr lesbar");
             }
@@ -160,11 +170,11 @@ public final class LucenePageSearchIndex implements PageSearchIndex {
         return new TreeSet<>(sourceIds);
     }
 
-    /** Generation der Menge aus genau diesem Commit; für eine Quelle deren {@code s<n>}. */
+    /**
+     * Generation der Menge aus genau diesem Commit, auch für eine einzige Quelle mit deren ID im Hash: Wechselt der
+     * sichtbare Umfang einer globalen Suche von Quelle A zu B mit gleichem Zähler, passt der Cursor nicht mehr.
+     */
     private static Optional<SearchIndexState> state(IndexSearcher searcher, Set<String> sources) throws IOException {
-        if (sources.size() == 1) {
-            return source(searcher, sources.iterator().next());
-        }
         StringBuilder plain = new StringBuilder();
         Instant committedAt = null;
         for (String sourceId : sources) {

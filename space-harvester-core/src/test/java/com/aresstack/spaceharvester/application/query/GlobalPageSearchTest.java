@@ -235,6 +235,21 @@ class GlobalPageSearchTest {
     }
 
     @Test
+    void aVisibleScopeThatSwitchesSourcesEndsTheGlobalPaginationEvenWithEqualGenerations() {
+        publish("wiki-a", "s1", page("wiki-a", "DEV", "1", "A1", T0), page("wiki-a", "DEV", "2", "A2", T0));
+        publish("wiki-b", "s1", page("wiki-b", "DEV", "1", "B1", T0), page("wiki-b", "DEV", "2", "B2", T0));
+        String[] visible = {"wiki-a"};
+        AccessPolicy onlyOne = (context, scope, kind) -> scope.sourceId().equals(visible[0]) ? AccessDecision.ALLOW
+                : AccessDecision.DENY;
+        SearchResults first = search(onlyOne).search(CALLER, global(null, SearchSort.PAGE_ID), null, 1);
+
+        visible[0] = "wiki-b";
+
+        assertThatThrownBy(() -> search(onlyOne).search(CALLER, global(null, SearchSort.PAGE_ID),
+                first.nextCursor(), 1)).isInstanceOf(CacheGenerationChangedException.class);
+    }
+
+    @Test
     void hiddenSourcesSpacesAndPagesNeverAppearAndPaginationSkipsThem() {
         twoSources();
         configured.add("geheim");

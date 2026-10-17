@@ -17,7 +17,8 @@ public interface PageSearchIndex {
     /**
      * Die Indexgeneration, die Suchen über diese Quellen jetzt lesen sollen (#114). Sie ändert sich, sobald sich die
      * Generation einer dieser Quellen ändert oder eine von ihnen in den Index kommt; Quellen außerhalb der Menge
-     * beeinflussen sie nicht. Für genau eine Quelle ist sie deren Generation.
+     * beeinflussen sie nicht. Sie nennt die Quellen mit, auch wenn die Menge nur eine enthält: Eine globale Suche, deren
+     * sichtbarer Umfang von einer Quelle zu einer anderen mit gleichem Stand wechselt, bekommt eine andere Generation.
      *
      * @param sourceIds nicht leer
      * @return leer, wenn für keine dieser Quellen etwas im Index liegt
@@ -30,7 +31,8 @@ public interface PageSearchIndex {
      * {@link PageSearchQuery#matches}. Sortierung und Grenze gelten für die ganze Menge, nicht je Quelle.
      *
      * @param sourceIds     nicht leer; mit {@link PageSearchQuery#sourceId()} zusätzlich nur diese Quelle
-     * @param generation    Indexgeneration aus {@link #state(Set)} für dieselben Quellen
+     * @param generation    Indexgeneration aus {@link #state(Set)} für dieselben Quellen oder, bei genau einer Quelle,
+     *                      aus {@link #state(String)}
      * @param afterPosition nur Treffer hinter dem Treffer mit dieser {@link SearchHit#position()}; {@code null} ab dem
      *                      ersten
      * @param limit         höchstens so viele; weniger nur, wenn keine weiteren folgen
@@ -40,7 +42,8 @@ public interface PageSearchIndex {
                            int limit);
 
     /**
-     * Die Indexgeneration, die Suchen auf diese Quelle jetzt lesen sollen.
+     * Die Indexgeneration, die Suchen auf genau diese Quelle ({@code sourceId} gesetzt) jetzt lesen sollen; Umsetzungen
+     * mit eigener Generation je Quelle überschreiben das.
      *
      * @return leer, wenn für die Quelle nichts im Index liegt
      */

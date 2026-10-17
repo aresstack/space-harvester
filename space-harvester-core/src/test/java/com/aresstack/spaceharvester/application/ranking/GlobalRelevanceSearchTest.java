@@ -155,7 +155,7 @@ class GlobalRelevanceSearchTest {
         RelevanceSearch.RelevanceResults results = search(noB).search(CALLER, global("betrieb"), "Betrieb", 10);
 
         assertThat(keys(results)).allMatch(key -> key.startsWith("wiki-a/")).isNotEmpty();
-        assertThat(results.index().generation()).isEqualTo("a1");
+        assertThat(results.index().generation()).doesNotContain("wiki-b");
         assertThatThrownBy(() -> search(noB).search(CALLER, PageSearchQuery.of("wiki-b", List.of(), null, null, null,
                 null, null, null, SearchSort.TITLE), "Betrieb", 10)).isInstanceOf(AccessDeniedException.class);
     }
