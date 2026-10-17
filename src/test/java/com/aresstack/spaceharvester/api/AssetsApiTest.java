@@ -197,6 +197,10 @@ class AssetsApiTest {
 
     @Test
     void onlyAttachmentsOfTheVisiblePageAreServed() throws Exception {
+        int listings = CONFLUENCE.requestCount("/child/attachment");
+        assertThat(send("GET", "/api/v1/sources/wiki/pages/101/assets/att%22x/content", TestClient.TOKEN)
+                .statusCode()).isEqualTo(404);
+        assertThat(CONFLUENCE.requestCount("/child/attachment")).isEqualTo(listings);
         assertThat(send("GET", "/api/v1/sources/wiki/pages/101/assets/att5/content", TestClient.TOKEN)
                 .statusCode()).isEqualTo(404);
         HttpResponse<String> restricted = send("GET", "/api/v1/sources/wiki/pages/103/assets/att6/content",
@@ -250,6 +254,20 @@ class AssetsApiTest {
                 .statusCode()).isIn(403, 404);
         assertThat(send("GET", "/api/v1/sources/wiki/pages/101/assets/att2/description", READER_TOKEN)
                 .statusCode()).isIn(403, 404);
+    }
+
+    @Test
+    void fileNamesInContentDispositionAreSanitised() {
+        assertThat(AssetsController.filename(named("a\"b;c\r\nd/e\\f.png"))).isEqualTo("a_b_c__d_e_f.png");
+        assertThat(AssetsController.filename(named(".."))).isEqualTo("att9");
+        assertThat(AssetsController.filename(named(""))).isEqualTo("att9");
+        assertThat(AssetsController.filename(named("Übersicht.png"))).isEqualTo("Übersicht.png");
+    }
+
+    private static com.aresstack.spaceharvester.application.assets.Asset named(String title) {
+        return new com.aresstack.spaceharvester.application.assets.Asset("wiki", "101", "att9", "1", title,
+                "image/png", com.aresstack.spaceharvester.application.assets.AssetKind.IMAGE, 1, "sha256:00",
+                java.time.Instant.EPOCH);
     }
 
     private HttpResponse<String> send(String method, String path, String token) throws Exception {

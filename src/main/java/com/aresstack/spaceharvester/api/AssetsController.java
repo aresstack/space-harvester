@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -20,6 +21,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.regex.Pattern;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -43,6 +45,10 @@ import org.springframework.web.bind.annotation.RestController;
         produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Assets", description = "Anhänge und Bilder einer Seite, getrennt geerntet und versioniert")
 public class AssetsController {
+
+    /** Anhang-IDs der Quellen (Confluence {@code att<Ziffern>}); alles andere ist unbekannt, bevor etwas geladen wird. */
+    private static final Pattern ATTACHMENT_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
+    private static final Pattern UNSAFE_FILENAME = Pattern.compile("[\\p{Cntrl}\"\\\\/;]");
 
     private final SourceQueries queries;
     private final Assets assets;
@@ -101,6 +107,7 @@ public class AssetsController {
             @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
             @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId,
             @RequestHeader(name = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+        requireAttachmentId(sourceId, attachmentId);
         Assets.AssetContent content = assets.content(visible(caller, sourceId, pageId, AccessKind.CONTENT),
                 attachmentId);
         Asset asset = content.asset();
@@ -116,7 +123,7 @@ public class AssetsController {
         }
         headers.setContentType(mediaType(asset.mediaType()));
         headers.setContentDisposition(ContentDisposition.attachment()
-                .filename(asset.title().isEmpty() ? asset.attachmentId() : asset.title(), StandardCharsets.UTF_8)
+                .filename(filename(asset), StandardCharsets.UTF_8)
                 .build());
         return new ResponseEntity<>(content.content(), headers, HttpStatus.OK);
     }
@@ -135,6 +142,7 @@ public class AssetsController {
             @PathVariable String sourceId,
             @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
             @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId) {
+        requireAttachmentId(sourceId, attachmentId);
         return ImageDescriptionResponse.of(assets.description(visible(caller, sourceId, pageId, AccessKind.CONTENT),
                 attachmentId));
     }
@@ -154,6 +162,7 @@ public class AssetsController {
             @PathVariable String sourceId,
             @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
             @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId) {
+        requireAttachmentId(sourceId, attachmentId);
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
         return ImageDescriptionResponse.of(assets.describe(list, attachmentId));
@@ -168,6 +177,19 @@ public class AssetsController {
         PageAttachmentList list = queries.attachments(sourceId, pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), kind);
         return list;
+    }
+
+    private static void requireAttachmentId(String sourceId, String attachmentId) {
+        if (!ATTACHMENT_ID.matcher(attachmentId).matches()) {
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.NOT_FOUND, "Ungültige Anhang-ID",
+                    null);
+        }
+    }
+
+    /** Dateiname für Content-Disposition: ohne Steuerzeichen, Anführungszeichen, Pfad- und Parametertrenner. */
+    static String filename(Asset asset) {
+        String name = UNSAFE_FILENAME.matcher(asset.title()).replaceAll("_").strip();
+        return name.isEmpty() || name.chars().allMatch(c -> c == '.') ? asset.attachmentId() : name;
     }
 
     private static MediaType mediaType(String value) {
