@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchSort;
@@ -191,6 +192,19 @@ class WorkspaceTest {
         assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))
                 .isEqualTo("Wartungsfenster sonntags");
         assertNoFileContains(home, TOKEN);
+    }
+
+    @Test
+    void pagesOpenByAddressAndAnalysesCanBeRecomputed() throws Exception {
+        Workspace workspace = start().workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
+        String address = workspace.page("wiki", "102", false).header().metadata().url().toString();
+
+        assertThat(workspace.pageByUrl("wiki", address, false).header().key().pageId()).isEqualTo("102");
+        assertThatThrownBy(() -> workspace.pageByUrl("wiki",
+                "https://fremd.example.org/pages/viewpage.action?pageId=102", false))
+                .isInstanceOf(CacheMissException.class);
+        assertThat(workspace.recomputeEnrichments("wiki", "102", null).supported()).isTrue();
     }
 
     @Test

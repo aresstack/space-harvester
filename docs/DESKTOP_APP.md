@@ -138,8 +138,8 @@ Prüfungen der REST-Controller (metadata, content, export, sync; verdeckte Seite
 | `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…` |
 | `GET …/spaces/{key}/tree` | `PageQueries.tree` | Inhalte › Struktur | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite öffnen, Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…` |
-| `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | – |
-| `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | – |
+| `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
+| `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
 | `GET /api/v1/search` | `PageSearch.search` | Suche (Titel, Neueste), Kopfzeilensuche | `WorkspaceTest.harvestsBrowses…`, `MainWindowTest` |
 | `GET /api/v1/search?sort=relevance` | `RelevanceSearch.search` | Suche › Relevanz | `WorkspaceTest.harvestsBrowses…` |
 | `POST …/spaces/{key}/syncs` | `SpaceKeyCheck`, `SpaceSyncJobs.start` | Synchronisieren, Erneut abgleichen | `WorkspaceTest.*`, `MainWindowTest` |
