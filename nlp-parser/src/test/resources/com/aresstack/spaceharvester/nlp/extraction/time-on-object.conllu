@@ -1,0 +1,25 @@
+# Handgeschriebene Gold-Analysen (MIT, Teil der Tests von #98): Zeitangaben, die zu Recht an einem Nomen hängen.
+# sent_id = 1
+# text = Er löscht den Bericht vom Montag.
+1	Er	er	PRON	PPER	_	2	nsubj	_	_
+2	löscht	löschen	VERB	VVFIN	_	0	root	_	_
+3	den	der	DET	ART	_	4	det	_	_
+4	Bericht	Bericht	NOUN	NN	_	2	obj	_	_
+5-6	vom	_	_	_	_	_	_	_	_
+5	von	von	ADP	APPR	_	7	case	_	_
+6	dem	der	DET	ART	_	7	det	_	_
+7	Montag	Montag	NOUN	NN	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	$.	_	2	punct	_	_
+
+# sent_id = 2
+# text = Sie antwortet dem Kunden vom Montag.
+1	Sie	sie	PRON	PPER	_	2	nsubj	_	_
+2	antwortet	antworten	VERB	VVFIN	_	0	root	_	_
+3	dem	der	DET	ART	_	4	det	_	_
+4	Kunden	Kunde	NOUN	NN	_	2	obl:arg	_	_
+5-6	vom	_	_	_	_	_	_	_	_
+5	von	von	ADP	APPR	_	7	case	_	_
+6	dem	der	DET	ART	_	7	det	_	_
+7	Montag	Montag	NOUN	NN	_	4	nmod	_	SpaceAfter=No
+8	.	.	PUNCT	$.	_	2	punct	_	_
+

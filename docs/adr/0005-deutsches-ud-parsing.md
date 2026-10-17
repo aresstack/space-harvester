@@ -1,8 +1,8 @@
 # ADR 0005: Deutsches Dependency Parsing nach Universal Dependencies mit MaltParser
 
-- Status: **Vorgeschlagen** (Strang I, 17.10.2026). Laufzeitmodul `:nlp-parser` mit Vertrag, Regeln, Vorverarbeitung
-  und MaltParser-Anbindung liegt vor; das deutsche Modell kommt aus #99 und ist noch nicht veröffentlicht. Keine
-  Produktfreigabe, keine Einbindung in die Anwendung.
+- Status: **Angenommen** (Strang I, 17.10.2026) als Laufzeitparser von `:nlp-parser`. Vorgeschlagen am 17.10.2026;
+  der reale Laufzeit-Spike ist mit dem veröffentlichten Modell `maltparser-de-gsd-v1.0.0` aus #99 abgeschlossen
+  (Rauchtest unten). Das Modul ist weiterhin nicht in die Anwendung eingebunden; das braucht ein eigenes Issue.
 - Entscheidung zur Parserwahl: Angelo, 17.10.2026 („Für das Dependency Parsing mussten wir aus Lizenzgründen auf den
   MaltParser ausweichen“), Issue #98 in der Fassung vom 17.10.2026.
 - Hängt ab von: #99 (`:nlp-model-training`: Training, Evaluation, Lizenzprüfung und Veröffentlichung des Modells).
@@ -112,17 +112,29 @@ Sätze mit Kopula (`ist zuständig`; Eigenschaften liefert #29).
   kleinen Testmodell aus selbst geschriebenen Sätzen (`src/test/malt/train-mini.conllu`, 29 KB, SHA-256 fest). Es wird
   nur mit `:nlp-parser:trainTestParserModel` neu erzeugt, das kein anderer Task aufruft. Die Anwendung bindet das
   Modul nicht ein; eine spätere Anbindung als Enrichment-Prozessor ist optional und braucht ein eigenes Issue.
-- **Messung (17.10.2026, Container, lokal trainiertes GSD-Modell, nicht veröffentlicht):** Laden der `.mco` ~1–1,3 s
-  und ~50–65 MB Heap, OpenNLP-Modelle ~0,3 s; Rohtext → Baum ~4,5 ms je Satz, ~1,4 ms je Satz mit 4 Threads auf einem
-  geteilten Modell, gleiche Ergebnisse parallel wie seriell. Details und Qualitätszahlen: `nlp-parser/README.md`.
-- **Qualität:** Mit dem MaltParser-Standard-Featuremodell (nur FORM und UPOS) verwechselt das GSD-Modell Dativ und
-  Akkusativ (dev: obj 63 %, obl:arg 39 %; der Referenzsatz kippt). Mit zusätzlichen Merkmalen aus den Artikelformen
-  steigt das deutlich (obj 74 %, obl:arg 51 %, obl:agent 92 %; Referenzsatz richtig). Das ist an #99 übergeben; die
-  Regeln fangen den verbleibenden Fehler ab (`CASE_CONFLICT`: `dem …` ist nie Akkusativ, also keine Kernrelation).
+- **Modell:** fest hinterlegt ist `maltparser-de-gsd-v1.0.0` (ZIP-SHA-256 `d779fb32…a959`, `.mco`-SHA-256
+  `237885c2…6ea3`, UD German GSD r2.18, `stacklazy`/liblinear, Lizenz CC BY-SA 4.0, Freigabe in #99 und
+  `docs/NLP_MODEL_LICENSE.md`). Wer das Modell mit ausliefert, gibt die Dateien `LICENSE-MODEL.md` und
+  `ATTRIBUTION.md` aus der ZIP mit; der Code von `:nlp-parser` bleibt MIT.
+- **Messung mit dem veröffentlichten Modell (17.10.2026, Container, Workflow „Deutsches Parsermodell“):** Laden
+  der `.mco` ~7–7,5 s und ~225 MB Heap (JVM für den Dienst mit mindestens 512 MB planen), OpenNLP-Modelle
+  ~0,2–0,3 s; Rohtext → Baum ~5 ms je Satz, ~1,5 ms je Satz mit 4 Threads auf einem geteilten Modell. Die
+  Gold-Sätze dieses Moduls (78 Wörter ohne Satzzeichen): UAS 94,9 %, LAS 92,3 % mit Gold- und mit
+  OpenNLP-Wortarten. GSD-Werte laut Manifest aus #99: test UAS 84,4 / LAS 79,4 mit Gold-Wortarten, 77,7 / 71,6
+  mit vorhergesagten Wortarten. Das Labelset enthält `nsubj`, `nsubj:pass`, `obj`, `iobj`, `obl`, `obl:arg`,
+  `obl:agent`, `obl:tmod`, `nmod`, `nmod:poss`, `compound:prt`, `conj` (vollständige Liste im Manifest).
+- **Qualität am Referenzsatz:** aus Rohtext richtig `nsubj` (Sachbearbeiter), `obj` (Beleg), `obl:arg` (dem
+  Vorgesetzten, Dativ bestätigt) und `nmod` (des Kunden am Beleg). `am Montag` hängt das Modell als `nmod` an
+  `dem Vorgesetzten` statt als `obl` an das Prädikat. Die Auswertung führt eine Zeitangabe mit Präposition am
+  Dativempfänger (nicht `von`/`vom`, nicht an Subjekt oder Objekt: `den Bericht vom Montag` bleibt Datum des Berichts)
+  zusätzlich als unsichere Zeitrolle der Aussage (`TIME_FROM_NOMINAL`, Grundlage Wortliste) und lässt die Kante als
+  nominalen Bezug stehen; die Kernrelation ist davon nicht betroffen. Im lokalen Vorversuch mit dem
+  MaltParser-Standard-Featuremodell kippte Dativ gegen Akkusativ; das veröffentlichte Modell nutzt deshalb
+  zusätzliche Artikelform-Merkmale (#99), und die Regeln fangen den Restfehler weiter ab (`CASE_CONFLICT`).
 
 ## Mess- und Wechselkriterien
 
-- Ein Modell aus #99 wird nur hinterlegt, wenn der Rauchtest (`./gradlew :nlp-parser:test -PnlpModelDir=…`) die
+- Ein neues Modell aus #99 wird nur hinterlegt, wenn der Rauchtest (`./gradlew :nlp-parser:test -PnlpModelDir=…`) die
   Kernrelation des Referenzsatzes aus Rohtext liefert und #99 die Lizenzprüfung abgeschlossen hat.
 - Neu bewerten, wenn auf realen Confluence-Texten LAS für `nsubj`, `obj` oder `obl:arg` mit vorhergesagten Wortarten
   deutlich unter den GSD-dev-Werten liegt, oder wenn Kasusmerkmale (FEATS) gebraucht werden, die die Vorverarbeitung

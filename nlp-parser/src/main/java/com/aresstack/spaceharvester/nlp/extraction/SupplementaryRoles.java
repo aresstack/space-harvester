@@ -21,6 +21,11 @@ import java.util.Set;
  * </ul>
  * Die Unterscheidung Dativargument gegen Zeitangabe folgt der Kante ({@code obl:arg} gegen {@code obl}), nicht
  * dem Kasus allein: {@code am Montag} steht auch im Dativ.
+ * <p>
+ * Hängt der Parser eine Zeitangabe mit Präposition (außer {@code von}/{@code vom}) als {@code nmod} an den
+ * Dativempfänger statt ans Prädikat ({@code dem Vorgesetzten am Montag}, typischer Anbindungsfehler des
+ * GSD-Modells), wird sie zusätzlich als
+ * unsichere {@link Role#TIME} der Aussage geführt ({@link Finding#TIME_FROM_NOMINAL}); die Parserkante bleibt.
  */
 final class SupplementaryRoles {
 
@@ -31,6 +36,8 @@ final class SupplementaryRoles {
             "morgen", "vormittag", "mittag", "nachmittag", "abend", "nacht", "stunde", "minute", "zeitpunkt",
             "datum", "frist", "werktag", "feiertag");
     private static final Set<String> INSTRUMENT_PREPOSITIONS = Set.of("mit", "mittels", "per");
+    /** {@code vom Montag} bezeichnet Herkunft oder Datum eines Gegenstands, keinen Zeitpunkt der Handlung. */
+    private static final Set<String> ORIGIN_PREPOSITIONS = Set.of("von", "vom");
 
     private SupplementaryRoles() {
     }
@@ -64,7 +71,36 @@ final class SupplementaryRoles {
                 arguments.add(circumstance(mention, relation, marker));
             }
         }
+        timesAttachedToParticipants(document, sentence, mentions, statement, arguments, findings);
         return statement.with(arguments, PrimaryRelationExtraction.withPronouns(mentions, arguments, findings));
+    }
+
+    private static void timesAttachedToParticipants(ParsedDocument document, Sentence sentence, Mentions mentions,
+                                                    Statement statement, List<Argument> arguments,
+                                                    Set<Finding> findings) {
+        for (Token participant : sentence.dependents(statement.predicate().verb())) {
+            // Nur am Empfänger: "den Bericht vom Montag" datiert zu Recht den Bericht, eine Zeitangabe am
+            // Dativempfänger ist dagegen der bekannte Anbindungsfehler
+            boolean recipient = "iobj".equals(participant.deprel())
+                    || "obl:arg".equals(participant.deprel()) && Markers.of(sentence, participant) == null;
+            if (!recipient) {
+                continue;
+            }
+            for (Token nominal : sentence.dependents(participant.id())) {
+                String marker = Markers.of(sentence, nominal);
+                if (!"nmod".equals(nominal.deprel()) || marker == null
+                        || ORIGIN_PREPOSITIONS.contains(marker.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                Mention mention = mentions.at(document, sentence, nominal);
+                String word = (mention.lemma() != null ? mention.lemma() : mention.headForm()).toLowerCase(Locale.ROOT);
+                if (TIME_WORDS.contains(word)) {
+                    arguments.add(new Argument(Role.TIME, mention.id(), nominal.deprel(), marker, Priority.CONTEXT,
+                            Basis.LEXICON, false));
+                    findings.add(Finding.TIME_FROM_NOMINAL);
+                }
+            }
+        }
     }
 
     private static Argument circumstance(Mention mention, String relation, String marker) {

@@ -3,10 +3,14 @@ package com.aresstack.spaceharvester.nlp.malt;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.aresstack.spaceharvester.nlp.extraction.Argument;
 import com.aresstack.spaceharvester.nlp.extraction.CoreRelation;
 import com.aresstack.spaceharvester.nlp.extraction.ExtractionSettings;
+import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricAnalysis;
 import com.aresstack.spaceharvester.nlp.extraction.ObjectCentricExtraction;
+import com.aresstack.spaceharvester.nlp.extraction.Role;
 import com.aresstack.spaceharvester.nlp.extraction.SalienceProjection;
+import com.aresstack.spaceharvester.nlp.extraction.Statement;
 import com.aresstack.spaceharvester.nlp.model.Sha256;
 import com.aresstack.spaceharvester.nlp.opennlp.OpenNlpGermanPreprocessor;
 import com.aresstack.spaceharvester.nlp.syntax.Component;
@@ -103,11 +107,18 @@ class RealModelSmokeTest {
         String text = "Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg des Kunden.";
         ParsedDocument document = analyze(text);
         line("Referenzsatz mit OpenNLP + MaltParser:\n" + ConllU.write(document));
-        CoreRelation core = SalienceProjection.project(new ObjectCentricExtraction(ExtractionSettings.defaults())
-                .analyze(document)).core().get(0);
+        ObjectCentricAnalysis analysis = new ObjectCentricExtraction(ExtractionSettings.defaults()).analyze(document);
+        CoreRelation core = SalienceProjection.project(analysis).core().get(0);
         assertEquals("Der Sachbearbeiter", core.subjectText());
         assertEquals("übermitteln", core.predicateLemma());
         assertEquals("den Beleg", core.objectText());
+        // Empfänger, Zeitkontext und nominaler Bezug bleiben an derselben Aussage bzw. am Beleg referenzierbar
+        Statement statement = analysis.statement(core.statement());
+        assertEquals("dem Vorgesetzten", mentionText(analysis, statement.withRole(Role.RECIPIENT)));
+        assertEquals("Montag", mentionText(analysis, statement.withRole(Role.TIME)));
+        assertEquals("des Kunden", analysis.mention(analysis.attachmentsOf(
+                statement.core(Role.AFFECTED_OBJECT).mention()).get(0).dependent()).text());
+        line("Aussage: " + statement.arguments() + " " + statement.findings());
     }
 
     @Test
@@ -141,6 +152,10 @@ class RealModelSmokeTest {
         int count = rounds * texts.size();
         line(String.format("Durchsatz Rohtext → Baum: %.2f ms/Satz einzeln, %.2f ms/Satz mit 4 Threads (%d Sätze)",
                 single / 1e6 / count, parallel / 1e6 / count, count));
+    }
+
+    private static String mentionText(ObjectCentricAnalysis analysis, List<Argument> arguments) {
+        return arguments.isEmpty() ? null : analysis.mention(arguments.get(0).mention()).text();
     }
 
     private ParsedDocument analyze(String text) {

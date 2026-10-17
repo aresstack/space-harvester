@@ -45,13 +45,14 @@ tasks.withType(AbstractArchiveTask).configureEach {
 }
 
 // Optionales echtes Modell für den Rauchtest: ./gradlew :nlp-parser:test -PnlpModelDir=<entpacktes Release>
+// (relativer Pfad gilt ab dem Wurzelverzeichnis, wie im Workflow nlp-parser-model.yml)
 def realModelDir = providers.gradleProperty('nlpModelDir')
 
 tasks.named('test') {
     useJUnitPlatform()
     maxHeapSize = '1g'
     if (realModelDir.isPresent()) {
-        systemProperty 'nlp.parser.modelDir', file(realModelDir.get()).absolutePath
+        systemProperty 'nlp.parser.modelDir', rootProject.file(realModelDir.get()).absolutePath
     }
 }
 

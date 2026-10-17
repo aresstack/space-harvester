@@ -21,5 +21,10 @@ public enum Finding {
     /** Ein Beteiligter stammt aus dem Kasus-Rückfall, nicht aus einer Parserkante. */
     HEURISTIC_PARTICIPANT,
     /** Ein Dativargument ohne bestätigten Dativ (Kasus unbekannt oder mehrdeutig). */
-    UNCONFIRMED_DATIVE
+    UNCONFIRMED_DATIVE,
+    /**
+     * Eine Zeitangabe mit Präposition hing laut Parser am Dativempfänger ({@code dem Vorgesetzten am Montag}) und
+     * ist als Zeitkontext der Aussage übernommen; der nominale Bezug bleibt daneben erhalten.
+     */
+    TIME_FROM_NOMINAL
 }

@@ -76,12 +76,15 @@ class MaltModelLoaderTest {
     }
 
     @Test
-    void pinnedModelIsNotYetPublished() {
-        // Bis #99 ein lizenzgeprüftes Modell veröffentlicht, ist nichts hinterlegt und nichts wird geladen.
-        assertTrue(GermanParserModelPin.expected().isEmpty());
+    void pinnedModelIsTheReleasedGermanModelAndRejectsAnyOther() throws IOException {
+        // Fest hinterlegt ist das freigegebene Release aus #99; ein anderes Modell im Verzeichnis wird abgelehnt.
+        ExpectedModel pinned = GermanParserModelPin.expected().orElseThrow();
+        assertEquals(new ExpectedModel("maltparser-de-gsd", "1.0.0", "maltparser-de-gsd",
+                "237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3"), pinned);
+        copyTestModel();
         ModelUnavailableException error = assertThrows(ModelUnavailableException.class,
                 () -> MaltModelLoader.loadPinned(dir));
-        assertTrue(error.getMessage().contains("#99"), error.getMessage());
+        assertTrue(error.getMessage().contains("maltparser-de-gsd"), error.getMessage());
     }
 
     private void copyTestModel() throws IOException {
