@@ -32,7 +32,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Aktivitäten: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
+ * Aufträge: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
  * nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte, erscheint als
  * Warnung mit Grund.
  */

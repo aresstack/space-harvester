@@ -83,9 +83,9 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        assertThat(buttonTexts(surface[0])).contains("Übersicht", "Wissensquellen", "Inhalte", "Aktivitäten",
-                "Exporte", "Suche", "Einstellungen");
-        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.OVERVIEW));
+        assertThat(buttonTexts(surface[0])).containsSubsequence("Suche", "Wissensquellen", "Inhalte",
+                "Exportieren", "Aufträge", "Status", "Einstellungen");
+        SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
         assertThat(labelTexts(surface[0])).as("„Zu erledigen“ steht im Dashboard, nicht in der Begrüßung")
                 .contains("Nichts offen.");
 
@@ -124,7 +124,7 @@ class MainWindowTest {
             MainWindow window = new MainWindow(context);
             surface[0] = window.content(() -> { }, () -> { });
             surface[0].setSize(1280, 820);
-            window.show(AppContext.Section.OVERVIEW);
+            window.show(AppContext.Section.STATUS);
             Screenshots.write(surface[0], home.resolve("welcome.png"));
         });
         assertThat(home.resolve("welcome.png")).isNotEmptyFile();
