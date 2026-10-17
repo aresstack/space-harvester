@@ -1,8 +1,10 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
+import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
@@ -10,9 +12,12 @@ import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
+import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -148,6 +153,30 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private StoredPage storedPage(StoredContent content) {
         return new StoredPage(withSpace(content.resource()), content.payload(), content.mediaType(),
                 content.nativeFormat(), content.retrievedAt());
+    }
+
+    @Override
+    public PageAttachments attachments(String pageId) {
+        if (!(port instanceof AttachmentListSource listing)) {
+            return HarvestSource.super.attachments(pageId);
+        }
+        StoredAttachmentList list;
+        try {
+            list = listing.storedAttachments(pageId);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
+                .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    private static PageAttachment attachment(KnowledgeResource resource) {
+        String size = resource.metadata().asMap().get(KnowledgeMetadata.FILE_SIZE);
+        String version = resource.revision().version();
+        return new PageAttachment(nativeId(resource.id()), resource.id().value(), resource.title(),
+                resource.contentType(), size == null ? null : Long.valueOf(size),
+                version == null || version.isEmpty() ? null : version, resource.revision().modifiedAt().orElse(null),
+                resource.location().orElse(null));
     }
 
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */

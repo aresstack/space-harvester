@@ -5,8 +5,8 @@ Unveränderte Kopie der Confluence-Quelle aus
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`74004987fa8c4e54ae7f0ea19111425b35f92160`, der Merge von enterprise-ai-client#173 (asynchrone Transport-Naht und
-asynchrone Seiten-Snapshots, #47) auf `main`.
+`b2e6a4522e4655c65444503324deb88bbcb6e91f`, der Merge von enterprise-ai-client#175 (Anhangslisten als
+Metadaten, #9) auf `main`.
 
 ## Inhalt
 
@@ -15,7 +15,7 @@ asynchrone Seiten-Snapshots, #47) auf `main`.
 | `astu` | nur die 15 Klassen, die die Module unten transitiv brauchen (Liste in `sync-from-upstream.sh`) |
 | `adyton` | vollständig: `SecretProvider`, `SecretRef`-Auflösung |
 | `proasteion/platform/network` | vollständig: `HttpRoutePort` |
-| `source-api` | vollständig: `KnowledgeSourcePort`, `KnowledgeSourceProvider`, `PageNavigationSource`, `PageViewSource`, `PartitionListingSource`, Test-Fixtures |
+| `source-api` | vollständig: `KnowledgeSourcePort`, `KnowledgeSourceProvider`, `PageNavigationSource`, `PageViewSource`, `PartitionListingSource`, `AttachmentListSource`, Test-Fixtures |
 | `proasteion/emporion/holkas/source-confluence` | vollständig: `ConfluenceRestClient`, `ConfluenceKnowledgeSource`, `FakeConfluence`-Fixtures |
 | `LICENSE` | die Lizenz des Upstreams (MIT, AresStack), mitkopiert und mitgeprüft |
 

@@ -7,6 +7,8 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.MetadataHash;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
+import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -163,6 +165,42 @@ public class SourcesController {
         return SinglePageMetadataResponse.of(metadata);
     }
 
+    @GetMapping("/{sourceId}/pages/{pageId}/attachments")
+    @Operation(summary = "Alle Anhänge einer Seite als Metadaten, ohne Dateiinhalte",
+            description = "Live aus der Quelle gelesen (origin=live). Enthält auch Anhänge, die der Seiteninhalt nicht "
+                    + "einbettet, über alle Listenseiten der Quelle; nie gekürzt. complete=false mit warnings, wenn "
+                    + "die Quelle einzelne Einträge ohne brauchbare ID lieferte. Die URLs sind keine "
+                    + "Download-Freigabe. Rechte wie bei den Metadaten der Seite.")
+    @ApiResponse(responseCode = "200", description = "Anhangsliste der Seite")
+    @ApiResponse(responseCode = "403", description = "Keine Freigabe für diese Quelle (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle oder unbekannte bzw. nicht sichtbare Seite",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff oder antwortet fehlerhaft, "
+            + "auch bei einer Liste über der Obergrenze",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Quelle nicht erreichbar (source-unavailable)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public PageAttachmentsResponse pageAttachments(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "ID der Seite in der Quelle (Confluence-Content-ID)", example = "123456")
+            @PathVariable String pageId) {
+        // Wie bei den Metadaten der Seite: ohne Freigabe für alle Spaces erst nach dem Lesen prüfen, verdeckt.
+        if (access.permits(caller, ResourceScope.page(sourceId, null, pageId), AccessKind.METADATA)) {
+            return PageAttachmentsResponse.of(queries.attachments(sourceId, pageId));
+        }
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        PageAttachmentList list = queries.attachments(sourceId, pageId);
+        access.requireConcealed(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.METADATA);
+        return PageAttachmentsResponse.of(list);
+    }
+
     /** Eine konfigurierte Quelle. */
     public record SourceResponse(String id, String type, String title) {
 
@@ -256,6 +294,44 @@ public class SourcesController {
             return new PageMetadataEntry(page.pageId(), page.resourceId(), page.title(), page.partitionKey(),
                     page.parentPageId(), page.version(), page.modifiedAt(), page.url(), page.attributes(),
                     entry.metadataHash(), entry.attributesHash());
+        }
+    }
+
+    /**
+     * Anhangsliste einer Seite.
+     *
+     * @param complete    {@code false}, wenn die Quelle Einträge auslassen musste; die Gründe stehen in
+     *                    {@code warnings}
+     * @param nativeFormat Format der nativen Listenantworten der Quelle
+     */
+    public record PageAttachmentsResponse(String sourceId, String pageId, String spaceKey, String origin,
+                                          Instant retrievedAt, boolean complete, List<String> warnings,
+                                          String nativeFormat, List<AttachmentEntry> attachments) {
+
+        static PageAttachmentsResponse of(PageAttachmentList list) {
+            return new PageAttachmentsResponse(list.sourceId(), list.attachments().pageId(), list.spaceKey(), "live",
+                    list.retrievedAt(), list.attachments().complete(), list.attachments().warnings(),
+                    list.attachments().nativeFormat(),
+                    list.attachments().attachments().stream().map(AttachmentEntry::of).toList());
+        }
+    }
+
+    /**
+     * Ein Anhang ohne Inhalt.
+     *
+     * @param fileSize Größe in Bytes oder {@code null}, wenn die Quelle sie nicht nennt
+     * @param url      Adresse in der Quelle; keine Download-Freigabe
+     */
+    public record AttachmentEntry(String attachmentId, String resourceId, String title, String mediaType,
+                                  @Schema(nullable = true) Long fileSize,
+                                  @Schema(nullable = true) String version,
+                                  @Schema(nullable = true) Instant modifiedAt,
+                                  @Schema(nullable = true) URI url) {
+
+        static AttachmentEntry of(PageAttachment attachment) {
+            return new AttachmentEntry(attachment.attachmentId(), attachment.resourceId(), attachment.title(),
+                    attachment.mediaType(), attachment.fileSize(), attachment.version(), attachment.modifiedAt(),
+                    attachment.url());
         }
     }
 }

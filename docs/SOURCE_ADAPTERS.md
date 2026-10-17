@@ -21,9 +21,10 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 | `pageMetadata(space, cursor, limit)` | `PartitionListingSource` | alle Seiten eines Space ohne Inhalt, mit Cursor (#5) |
 | `pageMetadata(pageId)` | `ResourceMetadataSource` | eine Seite ohne Inhalt, unabhängig vom Space (#6) |
 | `storedPage(pageId)` | `StoredContentSource` | native Antwort Byte für Byte mit Kopfdaten aus derselben Antwort (#8) |
+| `attachments(pageId)` | `AttachmentListSource` | alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit allen Listenantworten Byte für Byte; nie Dateibytes (#9) |
 
 - Fehlt einer Quelle eine Fähigkeit, antwortet die Methode mit `SourceAccessException` `UNSUPPORTED`, nie mit
-  einem leeren Ergebnis. `storedPage` ist deshalb eine Default-Methode.
+  einem leeren Ergebnis. `storedPage` und `attachments` sind deshalb Default-Methoden.
 - Fehler der Quelle werden auf `SourceAccessException.Reason` abgebildet: `NOT_FOUND`, `ACCESS_DENIED`,
   `UNAVAILABLE`, `RATE_LIMITED`, `INVALID_RESPONSE`, `UNSUPPORTED`. Eine Antwort über `maxResponseBytes` ist
   `INVALID_RESPONSE` und wird nie gekürzt. Die Fehlertexte enthalten keine Zugangsdaten und keine Seiteninhalte.
@@ -47,6 +48,7 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 Darauf bauen:
 
 - `SourceQueries`: Metadaten live für die API (#5, #6)
+- `SourceQueries.attachments`: Anhangsliste live für die API (#9)
 - `snapshot.SourceSnapshots`: `PageSnapshot` aus `storedPage`, zugleich `PageContentFetcher` der
   Synchronisierung (#16)
 

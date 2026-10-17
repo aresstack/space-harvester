@@ -397,6 +397,69 @@ final class ConfluenceRestClient {
                 });
     }
 
+    /** {@code expand} der vollständigen Anhangsliste ({@link #storedAttachments}). */
+    static final String ATTACHMENT_LIST_EXPAND = "version,container";
+
+    /**
+     * Die vollständige Anhangsliste einer Seite: alle Listenseiten von {@code /child/attachment} unverändert, dazu die
+     * daraus gelesenen Anhänge. Einträge ohne brauchbare ID oder ohne JSON-Objekt fehlen in
+     * {@link StoredAttachments#attachments} und stehen als Warnung da. Es wird nie gekürzt: mehr als {@code max}
+     * Einträge (brauchbar oder nicht) oder ein sich wiederholender Folgelink sind {@code INVALID_RESPONSE}.
+     */
+    StoredAttachments storedAttachments(Session session, String contentId, int max) throws KnowledgeSourceException {
+        String what = "Anhangsliste";
+        List<byte[]> payloads = new ArrayList<byte[]>();
+        List<Attachment> attachments = new ArrayList<Attachment>();
+        List<String> warnings = new ArrayList<String>();
+        String contentType = null;
+        Instant firstAnswer = null;
+        int entries = 0;
+        Set<String> visited = new HashSet<String>();
+        String next = "/rest/api/content/" + contentId + "/child/attachment?expand=" + ATTACHMENT_LIST_EXPAND
+                + "&start=0&limit=" + config.pageSize();
+        while (next != null) {
+            if (!visited.add(next)) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Folgelink wiederholt sich");
+            }
+            ConfluenceHttpResponse response = send(session, next, what, config.maxResponseBytes());
+            if (firstAnswer == null) {
+                firstAnswer = Instant.now();
+            }
+            JsonObject json = jsonObject(response, what);
+            payloads.add(response.body());
+            if (contentType == null) {
+                contentType = response.contentType();
+            }
+            JsonArray results = array(json, "results");
+            if (results == null) {
+                throw new KnowledgeSourceException(Kind.INVALID_RESPONSE, what + ": Liste ohne results");
+            }
+            int index = 0;
+            for (JsonElement element : results) {
+                index++;
+                // Jeder Eintrag zählt zur Grenze, auch ein unbrauchbarer, damit nichts unbegrenzt wächst.
+                if (++entries > max) {
+                    throw new KnowledgeSourceException(Kind.INVALID_RESPONSE,
+                            what + ": mehr als " + max + " Einträge, Liste wird nicht gekürzt");
+                }
+                if (!element.isJsonObject()) {
+                    warnings.add("Listenseite " + payloads.size() + ", Eintrag " + index
+                            + ": kein JSON-Objekt, ausgelassen");
+                    continue;
+                }
+                JsonObject result = element.getAsJsonObject();
+                if (attachmentId(result) == null) {
+                    warnings.add("Listenseite " + payloads.size() + ", Eintrag " + index
+                            + ": Anhang ohne gültige ID (" + idShape(result) + ") ausgelassen");
+                    continue;
+                }
+                attachments.add(toAttachment(result, contentId));
+            }
+            next = nextLink(json, what);
+        }
+        return new StoredAttachments(payloads, contentType, firstAnswer, attachments, warnings);
+    }
+
     /** Ein Anhang; {@code NOT_FOUND}, wenn es ihn nicht gibt. */
     Attachment attachment(Session session, String attachmentId) throws KnowledgeSourceException {
         JsonObject json = getJson(session, "/rest/api/content/" + attachmentId + "?expand=version,container",
@@ -1616,8 +1679,10 @@ final class ConfluenceRestClient {
                 throw attempt == 0 ? failure : exhausted(failure, attempt);
             }
             long delay = backoffMillis(attempt, config.retryBackoffMillis(), config.maxRetryBackoffMillis());
-            LOG.warning("[Confluence] " + failure.getMessage() + "; Wiederholung " + (attempt + 1) + " von "
+            // WARNING nur mit Art des Fehlers; die Meldung kann Hosts, Pfade oder Proxy-Diagnosen enthalten.
+            LOG.warning("[Confluence] " + what + ": " + failure.kind() + ", Wiederholung " + (attempt + 1) + " von "
                     + config.maxRetries() + " in " + delay + " ms");
+            LOG.fine("[Confluence] " + failure.getMessage());
             pause(delay, failure);
         }
     }
@@ -2044,6 +2109,25 @@ final class ConfluenceRestClient {
             this.payload = payload;
             this.contentType = contentType;
             this.page = page;
+        }
+    }
+
+    /** Antwortkörper aller Seiten einer Anhangsliste, unverändert, mit den daraus gelesenen Anhängen. */
+    static final class StoredAttachments {
+        final List<byte[]> payloads;
+        final String contentType;
+        /** Zeitpunkt der ersten Antwort, nach Anmeldung und Wiederholungen. */
+        final Instant retrievedAt;
+        final List<Attachment> attachments;
+        final List<String> warnings;
+
+        StoredAttachments(List<byte[]> payloads, String contentType, Instant retrievedAt, List<Attachment> attachments,
+                          List<String> warnings) {
+            this.payloads = payloads;
+            this.contentType = contentType;
+            this.retrievedAt = retrievedAt;
+            this.attachments = attachments;
+            this.warnings = warnings;
         }
     }
 
