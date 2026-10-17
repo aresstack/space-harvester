@@ -40,11 +40,14 @@ gson = "2.10.1"
 jsoup = "1.17.2"
 jgraphx = "4.2.2"
 junit4 = "4.13.2"
+# Desktop-App (#103): YAML-Konfiguration ohne Spring, dieselbe Fassung wie über Spring Boot 4.1
+snakeyaml = "2.4"
 
 [libraries]
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
 jackson-databind = { module = "tools.jackson.core:jackson-databind", version.ref = "jackson" }
 spring-webflux = { module = "org.springframework:spring-webflux", version.ref = "springFramework" }
+spring-context = { module = "org.springframework:spring-context", version.ref = "springFramework" }
 reactor-netty-http = { module = "io.projectreactor.netty:reactor-netty-http", version.ref = "reactorNetty" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
@@ -68,6 +71,7 @@ opennlp-models-pos-de = { module = "org.apache.opennlp:opennlp-models-pos-de", v
 opennlp-models-lemmatizer-de = { module = "org.apache.opennlp:opennlp-models-lemmatizer-de", version.ref = "opennlpModelsDe" }
 jackson-jr-objects = { module = "com.fasterxml.jackson.jr:jackson-jr-objects", version.ref = "jacksonJr" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 
 [plugins]

@@ -48,12 +48,15 @@ SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
 
 ## Module und Nutzung als Bibliothek
 
-Der Build hat zwei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
+Der Build hat drei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
 
 - `space-harvester-core`: Bibliothek ohne Spring Boot und ohne REST. Fachlogik, Quellenadapter (Confluence, Dateien),
   Lucene-Cache, Abgleich, Suche, Export und Embeddings.
 - `space-harvester-server`: der Spring-Boot-Dienst mit REST-API, Confluence-Fassade, Weboberfläche und Sicherheit; er
   verwendet den Core. `./gradlew bootRun` und das Jar oben starten ihn.
+- `space-harvester-app`: Desktop-App (Swing, Comic-Design des Enterprise AI Client) direkt auf dem Core, ohne REST und
+  ohne Spring-Kontext: `java -jar space-harvester-app/build/libs/space-harvester-app-<version>.jar`. Start unter
+  Windows, Konfiguration und Funktionsumfang: [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md).
 
 Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
 Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,

@@ -21,6 +21,9 @@ space-harvester-core   ─X─► space-harvester-server, Spring Boot, Servlet, 
 Weitere unabhängige Subprojekte (`:nlp-parser` aus #98, `:nlp-model-training` aus #99) stehen gleichrangig daneben
 und hängen von keinem der beiden Module ab.
 
+Die Desktop-App `:space-harvester-app` (#103, [ADR 0008](adr/0008-desktop-app.md)) hängt nur am Core und an
+`:comic-controls` (Kopie aus enterprise-ai-client), nie am Server.
+
 ## 2. Befund: Die Grenze existiert schon
 
 Die Paketstruktur trennt Fachlogik und Spring bereits sauber. Gezählt auf `main` (7b4635f):
