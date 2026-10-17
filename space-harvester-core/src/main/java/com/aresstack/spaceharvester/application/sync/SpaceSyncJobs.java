@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
@@ -99,7 +101,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         try {
             run = sync.run(sourceId, spaceKey, applier, listener(context));
         } catch (SyncConflictException e) {
-            return new Provisioned(true, true, Set.of());
+            return new Provisioned(true, true, List.of());
         }
         if (run.confirmed() == null) {
             LOG.log(System.Logger.Level.INFO, "Einlesen {0}/{1} für Auftrag {2}: keine Generation bestätigt ({3})",
@@ -107,7 +109,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             return Provisioned.NOT_CONFIRMED;
         }
         afterCommit(run, sourceId, spaceKey);
-        return new Provisioned(true, false, run.failedPageIds());
+        return new Provisioned(true, false, failedPages(run));
     }
 
     /**
@@ -195,6 +197,16 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
                     + "Lauf gleicht sie erneut ab");
         }
+    }
+
+    /** Kopfdaten der gescheiterten Seiten aus der Inventur, auch für Seiten, die nie in den Cache kamen. */
+    private static List<PageHeader> failedPages(SpaceSync.SyncRun run) {
+        Inventory inventory = run.plan().inventory();
+        return inventory.pages().stream()
+                .filter(entry -> run.failedPageIds().contains(entry.page().pageId()))
+                .map(entry -> new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()), entry.page(),
+                        entry.metadataHash(), entry.attributesHash(), inventory.finishedAt()))
+                .toList();
     }
 
     private void afterCommit(SpaceSync.SyncRun run, String sourceId, String spaceKey) {

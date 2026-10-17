@@ -41,6 +41,14 @@ public record AccessContext(String principal, PrincipalKind kind, String via, Us
                 Objects.requireNonNull(credential, "credential"));
     }
 
+    /**
+     * Eigentümer der Aufträge dieses Aufrufers: Art und Kennung, bei Endnutzern dazu der durchreichende Client. So
+     * sehen zwei Clients, die dieselbe Person durchreichen, nie die Aufträge des anderen.
+     */
+    public String jobOwner() {
+        return kind.name() + ":" + principal + (via == null ? "" : "@" + via);
+    }
+
     @Override
     public String toString() {
         return "AccessContext[" + kind + " " + principal + (via == null ? "" : " via " + via) + "]";

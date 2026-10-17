@@ -184,7 +184,7 @@ class ExportsTest {
                 context.discovered(2);
                 cache.publish(sourceId, spaceKey, confirmed("g1"), List.of(page(sourceId, spaceKey, "1", null),
                         page(sourceId, spaceKey, "2", "1")));
-                return new Provisioned(true, false, java.util.Set.of());
+                return new Provisioned(true, false, java.util.List.of());
             }
         };
 

@@ -63,7 +63,8 @@ class ExportProvisioningTest {
             // Zähler des Einlesens zählen nicht: erst der Export weiß, welche Seiten der Auftraggeber lesen darf.
             context.discovered(pages.size());
             cache.publish("confluence", "DEV", confirmed(generation), pages);
-            return new SpaceProvisioning.Provisioned(true, false, failed);
+            return new SpaceProvisioning.Provisioned(true, false, pages.stream()
+                    .filter(page -> failed.contains(page.key().pageId())).map(PageSnapshot::header).toList());
         });
     }
 
@@ -126,6 +127,35 @@ class ExportProvisioningTest {
     }
 
     @Test
+    void aNewPageThatNeverReachedTheCacheStillMakesTheExportIncomplete() {
+        PageSnapshot missing = page("confluence", "DEV", "3", "1");
+        JobStatus status = run(exports(provisioning(context -> {
+            // Seite 3 stand in der Inventur, ihr erster Abruf scheiterte: kein Stand im Cache, keine Seitenliste.
+            cache.publish("confluence", "DEV", confirmed("g1"), twoPages());
+            return new SpaceProvisioning.Provisioned(true, false, List.of(missing.header()));
+        })), dev());
+
+        ExportSummary summary = writer.published.get(status.id()).summary();
+        assertThat(summary.complete()).isFalse();
+        assertThat(summary.warnings()).anyMatch(w -> w.startsWith("1 Seiten ließen sich beim Einlesen nicht"));
+        assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(3, 2, 2, 1));
+    }
+
+    @Test
+    void aMissingPageTheCallerMayNotReadIsNeverMentioned() {
+        PageSnapshot missing = page("confluence", "DEV", "3", "1");
+        JobStatus status = run(exports(provisioning(context -> {
+            cache.publish("confluence", "DEV", confirmed("g1"), twoPages());
+            return new SpaceProvisioning.Provisioned(true, false, List.of(missing.header()));
+        })), dev().withVisible(header -> !header.key().pageId().equals("3")));
+
+        ExportSummary summary = writer.published.get(status.id()).summary();
+        assertThat(summary.complete()).isTrue();
+        assertThat(summary.warnings()).isEmpty();
+        assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+    }
+
+    @Test
     void unconfirmableReadInWithoutCacheFailsWithoutArtifact() {
         JobStatus status = run(exports(provisioning(context -> SpaceProvisioning.Provisioned.NOT_CONFIRMED)),
                 dev());
@@ -163,7 +193,7 @@ class ExportProvisioningTest {
     void aConcurrentSyncThatConfirmedFirstIsUsed() {
         JobStatus status = run(exports(provisioning(context -> {
             cache.publish("confluence", "DEV", confirmed("other"), twoPages());
-            return new SpaceProvisioning.Provisioned(true, true, Set.of());
+            return new SpaceProvisioning.Provisioned(true, true, List.of());
         })), dev());
 
         ExportSummary summary = writer.published.get(status.id()).summary();
@@ -208,7 +238,7 @@ class ExportProvisioningTest {
         SpaceProvisioning cancelling = provisioning(context -> {
             deferredJobs.cancel(id[0]);
             context.checkpoint();
-            return new SpaceProvisioning.Provisioned(true, false, Set.of());
+            return new SpaceProvisioning.Provisioned(true, false, List.of());
         });
         id[0] = new Exports(deferredJobs, cache, writer, ExportConverters.none(), cancelling, clock).start(dev())
                 .id();
@@ -239,6 +269,17 @@ class ExportProvisioningTest {
         int[] checks = {0};
         JobStatus status = run(exports(publishing("g1", twoPages(), Set.of())),
                 dev().withAuthorized(() -> checks[0]++ == 0));
+
+        assertThat(status.state()).isEqualTo(JobState.FAILED);
+        assertThat(status.error().code()).isEqualTo("ACCESS_REVOKED");
+        assertThat(writer.published).isEmpty();
+    }
+
+    @Test
+    void aPageRevokedBeforePublishingPublishesNothing() {
+        java.util.Map<String, Integer> checks = new java.util.HashMap<>();
+        JobStatus status = run(exports(publishing("g1", twoPages(), Set.of())), dev().withVisible(header ->
+                checks.merge(header.key().pageId(), 1, Integer::sum) == 1 || !header.key().pageId().equals("2")));
 
         assertThat(status.state()).isEqualTo(JobState.FAILED);
         assertThat(status.error().code()).isEqualTo("ACCESS_REVOKED");
