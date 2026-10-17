@@ -26,6 +26,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -210,7 +211,9 @@ class WorkspaceTest {
     @Test
     void aRunningSyncCanBeCancelled() throws Exception {
         Workspace workspace = start().workspace();
-        server.hold();
+        // Die Vorprüfung des Space-Keys (Space und erste Seite, limit=1) läuft synchron in startSync; erst die
+        // Seitenlisten des Abgleichs hängen.
+        server.holdUnless(uri -> uri.getPath().endsWith("/space/DEV") || "1".equals(limit(uri)));
         JobStatus started;
         try {
             started = workspace.startSync("wiki", "DEV");
@@ -335,6 +338,16 @@ class WorkspaceTest {
             status = workspace.job(started.id());
         }
         return status;
+    }
+
+    private static String limit(URI uri) {
+        String query = uri.getQuery() == null ? "" : uri.getQuery();
+        for (String part : query.split("&")) {
+            if (part.startsWith("limit=")) {
+                return part.substring("limit=".length());
+            }
+        }
+        return null;
     }
 
     private static void assertNoFileContains(Path directory, String secret) throws Exception {
