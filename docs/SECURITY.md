@@ -198,14 +198,13 @@ diesem Zeitpunkt noch nicht; sie fallen bei ihrem Hinzukommen unter `ApiRouteCov
 | Fassade: unbegrenztes `start` ließ eine Anfrage den ganzen Space lesen und prüfen | `start` höchstens 10 000, darüber 400 |
 | Keine Tomcat-Grenzen für Formular- und verworfene Bodies | `max-http-form-post-size` 64 KB, `max-swallow-size` 1 MB |
 | Config-Server-Zugang in der URL möglich | `docs/CONFIGURATION.md`: Zugang nur über `username`/`password` |
+| Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
 
 **Bewusst offen**
 
 - `parentPageId` einer sichtbaren Seite nennt auch einen Elternteil, den ein Endnutzer in Confluence nicht sehen darf
   (nur die ID, kein Titel oder Inhalt). Confluence vererbt Leseeinschränkungen auf Unterseiten, der Fall ist daher
   selten. Der Baum blendet solche Elternteile schon aus.
-- Plattenplatz der Exporte: Artefakte bleiben bis zum Ende der Aufbewahrung; die Grenze je Client begrenzt nur
-  gleichzeitige Aufträge. Eine Gesamtgrenze in Bytes kommt mit dem Aufräumen (#11/#12).
 - Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
 - Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
