@@ -1,10 +1,12 @@
 # Lizenzprüfung des deutschen MaltParser-Modells (#99, #111)
 
-Freigabebedingung für die öffentliche Weitergabe von `maltparser-de-gsd` über GitHub Releases. Solange diese Seite
-**Status: ausstehend** zeigt und das Rezept `license.approval=pending` enthält, bleibt jedes Modell ein Entwurfs-Release
-oder Workflow-Artefakt und wird nicht veröffentlicht.
+Freigabebedingung für die öffentliche Weitergabe von `maltparser-de-gsd` über GitHub Releases. Die
+**Lizenz- und Risikoentscheidung ist getroffen**; das Rezept dokumentiert `license.approval=approved`.
+**Die technische Veröffentlichung ist davon getrennt:** Bis zum erfolgreichen Neuverpacken, Prüfen und manuellen
+Veröffentlichen bleibt das Modell ein Entwurfs-Release.
 
-**Status: ausstehend.** Die Entscheidung trägt der Abschnitt [Freigabeentscheidung](#freigabeentscheidung) ein.
+**Status: freigegeben (Veröffentlichung technisch noch ausstehend).** Die Entscheidung und die verbliebenen
+Rechtsunsicherheiten sind im Abschnitt [Freigabeentscheidung](#freigabeentscheidung) dokumentiert.
 
 Diese Seite ist eine technische und rechtliche Einschätzung des Projekts, kein anwaltliches Gutachten. Sie betrachtet
 deutsches und EU-Recht; für andere Rechtsordnungen trifft sie keine Aussage.
@@ -228,20 +230,25 @@ Die Seite empfiehlt keine dieser Möglichkeiten zwingend; sie sind die Antwort, 
 
 ## Freigabeentscheidung
 
-Wird von der verantwortlichen Person ausgefüllt; bis dahin gilt **ausstehend**. Eine grüne CI, ein gemergter PR oder
-dieses Dokument selbst sind keine Freigabe.
+Die projektverantwortliche Person hat am 17.10.2026 **ausdrücklich die öffentliche Veröffentlichung von v1.0.0**
+in der Projektunterhaltung befürwortet, nachdem die Trennung der Rechte an Annotationen, Modell und Satztexten
+sowie die bestehenden Restrisiken erläutert wurden. Dies dokumentiert eine **bewusste Risikoentscheidung, keine
+Rechteklärung oder rechtliche Garantie**. Die technische Veröffentlichung bedarf weiterhin der unten genannten
+Integritätsprüfungen und der manuellen Freigabe des Release-Entwurfs.
 
 | Feld | Eintrag |
 |---|---|
-| Status | ausstehend |
-| Entschieden von | – |
-| Datum | – |
+| Status | **freigegeben** – öffentlicher Release noch nicht veröffentlicht |
+| Entschieden von | Projektverantwortliche Person, ausdrücklich in der Projektunterhaltung bestätigt (kein Klarname im öffentlichen Dokument eingetragen) |
+| Datum | 17.10.2026 |
 | Umfang | `maltparser-de-gsd-v1.0.0`, `.mco` SHA-256 `237885c25519b5e8996602994a81959b8a51a8dc7c331b40954618359c5f6ea3`, **CC-BY-SA-4.0-Lizenzangebot nur für wirksam lizenzierbare Modellrechte**, keine Lizenzzusage für etwaige Dritttextrechte; öffentliche Weitergabe über GitHub Releases |
-| Getragene Restrisiken | Restrisiken 1 bis 4 aus „Bewertung und Restrisiken“ |
+| Getragene Restrisiken | **Bewusst akzeptierte Veröffentlichungsunsicherheiten:** Restrisiken 1 bis 4 aus „Bewertung und Restrisiken“, insbesondere Wortpaar-Rekonstruktion, Dritttextrechte, Datenbankrechte und internationale Rechtslagen. Nachnutzende Personen müssen eigene Nutzung und Rechte selbst beurteilen; das entbindet den Herausgeber nicht von möglicherweise bestehenden Drittansprüchen. |
 | Veröffentlichte ZIP | SHA-256 aus `SHA256SUMS` des veröffentlichten Release (nach dem Neuverpacken nachtragen) |
 
-Zum Freigeben: Status auf **freigegeben**, Name und Datum eintragen, oben auf der Seite **Status: freigegeben** setzen;
-bei Ablehnung **abgelehnt** und die gewählte Möglichkeit aus „Bewertung und Restrisiken“ notieren.
+Die hier festgehaltene Freigabe wurde **nicht als Namensunterschrift oder externe anwaltliche Prüfung** ausgegeben.
+Vor dem öffentlichen Release ist das genehmigte Modellpaket mit Lizenzhinweis, Attributionsdatei, unveränderter
+Modell-SHA und den SHA256SUMS zu prüfen. Der Klarname kann bei Bedarf durch die verantwortliche Person in einem
+separaten Commit ergänzt werden; hier wird keiner erfunden.
 
 ## Ablauf der Freigabe
 
