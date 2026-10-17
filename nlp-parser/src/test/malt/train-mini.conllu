@@ -1,0 +1,428 @@
+# Kleiner Trainingssatz für das Testmodell maltparser-de-test (MIT, selbst geschrieben, #98).
+# Nur Spalten FORM und UPOS wie im Eingabevertrag aus #99; keine Mehrwortzeilen. Kein Ersatz für das GSD-Modell.
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	des	_	DET	_	_	12	det	_	_
+12	Kunden	_	NOUN	_	_	10	nmod	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Beleg wird vom Sachbearbeiter an die Kasse übermittelt.
+1	Der	_	DET	_	_	2	det	_	_
+2	Beleg	_	NOUN	_	_	10	nsubj:pass	_	_
+3	wird	_	AUX	_	_	10	aux:pass	_	_
+4	von	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Sachbearbeiter	_	NOUN	_	_	10	obl:agent	_	_
+7	an	_	ADP	_	_	9	case	_	_
+8	die	_	DET	_	_	9	det	_	_
+9	Kasse	_	NOUN	_	_	10	obl	_	_
+10	übermittelt	_	VERB	_	_	0	root	_	_
+11	.	_	PUNCT	_	_	10	punct	_	_
+
+# text = Der Kunde ruft den Sachbearbeiter an und reicht den Antrag ein.
+1	Der	_	DET	_	_	2	det	_	_
+2	Kunde	_	NOUN	_	_	3	nsubj	_	_
+3	ruft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	obj	_	_
+6	an	_	ADP	_	_	3	compound:prt	_	_
+7	und	_	CCONJ	_	_	8	cc	_	_
+8	reicht	_	VERB	_	_	3	conj	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	8	obj	_	_
+11	ein	_	ADV	_	_	8	compound:prt	_	_
+12	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Er genehmigt ihn.
+1	Er	_	PRON	_	_	2	nsubj	_	_
+2	genehmigt	_	VERB	_	_	0	root	_	_
+3	ihn	_	PRON	_	_	2	obj	_	_
+4	.	_	PUNCT	_	_	2	punct	_	_
+
+# text = Die Sachbearbeiterin antwortet dem Kunden.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	antwortet	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Prüfer arbeitet am Montag.
+1	Der	_	DET	_	_	2	det	_	_
+2	Prüfer	_	NOUN	_	_	3	nsubj	_	_
+3	arbeitet	_	VERB	_	_	0	root	_	_
+4	an	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Montag	_	PROPN	_	_	3	obl	_	_
+7	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Daten werden geprüft, weil der Prüfer sie anfordert.
+1	Die	_	DET	_	_	2	det	_	_
+2	Daten	_	NOUN	_	_	4	nsubj:pass	_	_
+3	werden	_	AUX	_	_	4	aux:pass	_	_
+4	geprüft	_	VERB	_	_	0	root	_	_
+5	,	_	PUNCT	_	_	10	punct	_	_
+6	weil	_	SCONJ	_	_	10	mark	_	_
+7	der	_	DET	_	_	8	det	_	_
+8	Prüfer	_	NOUN	_	_	10	nsubj	_	_
+9	sie	_	PRON	_	_	10	obj	_	_
+10	anfordert	_	VERB	_	_	4	advcl	_	_
+11	.	_	PUNCT	_	_	4	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt der Kasse am Freitag den Antrag per Post.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Kasse	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Freitag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	3	obj	_	_
+11	per	_	ADP	_	_	12	case	_	_
+12	Post	_	NOUN	_	_	3	obl	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Einen Antrag prüft der Sachbearbeiter.
+1	Einen	_	DET	_	_	2	det	_	_
+2	Antrag	_	NOUN	_	_	3	obj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Kasse prüft den Beleg.
+1	Die	_	DET	_	_	2	det	_	_
+2	Kasse	_	NOUN	_	_	3	nsubj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Beleg	_	NOUN	_	_	3	obj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Vorgesetzte genehmigt den Antrag des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Vorgesetzte	_	NOUN	_	_	3	nsubj	_	_
+3	genehmigt	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Antrag	_	NOUN	_	_	3	obj	_	_
+6	des	_	DET	_	_	7	det	_	_
+7	Kunden	_	NOUN	_	_	5	nmod	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Sachbearbeiterin schickt dem Kunden den Bescheid.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	schickt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	den	_	DET	_	_	7	det	_	_
+7	Bescheid	_	NOUN	_	_	3	obj	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	des	_	DET	_	_	12	det	_	_
+12	Kunden	_	NOUN	_	_	10	nmod	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Beleg wird vom Sachbearbeiter an die Kasse übermittelt.
+1	Der	_	DET	_	_	2	det	_	_
+2	Beleg	_	NOUN	_	_	10	nsubj:pass	_	_
+3	wird	_	AUX	_	_	10	aux:pass	_	_
+4	von	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Sachbearbeiter	_	NOUN	_	_	10	obl:agent	_	_
+7	an	_	ADP	_	_	9	case	_	_
+8	die	_	DET	_	_	9	det	_	_
+9	Kasse	_	NOUN	_	_	10	obl	_	_
+10	übermittelt	_	VERB	_	_	0	root	_	_
+11	.	_	PUNCT	_	_	10	punct	_	_
+
+# text = Der Kunde ruft den Sachbearbeiter an und reicht den Antrag ein.
+1	Der	_	DET	_	_	2	det	_	_
+2	Kunde	_	NOUN	_	_	3	nsubj	_	_
+3	ruft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	obj	_	_
+6	an	_	ADP	_	_	3	compound:prt	_	_
+7	und	_	CCONJ	_	_	8	cc	_	_
+8	reicht	_	VERB	_	_	3	conj	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	8	obj	_	_
+11	ein	_	ADV	_	_	8	compound:prt	_	_
+12	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Er genehmigt ihn.
+1	Er	_	PRON	_	_	2	nsubj	_	_
+2	genehmigt	_	VERB	_	_	0	root	_	_
+3	ihn	_	PRON	_	_	2	obj	_	_
+4	.	_	PUNCT	_	_	2	punct	_	_
+
+# text = Die Sachbearbeiterin antwortet dem Kunden.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	antwortet	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Prüfer arbeitet am Montag.
+1	Der	_	DET	_	_	2	det	_	_
+2	Prüfer	_	NOUN	_	_	3	nsubj	_	_
+3	arbeitet	_	VERB	_	_	0	root	_	_
+4	an	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Montag	_	PROPN	_	_	3	obl	_	_
+7	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Daten werden geprüft, weil der Prüfer sie anfordert.
+1	Die	_	DET	_	_	2	det	_	_
+2	Daten	_	NOUN	_	_	4	nsubj:pass	_	_
+3	werden	_	AUX	_	_	4	aux:pass	_	_
+4	geprüft	_	VERB	_	_	0	root	_	_
+5	,	_	PUNCT	_	_	10	punct	_	_
+6	weil	_	SCONJ	_	_	10	mark	_	_
+7	der	_	DET	_	_	8	det	_	_
+8	Prüfer	_	NOUN	_	_	10	nsubj	_	_
+9	sie	_	PRON	_	_	10	obj	_	_
+10	anfordert	_	VERB	_	_	4	advcl	_	_
+11	.	_	PUNCT	_	_	4	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt der Kasse am Freitag den Antrag per Post.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Kasse	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Freitag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	3	obj	_	_
+11	per	_	ADP	_	_	12	case	_	_
+12	Post	_	NOUN	_	_	3	obl	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Einen Antrag prüft der Sachbearbeiter.
+1	Einen	_	DET	_	_	2	det	_	_
+2	Antrag	_	NOUN	_	_	3	obj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Kasse prüft den Beleg.
+1	Die	_	DET	_	_	2	det	_	_
+2	Kasse	_	NOUN	_	_	3	nsubj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Beleg	_	NOUN	_	_	3	obj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Vorgesetzte genehmigt den Antrag des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Vorgesetzte	_	NOUN	_	_	3	nsubj	_	_
+3	genehmigt	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Antrag	_	NOUN	_	_	3	obj	_	_
+6	des	_	DET	_	_	7	det	_	_
+7	Kunden	_	NOUN	_	_	5	nmod	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Sachbearbeiterin schickt dem Kunden den Bescheid.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	schickt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	den	_	DET	_	_	7	det	_	_
+7	Bescheid	_	NOUN	_	_	3	obj	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	des	_	DET	_	_	12	det	_	_
+12	Kunden	_	NOUN	_	_	10	nmod	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Beleg wird vom Sachbearbeiter an die Kasse übermittelt.
+1	Der	_	DET	_	_	2	det	_	_
+2	Beleg	_	NOUN	_	_	10	nsubj:pass	_	_
+3	wird	_	AUX	_	_	10	aux:pass	_	_
+4	von	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Sachbearbeiter	_	NOUN	_	_	10	obl:agent	_	_
+7	an	_	ADP	_	_	9	case	_	_
+8	die	_	DET	_	_	9	det	_	_
+9	Kasse	_	NOUN	_	_	10	obl	_	_
+10	übermittelt	_	VERB	_	_	0	root	_	_
+11	.	_	PUNCT	_	_	10	punct	_	_
+
+# text = Der Kunde ruft den Sachbearbeiter an und reicht den Antrag ein.
+1	Der	_	DET	_	_	2	det	_	_
+2	Kunde	_	NOUN	_	_	3	nsubj	_	_
+3	ruft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	obj	_	_
+6	an	_	ADP	_	_	3	compound:prt	_	_
+7	und	_	CCONJ	_	_	8	cc	_	_
+8	reicht	_	VERB	_	_	3	conj	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	8	obj	_	_
+11	ein	_	ADV	_	_	8	compound:prt	_	_
+12	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Er genehmigt ihn.
+1	Er	_	PRON	_	_	2	nsubj	_	_
+2	genehmigt	_	VERB	_	_	0	root	_	_
+3	ihn	_	PRON	_	_	2	obj	_	_
+4	.	_	PUNCT	_	_	2	punct	_	_
+
+# text = Die Sachbearbeiterin antwortet dem Kunden.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	antwortet	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Prüfer arbeitet am Montag.
+1	Der	_	DET	_	_	2	det	_	_
+2	Prüfer	_	NOUN	_	_	3	nsubj	_	_
+3	arbeitet	_	VERB	_	_	0	root	_	_
+4	an	_	ADP	_	_	6	case	_	_
+5	dem	_	DET	_	_	6	det	_	_
+6	Montag	_	PROPN	_	_	3	obl	_	_
+7	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Daten werden geprüft, weil der Prüfer sie anfordert.
+1	Die	_	DET	_	_	2	det	_	_
+2	Daten	_	NOUN	_	_	4	nsubj:pass	_	_
+3	werden	_	AUX	_	_	4	aux:pass	_	_
+4	geprüft	_	VERB	_	_	0	root	_	_
+5	,	_	PUNCT	_	_	10	punct	_	_
+6	weil	_	SCONJ	_	_	10	mark	_	_
+7	der	_	DET	_	_	8	det	_	_
+8	Prüfer	_	NOUN	_	_	10	nsubj	_	_
+9	sie	_	PRON	_	_	10	obj	_	_
+10	anfordert	_	VERB	_	_	4	advcl	_	_
+11	.	_	PUNCT	_	_	4	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt dem Vorgesetzten am Montag den Beleg.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Vorgesetzten	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Montag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Beleg	_	NOUN	_	_	3	obj	_	_
+11	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Sachbearbeiter übermittelt der Kasse am Freitag den Antrag per Post.
+1	Der	_	DET	_	_	2	det	_	_
+2	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+3	übermittelt	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Kasse	_	NOUN	_	_	3	obl:arg	_	_
+6	an	_	ADP	_	_	8	case	_	_
+7	dem	_	DET	_	_	8	det	_	_
+8	Freitag	_	PROPN	_	_	3	obl	_	_
+9	den	_	DET	_	_	10	det	_	_
+10	Antrag	_	NOUN	_	_	3	obj	_	_
+11	per	_	ADP	_	_	12	case	_	_
+12	Post	_	NOUN	_	_	3	obl	_	_
+13	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Einen Antrag prüft der Sachbearbeiter.
+1	Einen	_	DET	_	_	2	det	_	_
+2	Antrag	_	NOUN	_	_	3	obj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	der	_	DET	_	_	5	det	_	_
+5	Sachbearbeiter	_	NOUN	_	_	3	nsubj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Kasse prüft den Beleg.
+1	Die	_	DET	_	_	2	det	_	_
+2	Kasse	_	NOUN	_	_	3	nsubj	_	_
+3	prüft	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Beleg	_	NOUN	_	_	3	obj	_	_
+6	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Der Vorgesetzte genehmigt den Antrag des Kunden.
+1	Der	_	DET	_	_	2	det	_	_
+2	Vorgesetzte	_	NOUN	_	_	3	nsubj	_	_
+3	genehmigt	_	VERB	_	_	0	root	_	_
+4	den	_	DET	_	_	5	det	_	_
+5	Antrag	_	NOUN	_	_	3	obj	_	_
+6	des	_	DET	_	_	7	det	_	_
+7	Kunden	_	NOUN	_	_	5	nmod	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+
+# text = Die Sachbearbeiterin schickt dem Kunden den Bescheid.
+1	Die	_	DET	_	_	2	det	_	_
+2	Sachbearbeiterin	_	NOUN	_	_	3	nsubj	_	_
+3	schickt	_	VERB	_	_	0	root	_	_
+4	dem	_	DET	_	_	5	det	_	_
+5	Kunden	_	NOUN	_	_	3	obl:arg	_	_
+6	den	_	DET	_	_	7	det	_	_
+7	Bescheid	_	NOUN	_	_	3	obj	_	_
+8	.	_	PUNCT	_	_	3	punct	_	_
+

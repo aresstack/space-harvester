@@ -1,0 +1,186 @@
+// Deutsches Dependency Parsing nach Universal Dependencies und objektzentrierte Satzauswertung (#98, ADR 0005).
+// Laufzeitmodul: Apache OpenNLP für Sätze, Tokens, Wortarten und Grundformen, MaltParser für die Abhängigkeiten.
+// Das deutsche Parsermodell kommt fertig aus #99 (GitHub-Release, Version und SHA-256 fest); hier wird nie trainiert.
+plugins {
+    id 'java-library'
+}
+
+description = 'Deutscher UD-Parser (MaltParser) und objektzentrierte Satzauswertung (#98).'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // MaltParser 1.9.2 bringt Log4j 1.2.16 mit (CVE-2019-17571, CVE-2021-4104, CVE-2022-23302/23305/23307);
+    // reload4j ist der gepflegte, API-gleiche Ersatz im selben Paket org.apache.log4j.
+    implementation(libs.maltparser) {
+        exclude group: 'log4j', module: 'log4j'
+    }
+    runtimeOnly libs.reload4j
+    implementation libs.opennlp.tools
+    // Deutsche OpenNLP-Modelle (UD German GSD), je rund 0,5–1,3 MB, als Klassenpfad-Ressourcen
+    runtimeOnly libs.opennlp.models.sentdetect.de
+    runtimeOnly libs.opennlp.models.tokenizer.de
+    runtimeOnly libs.opennlp.models.pos.de
+    runtimeOnly libs.opennlp.models.lemmatizer.de
+    // Modell-Manifest aus #99 lesen
+    implementation libs.jackson.jr.objects
+
+    testImplementation platform(libs.junit.bom)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+// Optionales echtes Modell für den Rauchtest: ./gradlew :nlp-parser:test -PnlpModelDir=<entpacktes Release>
+def realModelDir = providers.gradleProperty('nlpModelDir')
+
+tasks.named('test') {
+    useJUnitPlatform()
+    maxHeapSize = '1g'
+    if (realModelDir.isPresent()) {
+        systemProperty 'nlp.parser.modelDir', file(realModelDir.get()).absolutePath
+    }
+}
+
+// Fest hinterlegte Modellversion aus #99 (Tag, Asset, SHA-256 der ZIP); dieselbe Datei liest GermanParserModelPin.
+def pinFile = layout.projectDirectory.file('src/main/resources/com/aresstack/spaceharvester/nlp/malt/german-parser-model.properties')
+
+/**
+ * Lädt das freigegebene deutsche Parsermodell aus dem GitHub-Release von #99, prüft die SHA-256 der ZIP gegen den
+ * festen Wert und entpackt es nach build/nlp-model/<tag>. Nur auf ausdrücklichen Aufruf; kein anderer Task hängt
+ * davon ab, und es wird nie trainiert. Ein vorhandenes, geprüftes Verzeichnis wird nicht erneut geladen.
+ */
+abstract class DownloadGermanParserModel extends DefaultTask {
+    @InputFile
+    abstract RegularFileProperty getPin()
+
+    @OutputDirectory
+    abstract DirectoryProperty getTarget()
+
+    @TaskAction
+    void download() {
+        def props = new Properties()
+        pin.get().asFile.withInputStream { props.load(it) }
+        def tag = props.getProperty('release.tag', '').trim()
+        def asset = props.getProperty('release.asset', '').trim()
+        def sha = props.getProperty('release.sha256', '').trim().toLowerCase(Locale.ROOT)
+        def repo = props.getProperty('release.repository', '').trim()
+        if (!tag || !asset || !sha || !repo) {
+            throw new GradleException('Noch kein freigegebenes Parsermodell hinterlegt (german-parser-model.properties, #99).')
+        }
+        def dir = target.get().dir(tag).asFile
+        def marker = new File(dir, '.sha256')
+        if (marker.isFile() && marker.text.trim() == sha) {
+            logger.lifecycle("Parsermodell ${tag} liegt bereits geprüft in ${dir}")
+            return
+        }
+        def zip = new File(temporaryDir, asset)
+        def url = new URI("https://github.com/${repo}/releases/download/${tag}/${asset}").toURL()
+        logger.lifecycle("Lade ${url}")
+        url.withInputStream { input -> zip.withOutputStream { it << input } }
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        zip.withInputStream { input ->
+            byte[] buffer = new byte[65536]
+            int n
+            while ((n = input.read(buffer)) > 0) {
+                digest.update(buffer, 0, n)
+            }
+        }
+        def actual = digest.digest().encodeHex().toString()
+        if (actual != sha) {
+            throw new GradleException("SHA-256 von ${asset} ist ${actual}, erwartet ${sha}; nichts entpackt.")
+        }
+        dir.deleteDir()
+        dir.mkdirs()
+        new java.util.zip.ZipFile(zip).withCloseable { archive ->
+            archive.entries().each { entry ->
+                def out = new File(dir, entry.name).canonicalFile
+                if (!out.path.startsWith(dir.canonicalPath + File.separator)) {
+                    throw new GradleException("Unzulässiger Pfad im Modellarchiv: ${entry.name}")
+                }
+                if (entry.directory) {
+                    out.mkdirs()
+                } else {
+                    out.parentFile.mkdirs()
+                    archive.getInputStream(entry).withCloseable { input -> out.withOutputStream { it << input } }
+                }
+            }
+        }
+        marker.text = sha
+        logger.lifecycle("Parsermodell ${tag} geprüft und entpackt nach ${dir}")
+    }
+}
+
+tasks.register('downloadGermanParserModel', DownloadGermanParserModel) {
+    group = 'nlp'
+    description = 'Lädt das freigegebene deutsche MaltParser-Modell (#99) und prüft die SHA-256; trainiert nie.'
+    pin = pinFile
+    target = layout.buildDirectory.dir('nlp-model')
+    outputs.upToDateWhen { false }
+}
+
+// Trainiert das winzige Testmodell aus selbst geschriebenen Sätzen neu (src/test/malt). Nur von Hand aufrufen,
+// wenn sich train-mini.conllu ändert; das Ergebnis wird mit neuer Prüfsumme eingecheckt. Kein Build hängt daran.
+tasks.register('trainTestParserModel', JavaExec) {
+    group = 'nlp'
+    description = 'Trainiert das kleine Testmodell für die Tests neu (nicht das deutsche Modell, das kommt aus #99).'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.maltparser.Malt'
+    def work = layout.buildDirectory.dir('test-model').get().asFile
+    workingDir = work
+    args '-c', 'maltparser-de-test', '-i', file('src/test/malt/train-mini.conllu').absolutePath,
+            '-if', 'conllu', '-m', 'learn', '-a', 'nivreeager', '-l', 'liblinear'
+    doFirst { work.mkdirs() }
+    doLast {
+        copy {
+            from new File(work, 'maltparser-de-test.mco')
+            into 'src/test/resources/com/aresstack/spaceharvester/nlp/malt/test-model'
+        }
+    }
+}
+
+// Lizenz-Gate (ADR 0005): keine GPL-Bibliothek (Stanford CoreNLP) und kein Log4j 1.x im Laufzeit-Klassenpfad.
+tasks.register('licenseGate') {
+    group = 'verification'
+    description = 'Prüft, dass weder CoreNLP (GPL) noch Log4j 1.x im Laufzeit-Klassenpfad von nlp-parser liegen.'
+    def ids = configurations.runtimeClasspath.incoming.resolutionResult.rootComponent.map { root ->
+        def found = [] as Set
+        def visit
+        visit = { component ->
+            component.dependencies.each { dependency ->
+                if (dependency instanceof ResolvedDependencyResult) {
+                    def selected = dependency.selected
+                    if (selected.moduleVersion != null && found.add(selected.moduleVersion.toString())) {
+                        visit(selected)
+                    }
+                }
+            }
+        }
+        visit(root)
+        found
+    }
+    inputs.property('modules', ids)
+    doLast {
+        def forbidden = ids.get().findAll { it.startsWith('edu.stanford.nlp:') || it.startsWith('log4j:log4j:') }
+        if (!forbidden.isEmpty()) {
+            throw new GradleException("Nicht freigegebene Abhängigkeiten im Laufzeit-Klassenpfad: ${forbidden}")
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn 'licenseGate'
+}

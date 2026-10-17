@@ -19,3 +19,7 @@ include 'enterprise-ai-sources'
 
 // Ausführbarer Spring-Boot-Dienst (REST, Fassade, UI), siehe docs/MODULES.md (#100).
 include 'space-harvester-server'
+
+// Deutsches Dependency Parsing nach Universal Dependencies (#98, ADR 0005): Laufzeitmodul mit MaltParser und
+// objektzentrierter Auswertung. Der Dienst bindet es (noch) nicht ein; das Modell kommt aus #99.
+include 'nlp-parser'
