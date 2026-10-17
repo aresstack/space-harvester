@@ -3,7 +3,7 @@ package com.aresstack.spaceharvester.api.confluence;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.compat.ContentListing;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
-import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import io.swagger.v3.oas.annotations.Operation;
@@ -95,19 +95,21 @@ public class ConfluenceCompatController {
             throw new UnsupportedRequestException("version wird nicht unterstützt; der Cache hält nur die aktuelle "
                     + "Fassung einer Seite");
         }
-        CachedPage page = queries.page(caller, sourceId, id, false);
+        DeliveredPage page = queries.page(caller, sourceId, id, false);
         NativePayload payload = page.snapshot().payload();
         requireExpand(id, payload, expand);
         // Spring wertet If-None-Match am ETag der Antwort aus; die 304 behält so die Cache-Kopfzeilen.
         String etag = "\"" + payload.rawSha256() + "\"";
-        CacheGeneration generation = page.generation();
-        return ResponseEntity.ok()
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .eTag(etag)
                 .cacheControl(CacheControl.noCache().cachePrivate())
-                .contentType(MediaType.parseMediaType(payload.mediaType()))
-                .header(CACHE_GENERATION, generation.id())
-                .header(CACHE_STATE, generation.state().name().toLowerCase(Locale.ROOT))
-                .body(payload.bytes());
+                .contentType(MediaType.parseMediaType(payload.mediaType()));
+        CacheGeneration generation = page.generation();
+        if (generation != null) {
+            response.header(CACHE_GENERATION, generation.id())
+                    .header(CACHE_STATE, generation.state().name().toLowerCase(Locale.ROOT));
+        }
+        return response.body(payload.bytes());
     }
 
     @GetMapping("/content")
@@ -182,7 +184,7 @@ public class ConfluenceCompatController {
         ByteArrayOutputStream body = new ByteArrayOutputStream();
         body.writeBytes("{\"results\":[".getBytes(StandardCharsets.UTF_8));
         String separator = "";
-        for (CachedPage page : slice.pages()) {
+        for (DeliveredPage page : slice.pages()) {
             NativePayload payload = page.snapshot().payload();
             requireExpand(page.header().key().pageId(), payload, expand);
             body.writeBytes(separator.getBytes(StandardCharsets.UTF_8));

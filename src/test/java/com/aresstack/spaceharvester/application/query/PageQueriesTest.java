@@ -5,6 +5,7 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
@@ -17,14 +18,19 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +54,9 @@ class PageQueriesTest {
 
     private static final AccessContext CALLER = AccessContext.technicalClient("etl");
     private static final AccessPolicy ALLOW_ALL = (context, scope, kind) -> AccessDecision.ALLOW;
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-16T22:00:00Z"), ZoneOffset.UTC);
+    /** Ohne Inhaltsabruf: refresh=true ist nicht möglich. */
+    private static final PageFreshness NO_REFRESH = new PageFreshness(new SourceQueries(CATALOG, CLOCK), null, CLOCK);
 
     private final InMemoryPageCache cache = new InMemoryPageCache();
 
@@ -64,7 +73,7 @@ class PageQueriesTest {
     }
 
     private PageQueries queries(AccessPolicy policy) {
-        return new PageQueries(CATALOG, cache, new AccessGuard(policy), 1000);
+        return new PageQueries(CATALOG, cache, new AccessGuard(policy), NO_REFRESH, 1000);
     }
 
     @Test
@@ -161,7 +170,7 @@ class PageQueriesTest {
         assertThat(tree.tree().roots().get(0).children()).extracting(PageTree.Node::pageId).contains("p03", "p99");
         assertThat(tree.pages().get("p99").rawSha256()).isNull();
 
-        CachedPage page = queries.page(CALLER, "wiki", "p03", false);
+        DeliveredPage page = queries.page(CALLER, "wiki", "p03", false);
         assertThat(page.header().metadata().title()).isEqualTo("Umbenannt");
         assertThat(page.snapshot().metadata().title()).isEqualTo("Seite p03");
         assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p99", false)).isInstanceOf(CacheMissException.class);
@@ -253,7 +262,7 @@ class PageQueriesTest {
     void movedPageIsFoundByPageIdAlone() {
         cache.publish("wiki", "OPS", confirmed("g7"), List.of(page("wiki", "OPS", "101", null)));
 
-        CachedPage page = queries(ALLOW_ALL).page(CALLER, "wiki", "101", false);
+        DeliveredPage page = queries(ALLOW_ALL).page(CALLER, "wiki", "101", false);
 
         assertThat(page.snapshot().spaceKey()).isEqualTo("OPS");
         assertThat(page.generation().id()).isEqualTo("g7");
@@ -267,13 +276,132 @@ class PageQueriesTest {
                 .isInstanceOf(RefreshUnavailableException.class);
     }
 
+    // refresh=true gegen eine Quelle, die die Einzelmetadaten aus live liefert
+
+    private final HarvestSource live = mock(HarvestSource.class);
+    private final List<String> fetched = new ArrayList<>();
+    private PageSnapshot fetchAnswer;
+
+    private PageQueries refreshing(AccessPolicy policy) {
+        when(live.id()).thenReturn("wiki");
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(live);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "wiki".equals(sourceId) ? Optional.of(live) : Optional.empty();
+            }
+        };
+        PageFreshness freshness = new PageFreshness(new SourceQueries(catalog, CLOCK), (sourceId, pageId) -> {
+            fetched.add(pageId);
+            if (fetchAnswer == null) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.NOT_FOUND, "weg", null);
+            }
+            return fetchAnswer;
+        }, CLOCK);
+        return new PageQueries(catalog, cache, new AccessGuard(policy), freshness, 1000);
+    }
+
+    private static PageMetadata version(PageSnapshot page, String space, String version) {
+        PageMetadata metadata = page.metadata();
+        return new PageMetadata(metadata.pageId(), metadata.resourceId(), metadata.title(), space,
+                metadata.parentPageId(), version, metadata.modifiedAt(), metadata.url(), metadata.attributes());
+    }
+
+    @Test
+    void refreshOfAnUnchangedPageDeliversTheCacheWithoutFetching() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot stored = page("wiki", "DEV", "p03", "p01");
+        when(live.pageMetadata("p03")).thenReturn(stored.metadata());
+
+        DeliveredPage page = refreshing(ALLOW_ALL).page(CALLER, "wiki", "p03", true);
+
+        assertThat(page.live()).isFalse();
+        assertThat(page.refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
+        assertThat(page.checkedAt()).isEqualTo(CLOCK.instant());
+        assertThat(page.generation().id()).isEqualTo("g1");
+        assertThat(page.snapshot().payload().rawSha256()).isEqualTo(stored.payload().rawSha256());
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void refreshOfANewRevisionDeliversItLiveAndLeavesTheCacheAlone() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot stored = page("wiki", "DEV", "p03", "p01");
+        when(live.pageMetadata("p03")).thenReturn(version(stored, "DEV", "4"));
+        fetchAnswer = page("wiki", "DEV", "p03", "p01", "{\"v\":4}".getBytes(StandardCharsets.UTF_8));
+
+        DeliveredPage page = refreshing(ALLOW_ALL).page(CALLER, "wiki", "p03", true);
+
+        assertThat(page.live()).isTrue();
+        assertThat(page.refresh()).isEqualTo(PageFreshness.Outcome.CONTENT_CHANGED);
+        assertThat(page.snapshot()).isSameAs(fetchAnswer);
+        assertThat(page.generation().id()).isEqualTo("g1");
+        assertThat(fetched).containsExactly("p03");
+        assertThat(cache.page(stored.key()).orElseThrow().snapshot().payload().rawSha256())
+                .isEqualTo(stored.payload().rawSha256());
+    }
+
+    @Test
+    void refreshFindsPagesThatAreNotYetCached() {
+        PageSnapshot fresh = page("wiki", "DEV", "p77", null);
+        when(live.pageMetadata("p77")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+
+        DeliveredPage page = refreshing(ALLOW_ALL).page(CALLER, "wiki", "p77", true);
+
+        assertThat(page.live()).isTrue();
+        assertThat(page.generation()).isNull();
+        assertThat(page.snapshot()).isSameAs(fresh);
+    }
+
+    @Test
+    void refreshChecksRightsInTheSpaceTheSourceReports() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot stored = page("wiki", "DEV", "p03", "p01");
+        // In der Quelle nach OPS verschoben, der Aufrufer darf OPS nicht lesen.
+        when(live.pageMetadata("p03")).thenReturn(version(stored, "OPS", "3"));
+        AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY;
+
+        assertThatThrownBy(() -> refreshing(devOnly).page(CALLER, "wiki", "p03", true))
+                .isInstanceOf(CacheMissException.class);
+    }
+
+    @Test
+    void pagesTheSourceNoLongerKnowsAreCacheMisses() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        when(live.pageMetadata("p03")).thenThrow(
+                new SourceAccessException("wiki", SourceAccessException.Reason.NOT_FOUND, "weg", null));
+        PageSnapshot stored = page("wiki", "DEV", "p04", "p00");
+        // Metadaten noch da, Inhalt beim Abruf schon weg.
+        when(live.pageMetadata("p04")).thenReturn(version(stored, "DEV", "9"));
+        PageQueries queries = refreshing(ALLOW_ALL);
+
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p03", true)).isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p04", true)).isInstanceOf(CacheMissException.class);
+    }
+
+    @Test
+    void sourceFailuresAreNeverReplacedByTheCache() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        when(live.pageMetadata("p03")).thenThrow(
+                new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "aus", null));
+
+        assertThatThrownBy(() -> refreshing(ALLOW_ALL).page(CALLER, "wiki", "p03", true))
+                .isInstanceOf(SourceAccessException.class);
+    }
+
     @Test
     void treeLargerThanTheLimitIsRefused() {
         cache.publish("wiki", "DEV", confirmed("g1"), devPages());
 
-        assertThatThrownBy(() -> new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 24)
+        assertThatThrownBy(() -> new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), NO_REFRESH, 24)
                 .tree(CALLER, "wiki", "DEV")).isInstanceOf(TreeTooLargeException.class);
-        assertThat(new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 25).tree(CALLER, "wiki", "DEV")
+        assertThat(new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), NO_REFRESH, 25).tree(CALLER, "wiki", "DEV")
                 .tree().nodeCount()).isEqualTo(25);
     }
 
@@ -298,7 +426,7 @@ class PageQueriesTest {
         }
         cache.publish("wiki", "BIG", confirmed("g1"), pages);
 
-        SpaceTree tree = new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), 5000).tree(CALLER, "wiki", "BIG");
+        SpaceTree tree = new PageQueries(CATALOG, cache, new AccessGuard(ALLOW_ALL), NO_REFRESH, 5000).tree(CALLER, "wiki", "BIG");
 
         assertThat(tree.tree().nodeCount()).isEqualTo(2501);
         assertThat(tree.tree().roots()).singleElement().satisfies(root ->

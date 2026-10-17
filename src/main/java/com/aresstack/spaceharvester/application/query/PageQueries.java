@@ -5,18 +5,23 @@ import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Anwendungsfälle der cachegestützten Query-API (#27): flache Seitenliste, ID-Baum und native Einzelseite.
@@ -26,6 +31,9 @@ import java.util.Objects;
  * verlangen {@link AccessKind#METADATA} für den Space und filtern zusätzlich je Seite an ihren aktuellen Kopfdaten; die
  * native Einzelseite verlangt {@link AccessKind#CONTENT}. Eine Seite ohne Freigabe ist nach außen nicht von einer
  * fehlenden zu unterscheiden.
+ *
+ * <p>{@code refresh=true} prüft die Einzelseite über {@link PageFreshness} gegen die Quelle und liefert nie
+ * stattdessen den Cache-Stand; die Prüfung schreibt nicht in den Cache.
  */
 public class PageQueries {
 
@@ -44,15 +52,19 @@ public class PageQueries {
     private final SourceCatalog catalog;
     private final PageCacheReader cache;
     private final AccessGuard access;
+    private final PageFreshness freshness;
     private final int maxTreeNodes;
 
     /**
+     * @param freshness    Prüfung gegen die Quelle für {@code refresh=true}
      * @param maxTreeNodes größte Zahl sichtbarer Seiten, deren Baum noch synchron ausgeliefert wird
      */
-    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, int maxTreeNodes) {
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       int maxTreeNodes) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = Objects.requireNonNull(cache, "cache");
         this.access = Objects.requireNonNull(access, "access");
+        this.freshness = Objects.requireNonNull(freshness, "freshness");
         if (maxTreeNodes < 1) {
             throw new IllegalArgumentException("maxTreeNodes muss positiv sein");
         }
@@ -149,27 +161,82 @@ public class PageQueries {
     }
 
     /**
-     * Eine Seite mit ihrer nativen Payload aus dem Cache.
+     * Eine Seite mit ihrer nativen Payload, aus dem Cache oder nach Prüfung gegen die Quelle.
      *
      * @param caller  Aufrufer aus der geprüften Anmeldung
-     * @param refresh {@code true} verlangt eine Prüfung gegen die Quelle vor der Auslieferung
-     * @throws AccessDeniedException        wenn die Quelle für keinen Space für {@code content} freigegeben ist
-     * @throws UnknownSourceException       wenn keine Quelle mit dieser ID konfiguriert ist
-     * @throws RefreshUnavailableException  bei {@code refresh}, solange keine Prüfung gegen die Quelle angebunden ist;
-     *                                      dann nie stattdessen der Cache-Stand
-     * @throws CacheMissException           wenn die Seite nicht im Cache liegt oder ihr Space nicht für
-     *                                      {@code content} freigegeben ist
+     * @param refresh {@code true} verlangt eine Prüfung gegen die Quelle vor der Auslieferung; nie stattdessen der
+     *                Cache-Stand
+     * @throws AccessDeniedException       wenn die Quelle für keinen Space für {@code content} freigegeben ist
+     * @throws UnknownSourceException      wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws RefreshUnavailableException bei {@code refresh}, solange keine Prüfung gegen die Quelle angebunden ist
+     * @throws SourceAccessException       bei {@code refresh}, wenn die Quelle nicht oder nicht in der Frist antwortet
+     * @throws CacheMissException          wenn die Seite nicht im Cache liegt bzw. die Quelle sie nicht (mehr) kennt,
+     *                                     oder ihr Space nicht für {@code content} freigegeben ist
      */
-    public CachedPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
+    public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         requireSource(sourceId);
-        if (refresh) {
-            // Kommt mit der Aktualitätsprüfung aus #16 und dem nativen Abruf aus #8.
+        if (!refresh) {
+            return cache.page(new PageKey(sourceId, pageId))
+                    .filter(page -> readable(caller, page.header()))
+                    .map(DeliveredPage::cached)
+                    .orElseThrow(() -> new CacheMissException(sourceId, "Seite nicht im Cache"));
+        }
+        if (!freshness.available()) {
             throw new RefreshUnavailableException("Die Prüfung gegen die Quelle ist noch nicht angebunden");
         }
-        return cache.page(new PageKey(sourceId, pageId))
-                .filter(page -> access.canRead(caller, sourceId, page.header().metadata().partitionKey(), pageId))
-                .orElseThrow(() -> new CacheMissException(sourceId, "Seite nicht im Cache"));
+        // Ohne lesbaren Cache prüft refresh trotzdem live; die Antwort ist dann als live gekennzeichnet.
+        Optional<CachedPage> cached;
+        try {
+            cached = cache.page(new PageKey(sourceId, pageId));
+        } catch (CacheUnavailableException e) {
+            cached = Optional.empty();
+        }
+        PageFreshness.Refreshed checked;
+        try {
+            checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header),
+                    cached.map(CachedPage::snapshot));
+        } catch (SourceAccessException e) {
+            if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
+                // Etwa beim Inhaltsabruf: wie GONE, damit der Fehlertyp nichts über die Seite verrät.
+                throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+            }
+            throw e;
+        }
+        // Rechte am Ergebnis der Quelle: eine verschobene Seite zählt in ihrem neuen Space. Nicht mehr vorhanden und
+        // nicht freigegeben sehen gleich aus.
+        if (checked.outcome() == PageFreshness.Outcome.GONE || !readable(caller, checked.header())) {
+            throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+        }
+        return new DeliveredPage(checked.header(), checked.snapshot(),
+                cached.map(CachedPage::generation).orElse(null), checked.cacheStale(), checked.outcome(),
+                checked.checkedAt());
+    }
+
+    /**
+     * Eine Seite über ihre URL, wie {@link #page}. Die URL muss die Seiten-ID enthalten ({@link PageUrls}) und auf
+     * denselben Server zeigen wie die bekannte URL der Seite.
+     *
+     * @throws InvalidQueryException wenn die URL keine Seiten-ID enthält
+     * @throws CacheMissException    wie bei {@link #page}, oder wenn die URL auf einen anderen Server zeigt
+     *                               oder die Seite keine bekannte URL hat
+     */
+    public DeliveredPage pageByUrl(AccessContext caller, String sourceId, String url, boolean refresh) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
+        String pageId = PageUrls.pageId(url).orElseThrow(() -> new InvalidQueryException(
+                "url muss eine absolute Seiten-URL mit Seiten-ID sein (pageId=…, /spaces/KEY/pages/ID oder /x/…)"));
+        DeliveredPage page = page(caller, sourceId, pageId, refresh);
+        URI known = page.header().metadata().url();
+        // Ohne bekannte URL lässt sich der Server nicht prüfen; fail closed wie bei einem fremden Server.
+        if (known == null || !PageUrls.sameServer(url, known)) {
+            throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+        }
+        return page;
+    }
+
+    private boolean readable(AccessContext caller, PageHeader header) {
+        return access.canRead(caller, header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId());
     }
 
     /** Freigabe je Seite an ihren aktuellen Kopfdaten, auch wenn der Space schon geprüft ist (#24: je Seite). */

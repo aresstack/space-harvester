@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.api;
 
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
+import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.withUrl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.TestClient;
@@ -84,8 +85,8 @@ class PageQueryApiTest {
     void fillCache() {
         cache.clear();
         cache.publish("wiki", "DEV", confirmed("g1"), List.of(
-                page("wiki", "DEV", "100", null),
-                page("wiki", "DEV", "101", "100", NOT_UTF8),
+                withUrl(page("wiki", "DEV", "100", null)),
+                withUrl(page("wiki", "DEV", "101", "100", NOT_UTF8)),
                 page("wiki", "DEV", "102", "100"),
                 page("wiki", "DEV", "103", "101"),
                 page("wiki", "DEV", "200", null),
@@ -219,6 +220,8 @@ class PageQueryApiTest {
         assertThat(response.headers().firstValue("ETag")).contains("\"" + rawSha256 + "\"");
         assertThat(response.headers().firstValue("X-Cache-Generation")).contains("g1");
         assertThat(response.headers().firstValue("X-Cache-State")).contains("confirmed");
+        assertThat(response.headers().firstValue("X-Page-Origin")).contains("cache");
+        assertThat(response.headers().firstValue("X-Page-Refresh")).isEmpty();
         assertThat(response.headers().firstValue("X-Cache-Synced-At")).contains("2026-10-16T20:00:00Z");
         assertThat(response.headers().firstValue("X-Cache-Last-Checked-At")).contains("2026-10-16T20:05:00Z");
         assertThat(response.headers().firstValue("X-Page-Revision")).contains("3");
@@ -231,6 +234,9 @@ class PageQueryApiTest {
                 .header("If-None-Match", "\"" + rawSha256 + "\"").build(), HttpResponse.BodyHandlers.ofByteArray());
         assertThat(again.statusCode()).isEqualTo(304);
         assertThat(again.body()).isEmpty();
+        // Auch eine 304 sagt, woher die Antwort stammt (nach refresh=true zusätzlich X-Page-Refresh).
+        assertThat(again.headers().firstValue("X-Page-Origin")).contains("cache");
+        assertThat(again.headers().firstValue("X-Cache-Generation")).contains("g1");
     }
 
     @Test
@@ -248,10 +254,12 @@ class PageQueryApiTest {
 
     @Test
     void refreshIsNeverAnsweredFromTheCache() throws Exception {
+        // Die Quelle (127.0.0.1:9) ist nicht erreichbar: ein Fehler, nie der Cache-Stand.
         HttpResponse<String> response = get("/api/v1/sources/wiki/pages/101?refresh=true");
 
-        assertProblem(response, 501, "refresh-unavailable");
+        assertProblem(response, 503, "source-unavailable");
         assertThat(response.headers().firstValue("ETag")).isEmpty();
+        assertThat(response.headers().firstValue("X-Cache-Generation")).isEmpty();
     }
 
     @Test
@@ -307,11 +315,46 @@ class PageQueryApiTest {
     @Test
     void extendedViewFollowsTheSameRulesAsTheNativeView() throws Exception {
         assertProblem(get("/api/v1/sources/wiki/pages/101?view=html"), 400, "invalid-request");
-        assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 501, "refresh-unavailable");
+        assertProblem(get("/api/v1/sources/wiki/pages/100?view=extended&refresh=true"), 503, "source-unavailable");
         assertProblem(get("/api/v1/sources/wiki/pages/4711?view=extended"), 404, "cache-miss");
         HttpResponse<String> denied = getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages/100?view=extended");
         assertProblem(denied, 403, "access-denied");
         assertThat(denied.body()).doesNotContain("Seite 100");
+    }
+
+    @Test
+    void pagesCanBeAddressedByTheirUrl() throws Exception {
+        String url = URLEncoder.encode("https://wiki.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8);
+        HttpResponse<byte[]> response = http.send(request("/api/v1/sources/wiki/pages?url=" + url).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).isEqualTo(NOT_UTF8);
+        assertThat(json.readTree(get("/api/v1/sources/wiki/pages?view=extended&url="
+                + URLEncoder.encode("https://wiki.example.org/spaces/DEV/pages/100/Start", StandardCharsets.UTF_8))
+                .body()).get("metadata").get("page").get("pageId").asString()).isEqualTo("100");
+        // Ohne Seiten-ID nicht auflösbar, fremder Server wie eine unbekannte Seite.
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://wiki.example.org/display/DEV/Start", StandardCharsets.UTF_8)), 400, "invalid-request");
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://evil.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8)), 404,
+                "cache-miss");
+        assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages?url=" + url), 403, "access-denied");
+    }
+
+    @Test
+    void urlsOfPagesWithoutKnownUrlAreNotResolved() throws Exception {
+        PageSnapshot stored = page("wiki", "DEV", "105", "100");
+        cache.publish("wiki", "DEV", confirmed("g2"), List.of(stored));
+        PageMetadata withoutUrl = new PageMetadata("105", stored.header().metadata().resourceId(), "Ohne URL", "DEV",
+                "100", "3", Instant.parse("2026-10-16T20:30:00Z"), null, PageMetadata.sorted(Map.of()));
+        cache.updateHeader("DEV", PageHeader.of("wiki", withoutUrl, Instant.parse("2026-10-16T20:40:00Z")));
+
+        // Ohne bekannte URL lässt sich der Server nicht prüfen: wie eine fremde URL, über die ID weiter erreichbar.
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
+                "https://evil.example.org/pages/viewpage.action?pageId=105", StandardCharsets.UTF_8)), 404,
+                "cache-miss");
+        assertThat(get("/api/v1/sources/wiki/pages/105").statusCode()).isEqualTo(200);
     }
 
     @Test

@@ -263,13 +263,14 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |
-| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit |
+| `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/tree` | Seitenbaum aus dem Cache als `roots[]` mit `id` und `children[]`; `include=metadata` ergänzt Titel, Version, Änderungszeit, URL |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/attachments` | Alle Anhänge einer Seite als Metadaten, live, auch nicht eingebettete, ohne Dateiinhalte; `complete=false` mit `warnings`, wenn die Quelle Einträge auslassen musste (#9) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets` | Anhänge einer Seite mit Art (`DIAGRAM` vor `VECTOR` vor `IMAGE` vor `OTHER`), Bezug Vorschaubild → draw.io-Diagramm (`previewOf`) und abgelegtem Stand; lädt nichts (#19) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/harvest` | Alle Anhänge der Seite über die Anmeldung der Quelle herunterladen und versioniert ablegen; gleiche Versionen werden nicht erneut übertragen; verlangt `sync` (#19) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/content` | Ein Anhang in seiner aktuellen Version Byte für Byte, aus der Ablage oder bei Bedarf nachgeladen; immer als Download, `ETag` = SHA-256; verlangt `content` (#19) |
 | `GET`/`POST /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/description` | Maschinelle Beschreibung eines Bildes (`provenance=machine-generated`), je Bildinhalt und Modellversion gecacht; `POST` erzeugt sie bei Bedarf und verlangt zusätzlich `sync`; ohne konfigurierten Beschreiber `image-description-unavailable` (503) (#19) |
-| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments` |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}` | Native Payload einer Seite aus dem Cache, Byte für Byte; Cache-Stand in Headern, `ETag` = `rawSha256`. `view=extended`: Container mit `data`, `metadata`, `enrichments`; `refresh=true` prüft gegen die Quelle |
+| `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre URL (`?pageId=…`, `/spaces/KEY/pages/ID`, Kurzlink `/x/…`) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
@@ -336,8 +337,17 @@ samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObserved
 können neuer sein als die Payload) und `enrichments` die Anreicherungen (siehe unten). Harvester-Angaben stehen nie
 in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
-`refresh=true` liefert nie stattdessen den Cache-Stand; bis die Prüfung gegen die Quelle angebunden ist (#16, #8),
-antwortet es mit `refresh-unavailable` (501). Was nicht im Cache liegt, ist `cache-miss`
+`refresh=true` prüft die Einzelseite vor der Auslieferung gegen die Quelle und liefert nie stattdessen den
+Cache-Stand: Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
+Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
+geladene Payload (`content-changed`); auch Seiten, die noch nicht im Cache liegen, werden so live geliefert.
+Abweichungen vom Cache tragen `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand `stale`. Der Cache
+selbst ändert sich erst mit dem nächsten Abgleich. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
+die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
+`source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
+antwortet `refresh=true` mit `refresh-unavailable` (501). Seiten lassen sich auch über ihre URL abrufen
+(`…/pages?url=…`), sofern sie die Seiten-ID enthält; Formen ohne ID (`/display/KEY/Titel`) ergeben 400, eine URL eines
+anderen Servers als der bekannten Seiten-URL `cache-miss`. Was nicht im Cache liegt, ist `cache-miss`
 (404); ohne eingerichteten Cache (#26) antworten die Routen mit `cache-unavailable` (503). Rechte (siehe
 [docs/SECURITY.md](docs/SECURITY.md)): Liste und Baum verlangen `metadata` für den Space, sonst 403; die
 Einzelseite verlangt in beiden Ansichten `content`. Liegt die Seite in einem Space ohne `content`-Freigabe, ist die Antwort `cache-miss`

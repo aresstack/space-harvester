@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
@@ -104,5 +105,14 @@ public final class InMemoryPageCache implements PageCacheReader {
                 PageMetadata.sorted(Map.of("confluence.labels", "api")));
         return PageSnapshot.of(sourceId, metadata, new NativePayload(payload, "application/json",
                 "confluence-rest-content+json;expand=body.storage"), Instant.parse("2026-10-16T20:00:00Z"));
+    }
+
+    /** Dieselbe Seite mit der URL, unter der Confluence sie anzeigt. */
+    public static PageSnapshot withUrl(PageSnapshot page) {
+        PageMetadata m = page.metadata();
+        PageMetadata metadata = new PageMetadata(m.pageId(), m.resourceId(), m.title(), m.partitionKey(),
+                m.parentPageId(), m.version(), m.modifiedAt(),
+                URI.create("https://wiki.example.org/pages/viewpage.action?pageId=" + m.pageId()), m.attributes());
+        return PageSnapshot.of(page.key().sourceId(), metadata, page.payload(), page.retrievedAt());
     }
 }
