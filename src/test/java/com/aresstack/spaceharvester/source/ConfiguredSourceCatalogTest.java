@@ -140,6 +140,10 @@ class ConfiguredSourceCatalogTest {
         assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
                 new SourceSettingsConfig("docs", "files", null, null, null, Map.of())), "test"))
                 .hasMessageContaining("sources[0] (id=docs): options.directory: fehlt");
+        assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
+                new SourceSettingsConfig("docs", "files", null, null, null,
+                        Map.of("directory", ".", "maxFileMegabytes", "65"))), "test"))
+                .hasMessageContaining("sources[0] (id=docs): options.maxFileMegabytes darf höchstens 64 sein");
     }
 
     @Test
