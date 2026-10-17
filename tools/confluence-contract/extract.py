@@ -4,7 +4,7 @@
 Liest die von Atlassian veröffentlichte OpenAPI-Datei und schreibt die GET-Operationen der Endpunkte, die die
 Fassade anbietet, samt aller über $ref erreichbaren Schemas kanonisch sortiert als JSON. Beschreibungstexte fallen
 weg, Parameter, Statuscodes, Schemas und Beispiele bleiben. Der Auszug liegt je Version unter
-src/test/resources/confluence-contract/<version>/openapi-extract.json.
+space-harvester-server/src/test/resources/confluence-contract/<version>/openapi-extract.json.
 
     python3 tools/confluence-contract/extract.py <openapi.json> > openapi-extract.json
 

@@ -151,8 +151,8 @@ Referenz dokumentiert nur 200 und 404; 304, 400, 401, 403 und 503 sind Ergänzun
 Atlassian veröffentlicht je Data-Center-Version eine OpenAPI-Referenz. Ein Auszug daraus (GET-Operationen der drei
 Endpunkte und alle über `$ref` erreichbaren Schemas, ohne Beschreibungstexte) liegt versioniert im Repository:
 
-- `src/test/resources/confluence-contract/version.txt` nennt die Version, gegen die der Build testet (`10.2.0`).
-- `src/test/resources/confluence-contract/<version>/openapi-extract.json` ist der Auszug dieser Version, erzeugt mit
+- `space-harvester-server/src/test/resources/confluence-contract/version.txt` nennt die Version, gegen die der Build testet (`10.2.0`).
+- `space-harvester-server/src/test/resources/confluence-contract/<version>/openapi-extract.json` ist der Auszug dieser Version, erzeugt mit
   `tools/confluence-contract/extract.py`.
 
 Der Build hängt nicht von der Atlassian-Seite ab. Der Workflow `.github/workflows/confluence-contract.yml` (wöchentlich,
@@ -167,9 +167,9 @@ Weitere Version (z. B. die der produktiven Instanz) hinzunehmen, ohne Code zu ä
 ```bash
 v=10.2.0   # Version wie in der Atlassian-URL
 curl -sSf -o /tmp/confluence-$v.json https://dac-static.atlassian.com/server/confluence/$v.swagger.v3.json
-mkdir -p src/test/resources/confluence-contract/$v
+mkdir -p space-harvester-server/src/test/resources/confluence-contract/$v
 python3 tools/confluence-contract/extract.py /tmp/confluence-$v.json \
-    > src/test/resources/confluence-contract/$v/openapi-extract.json
+    > space-harvester-server/src/test/resources/confluence-contract/$v/openapi-extract.json
 ```
 
 Der Workflow vergleicht dann beide Auszüge. Gegen welche Version der Test läuft, bestimmt `version.txt`; der Wechsel

@@ -1,0 +1,16 @@
+# Handgeschriebene Gold-Analysen (MIT, Teil der Tests von #98) nach den Konventionen von UD German GSD.
+# sent_id = 1
+# text = Der Kunde ruft den Sachbearbeiter an und reicht den Antrag ein.
+1	Der	der	DET	ART	_	2	det	_	_
+2	Kunde	Kunde	NOUN	NN	_	3	nsubj	_	_
+3	ruft	rufen	VERB	VVFIN	_	0	root	_	_
+4	den	der	DET	ART	_	5	det	_	_
+5	Sachbearbeiter	Sachbearbeiter	NOUN	NN	_	3	obj	_	_
+6	an	an	ADP	PTKVZ	_	3	compound:prt	_	_
+7	und	und	CCONJ	KON	_	8	cc	_	_
+8	reicht	reichen	VERB	VVFIN	_	3	conj	_	_
+9	den	der	DET	ART	_	10	det	_	_
+10	Antrag	Antrag	NOUN	NN	_	8	obj	_	_
+11	ein	ein	ADP	PTKVZ	_	8	compound:prt	_	_
+12	.	.	PUNCT	$.	_	3	punct	_	_
+

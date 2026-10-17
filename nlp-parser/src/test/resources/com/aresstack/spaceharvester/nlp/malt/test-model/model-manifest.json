@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "maltparser-model-manifest/v1",
+  "modelId": "maltparser-de-test",
+  "modelVersion": "0.1.0",
+  "maltParserVersion": "1.9.2",
+  "configName": "maltparser-de-test",
+  "mcoFile": "maltparser-de-test.mco",
+  "mcoSha256": "43cc823cf1a31f376e116c83b7d7d355d6a09fb6b79373dac028411d920dd335",
+  "inputSchema": {
+    "format": "conllu",
+    "columns": [
+      "FORM",
+      "UPOS"
+    ],
+    "tokenization": "ud-syntactic-words",
+    "multiwordTokens": "removed",
+    "emptyNodes": "removed"
+  },
+  "labels": [
+    "advcl",
+    "aux:pass",
+    "case",
+    "cc",
+    "compound:prt",
+    "conj",
+    "det",
+    "mark",
+    "nmod",
+    "nsubj",
+    "nsubj:pass",
+    "obj",
+    "obl",
+    "obl:agent",
+    "obl:arg",
+    "punct",
+    "root"
+  ],
+  "treebank": {
+    "name": "train-mini.conllu",
+    "note": "selbst geschriebene Testsätze (MIT), nur für Tests von #98"
+  },
+  "license": "MIT"
+}
