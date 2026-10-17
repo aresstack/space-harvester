@@ -10,19 +10,23 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -58,6 +62,7 @@ class WorkspaceTest {
         CONFLUENCE.page("100", "Start", "DEV", "<p>Start</p>").storage("<h1>Start</h1><p>Willkommen</p>");
         CONFLUENCE.page("102", "Betrieb und Wartung", "DEV", "<p>Inhalt</p>").storage("<p>Der Dienst läuft.</p>");
         CONFLUENCE.child("100", "102");
+        CONFLUENCE.attachment("att900", "102", "wartung.txt", "text/plain", "Wartungsfenster sonntags");
         CONFLUENCE.homepage("DEV", "100");
         certificates = new TestCertificates(tls);
         server = new HttpsFakeConfluenceServer(CONFLUENCE, certificates.serverContext(), true);
@@ -172,6 +177,57 @@ class WorkspaceTest {
     }
 
     @Test
+    void attachmentsAreListedStoredAndDeliveredByteForByte() throws Exception {
+        Workspace workspace = start().workspace();
+
+        assertThat(workspace.attachments("wiki", "102").attachments().attachments())
+                .extracting(PageAttachment::attachmentId).containsExactly("att900");
+        assertThat(workspace.assets("wiki", "102").entries()).singleElement()
+                .satisfies(entry -> assertThat(entry.stored()).isNull());
+
+        AssetHarvest harvest = workspace.harvestAssets("wiki", "102");
+        assertThat(harvest.complete()).as(harvest.toString()).isTrue();
+        assertThat(harvest.count(AssetHarvest.Status.STORED)).isEqualTo(1);
+        assertThat(workspace.assets("wiki", "102").entries()).singleElement()
+                .satisfies(entry -> assertThat(entry.stored()).isNotNull());
+        assertThat(new String(workspace.assetContent("wiki", "102", "att900").content(), StandardCharsets.UTF_8))
+                .isEqualTo("Wartungsfenster sonntags");
+        assertNoFileContains(home, TOKEN);
+    }
+
+    @Test
+    void pagesOpenByAddressAndAnalysesCanBeRecomputed() throws Exception {
+        Workspace workspace = start().workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
+        String address = workspace.page("wiki", "102", false).header().metadata().url().toString();
+
+        assertThat(workspace.pageByUrl("wiki", address, false).header().key().pageId()).isEqualTo("102");
+        assertThatThrownBy(() -> workspace.pageByUrl("wiki",
+                "https://fremd.example.org/pages/viewpage.action?pageId=102", false))
+                .isInstanceOf(CacheMissException.class);
+        assertThat(workspace.recomputeEnrichments("wiki", "102", null).supported()).isTrue();
+    }
+
+    @Test
+    void aRunningSyncCanBeCancelled() throws Exception {
+        Workspace workspace = start().workspace();
+        // Die Vorprüfung des Space-Keys (Space und erste Seite, limit=1) läuft synchron in startSync; erst die
+        // Seitenlisten des Abgleichs hängen.
+        server.holdUnless(uri -> uri.getPath().endsWith("/space/DEV") || "1".equals(limit(uri)));
+        JobStatus started;
+        try {
+            started = workspace.startSync("wiki", "DEV");
+            assertThat(workspace.cancelSync(started.id()).status().state()).isIn(JobState.CANCELLED, JobState.RUNNING,
+                    JobState.QUEUED);
+        } finally {
+            server.release();
+        }
+        JobStatus finished = await(workspace, started);
+        assertThat(finished.state()).isEqualTo(JobState.CANCELLED);
+        assertThat(workspace.jobs()).extracting(JobStatus::id).contains(started.id());
+    }
+
+    @Test
     void onlyConfiguredSourcesAreReachable() throws Exception {
         Workspace workspace = start().workspace();
 
@@ -282,6 +338,16 @@ class WorkspaceTest {
             status = workspace.job(started.id());
         }
         return status;
+    }
+
+    private static String limit(URI uri) {
+        String query = uri.getQuery() == null ? "" : uri.getQuery();
+        for (String part : query.split("&")) {
+            if (part.startsWith("limit=")) {
+                return part.substring("limit=".length());
+            }
+        }
+        return null;
     }
 
     private static void assertNoFileContains(Path directory, String secret) throws Exception {
