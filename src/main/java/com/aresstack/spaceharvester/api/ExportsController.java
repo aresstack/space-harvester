@@ -78,6 +78,9 @@ public class ExportsController {
     @ApiResponse(responseCode = "403", description = "Keine Freigabe export und content für diesen Space "
             + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "507", description = "Exportablage voll (export-storage-full)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "429", description = "Zu viele offene Aufträge (too-many-jobs)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))

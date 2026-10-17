@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportScope;
+import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.export.PageFailure;
@@ -318,5 +319,58 @@ class FileSystemExportArtifactWriterTest {
                 "Seite " + pageId, "DEV", parentPageId, "3", NOW, URI.create(url), PageMetadata.sorted(java.util.Map.of()));
         return PageSnapshot.of("confluence", metadata, new NativePayload(("{\"id\":\"" + pageId + "\"}")
                 .getBytes(StandardCharsets.UTF_8), "application/json", "confluence-rest-content+json"), NOW);
+    }
+
+    @Test
+    void totalLimitFailsAnExportInsteadOfTruncatingAndFreesItsShareAfterwards() throws Exception {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root, 2_000);
+        try (ExportArtifactWriter.Session session = writer.begin("job-1", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            assertThatThrownBy(() -> write(session, snapshot("101", null, new byte[2_000])))
+                    .isInstanceOf(ExportStorageFullException.class);
+        }
+        assertThat(writer.unpublished()).isEmpty();
+
+        // Der abgebrochene Export belegt nichts mehr: ein kleiner passt wieder hinein und wird veröffentlicht.
+        try (ExportArtifactWriter.Session session = writer.begin("job-2", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-2", 1, List.of(), true));
+        }
+        writer.requireCapacity();
+    }
+
+    @Test
+    void fullStorageRejectsNewExportsUntilArtifactsExpire() throws Exception {
+        try (ExportArtifactWriter.Session session = new FileSystemExportArtifactWriter(root).begin("job-1", SCOPE)) {
+            write(session, snapshot("100", null, PRETTY));
+            session.publish(tree(new PageTree.Node("100", List.of())), summary("job-1", 1, List.of(), true));
+        }
+        long used;
+        try (Stream<Path> files = Files.walk(root.resolve("job-1"))) {
+            used = files.filter(Files::isRegularFile).mapToLong(file -> file.toFile().length()).sum();
+        }
+        // Eine Ablage, die genau dieses Artefakt fasst, ist voll.
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root, used);
+
+        assertThatThrownBy(writer::requireCapacity).isInstanceOf(ExportStorageFullException.class);
+        assertThatThrownBy(() -> writer.begin("job-2", SCOPE)).isInstanceOf(ExportStorageFullException.class);
+        writer.delete("job-1");
+        writer.requireCapacity();
+    }
+
+    @Test
+    void exportBeyondTheTotalLimitFailsWithAReason() {
+        Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
+        Jobs jobs = new Jobs(new InMemoryJobStore(), Runnable::run, new JobLimits(1, 5, Duration.ofHours(1)), clock);
+        InMemoryPageCache cache = new InMemoryPageCache();
+        cache.publish("confluence", "DEV", confirmed("g1"), IntStream.range(0, 50)
+                .mapToObj(i -> InMemoryPageCache.page("confluence", "DEV", String.valueOf(i), null)).toList());
+        Exports exports = new Exports(jobs, cache, new FileSystemExportArtifactWriter(root, 4_000), clock);
+
+        String id = exports.start("confluence", "DEV", "client-a").id();
+
+        assertThat(jobs.status(id).state()).isEqualTo(JobState.FAILED);
+        assertThat(jobs.status(id).error().code()).isEqualTo("EXPORT_STORAGE_FULL");
+        assertThat(exports.artifact(id, "client-a")).isEmpty();
     }
 }

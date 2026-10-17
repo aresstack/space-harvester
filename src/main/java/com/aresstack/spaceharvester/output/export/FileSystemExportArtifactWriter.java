@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.export.Conversion;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportScope;
+import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.export.ExportSummary;
 import com.aresstack.spaceharvester.application.export.PageFailure;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
@@ -38,6 +39,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongConsumer;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -61,6 +64,9 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>Ein Export entsteht unter {@code <root>/.incomplete/<exportId>/} und wird erst nach dem Manifest in einem Schritt
  * nach {@code <root>/<exportId>/} verschoben. Ein vorhandenes Artefakt wird nie überschrieben.
+ *
+ * <p>Alle Artefakte zusammen, veröffentlichte und entstehende, belegen höchstens {@code maxTotalBytes}. Würde ein
+ * Export die Grenze überschreiten, scheitert er mit {@link ExportStorageFullException}; nichts wird abgeschnitten.
  */
 public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
 
@@ -80,11 +86,47 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                     + "|" + CONVERTED_NAME + ")");
     private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
+    /** Standardgrenze aller Artefakte zusammen. */
+    public static final long DEFAULT_MAX_TOTAL_BYTES = 20L * 1024 * 1024 * 1024;
+
     private final Path root;
+    private final long maxTotalBytes;
+    /** Was laufende Sitzungen bisher geschrieben haben. */
+    private final AtomicLong inProgress = new AtomicLong();
     private final JsonMapper json = JsonMapper.builder().build();
 
     public FileSystemExportArtifactWriter(Path root) {
+        this(root, DEFAULT_MAX_TOTAL_BYTES);
+    }
+
+    public FileSystemExportArtifactWriter(Path root, long maxTotalBytes) {
+        if (maxTotalBytes <= 0) {
+            throw new IllegalArgumentException("maxTotalBytes muss positiv sein");
+        }
         this.root = Objects.requireNonNull(root, "root").toAbsolutePath().normalize();
+        this.maxTotalBytes = maxTotalBytes;
+    }
+
+    @Override
+    public void requireCapacity() {
+        if (publishedBytes() + inProgress.get() >= maxTotalBytes) {
+            throw new ExportStorageFullException(maxTotalBytes);
+        }
+    }
+
+    /** Größe aller veröffentlichten Artefakte. */
+    private long publishedBytes() {
+        long total = 0;
+        for (String exportId : published()) {
+            try (Stream<Path> files = Files.walk(root.resolve(exportId))) {
+                for (Path file : files.filter(Files::isRegularFile).toList()) {
+                    total += Files.size(file);
+                }
+            } catch (IOException | UncheckedIOException e) {
+                // Gleichzeitig entfernt: zählt nicht mehr.
+            }
+        }
+        return total;
     }
 
     @Override
@@ -97,8 +139,12 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht");
             }
             deleteRecursively(work);
+            long published = publishedBytes();
+            if (published + inProgress.get() >= maxTotalBytes) {
+                throw new ExportStorageFullException(maxTotalBytes);
+            }
             Files.createDirectories(work.resolve(RAW));
-            return new FileSession(exportId, scope, work, target);
+            return new FileSession(exportId, scope, work, target, published);
         } catch (IOException e) {
             throw new UncheckedIOException("Exportverzeichnis für " + exportId + " nicht anlegbar", e);
         }
@@ -211,16 +257,36 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         private final List<String> warnings = new ArrayList<>();
         /** Adresse je geschriebener Seite für die Verweise im Baum; nur Seiten mit bekannter Adresse. */
         private final Map<String, String> urls = new HashMap<>();
+        /** Belegung durch veröffentlichte Artefakte zu Beginn dieser Sitzung. */
+        private final long publishedAtBegin;
+        private long written;
         private final List<ExportArtifact.File> convertedFiles = new ArrayList<>();
         private final List<Conversion> conversions = new ArrayList<>();
         private boolean published;
 
-        FileSession(String exportId, ExportScope scope, Path work, Path target) throws IOException {
+        FileSession(String exportId, ExportScope scope, Path work, Path target, long publishedAtBegin)
+                throws IOException {
             this.exportId = exportId;
             this.scope = scope;
             this.work = work;
             this.target = target;
-            this.pages = new HashingOutputStream(Files.newOutputStream(work.resolve(PAGES)));
+            this.publishedAtBegin = publishedAtBegin;
+            this.pages = new HashingOutputStream(Files.newOutputStream(work.resolve(PAGES)), this::reserve);
+        }
+
+        /** Zählt zu schreibende Bytes gegen die Gesamtgrenze, bevor sie geschrieben werden. */
+        private void reserve(long bytes) {
+            if (publishedAtBegin + inProgress.get() + bytes > maxTotalBytes) {
+                throw new ExportStorageFullException(maxTotalBytes);
+            }
+            inProgress.addAndGet(bytes);
+            written += bytes;
+        }
+
+        /** Gibt den Anteil dieser Sitzung frei; veröffentlicht zählt er ab dann über das Verzeichnis. */
+        private void release() {
+            inProgress.addAndGet(-written);
+            written = 0;
         }
 
         @Override
@@ -236,6 +302,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 urls.put(pageId, header.metadata().url().toString());
             }
             try {
+                reserve(bytes.length);
                 // CREATE_NEW: zwei Seiten-IDs auf einem Dateinamen wären ein Fehler, nie ein Überschreiben.
                 Files.write(work.resolve(rawName), bytes, StandardOpenOption.CREATE_NEW);
                 boolean parseable = PageJson.isJson(payload.mediaType(), bytes);
@@ -274,7 +341,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 throw new IllegalArgumentException("Ungültiger oder doppelter Dateiname " + name);
             }
             HashingOutputStream out = new HashingOutputStream(
-                    Files.newOutputStream(work.resolve(name), StandardOpenOption.CREATE_NEW));
+                    Files.newOutputStream(work.resolve(name), StandardOpenOption.CREATE_NEW), this::reserve);
             try (out) {
                 content.write(new NonClosingOutputStream(out));
             }
@@ -305,6 +372,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                     Files.move(work, target);
                 }
                 published = true;
+                release();
                 return new ExportArtifact(exportId, summary.complete(), files);
             } catch (FileAlreadyExistsException e) {
                 throw new IllegalStateException("Export " + exportId + " ist bereits veröffentlicht", e);
@@ -318,6 +386,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             if (published) {
                 return;
             }
+            release();
             try {
                 pages.close();
                 deleteRecursively(work);
@@ -327,7 +396,8 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         }
 
         private ExportArtifact.File writeJson(String name, JsonWriting content) throws IOException {
-            HashingOutputStream out = new HashingOutputStream(Files.newOutputStream(work.resolve(name)));
+            HashingOutputStream out = new HashingOutputStream(Files.newOutputStream(work.resolve(name)),
+                    this::reserve);
             try (out; JsonGenerator generator = json.createGenerator(new NonClosingOutputStream(out))) {
                 content.write(generator);
             }
@@ -470,20 +540,24 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     private static final class HashingOutputStream extends DigestOutputStream {
 
         long count;
+        private final LongConsumer reserve;
         private String sha256;
 
-        HashingOutputStream(OutputStream out) {
+        HashingOutputStream(OutputStream out, LongConsumer reserve) {
             super(out, FileSystemExportArtifactWriter.sha256());
+            this.reserve = reserve;
         }
 
         @Override
         public void write(int b) throws IOException {
+            reserve.accept(1);
             super.write(b);
             count++;
         }
 
         @Override
         public void write(byte[] b, int off, int len) throws IOException {
+            reserve.accept(len);
             super.write(b, off, len);
             count += len;
         }

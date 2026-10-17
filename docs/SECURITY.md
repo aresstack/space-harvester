@@ -215,21 +215,22 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
 | Markdown-Export: Backticks im Inline-Code oder in der Code-Sprache beendeten den Code früher, Seiteninhalt wurde rohes HTML; `javascript:`/`data:`-Links und eingebettete externe Bilder (laden beim Öffnen nach) | Zaun länger als jede Backtick-Folge, Sprache nur `[A-Za-z0-9_+.#-]`, Links nur `http(s)`, `mailto`, Seiten- und Anhangsverweise, externe Bilder nur als Link; `MarkdownConverterTest` |
 | PDF-Export: ein langes Wort ohne Leerzeichen kostete quadratisch Rechenzeit; tiefe Verschachtelung oder sehr viele Spalten ließen den Export scheitern | jedes Zeichen nur einmal gemessen, Mindestbreite 40 pt; `PdfConverterTest` |
 | Export-Downloads (künftig auch Markdown, PDF, Word mit Seiteninhalt) ohne CSP | `Content-Security-Policy: sandbox; default-src 'none'` neben `attachment` und `nosniff`, `ExportsApiTest` |
+| Exporte konnten die Platte füllen; die Grenze je Client begrenzte nur gleichzeitige Aufträge | `space-harvester.export.max-total-bytes` (Standard 20 GiB) über alle Artefakte, Start sonst 507 `export-storage-full`, laufender Export `EXPORT_STORAGE_FULL`, nie abgeschnitten (`FileSystemExportArtifactWriterTest`) |
 
 **Bewusst offen**
 
 - `parentPageId` einer sichtbaren Seite nennt auch einen Elternteil, den ein Endnutzer in Confluence nicht sehen darf
   (nur die ID, kein Titel oder Inhalt). Confluence vererbt Leseeinschränkungen auf Unterseiten, der Fall ist daher
   selten. Der Baum blendet solche Elternteile schon aus.
-- Plattenplatz der Exporte: Artefakte bleiben bis zum Ende der Aufbewahrung; die Grenze je Client begrenzt nur
-  gleichzeitige Aufträge. Eine Gesamtgrenze in Bytes kommt mit dem Aufräumen (#11/#12).
 - Die Fassade lädt bis zu 100 Payloads je Antwort; eine Bytegrenze je Antwort fehlt noch.
 - Der Export-Dateischreiber folgt symbolischen Links im eigenen Verzeichnis; ausnutzbar nur mit Schreibrecht dort.
-- PDF: Speicher und Seitenzahl wachsen vor `max-converted-bytes` (PDFBox baut das Dokument vor dem Schreiben);
+- PDF: Seitenbaum und Objekte wachsen im Speicher vor `max-converted-bytes` (Streams cacht PDFBox in einer
+  temporären Datei); eine Grenze für Seiten oder Tabellen fehlt noch;
   sehr tiefe Verschachtelung im Storage-Format kann den Parser per `StackOverflowError` abbrechen, was nur den Auftrag
   beendet.
-- Lokale Dateiquelle, upstream zu beheben (an Strang A gemeldet): Dateien in versteckten Verzeichnissen (`.git/…`)
-  werden gelistet, bis 2000 MB je Datei werden ganz gelesen, der absolute Serverpfad steht in den Metadaten.
+- Lokale Dateiquelle, in Arbeit bei Strang A (upstream enterprise-ai-client#178): Dateien in versteckten Verzeichnissen
+  (`.git/…`) werden gelistet, bis 2000 MB je Datei ganz gelesen (im Harvester künftig Standard 20 MB, höchstens 64 MB),
+  der absolute Serverpfad steht in den Metadaten.
 - Space-Routen antworten ohne Freigabe mit 403 statt 404; die Prüfung läuft vor jeder Suche, verrät also nicht, ob der
   Space existiert.
 
