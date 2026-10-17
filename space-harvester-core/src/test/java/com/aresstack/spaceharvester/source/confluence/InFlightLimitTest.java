@@ -104,6 +104,12 @@ class InFlightLimitTest {
             pool.shutdownNow();
         }
         assertThat(highest.get()).isLessThanOrEqualTo(3);
+        // Die Stufe des Aufrufers endet kurz vor der Freigabe des Platzes; der letzte Platz wird also eventuell erst
+        // nach done.countDown() frei.
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (limit.running() > 0 && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
         assertThat(limit.running()).isZero();
     }
 
