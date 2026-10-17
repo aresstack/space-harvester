@@ -139,7 +139,7 @@ public final class Workspace {
 
     // ------------------------------------------------------------------ Suche
 
-    /** Titel- und Metadatensuche im Cache ({@code GET /api/v1/search}). */
+    /** Titel- und Metadatensuche im Cache ({@code GET /api/v1/search}); ohne {@code sourceId} global (#114). */
     public SearchResults search(PageSearchQuery query, String cursor, int limit) {
         return harvester.search().search(caller, query, cursor, limit);
     }
