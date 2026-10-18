@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -195,6 +196,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             }
             throw new InvalidSourceConfigurationException(problems);
         }
+        List<String> duplicates = sameTargets(configs);
+        if (!duplicates.isEmpty()) {
+            // Beim Start nur eine Warnung, damit bestehende Konfigurationen weiter starten; neue lehnt problems() ab.
+            LOG.warn("Quellen mit demselben Ziel (Typ und Basisadresse): {}", String.join(", ", duplicates));
+        }
         // Für HttpURLConnection (synchroner Transport, KI-Dienst) gibt es die Proxy-Anmeldung nur prozessweit.
         ProxyAuthenticator authenticator = ProxyAuthenticator.install(proxyCredentials);
         return new ConfiguredSourceCatalog(Collections.unmodifiableMap(byType), secrets, context,
@@ -302,21 +308,54 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * @param replacing ob die Quelle eine vorhandene gleicher ID ersetzen soll; sonst ist eine vergebene ID ein Problem
      */
     public List<String> problems(SourceSettingsConfig config, boolean replacing) {
+        return problems(config, replacing, List.of());
+    }
+
+    /**
+     * Wie {@link #problems(SourceSettingsConfig, boolean)}, dazu gegen Quellen, die das Programm eingerichtet, aber
+     * (noch) nicht geöffnet hat, etwa weil sie auf ihr Geheimnis warten oder beim Start abgelehnt wurden: Deren IDs
+     * sind ebenso vergeben und deren Ziele ebenso belegt.
+     *
+     * @param alsoConfigured weitere eingerichtete Quellen; Einträge mit der ID von {@code config} zählen beim Ersetzen
+     *                       nicht
+     */
+    public List<String> problems(SourceSettingsConfig config, boolean replacing,
+                                 Collection<SourceSettingsConfig> alsoConfigured) {
         Objects.requireNonNull(config, "config");
-        Set<String> taken = new HashSet<>(opened.keySet());
+        Objects.requireNonNull(alsoConfigured, "alsoConfigured");
+        Map<String, SourceSettingsConfig> known = new LinkedHashMap<>();
+        opened.values().forEach(source -> known.put(source.config().id(), source.config()));
+        alsoConfigured.stream().filter(Objects::nonNull).filter(other -> other.id() != null)
+                .forEach(other -> known.putIfAbsent(other.id(), other));
+        Set<String> taken = new HashSet<>(known.keySet());
         if (replacing) {
             taken.remove(config.id());
         }
         List<String> problems = new ArrayList<>(check(config, taken, adapters, secrets.external()));
         // Wie im Enterprise AI Client ist eine Quelle durch Typ und Ziel bestimmt: dasselbe Ziel zweimal wäre derselbe
         // Datenbestand unter zwei IDs.
-        target(config).ifPresent(target -> opened.values().stream()
-                .filter(other -> !other.config().id().equals(config.id()))
-                .filter(other -> target(other.config()).filter(target::equals).isPresent())
-                .findFirst()
+        target(config).flatMap(target -> known.values().stream()
+                        .filter(other -> !other.id().equals(config.id()))
+                        .filter(other -> target(other).filter(target::equals).isPresent())
+                        .findFirst())
                 .ifPresent(other -> problems.add("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie '"
-                        + other.config().id() + "')")));
+                        + other.id() + "')"));
         return problems;
+    }
+
+    /** Paare von IDs mit demselben Ziel in {@code configs}, je Paar einmal; für die Warnung beim Start. */
+    static List<String> sameTargets(List<SourceSettingsConfig> configs) {
+        Map<String, String> first = new LinkedHashMap<>();
+        List<String> pairs = new ArrayList<>();
+        for (SourceSettingsConfig config : configs) {
+            target(config).ifPresent(target -> {
+                String earlier = first.putIfAbsent(target, config.id());
+                if (earlier != null) {
+                    pairs.add(earlier + "/" + config.id());
+                }
+            });
+        }
+        return pairs;
     }
 
     /**
