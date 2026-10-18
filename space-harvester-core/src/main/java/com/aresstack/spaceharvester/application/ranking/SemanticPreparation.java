@@ -1,0 +1,131 @@
+package com.aresstack.spaceharvester.application.ranking;
+
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
+
+/**
+ * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): Dieselbe Schlagwortsuche wie ohne Haken findet die Seiten
+ * und lädt sie mit den Rechten des Aufrufers in den Cache ({@link KeywordSearch}). Für ihre Treffer, also nur Seiten,
+ * die der Aufrufer lesen darf, berechnet die Vorbereitung fehlende oder veraltete Embeddings im Aufruf, begrenzt
+ * parallel und höchstens {@link #DEFAULT_WAIT} lang. Seiten aus Quellen ohne Freigabe für externe Verarbeitung lässt
+ * der Embedding-Prozessor selbst aus.
+ */
+public final class SemanticPreparation implements RelevanceSearch.Preparation {
+
+    private static final System.Logger LOG = System.getLogger(SemanticPreparation.class.getName());
+
+    /** So viele Seiten findet die Vorbereitung je Suche höchstens. */
+    public static final int MAX_PAGES = 50;
+    /** So lange wartet sie höchstens auf Laden und Embeddings zusammen. */
+    public static final Duration DEFAULT_WAIT = Duration.ofSeconds(10);
+
+    private static final int PARALLEL = 4;
+
+    private final KeywordSearch keywords;
+    private final Function<PageKey, Optional<PageSnapshot>> snapshots;
+    private final Enrichments enrichments;
+    private final String processorId;
+    private final Duration wait;
+
+    /**
+     * @param snapshots   die abgelegte Seite im Cache
+     * @param processorId Kennung des Embedding-Prozessors in {@code enrichments}
+     */
+    public SemanticPreparation(KeywordSearch keywords, Function<PageKey, Optional<PageSnapshot>> snapshots,
+                               Enrichments enrichments, String processorId, Duration wait) {
+        this.keywords = Objects.requireNonNull(keywords, "keywords");
+        this.snapshots = Objects.requireNonNull(snapshots, "snapshots");
+        this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
+        this.processorId = Objects.requireNonNull(processorId, "processorId");
+        this.wait = Objects.requireNonNull(wait, "wait");
+    }
+
+    @Override
+    public int prepare(AccessContext caller, PageSearchQuery query, String text) {
+        long deadline = System.nanoTime() + wait.toNanos();
+        KeywordSearch.Results found = keywords.search(caller, new KeywordSearch.Query(shortened(text),
+                query.sourceId(), query.sourceIds(), query.spaceKeys()), null, MAX_PAGES);
+        int pending = found.loading();
+        List<PageSnapshot> missing = new ArrayList<>();
+        for (KeywordSearch.Hit hit : found.hits()) {
+            snapshots.apply(new PageKey(hit.sourceId(), hit.pageId())).filter(this::withoutCurrentEmbedding)
+                    .ifPresent(missing::add);
+        }
+        if (missing.isEmpty()) {
+            return pending;
+        }
+        Semaphore slots = new Semaphore(PARALLEL);
+        List<Future<?>> runs = new ArrayList<>(missing.size());
+        ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor();
+        try {
+            for (PageSnapshot snapshot : missing) {
+                runs.add(runner.submit(() -> {
+                    slots.acquireUninterruptibly();
+                    try {
+                        enrichments.recompute(snapshot, processorId);
+                    } finally {
+                        slots.release();
+                    }
+                }));
+            }
+            for (Future<?> run : runs) {
+                try {
+                    run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                } catch (TimeoutException e) {
+                    // Rechnet weiter und zählt beim nächsten Mal; diese Suche ist unvollständig.
+                    pending++;
+                } catch (ExecutionException e) {
+                    LOG.log(System.Logger.Level.INFO, "Embedding einer gefundenen Seite gescheitert ({0})",
+                            e.getCause() == null ? "?" : e.getCause().getClass().getName());
+                    pending++;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    pending++;
+                }
+            }
+        } finally {
+            // Nicht unterbrechen: Ein Abbruch mitten im Schreiben schlösse die Dateikanäle des Lucene-Index.
+            runner.shutdown();
+        }
+        try {
+            enrichments.flush();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Embeddings nicht dauerhaft gemacht ({0})", e.getClass().getName());
+        }
+        return pending;
+    }
+
+    private boolean withoutCurrentEmbedding(PageSnapshot snapshot) {
+        return enrichments.view(snapshot).stream()
+                .noneMatch(view -> processorId.equals(view.enrichment().processorId())
+                        && view.freshness() == Enrichment.Freshness.CURRENT);
+    }
+
+    /** Die Schlagwortsuche nimmt höchstens {@value KeywordSearch#MAX_TEXT_LENGTH} Zeichen, an einer Wortgrenze. */
+    static String shortened(String text) {
+        String stripped = text.strip();
+        if (stripped.length() <= KeywordSearch.MAX_TEXT_LENGTH) {
+            return stripped;
+        }
+        int cut = stripped.lastIndexOf(' ', KeywordSearch.MAX_TEXT_LENGTH);
+        return stripped.substring(0, cut > 0 ? cut : KeywordSearch.MAX_TEXT_LENGTH).strip();
+    }
+}
