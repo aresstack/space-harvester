@@ -548,7 +548,11 @@ wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in eine
 
 **Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
 antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
-ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung: Bestätigt die Quelle die Löschung (lokale
+Dateien), fällt die Seite samt Indizes weg (`removed`); meldet sie dem technischen Konto nur „nicht gefunden“
+(Confluence), ist die Seite sofort für jede Ausgabe gesperrt und aus den Indizes genommen (`withheld`), ihre Rohdaten
+entfernt erst ein Lauf nach `space-harvester.sync.withheld-retention` (Standard `30d`, `purged`); ein verweigerter
+Zugriff ändert nichts ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)). Leser sehen seine Änderungen erst zusammen mit
 der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
 `completed` nur mit neu bestätigter Generation, in der jede Seite abgeglichen ist; sonst `failed` mit `error.code`
 `SYNC_INCOMPLETE` (nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt,

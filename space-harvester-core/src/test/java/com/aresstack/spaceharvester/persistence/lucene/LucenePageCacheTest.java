@@ -234,6 +234,25 @@ class LucenePageCacheTest {
         assertThat(cache.documentCount()).isEqualTo(1);
     }
 
+    @Test
+    void withholdHidesThePageButKeepsItsHistoryUntilRemove() {
+        LucenePageCache cache = open();
+        PageSnapshot snapshot = page("wiki", "101", "DEV", "100", "3", json("{}"));
+        cache.save(snapshot);
+
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            batch.withhold(snapshot.key());
+            batch.commit();
+        }
+
+        assertThat(cache.find(snapshot.key())).isEmpty();
+        assertThat(cache.findHeader(snapshot.key())).isEmpty();
+        assertThat(cache.revisions(snapshot.key())).hasSize(1);
+
+        assertThat(cache.remove(snapshot.key())).isFalse();
+        assertThat(cache.revisions(snapshot.key())).isEmpty();
+    }
+
     // --- Abfragen ohne Payload ------------------------------------------------------------------------------------
 
     @Test

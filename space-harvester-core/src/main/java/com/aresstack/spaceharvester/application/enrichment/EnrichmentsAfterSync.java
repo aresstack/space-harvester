@@ -20,7 +20,8 @@ import java.util.Objects;
 /**
  * Hält die Anreicherungen nach jedem bestätigten Abgleich nach: Für jede Seite der Inventur mit Inhalt im Cache werden
  * fehlende oder veraltete Ergebnisse berechnet ({@link Enrichments#refresh}; aktuelle kosten nur die Projektion, so
- * erreichen auch neue Prozessorversionen jede Seite), für entfernte Seiten werden sie gelöscht. Seiten, deren Abgleich
+ * erreichen auch neue Prozessorversionen jede Seite), für gelöschte und gesperrte Seiten (ADR 0014) werden sie
+ * gelöscht. Seiten, deren Abgleich
  * scheiterte oder die die Inventur nicht sah, bleiben unberührt.
  *
  * <p>Mit {@link Jobs} läuft das als eigener Auftrag {@link JobType#ENRICHMENT} für den Auslöser des Abgleichs oder
@@ -102,7 +103,8 @@ public class EnrichmentsAfterSync implements SyncCommitted {
             }
             if (change.kind() == PageChange.Kind.MISSING) {
                 RemovalCheck.Result removal = run.plan().removals().get(change.pageId());
-                if (removal != null && removal.verdict() == RemovalCheck.Verdict.GONE) {
+                if (removal != null && (removal.verdict() == RemovalCheck.Verdict.DELETED
+                        || removal.verdict() == RemovalCheck.Verdict.INACCESSIBLE)) {
                     enrichments.remove(key);
                     if (texts != null) {
                         texts.remove(key);

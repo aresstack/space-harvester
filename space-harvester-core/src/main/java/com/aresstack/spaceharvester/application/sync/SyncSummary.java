@@ -16,7 +16,10 @@ import java.util.Objects;
  * @param metadataChanged   Seiten mit neuen Metadaten bei gleicher Revision (umbenannt, verschoben)
  * @param attributesChanged Seiten mit nur neuen Attributen (Labels)
  * @param unchanged         unveränderte Seiten
- * @param removed           entfernte Seiten (gelöscht oder nicht mehr sichtbar)
+ * @param removed           entfernte Seiten, deren Löschung die Quelle bestätigt hat
+ * @param withheld          in diesem Lauf gesperrte Seiten: für das technische Konto nicht mehr sichtbar, ohne
+ *                          bestätigte Löschung (ADR 0014)
+ * @param purged            gesperrte Seiten, deren Rohdaten dieser Lauf nach Ablauf der Frist entfernt hat
  * @param movedOut          in einen anderen Space verschobene Seiten
  * @param unverified        fehlende Seiten, deren Fehlen nicht bestätigt werden konnte; bleiben als veraltet erhalten
  * @param failedPageIds     Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet erhalten oder fehlen
@@ -29,7 +32,7 @@ import java.util.Objects;
  */
 public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inventory, int listed, int added,
                           int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
-                          int movedOut, int unverified, List<String> failedPageIds, List<String> missingPageIds,
+                          int withheld, int purged, int movedOut, int unverified, List<String> failedPageIds, List<String> missingPageIds,
                           Long generation, boolean complete, String spaceFingerprint, String notConfirmed) {
 
     public SyncSummary {
@@ -43,12 +46,15 @@ public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inv
     static SyncSummary of(SpaceSync.SyncRun run) {
         SyncPlan plan = run.plan();
         int removed = 0;
+        int withheld = 0;
         int movedOut = 0;
         int unverified = 0;
         for (PageChange missing : plan.changes(PageChange.Kind.MISSING)) {
             RemovalCheck.Result removal = plan.removals().get(missing.pageId());
-            if (removal != null && removal.verdict() == RemovalCheck.Verdict.GONE) {
+            if (removal != null && removal.verdict() == RemovalCheck.Verdict.DELETED) {
                 removed++;
+            } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.INACCESSIBLE) {
+                withheld++;
             } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.MOVED_OUT) {
                 movedOut++;
             } else {
@@ -61,7 +67,8 @@ public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inv
                 plan.changes(PageChange.Kind.CONTENT_CHANGED).size(),
                 plan.changes(PageChange.Kind.METADATA_CHANGED).size(),
                 plan.changes(PageChange.Kind.ATTRIBUTES_CHANGED).size(),
-                plan.changes(PageChange.Kind.UNCHANGED).size(), removed, movedOut, unverified,
+                plan.changes(PageChange.Kind.UNCHANGED).size(), removed, withheld,
+                confirmed == null ? 0 : plan.purges().size(), movedOut, unverified,
                 run.failedPageIds().stream().sorted().toList(),
                 confirmed == null ? List.of() : List.copyOf(confirmed.missingPageIds()),
                 confirmed == null ? null : confirmed.generation(), confirmed != null && confirmed.complete(),

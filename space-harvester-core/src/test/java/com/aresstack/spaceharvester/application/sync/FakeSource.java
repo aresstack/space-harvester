@@ -30,6 +30,7 @@ class FakeSource implements HarvestSource {
     /** Ersetzt den Stapel vor der Auslieferung, um Widersprüche zu simulieren. */
     UnaryOperator<PageMetadataBatch> tamper = UnaryOperator.identity();
     private int listingCalls;
+    private boolean confirmsDeletion;
 
     @Override
     public String id() {
@@ -81,6 +82,17 @@ class FakeSource implements HarvestSource {
 
     FakeSource put(String pageId, String space, String parent, String version, String labels) {
         pages.put(pageId, page(pageId, space, parent, version, labels));
+        return this;
+    }
+
+    @Override
+    public boolean confirmsDeletion() {
+        return confirmsDeletion;
+    }
+
+    /** „Nicht gefunden“ bestätigt ab jetzt eine Löschung, wie bei lokalen Dateien (ADR 0014). */
+    FakeSource confirmingDeletion() {
+        confirmsDeletion = true;
         return this;
     }
 

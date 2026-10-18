@@ -33,9 +33,10 @@ class SyncConfiguration {
 
     @Bean
     SpaceSyncJobs spaceSyncJobs(Jobs jobs, SourceQueries queries, ObjectProvider<SyncBaselineStore> store,
-                                ObjectProvider<PageContentFetcher> fetcher, ObjectProvider<SyncCommitted> afterCommit) {
+                                ObjectProvider<PageContentFetcher> fetcher, ObjectProvider<SyncCommitted> afterCommit,
+                                SyncProperties properties) {
         return new SpaceSyncJobs(jobs, queries, store.getIfAvailable(), fetcher.getIfAvailable(), Clock.systemUTC(),
-                afterCommit.orderedStream().toList());
+                afterCommit.orderedStream().toList(), properties.withheldRetention());
     }
 
     /** Für {@code ?refresh=true} (#27); {@link PageFreshness#available()} erst mit angebundenem Inhaltsabruf. */

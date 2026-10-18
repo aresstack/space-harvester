@@ -117,6 +117,8 @@ public final class PageCacheSchema {
     static final String CONFIRMED_AT = "confirmedAt";
     static final String STALE_PAGE_ID = "stalePageId";
     static final String MISSING_PAGE_ID = "missingPageId";
+    /** Gesperrte Seite (ADR 0014) als {@code <Beginn der Sperre> <pageId>}; ein Instant enthält kein Leerzeichen. */
+    static final String WITHHELD_PAGE = "withheldPage";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
@@ -277,6 +279,8 @@ public final class PageCacheSchema {
         for (String pageId : baseline.missingPageIds()) {
             doc.add(new StoredField(MISSING_PAGE_ID, pageId));
         }
+        baseline.withheldPageIds().forEach((pageId, since) ->
+                doc.add(new StoredField(WITHHELD_PAGE, since + " " + pageId)));
         return doc;
     }
 
@@ -417,7 +421,16 @@ public final class PageCacheSchema {
         }
         return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
                 instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))),
-                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))));
+                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))), withheld(space));
+    }
+
+    private static SortedMap<String, Instant> withheld(Document space) {
+        SortedMap<String, Instant> withheld = new TreeMap<>();
+        for (String value : space.getValues(WITHHELD_PAGE)) {
+            int separator = value.indexOf(' ');
+            withheld.put(value.substring(separator + 1), instant(value.substring(0, separator)));
+        }
+        return withheld;
     }
 
     private static long number(Document doc, String field) {

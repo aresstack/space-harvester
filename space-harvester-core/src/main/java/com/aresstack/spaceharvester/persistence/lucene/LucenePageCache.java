@@ -440,6 +440,19 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         }
 
         /**
+         * Sperrt eine Seite (ADR 0014, {@code INACCESSIBLE}): Der aktuelle Stand mit Kopfdaten und Payload fällt weg,
+         * damit keine Ausgabe, Titelsuche oder Auflistung sie mehr findet. Der Verlauf ihrer Revisionen bleibt bis zum
+         * endgültigen {@link #remove} erhalten; er hat keinen Ausgabeweg.
+         */
+        public void withhold(PageKey key) {
+            Objects.requireNonNull(key, "key");
+            requireActive();
+            dirty = true;
+            touchedSources.add(key.sourceId());
+            write(() -> writer.deleteDocuments(PageCacheSchema.pageTerm(key)));
+        }
+
+        /**
          * Entfernt alles einer Quelle (#188): Seiten samt Verlauf, bestätigte Generationen und ihre Seiteneinträge. Die
          * Suchgeneration der Quelle steigt mit dem Commit, damit kein Cursor von vorher weiter gilt.
          */
