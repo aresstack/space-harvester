@@ -37,7 +37,7 @@ public final class ConfigFileEditor {
     private static final Set<String> SECRET_KEYS = Set.of("password", "token", "secret", "clientsecret", "passphrase",
             "apikey", "keypassword", "storepassword");
     private static final String HEADER = """
-            # Space Harvester Desktop – Konfiguration (angelegt vom Quellen-Assistenten)
+            # Space Harvester Desktop – Konfiguration (angelegt von der App)
             # Geheimnisse nie hier eintragen: Hier steht nur ${NAME}; den Wert legt die App verschlüsselt ab.
             """;
 

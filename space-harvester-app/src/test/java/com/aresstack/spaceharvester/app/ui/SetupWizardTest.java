@@ -73,8 +73,29 @@ class SetupWizardTest {
             assertThat(wizard[0].trail.current()).isEqualTo(SetupWizard.STEPS.length - 1);
         });
         assertThat(SetupWizard.LINES).hasSameSizeAs(SetupWizard.STEPS);
-        assertThat(texts(wizard[0].summary)).contains("1 Quelle");
-        assertThat(texts(wizard[0].sources)).contains("Firmenwiki", "wiki");
+        assertThat(SetupWizard.STEPS).containsExactly("Wissensquellen", "Netzwerk", "KI-Dienst", "Modelle",
+                "Abschluss");
+        assertThat(texts(wizard[0].summary)).contains("Firmenwiki (wiki)", "keine Quelle");
+        assertThat(texts(wizard[0].sources)).contains("Firmenwiki (wiki)");
+        // Ansehen ist kein Einrichten: Die Quelle ist nicht erreichbar, kein KI-Dienst, also kein Häkchen.
+        SwingUtilities.invokeAndWait(() -> assertThat(wizard[0].done()).containsOnly(false));
+    }
+
+    @Test
+    void theNetworkTestTriesTheSourceAndSaysClearlyThatItFailed() throws Exception {
+        SetupWizard[] wizard = new SetupWizard[1];
+        CountDownLatch tested = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            wizard[0] = new SetupWizard(context);
+            wizard[0].show(SetupWizard.NETWORK);
+            wizard[0].testConnections(tested::countDown);
+        });
+        assertThat(tested.await(60, TimeUnit.SECONDS)).isTrue();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(texts(wizard[0].tests)).anyMatch(text -> text.startsWith("Verbindung fehlgeschlagen"));
+            assertThat(wizard[0].feedback.text()).contains("Verbindung fehlgeschlagen");
+            assertThat(wizard[0].done()[SetupWizard.NETWORK]).isFalse();
+        });
     }
 
     @Test

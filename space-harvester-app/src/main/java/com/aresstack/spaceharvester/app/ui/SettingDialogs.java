@@ -56,9 +56,9 @@ import java.util.function.Supplier;
 /**
  * Kleine Dialoge für je eine Einstellung einer Quelle, geöffnet vom Stift an der Einstellung: Anmeldung,
  * Client-Zertifikat, Serverzertifikate prüfen und Proxy. Sie zeigen nur das Wesentliche; gespeichert wird wie im
- * Assistenten ({@link SourceSaving}, {@link ConfigFileEditor}, Tresor), geprüft mit denselben Regeln
- * ({@link SourceDraft#problems()}, {@link ProxyDraft#problems()}). Der Assistent bleibt für neue Quellen und
- * „Assistent erneut öffnen“.
+ * Quellenformular ({@link SourceSaving}, {@link ConfigFileEditor}, Tresor), geprüft mit denselben Regeln
+ * ({@link SourceDraft#problems()}, {@link ProxyDraft#problems()}). Das {@link SourceForm} bleibt für neue Quellen und
+ * „Bearbeiten …“.
  *
  * <p>Übernehmen startet die Quellen neu. Laufen Aufträge, fragt {@link Dialogs#restartAllowed} vorher nach.
  */
@@ -663,8 +663,8 @@ final class SettingDialogs {
                 : context.loader().defaultProxy();
         ProxyDraft current = ProxyDraft.of(currentProxy);
         JComboBox<String> mode = Comic.combo();
-        SourceWizard.PROXY_MODES.forEach(m -> mode.addItem(SourceWizard.proxyLabel(m)));
-        mode.setSelectedItem(SourceWizard.proxyLabel(current.mode()));
+        PROXY_MODES.forEach(m -> mode.addItem(proxyLabel(m)));
+        mode.setSelectedItem(proxyLabel(current.mode()));
         JTextField pacUrl = Comic.field(32);
         pacUrl.setText(current.pacUrl() == null ? "" : current.pacUrl());
         JTextField host = Comic.field(24);
@@ -689,7 +689,7 @@ final class SettingDialogs {
                 "Route zur Adresse mit diesen Einstellungen bestimmen, ohne etwas zu speichern");
         JTextArea log = Comic.code();
         log.setRows(5);
-        Supplier<ProxySettings.Mode> chosen = () -> SourceWizard.PROXY_MODES.get(Math.max(0, mode.getSelectedIndex()));
+        Supplier<ProxySettings.Mode> chosen = () -> PROXY_MODES.get(Math.max(0, mode.getSelectedIndex()));
         Supplier<ProxyDraft> draft = () -> new ProxyDraft(chosen.get(), pacUrl.getText(), host.getText(),
                 port.getText(), exceptions.hosts(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
                 currentProxy.failureTtl(), user.getText(), script.getText());
@@ -859,7 +859,26 @@ final class SettingDialogs {
                 }
             }
         }
-        return SourceWizard.DEFAULT_URL;
+        return SourceForm.DEFAULT_URL;
+    }
+
+    /** Die wählbaren Modi des Cores in dieser Reihenfolge; die Vorgabe unter Windows zuerst. */
+    static final List<ProxySettings.Mode> PROXY_MODES = List.of(ProxySettings.Mode.PAC_URL_POWERSHELL,
+            ProxySettings.Mode.PAC_URL_WINDOWS_SETTINGS, ProxySettings.Mode.PAC_URL_WSCRIPT,
+            ProxySettings.Mode.WINDOWS_STATIC_PROXY, ProxySettings.Mode.PAC_URL_MANUAL,
+            ProxySettings.Mode.MANUAL_PROXY, ProxySettings.Mode.DISABLED);
+
+    static String proxyLabel(ProxySettings.Mode mode) {
+        String text = switch (mode) {
+            case PAC_URL_POWERSHELL -> "PAC aus den Windows-Einstellungen per PowerShell";
+            case PAC_URL_WINDOWS_SETTINGS -> "PAC aus den Windows-Einstellungen per reg.exe";
+            case PAC_URL_WSCRIPT -> "PAC aus den Windows-Einstellungen per VBScript";
+            case WINDOWS_STATIC_PROXY -> "Fester Proxy aus den Windows-Einstellungen";
+            case PAC_URL_MANUAL -> "PAC-Datei von fester Adresse";
+            case MANUAL_PROXY -> "Fester Proxy (Host und Port)";
+            case DISABLED -> "Ohne Proxy (direkt)";
+        };
+        return text + " · " + ProxyDraft.name(mode);
     }
 
     // ------------------------------------------------------------------ Gemeinsames
@@ -1037,8 +1056,7 @@ final class SettingDialogs {
                 Background.run(() -> {
                     if (!editor.editable(context.configFile(), source.id()).plaintextSecrets().isEmpty()) {
                         throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über "
-                                + "⋯ › „Assistent erneut öffnen“ an der Karte bearbeiten; der Assistent legt es "
-                                + "sicher ab.");
+                                + "⋯ › „Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
                     }
                     SourceSaving.store(context, editor, editing, source,
                             editor.replace(context.configFile(), source), value);

@@ -183,7 +183,7 @@ class SettingDialogsTest {
             assertThat(find(shell[0].body(), JTextField.class).stream().map(JTextField::getText))
                     .contains("https://wiki.example.invalid");
             JComboBox<?> mode = find(shell[0].body(), JComboBox.class).get(0);
-            mode.setSelectedItem(SourceWizard.proxyLabel(
+            mode.setSelectedItem(SettingDialogs.proxyLabel(
                     com.aresstack.spaceharvester.source.network.ProxySettings.Mode.MANUAL_PROXY));
             shell[0].save();
             assertThat(shell[0].feedback.text()).contains("Proxy-Host");
@@ -205,8 +205,11 @@ class SettingDialogsTest {
         AiSettingsPanel[] panel = new AiSettingsPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new AiSettingsPanel(context);
-            assertThat(panel[0].released).containsOnlyKeys("wiki");
-            assertThat(panel[0].released.get("wiki").isSelected()).as("Vorgabe: keine Quelle freigegeben").isFalse();
+            // Die Freigabe gehört zur Quelle; hier steht nur, wie viele freigegeben sind.
+            assertThat(panel[0].released.getText()).as("Vorgabe: keine Quelle freigegeben").isEqualTo("keine Quelle");
+            panel[0].baseUrl.setText("sk-abcdefghijklmnopqrstuvwxyz0123");
+            panel[0].save.doClick();
+            assertThat(panel[0].feedback.text()).as("Schlüssel im Adressfeld").contains("wie ein API-Key");
             panel[0].baseUrl.setText("kein-link");
             panel[0].save.doClick();
             assertThat(panel[0].feedback.text()).contains("http://");
@@ -214,7 +217,6 @@ class SettingDialogsTest {
             panel[0].embeddingModel.setText("text-embedding-3-small");
             // Mit Dimension misst Speichern nichts beim (hier nicht erreichbaren) Dienst.
             panel[0].dimensions.setText("1536");
-            panel[0].released.get("wiki").setSelected(true);
             panel[0].apiKey.setText("sk-geheim");
             panel[0].save.doClick();
         });
@@ -227,10 +229,10 @@ class SettingDialogsTest {
         assertThat(text[0]).contains("KI-Einstellungen übernommen");
 
         String file = Files.readString(config);
-        assertThat(file).contains("base-url: \"https://ki.example.invalid/v1\"", "- \"wiki\"", "# Kommentar bleibt")
+        assertThat(file).contains("base-url: \"https://ki.example.invalid/v1\"", "# Kommentar bleibt")
                 .doesNotContain("sk-geheim", "api-key");
         assertThat(context.settings().ai().configured()).isTrue();
-        assertThat(context.settings().ai().externalProcessingSources()).containsExactly("wiki");
+        assertThat(context.settings().ai().externalProcessingSources()).isEmpty();
         assertThat(vault.has("api-key")).as("nicht im Tresor der Quellen").isFalse();
         assertThat(new String(context.aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)))
                 .isEqualTo("sk-geheim");
@@ -272,8 +274,12 @@ class SettingDialogsTest {
                         .extracting(com.aresstack.spaceharvester.ai.AiModel::id)
                         .containsExactly("text-embedding-3-small");
                 assertThat(panel[0].pickEmbedding.isEnabled()).isTrue();
-                panel[0].choose(panel[0].embeddingModel, "text-embedding-3-small");
-                panel[0].choose(panel[0].chatModel, "gpt-x");
+                // Vorgewählt wie im Enterprise AI Client: ohne Vorzugsmodell im Angebot das erste passende.
+                assertThat(panel[0].embeddingModel.getText()).isEqualTo("text-embedding-3-small");
+                assertThat(panel[0].chatModel.getText()).isEqualTo("gpt-x");
+                assertThat(panel[0].advancedOpen()).as("Abschnittsgröße und Überlappung eingeklappt").isFalse();
+                panel[0].advanced.doClick();
+                assertThat(panel[0].advancedOpen()).isTrue();
                 panel[0].rerankModel.setText("bge-reranker");
                 // Gespeichert im Reiter „Modelle“; derselbe Block wie im Reiter „KI-Dienst“.
                 panel[0].saveModels.doClick();

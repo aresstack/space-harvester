@@ -122,7 +122,7 @@ public final class AppSettingsLoader {
 
     /**
      * Liest einen Konfigurationstext, der (noch) nicht in {@code file} steht, z. B. den Entwurf des
-     * Quellen-Assistenten vor dem Speichern.
+     * Quellenformulars vor dem Speichern.
      */
     public AppSettings read(Path file, String text) {
         try {
