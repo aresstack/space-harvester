@@ -95,10 +95,11 @@ class ConfigurationManagerTest {
         broken.setProperty("sync.sources.wiki.interval", "10s");
         broken.setProperty("sync.sources.wiki.refresh-strategy", "time-based");
         broken.setProperty("sync.sources.wiki.farbe", "blau");
+        broken.setProperty("sync.sources.team.max-age", "P400D");
 
         assertThat(HarvesterConfiguration.fromProperties(broken).problems()).extracting(ConfigurationProblem::key)
                 .containsExactlyInAnyOrder("sync.sources.wiki.interval", "sync.sources.wiki.max-age",
-                        "sync.sources.wiki.farbe");
+                        "sync.sources.wiki.farbe", "sync.sources.team.max-age");
     }
 
     @Test

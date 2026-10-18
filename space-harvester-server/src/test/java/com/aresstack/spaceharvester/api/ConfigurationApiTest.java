@@ -59,6 +59,8 @@ class ConfigurationApiTest {
         registry.add("space-harvester.network.proxy.proxy-port", () -> "3128");
         registry.add("space-harvester.network.proxy.auth.username", () -> "proxy-user");
         registry.add("space-harvester.network.proxy.auth.password", () -> PROXY_PASSWORD);
+        registry.add("space-harvester.sync.sources.wiki.interval", () -> "PT30M");
+        registry.add("space-harvester.sync.inventory-interval", () -> "P7D");
     }
 
     private final HttpClient http = HttpClient.newHttpClient();
@@ -94,6 +96,9 @@ class ConfigurationApiTest {
         assertThat(proxy.get("username").asString()).isEqualTo("proxy-user");
         assertThat(proxy.get("passwordSet").asBoolean()).isTrue();
         assertThat(body.get("configuration").get("storage").get("dataDirectory").isNull()).isTrue();
+        JsonNode sync = body.get("configuration").get("sync");
+        assertThat(sync.get("inventoryInterval").asString()).isEqualTo("PT168H");
+        assertThat(sync.get("sources").get("wiki").get("interval").asString()).isEqualTo("PT30M");
     }
 
     @Test
@@ -200,7 +205,8 @@ class ConfigurationApiTest {
     @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     void anEnvironmentChangeActivatesTheNewConfiguration() {
         environment.getPropertySources().addFirst(new MapPropertySource("refreshed",
-                Map.of("space-harvester.search.semantic", "true", "space-harvester.sync.interval", "6h")));
+                Map.of("space-harvester.search.semantic", "true", "space-harvester.sync.interval", "6h",
+                        "space-harvester.sync.sources[team].mode", "sync-cache")));
 
         context.publishEvent(new EnvironmentChangeEvent(context, Set.of("space-harvester.search.semantic",
                 "space-harvester.sync.interval")));
@@ -208,6 +214,8 @@ class ConfigurationApiTest {
         assertThat(manager.current().version()).isEqualTo(2);
         assertThat(manager.current().configuration().search().semantic()).isTrue();
         assertThat(manager.current().configuration().ai().apiKey()).isEqualTo(API_KEY);
+        assertThat(manager.current().configuration().syncFor("team").mode().key()).isEqualTo("sync-cache");
+        assertThat(manager.current().configuration().syncFor("wiki").interval()).hasMinutes(30);
 
         // Schlüssel außerhalb von space-harvester. lösen nichts aus.
         context.publishEvent(new EnvironmentChangeEvent(context, Set.of("server.port")));

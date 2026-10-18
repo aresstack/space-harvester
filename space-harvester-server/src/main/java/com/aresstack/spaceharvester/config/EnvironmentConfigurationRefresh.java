@@ -72,6 +72,6 @@ class EnvironmentConfigurationRefresh implements ApplicationListener<Environment
                 binder.bindOrCreate("space-harvester.cache", Bindable.of(CacheProperties.class)),
                 binder.bindOrCreate("space-harvester.network", Bindable.of(SpaceHarvesterProperties.Network.class)),
                 binder.bind("space-harvester.cache.max-age", Duration.class).orElse(Duration.ZERO),
-                binder.bind("space-harvester.cache.version-check", Boolean.class).orElse(true));
+                binder.bind("space-harvester.cache.version-check", Boolean.class).orElse(true), binder);
     }
 }

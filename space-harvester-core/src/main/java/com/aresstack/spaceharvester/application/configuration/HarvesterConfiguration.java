@@ -150,6 +150,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 problems.add(new ConfigurationProblem(SourceSyncOverride.key(id, SourceSyncOverride.WITHHELD_RETENTION),
                         "Die Frist darf nicht negativ sein"));
             }
+            if (o.maxAge() != null && (o.maxAge().isNegative() || o.maxAge().compareTo(CacheFreshness.MAX_AGE) > 0)) {
+                problems.add(new ConfigurationProblem(SourceSyncOverride.key(id, SourceSyncOverride.MAX_AGE),
+                        "Das Zeitfenster muss zwischen 0 und 365 Tagen liegen"));
+                continue;
+            }
             try {
                 freshnessFor(id);
             } catch (IllegalArgumentException e) {
