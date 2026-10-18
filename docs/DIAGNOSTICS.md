@@ -111,3 +111,26 @@ liegen im Asset-Speicher. Diagramme (draw.io, Mermaid) werden dabei einmal gezei
 Auftrag legt die Lese-Ansicht jeder Seite unter `views/` ab (#218, Format `space-harvester/export-reading-view/v1`,
 Status `AVAILABLE`/`RESTRICTED`/`UNSUPPORTED`/`UNAVAILABLE`); nur zur exportierten Version, und bei eingebundenen
 fremden Inhalten nur mit Freigabe der ganzen Quelle. Der Export wartet nicht darauf.
+
+## Verbindungsdiagnose
+
+Unabhängig von Aufträgen prüft die Verbindungsdiagnose (#189) den Weg zu einer Quelle Stufe für Stufe, wie
+`ConnectionProbe` und `ConnectionDiagnosis` im Enterprise AI Client. Bibliothek:
+`Harvester.sourceManagement().diagnose(sourceId)` oder `diagnose(entwurf, replacing)` für noch nicht übernommene
+Einstellungen; Server: `GET /api/v1/sources/{sourceId}/diagnosis` (Freigabe `metadata` für die Quelle).
+
+| Stufe | Prüfung |
+| --- | --- |
+| `proxy-route` | Route zur Basisadresse (PAC, fester Proxy, direkt); ist sie nicht bestimmbar, wird nichts verbunden |
+| `dns` | Auflösung des ersten Sprungs: des Proxys oder, ohne Proxy, des Ziels |
+| `tcp` | Verbindung zum ersten Sprung; bei HTTPS über Proxy der `CONNECT`-Tunnel samt Anmeldung am Proxy (407 nennt die Verfahren des Proxys) |
+| `tls` | Handshake mit Hostnamenprüfung und demselben Vertrauen wie die Quelle (`trust-bundle` oder `network.tls`); nennt Protokoll, Cipher-Suite und Serverzertifikat. Mit Client-Zertifikat ist ein abgelehnter Handshake nur eine Warnung, weil der Test ohne Zertifikat verbindet |
+| `authentication` | Anmeldung über den echten Quellenadapter (abgelehnt, angenommen oder anonym) |
+| `api` | sichtbare Spaces live abfragen; über REST ohne Anzahl, weil Freigaben je Space gelten |
+
+Status je Stufe: `ok`, `info`, `warning`, `failed`, `skipped` (nach einer gescheiterten Stufe). Ein gescheiterter
+Schritt trägt die Ursachenkette (`ConnectionDiagnosis.detail`, Bearer- und Basic-Anmeldungen maskiert) und einen
+Hinweis mit den Schlüsseln dieses Projekts, etwa `space-harvester.network.proxy.auth` bei 407 oder
+`network.tls.ca-certificates-file` bei einem unbekannten Zertifikat. Meldungen nennen Host und Port von Ziel und
+Proxy, nie Zugangsdaten, Pfad oder Query.
+

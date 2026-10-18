@@ -5,12 +5,14 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
+import com.aresstack.spaceharvester.source.network.ConnectionProbe;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyAuthenticator;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -24,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import javax.net.ssl.X509TrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -452,6 +455,21 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         if (!problems.isEmpty()) {
             throw new InvalidSourceConfigurationException(problems);
         }
+        return probeUnchecked(config, use);
+    }
+
+    /**
+     * Wie {@link #probe(SourceSettingsConfig, boolean, Function)} mit den Einstellungen einer vorhandenen Quelle (auch
+     * abgeschaltet), ohne sie erneut zu prüfen: Sie wurden beim Start oder Hinzufügen angenommen.
+     *
+     * @throws UnknownSourceException ohne Quelle dieser ID
+     */
+    public <T> T probe(String sourceId, Function<HarvestSource, T> use) {
+        Objects.requireNonNull(use, "use");
+        return probeUnchecked(config(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId)), use);
+    }
+
+    private <T> T probeUnchecked(SourceSettingsConfig config, Function<HarvestSource, T> use) {
         SourceAdapter.Context probing = new SourceAdapter.Context(secrets.fresh(), routes, context.userAgent(),
                 context.trustBundles(), null, context.proxyCredentials());
         Opened source = open(config, adapters.get(config.type()), probing);
@@ -493,6 +511,22 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         } catch (RuntimeException e) {
             return Optional.of("nicht bestimmbar (" + e.getClass().getSimpleName() + ")");
         }
+    }
+
+    /** Der Stufentest des Netzwegs mit derselben Route und Proxy-Anmeldung wie die Quellen (#189). */
+    public ConnectionProbe connectionProbe(Duration timeout) {
+        return new ConnectionProbe(routes, context.proxyCredentials(), timeout);
+    }
+
+    /**
+     * Das Serververtrauen einer Quelle: ihr {@code trust-bundle}, sonst das Vertrauen ohne Bundle; {@code null} heißt
+     * JVM-Truststore.
+     *
+     * @throws IllegalArgumentException wenn das Bundle nicht konfiguriert ist
+     */
+    public X509TrustManager trustFor(SourceSettingsConfig config) {
+        return config.trustBundle() == null ? context.trustBundles().defaultTrust()
+                : context.trustBundles().trustManager(config.trustBundle());
     }
 
     /** Die Proxy-Route je Ziel aller Quellen, auch für den KI-Dienst ({@code source.ai}, ADR 0011). */

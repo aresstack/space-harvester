@@ -340,6 +340,7 @@ space-harvester:
 | `GET /api/v1/info` | Name, Version und API-Version des Dienstes |
 | `GET /api/v1/sources` | Konfigurierte Quellen (ID, Typ, Titel; ohne Verbindungsdaten) |
 | `GET /api/v1/sources/{sourceId}/spaces` | Alle sichtbaren Spaces einer Quelle (Key, Name, Startseite), ungekürzt |
+| `GET /api/v1/sources/{sourceId}/diagnosis` | Verbindungsdiagnose in Stufen `proxy-route`, `dns`, `tcp`, `tls`, `authentication`, `api` mit Ergebnis, Ursache und Hinweis; live, legt nichts ab (#189, [DIAGNOSTICS.md](docs/DIAGNOSTICS.md#verbindungsdiagnose)) |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages/metadata` | Metadaten aller Seiten eines Space ohne Inhalte, live und stapelweise (`cursor`, `limit` 1–100) mit `metadataHash` und `attributesHash` |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/metadata` | Metadaten einer einzelnen Seite ohne Inhalt, live; kanonische Route ohne Space-Key |
 | `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/pages` | Flache Seitenliste aus dem Cache, ohne Inhalte, stapelweise (`cursor`, `limit` 1–100), mit Cache-Stand |

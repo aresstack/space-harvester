@@ -72,6 +72,9 @@ tasks.named('test') {
     useJUnitPlatform()
     // Testnamen *.test zeigen auf Loopback, damit Proxy-Tests eine mögliche Direktverbindung erkennen (#34).
     systemProperty 'jdk.net.hosts.file', file('src/test/resources/test-hosts').absolutePath
+    // Wie ein Programm, das beim Start ProxyAuthenticator.allowBasicTunneling() ruft: Das JDK liest die Property nur
+    // einmal, beim ersten HttpURLConnection-Aufbau, und der kann in einem früheren Test liegen.
+    systemProperty 'jdk.http.auth.tunneling.disabledSchemes', ''
 }
 
 ext.publishedArtifactId = 'space-harvester-core'
