@@ -23,7 +23,7 @@ import org.junit.jupiter.api.io.TempDir;
 /**
  * Der Ablauf der Inhalte-Ansicht wie ein Bediener ihn erlebt: Space einer neuen Quelle öffnen (Seiten live, ohne
  * Fehlermeldung), Seite wählen (lädt sofort, auch ohne Bestand), Quelle wechseln (nichts Altes bleibt stehen),
- * synchronisieren (danach Bestand und Seitenbaum).
+ * Seitenbaum ohne und mit Bestand.
  */
 class ContentViewTest {
 
@@ -86,7 +86,7 @@ class ContentViewTest {
         await(() -> view.pages().getRowCount() == 3);
         assertThat(onEdt(view::origin)).isEqualTo(ContentView.Origin.LIVE);
         assertThat(onEdt(() -> view.feedback().isVisible())).as("keine Meldung bei leerem Bestand").isFalse();
-        assertThat(onEdt(view::treeAvailable)).as("Seitenbaum braucht den Bestand").isFalse();
+        assertThat(onEdt(view::treeAvailable)).as("Seitenbaum auch ohne Bestand").isTrue();
         assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
     }
 
@@ -145,23 +145,43 @@ class ContentViewTest {
     }
 
     @Test
-    void synchronizingTakesTheSpaceIntoTheLocalCopy() throws Exception {
+    void thePageTreeWorksWithoutLocalCopy() throws Exception {
         open("handbuch");
         await(() -> view.pages().getRowCount() == 3);
+        assertThat(onEdt(view::origin)).isEqualTo(ContentView.Origin.LIVE);
+        assertThat(onEdt(view::treeAvailable)).isTrue();
 
         onEdt(() -> {
-            view.synchronize();
+            view.showPageTree();
             return null;
         });
 
-        await(() -> view.origin() == ContentView.Origin.STOCK && view.pages().getRowCount() == 3);
-        assertThat(onEdt(view::treeAvailable)).isTrue();
+        await(() -> view.treePageCount() == 3);
+        assertThat(onEdt(() -> view.feedback().isVisible())).isFalse();
         onEdt(() -> {
-            view.pages().setRowSelectionInterval(0, 0);
+            view.tree().setSelectionRow(0);
             return null;
         });
         await(() -> view.detail().shownPage() != null);
-        assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
+    }
+
+    @Test
+    void aSpaceInTheLocalCopyShowsItsTreeFromThere() throws Exception {
+        String space = context.runtime().workspace().spaces("handbuch").get(0).key();
+        String job = context.runtime().workspace().startSync("handbuch", space).id();
+        for (int i = 0; i < 600 && !context.runtime().workspace().job(job).state().terminal(); i++) {
+            Thread.sleep(50);
+        }
+        open("handbuch");
+        await(() -> view.origin() == ContentView.Origin.STOCK && view.pages().getRowCount() == 3);
+
+        onEdt(() -> {
+            view.showPageTree();
+            return null;
+        });
+
+        await(() -> view.treePageCount() == 3);
+        assertThat(onEdt(() -> view.feedback().isVisible())).isFalse();
     }
 
     @Test

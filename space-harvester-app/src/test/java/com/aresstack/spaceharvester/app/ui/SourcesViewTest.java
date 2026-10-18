@@ -175,11 +175,9 @@ class SourcesViewTest {
         });
         JTable pages = find((Container) view[0].component(), JTable.class).get(0);
         await(() -> pages.getRowCount() == 3);
-        // Ohne Bestand kommt die Liste live, ohne Fehlermeldung; die Ansicht sagt es und bietet die Übernahme an.
-        assertThat(find((Container) view[0].component(), javax.swing.JLabel.class))
-                .anySatisfy(label -> assertThat(label.getText()).startsWith("Seiten werden live"));
+        // Ohne Bestand kommt die Liste live, ohne Fehlermeldung; eine Synchronisierung wird nicht verlangt.
         assertThat(find((Container) view[0].component(), AbstractButton.class))
-                .anySatisfy(button -> assertThat(button.getText()).isEqualTo("Space synchronisieren"));
+                .noneSatisfy(button -> assertThat(button.getText()).contains("synchronisieren"));
     }
 
     @Test
@@ -194,14 +192,14 @@ class SourcesViewTest {
             window[0].show(AppContext.Section.SOURCES);
         });
         JTable spaces = find(surface[0], JTable.class).stream()
-                .filter(table -> table.getColumnCount() > 1 && "Schlüssel".equals(table.getColumnName(1)))
+                .filter(table -> table.getColumnCount() > 2 && "Schlüssel".equals(table.getColumnName(2)))
                 .findFirst().orElseThrow();
         await(() -> spaces.getRowCount() > 0);
         String[] key = new String[1];
         SwingUtilities.invokeAndWait(() -> {
             spaces.setRowSelectionInterval(0, 0);
-            key[0] = String.valueOf(spaces.getValueAt(0, 1));
-            java.awt.Rectangle cell = spaces.getCellRect(0, 0, true);
+            key[0] = String.valueOf(spaces.getValueAt(0, 2));
+            java.awt.Rectangle cell = spaces.getCellRect(0, 1, true);
             spaces.dispatchEvent(new MouseEvent(spaces, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0,
                     cell.x + 2, cell.y + 2, 2, false, MouseEvent.BUTTON1));
         });
@@ -220,6 +218,53 @@ class SourcesViewTest {
         SwingUtilities.invokeAndWait(() -> { });
         assertThat(String.valueOf(space.getEditor().getItem())).isEqualTo(key[0]);
         assertThat(space.getSelectedItem()).isEqualTo(key[0]);
+    }
+
+    @Test
+    void exportButtonsOpenExportsWithTheSpacesPreselectedAndStartNothing() throws Exception {
+        start();
+        List<Object> prepared = new ArrayList<>();
+        context.setNavigator(new AppContext.Navigator() {
+            public void show(AppContext.Section section) { }
+            public void openPage(String sourceId, String pageId) { }
+            public void openSpace(String sourceId, String spaceKey) { }
+            public void showJob(String jobId) { }
+            public void showDiagnosis(String jobId) { }
+            public void prepareExport(String sourceId, List<String> spaceKeys) {
+                prepared.add(sourceId);
+                prepared.add(spaceKeys);
+            }
+            public void search(String text) { }
+        });
+        SourcesView[] view = new SourcesView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SourcesView(context));
+        Container root = (Container) view[0].component();
+        JTable spaces = find(root, JTable.class).get(0);
+        await(() -> spaces.getRowCount() == 1);
+        String key = String.valueOf(spaces.getValueAt(0, 2));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].exportMarked.isEnabled()).isFalse();
+            view[0].exportRow(key);
+        });
+        assertThat(prepared).containsExactly("lang", List.of(key));
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].mark(key, true);
+            assertThat(view[0].exportMarked.isEnabled()).isTrue();
+            assertThat(view[0].exportMarked.getText()).contains("(1)");
+            view[0].exportMarked.doClick();
+        });
+        assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
+        assertThat(context.runtime().workspace().jobs()).isEmpty();
+
+        // Exportieren übernimmt die Spaces; JSON ist vorgewählt, gestartet ist noch nichts.
+        ExportsView[] exports = new ExportsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            exports[0] = new ExportsView(context);
+            exports[0].prepare("lang", List.of(key, "zweiter"));
+        });
+        assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter");
+        assertThat(exports[0].chosenFormats()).containsExactly("json");
+        assertThat(context.runtime().workspace().jobs()).isEmpty();
     }
 
     private void start() throws Exception {

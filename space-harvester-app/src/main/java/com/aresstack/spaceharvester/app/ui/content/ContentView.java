@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
-import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
@@ -13,8 +12,6 @@ import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.app.ui.View;
-import com.aresstack.spaceharvester.application.jobs.JobState;
-import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.query.CacheGeneration;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.ListedPage;
@@ -23,7 +20,10 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.query.SpaceTree;
 import com.aresstack.spaceharvester.application.tree.PageTree;
+import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
+import com.aresstack.spaceharvester.application.tree.TreeEntry;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
@@ -33,9 +33,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTable;
-import javax.swing.JTextArea;
 import javax.swing.JTree;
-import javax.swing.Timer;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
@@ -46,6 +44,8 @@ import java.awt.CardLayout;
 import java.awt.FlowLayout;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,10 +53,10 @@ import java.util.Objects;
 
 /**
  * Inhalte: Wissensquelle → Space → Seiten → Seiteninhalt. Nach der Wahl eines Space erscheinen sofort seine Seiten:
- * aus dem lokalen Bestand, wenn der Space schon synchronisiert ist, sonst live aus der Quelle (ein leerer Bestand ist
- * bei einer neuen Quelle der Normalfall und kein Fehler). Eine gewählte Seite lädt sofort rechts. Woher die Liste
- * stammt, sagt eine Zeile über ihr, zusammen mit „Space synchronisieren“, das den Space in den lokalen Bestand
- * übernimmt. Der Seitenbaum ist eine zweite Darstellung derselben Seiten und braucht den Bestand.
+ * aus dem lokalen Bestand, wenn er sie schon hat, sonst live aus der Quelle (ein leerer Bestand ist bei einer neuen
+ * Quelle der Normalfall und kein Fehler). Eine gewählte Seite lädt sofort rechts; fehlende Seiten holt der Core selbst.
+ * Liste und Seitenbaum sind gleichwertige Darstellungen derselben Seiten; ohne Bestand entsteht der Baum aus den
+ * Live-Metadaten des Space (Elternseite je Seite). Eine Synchronisierung ist für nichts hier Voraussetzung.
  *
  * <p>Jeder Wechsel von Quelle oder Space leert Liste und Seitenansicht und verwirft noch laufende Ladevorgänge
  * ({@link #epoch}); weitere Seiten folgen beim Scrollen, der Cursor bleibt intern.
@@ -66,6 +66,8 @@ public final class ContentView implements View {
     private static final int BATCH = 100;
     private static final String LIST = "list";
     private static final String TREE = "tree";
+    /** Obergrenze für den Live-Baum; größere Spaces zeigen die ersten Seiten und sagen es. */
+    private static final int TREE_LIMIT = 20_000;
 
     /** Woher die angezeigten Seiten stammen. */
     enum Origin { STOCK, LIVE }
@@ -75,11 +77,6 @@ public final class ContentView implements View {
     private final JComboBox<SourceItem> source = Comic.combo();
     private final JComboBox<String> space = Comic.combo();
     private final PlaceholderField openId = new PlaceholderField(20, "Seiten-ID oder Adresse …");
-    private final JLabel originTitle = new JLabel(" ");
-    private final JTextArea originText = Comic.note("");
-    private final ComposerButton sync = Comic.primary("Space synchronisieren",
-            "Übernimmt alle Seiten dieses Space in den lokalen Bestand (für Suche, Seitenbaum und Export)");
-    private final JPanel originBar = new JPanel(new BorderLayout(12, 0));
     private final ComposerToggleButton asList = toggle("Liste", "Seiten als Liste");
     private final ComposerToggleButton asTree = toggle("Seitenbaum", "Seiten nach Elternseiten geordnet");
     private final PlaceholderField filter = new PlaceholderField(14, "Seiten suchen …");
@@ -95,14 +92,12 @@ public final class ContentView implements View {
     /** Zählt Wechsel von Quelle und Space; Ergebnisse eines älteren Stands werden verworfen. */
     private int epoch;
     private Origin origin;
-    private CacheGeneration generation;
     private Batch loading;
     private String cursor;
     private boolean complete;
     private boolean treeLoaded;
     /** Während Quellen- oder Space-Liste programmatisch gefüllt werden, lösen ihre Ereignisse nichts aus. */
     private boolean filling;
-    private Timer syncWatch;
 
     public ContentView(AppContext context) {
         this.context = context;
@@ -148,7 +143,6 @@ public final class ContentView implements View {
         asList.setSelected(true);
         asList.addActionListener(e -> listCards.show(listDeck, LIST));
         asTree.addActionListener(e -> showTree());
-        sync.addActionListener(e -> startSync());
 
         pages.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && pages.getSelectedRow() >= 0) {
@@ -186,25 +180,12 @@ public final class ContentView implements View {
         opener.setOpaque(false);
         opener.add(openId);
 
-        originTitle.setFont(Comic.semiBold(13f));
-        originTitle.setForeground(Comic.INK);
-        JPanel originLines = new JPanel(new BorderLayout(0, 2));
-        originLines.setOpaque(false);
-        originLines.add(originTitle, BorderLayout.NORTH);
-        originLines.add(originText, BorderLayout.CENTER);
-        originBar.setOpaque(false);
-        originBar.setBorder(BorderFactory.createEmptyBorder(4, 4, 6, 4));
-        originBar.add(originLines, BorderLayout.CENTER);
-        originBar.add(Comic.row(sync), BorderLayout.EAST);
-        originBar.setVisible(false);
-
         JPanel top = new JPanel(new BorderLayout());
         top.setBackground(Comic.SURFACE);
         top.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(6, 8, 6, 8)));
         top.add(toolbar, BorderLayout.CENTER);
         top.add(opener, BorderLayout.EAST);
-        top.add(originBar, BorderLayout.SOUTH);
 
         JPanel left = new JPanel(new BorderLayout(0, 6));
         left.setBackground(Comic.SURFACE);
@@ -229,7 +210,6 @@ public final class ContentView implements View {
         root.add(new ComicSplitPane(left, detail, 320, 720), BorderLayout.CENTER);
         context.onChange(ignored -> refreshSources());
         refreshSources();
-        showOrigin();
     }
 
     @Override
@@ -367,17 +347,10 @@ public final class ContentView implements View {
     /** Leert Liste, Baum und Seitenansicht und verwirft laufende Ladevorgänge. */
     private void reset(String hint) {
         epoch++;
-        // Ein laufender Abgleich des vorigen Space läuft weiter (Aufträge); der Knopf gilt dem neuen Space.
-        if (syncWatch != null) {
-            syncWatch.stop();
-            syncWatch = null;
-        }
-        sync.setEnabled(true);
         loading = null;
         cursor = null;
         complete = false;
         origin = null;
-        generation = null;
         treeLoaded = false;
         pagesModel.clear(null);
         tree.setModel(new DefaultTreeModel(new DefaultMutableTreeNode("Seiten")));
@@ -386,7 +359,6 @@ public final class ContentView implements View {
         asList.setSelected(true);
         listCards.show(listDeck, LIST);
         status.setText(hint);
-        showOrigin();
     }
 
     private void reload() {
@@ -432,8 +404,6 @@ public final class ContentView implements View {
                     }
                     if (origin == null) {
                         origin = batch.origin();
-                        generation = result.generation();
-                        showOrigin();
                     }
                     pagesModel.append(batch, result.rows());
                     cursor = result.nextCursor();
@@ -478,130 +448,98 @@ public final class ContentView implements View {
         return Texts.count(pagesModel.size(), "Seite", "Seiten") + more;
     }
 
-    /** Die Zeile über der Liste: woher die Seiten kommen und was „Synchronisieren“ bewirkt. */
-    private void showOrigin() {
-        if (origin == null) {
-            originBar.setVisible(false);
-            asTree.setEnabled(false);
-            asTree.setToolTipText("Erst einen Space wählen");
-            return;
-        }
-        originBar.setVisible(true);
-        if (origin == Origin.LIVE) {
-            originTitle.setText("Seiten werden live aus der Quelle angezeigt.");
-            originText.setText("Dieser Space ist noch nicht lokal gespeichert. „Space synchronisieren“ übernimmt "
-                    + "alle Seiten in den lokalen Bestand; dann stehen Suche, Seitenbaum und Export bereit.");
-            sync.setText("Space synchronisieren");
-            asTree.setEnabled(false);
-            asTree.setToolTipText("Der Seitenbaum entsteht aus dem lokalen Bestand; dafür den Space synchronisieren");
-        } else {
-            originTitle.setText("Seiten aus dem lokalen Bestand.");
-            originText.setText("Stand: " + Texts.generation(generation) + ". Eine geöffnete Seite zeigt den "
-                    + "gespeicherten Stand; „Erneut synchronisieren“ holt Änderungen aus der Quelle.");
-            sync.setText("Erneut synchronisieren");
-            asTree.setEnabled(true);
-            asTree.setToolTipText("Seiten nach Elternseiten geordnet");
-        }
-        originBar.revalidate();
-    }
-
+    /**
+     * Zeigt den Seitenbaum: aus dem Bestand, wenn der Space dort liegt, sonst aus den Live-Metadaten (jede Seite nennt
+     * ihre Elternseite). Der Baum wird je Space einmal aufgebaut.
+     */
     private void showTree() {
         listCards.show(listDeck, TREE);
         AppRuntime runtime = context.runtime();
         String sourceId = selectedSource();
         String spaceKey = pagesModel.spaceKey;
-        if (treeLoaded || runtime == null || sourceId == null || spaceKey == null || origin != Origin.STOCK) {
-            return;
-        }
-        int current = epoch;
-        status.setText("Seitenbaum wird aufgebaut …");
-        Background.run(() -> runtime.workspace().tree(sourceId, spaceKey), spaceTree -> {
-            if (current != epoch) {
-                return;
-            }
-            treeLoaded = true;
-            DefaultMutableTreeNode top = new DefaultMutableTreeNode(spaceKey);
-            for (PageTree.Node node : spaceTree.tree().roots()) {
-                top.add(node(node, spaceTree.pages()));
-            }
-            tree.setModel(new DefaultTreeModel(top));
-            for (int i = 0; i < Math.min(tree.getRowCount(), 50); i++) {
-                tree.expandRow(i);
-            }
-            status.setText(Texts.count(spaceTree.tree().nodeCount(), "Seite", "Seiten") + " · Tiefe "
-                    + spaceTree.tree().depth()
-                    + (spaceTree.tree().anomalies().isEmpty() ? "" : " · "
-                    + Texts.count(spaceTree.tree().anomalies().size(), "Auffälligkeit", "Auffälligkeiten")));
-        }, error -> {
-            if (current == epoch) {
-                status.setText("Seitenbaum nicht aufgebaut.");
-                feedback.problem(error, Problems.Step.STOCK);
-            }
-        });
-    }
-
-    private static DefaultMutableTreeNode node(PageTree.Node node, Map<String, ListedPage> pages) {
-        ListedPage page = pages.get(node.pageId());
-        DefaultMutableTreeNode treeNode = new DefaultMutableTreeNode(new TreeItem(node.pageId(),
-                page == null ? node.pageId() : page.header().metadata().title()));
-        for (PageTree.Node child : node.children()) {
-            treeNode.add(node(child, pages));
-        }
-        return treeNode;
-    }
-
-    /** Übernimmt den Space in den lokalen Bestand und zeigt danach die Seiten aus dem Bestand. */
-    private void startSync() {
-        AppRuntime runtime = context.runtime();
-        String sourceId = selectedSource();
-        String spaceKey = pagesModel.spaceKey;
         if (runtime == null || sourceId == null || spaceKey == null) {
+            status.setText("Space wählen.");
             return;
         }
-        sync.setEnabled(false);
-        feedback.working("Space " + spaceKey + " wird in den lokalen Bestand übernommen …");
+        if (treeLoaded) {
+            return;
+        }
         int current = epoch;
-        Background.run(() -> runtime.workspace().startSync(sourceId, spaceKey),
-                started -> {
-                    if (current == epoch) {
-                        watchSync(runtime, started, current, spaceKey);
+        boolean stock = origin == Origin.STOCK;
+        status.setText("Seitenbaum wird aufgebaut …");
+        Background.run(() -> stock ? stockTree(runtime, sourceId, spaceKey) : liveTree(runtime, sourceId, spaceKey),
+                built -> {
+                    if (current != epoch) {
+                        return;
                     }
+                    treeLoaded = true;
+                    DefaultMutableTreeNode top = new DefaultMutableTreeNode(spaceKey);
+                    for (PageTree.Node node : built.tree().roots()) {
+                        top.add(node(node, built.titles()));
+                    }
+                    tree.setModel(new DefaultTreeModel(top));
+                    for (int i = 0; i < Math.min(tree.getRowCount(), 50); i++) {
+                        tree.expandRow(i);
+                    }
+                    status.setText(Texts.count(built.tree().nodeCount(), "Seite", "Seiten") + " · Tiefe "
+                            + built.tree().depth()
+                            + (built.tree().anomalies().isEmpty() ? "" : " · "
+                            + Texts.count(built.tree().anomalies().size(), "Auffälligkeit", "Auffälligkeiten"))
+                            + (built.complete() ? "" : " · nur die ersten " + TREE_LIMIT));
                 },
                 error -> {
                     if (current == epoch) {
-                        sync.setEnabled(true);
-                        feedback.problem(error);
+                        status.setText("Seitenbaum nicht aufgebaut.");
+                        feedback.problem(error, stock ? Problems.Step.STOCK : Problems.Step.PAGE_LIST,
+                                "Space " + spaceKey);
                     }
                 });
     }
 
-    private void watchSync(AppRuntime runtime, JobStatus started, int startedIn, String spaceKey) {
-        if (syncWatch != null) {
-            syncWatch.stop();
+    private static BuiltTree stockTree(AppRuntime runtime, String sourceId, String spaceKey) {
+        try {
+            SpaceTree spaceTree = runtime.workspace().tree(sourceId, spaceKey);
+            Map<String, String> titles = new HashMap<>();
+            spaceTree.pages().forEach((id, page) -> titles.put(id, page.header().metadata().title()));
+            return new BuiltTree(spaceTree.tree(), titles, true);
+        } catch (RuntimeException e) {
+            if (cacheMiss(e)) {
+                return liveTree(runtime, sourceId, spaceKey);
+            }
+            throw e;
         }
-        Timer timer = new Timer(1000, null);
-        syncWatch = timer;
-        timer.addActionListener(e -> Background.run(() -> runtime.workspace().job(started.id()), job -> {
-            if (syncWatch != timer || !job.state().terminal()) {
-                return;
+    }
+
+    /** Liest alle Seiten-Metadaten des Space live (seitenweise) und ordnet sie nach Elternseite. */
+    private static BuiltTree liveTree(AppRuntime runtime, String sourceId, String spaceKey) {
+        Map<String, TreeEntry> entries = new LinkedHashMap<>();
+        Map<String, String> titles = new HashMap<>();
+        String next = null;
+        boolean complete = true;
+        do {
+            PageMetadataListing listing = runtime.workspace().liveMetadata(sourceId, spaceKey, next, BATCH);
+            for (PageMetadataListing.Entry entry : listing.entries()) {
+                PageMetadata page = entry.page();
+                entries.putIfAbsent(page.pageId(), new TreeEntry(page.pageId(), page.parentPageId()));
+                titles.putIfAbsent(page.pageId(), page.title());
             }
-            timer.stop();
-            sync.setEnabled(true);
-            if (startedIn != epoch) {
-                return;
+            next = listing.nextCursor();
+            if (next != null && entries.size() >= TREE_LIMIT) {
+                complete = false;
+                next = null;
             }
-            if (job.state() == JobState.COMPLETED) {
-                reload();
-                feedback.success("Space " + spaceKey + " liegt jetzt im lokalen Bestand");
-            } else {
-                feedback.warning("Synchronisierung nicht abgeschlossen: " + Texts.state(job.state()),
-                        "Einzelheiten stehen unter Aufträge.");
-            }
-        }, error -> {
-            timer.stop();
-            sync.setEnabled(true);
-        }));
-        timer.start();
+        } while (next != null);
+        return new BuiltTree(PageTreeBuilder.build(entries.values()), titles, complete);
+    }
+
+    private static DefaultMutableTreeNode node(PageTree.Node node, Map<String, String> titles) {
+        String title = titles.get(node.pageId());
+        DefaultMutableTreeNode treeNode = new DefaultMutableTreeNode(new TreeItem(node.pageId(),
+                title == null || title.isBlank() ? node.pageId() : title));
+        for (PageTree.Node child : node.children()) {
+            treeNode.add(node(child, titles));
+        }
+        return treeNode;
     }
 
     private void openTyped() {
@@ -656,8 +594,25 @@ public final class ContentView implements View {
         return asTree.isEnabled();
     }
 
-    void synchronize() {
-        startSync();
+    void showPageTree() {
+        asTree.doClick();
+    }
+
+    JTree tree() {
+        return tree;
+    }
+
+    /** Für Tests: Seiten im aufgebauten Baum (ohne die Space-Wurzel). */
+    int treePageCount() {
+        DefaultMutableTreeNode top = (DefaultMutableTreeNode) tree.getModel().getRoot();
+        if (!treeLoaded) {
+            return 0;
+        }
+        int count = -1;
+        for (var nodes = top.breadthFirstEnumeration(); nodes.hasMoreElements(); nodes.nextElement()) {
+            count++;
+        }
+        return count;
     }
 
     void chooseSource(String sourceId) {
@@ -689,6 +644,9 @@ public final class ContentView implements View {
         public String toString() {
             return title;
         }
+    }
+
+    private record BuiltTree(PageTree tree, Map<String, String> titles, boolean complete) {
     }
 
     private record Batch(int epoch, String sourceId, String spaceKey, Origin origin) {

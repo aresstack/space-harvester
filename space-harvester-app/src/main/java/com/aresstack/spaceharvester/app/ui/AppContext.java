@@ -57,7 +57,12 @@ public final class AppContext {
         /** Status mit der Diagnose genau dieses Auftrags. */
         void showDiagnosis(String jobId);
 
-        void prepareExport(String sourceId, String spaceKey);
+        /** Exportieren mit Quelle und diesen Spaces vorbelegt; gestartet wird erst dort. */
+        void prepareExport(String sourceId, java.util.List<String> spaceKeys);
+
+        default void prepareExport(String sourceId, String spaceKey) {
+            prepareExport(sourceId, spaceKey == null ? java.util.List.of() : java.util.List.of(spaceKey));
+        }
 
         void search(String text);
     }

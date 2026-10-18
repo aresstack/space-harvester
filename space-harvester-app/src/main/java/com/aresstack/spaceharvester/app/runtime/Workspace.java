@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -28,6 +29,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.core.Harvester;
 
 import java.io.InputStream;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -255,6 +257,77 @@ public final class Workspace {
                 .filter(event -> access.permits(caller, ResourceScope.space(event.sourceId(), event.partitionKey()),
                         event.type() == JobType.EXPORT ? AccessKind.EXPORT : AccessKind.SYNC))
                 .toList();
+    }
+
+    /**
+     * Löscht einen beendeten Auftrag samt Diagnoseereignissen und nimmt ihn aus der Liste. Exportdateien, die der
+     * Benutzer gespeichert hat, und der Seitenbestand bleiben.
+     *
+     * @throws com.aresstack.spaceharvester.application.jobs.JobStillRunningException wenn er noch wartet oder läuft
+     */
+    public void deleteJob(String jobId) {
+        job(jobId);
+        harvester.deleteJob(jobId);
+        activities.forget(jobId);
+    }
+
+    /** Löscht alle sichtbaren beendeten Aufträge; wartende und laufende bleiben. @return Anzahl */
+    public int deleteFinishedJobs() {
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            if (status.state().terminal()) {
+                try {
+                    deleteJob(status.id());
+                    deleted++;
+                } catch (UnknownJobException e) {
+                    activities.forget(status.id());
+                }
+            }
+        }
+        return deleted;
+    }
+
+    /**
+     * Löscht genau diese Aufträge, soweit sie sichtbar und beendet sind; schon gelöschte oder wieder laufende bleiben
+     * unberührt. @return Anzahl
+     */
+    public int deleteJobs(List<String> jobIds) {
+        int deleted = 0;
+        for (String id : jobIds) {
+            try {
+                if (job(id).state().terminal()) {
+                    deleteJob(id);
+                    deleted++;
+                }
+            } catch (UnknownJobException | JobStillRunningException e) {
+                // Inzwischen gelöscht oder wieder aktiv: bleibt unberührt.
+            }
+        }
+        return deleted;
+    }
+
+    /** Löscht ein Diagnoseereignis eines beendeten, sichtbaren Auftrags; {@code false}, wenn es schon fehlt. */
+    public boolean deleteEvent(String jobId, long sequence) {
+        job(jobId);
+        return harvester.deleteEvent(jobId, sequence);
+    }
+
+    /**
+     * Löscht die Ereignisse sichtbarer beendeter Aufträge vor {@code before}; die Aufträge bleiben. Aufträge, die die
+     * App nicht (mehr) sehen darf, z. B. einer entfernten Quelle, bleiben unberührt. @return Anzahl
+     */
+    public int deleteEventsBefore(Instant before) {
+        int deleted = 0;
+        for (JobStatus status : jobs()) {
+            if (status.state().terminal()) {
+                try {
+                    deleted += harvester.jobs().deleteEventsBefore(status.id(), before, Harvester.OWNER);
+                } catch (UnknownJobException | JobStillRunningException e) {
+                    // Inzwischen gelöscht oder (neu gestartet) wieder aktiv: dann bleibt er unberührt.
+                }
+            }
+        }
+        return deleted;
     }
 
     // ------------------------------------------------------------------ Anhänge

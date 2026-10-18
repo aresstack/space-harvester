@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.brand.ScenePanel;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
+import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.Redaction;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
@@ -117,7 +118,13 @@ public final class StatusView implements View {
     private final JTable table = Comic.table(new JTable(model));
     private final JTextArea detail = Comic.code();
     private final ComposerButton copy = Comic.button("Kopieren", "Das gewählte Ereignis mit Ausnahmekette kopieren");
+    final ComposerButton delete = Comic.button("Löschen", "Das gewählte Ereignis aus dem Protokoll löschen");
+    final ComposerButton clean = Comic.button("Protokoll bereinigen …",
+            "Ereignisse beendeter Aufträge vor einem Zeitpunkt löschen");
     private final Timer timer = new Timer(3000, e -> load());
+    /** Ausgeblendete Verbindungsprüfungen (Quelle und Zeitpunkt); sie stehen nirgends sonst, nur in dieser Sitzung. */
+    private final java.util.Set<String> hiddenChecks = new java.util.HashSet<>();
+    private Instant checksBefore = Instant.MIN;
     /** Alle geladenen Einträge vor dem Filtern. */
     private List<Entry> loaded = List.of();
     /** Auftrag, auf den die Ansicht beschränkt ist, oder {@code null}. */
@@ -173,6 +180,19 @@ public final class StatusView implements View {
         reload.addActionListener(e -> load());
         copy.addActionListener(e -> Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new StringSelection(detail.getText()), null));
+        delete.addActionListener(e -> {
+            Entry chosen = selected();
+            if (chosen != null && Dialogs.confirm(root, "Ereignis löschen?", "Das gewählte Ereignis wird dauerhaft "
+                    + "aus dem Protokoll gelöscht; der Auftrag und seine übrigen Ereignisse bleiben.", "Löschen")) {
+                deleteEntry(chosen);
+            }
+        });
+        clean.addActionListener(e -> {
+            Instant before = askCleanup();
+            if (before != null) {
+                cleanBefore(before);
+            }
+        });
 
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.getSelectionModel().addListSelectionListener(e -> {
@@ -188,7 +208,8 @@ public final class StatusView implements View {
         detail.setLineWrap(false);
         detail.setText("Ein Ereignis wählen, um alle Befunde und die Ausnahmekette zu sehen.");
 
-        JPanel bar = Comic.row(kinds, Comic.caption("Zeitraum"), period, Comic.caption("Filter"), text, reload);
+        JPanel bar = Comic.row(kinds, Comic.caption("Zeitraum"), period, Comic.caption("Filter"), text, reload,
+                clean);
         JPanel focusRow = new JPanel(new BorderLayout(8, 0));
         focusRow.setOpaque(false);
         focusRow.add(focus, BorderLayout.CENTER);
@@ -206,7 +227,7 @@ public final class StatusView implements View {
         JPanel detailHead = new JPanel(new BorderLayout());
         detailHead.setOpaque(false);
         detailHead.add(Comic.caption("Details"), BorderLayout.WEST);
-        detailHead.add(Comic.row(copy), BorderLayout.EAST);
+        detailHead.add(Comic.row(copy, delete), BorderLayout.EAST);
         detailPanel.add(detailHead, BorderLayout.NORTH);
         detailPanel.add(detailScroll, BorderLayout.CENTER);
 
@@ -283,6 +304,92 @@ public final class StatusView implements View {
         return detail.getText();
     }
 
+    // ------------------------------------------------------------------ Löschen
+
+    /**
+     * Löscht ein Ereignis: ein Auftragsereignis dauerhaft im Core, eine Verbindungsprüfung (nur in dieser Sitzung
+     * gemerkt) durch Ausblenden.
+     */
+    void deleteEntry(Entry entry) {
+        AppRuntime runtime = context.runtime();
+        if (entry.jobId() == null) {
+            hiddenChecks.add(checkKey(entry.sourceId(), entry.at()));
+            feedback.success("Verbindungsprüfung aus dem Protokoll entfernt");
+            load();
+            return;
+        }
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().deleteEvent(entry.jobId(), entry.sequence()), deleted -> {
+            feedback.success(deleted ? "Ereignis gelöscht" : "Das Ereignis war schon gelöscht");
+            load();
+        }, this::deleteFailed);
+    }
+
+    /** Löscht die Ereignisse beendeter Aufträge vor {@code before} ({@link Instant#MAX}: alle). */
+    void cleanBefore(Instant before) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        // Auch die Verbindungsprüfungen bis jetzt; spätere Prüfungen erscheinen wieder.
+        Instant cutoff = before.equals(Instant.MAX) ? Instant.now() : before;
+        // Nie zurück: eine engere Bereinigung holt bereits entfernte Prüfungen nicht wieder hervor.
+        checksBefore = cutoff.isAfter(checksBefore) ? cutoff : checksBefore;
+        Background.run(() -> runtime.workspace().deleteEventsBefore(before), deleted -> {
+            feedback.success(Texts.count(deleted, "Ereignis", "Ereignisse") + " gelöscht"
+                    + "; Ereignisse laufender Aufträge bleiben");
+            load();
+        }, this::deleteFailed);
+    }
+
+    private void deleteFailed(Throwable error) {
+        if (error instanceof JobStillRunningException) {
+            feedback.info("Der Auftrag läuft noch", "Ereignisse eines laufenden Auftrags lassen sich erst nach "
+                    + "seinem Ende löschen.");
+        } else {
+            feedback.problem(error);
+        }
+    }
+
+    /** Fragt den Zeitraum für „Protokoll bereinigen“ ab; {@code null} bei Abbruch. */
+    private Instant askCleanup() {
+        record Choice(String label, Duration age) {
+            @Override
+            public String toString() {
+                return label;
+            }
+        }
+        JComboBox<Choice> choice = Comic.combo();
+        choice.addItem(new Choice("Älter als eine Stunde", Duration.ofHours(1)));
+        choice.addItem(new Choice("Älter als einen Tag", Duration.ofDays(1)));
+        choice.addItem(new Choice("Älter als eine Woche", Duration.ofDays(7)));
+        choice.addItem(new Choice("Alle Ereignisse beendeter Aufträge", null));
+        choice.setSelectedIndex(1);
+        Instant[] result = {null};
+        javax.swing.JDialog dialog = Dialogs.dialog(root, "Protokoll bereinigen");
+        ComposerButton yes = Comic.danger("Löschen", null);
+        ComposerButton no = Comic.button("Abbrechen", null);
+        yes.addActionListener(e -> {
+            Choice chosen = (Choice) choice.getSelectedItem();
+            result[0] = chosen == null || chosen.age() == null ? Instant.MAX : Instant.now().minus(chosen.age());
+            dialog.dispose();
+        });
+        no.addActionListener(e -> dialog.dispose());
+        JPanel body = new JPanel(new BorderLayout(0, 8));
+        body.setOpaque(false);
+        body.add(Comic.note("Löscht die Diagnoseereignisse beendeter Aufträge dauerhaft. Die Aufträge selbst bleiben "
+                + "unter „Aufträge“, Ereignisse laufender Aufträge bleiben ebenfalls."), BorderLayout.NORTH);
+        body.add(choice, BorderLayout.CENTER);
+        Dialogs.show(dialog, "Protokoll bereinigen", body, no, yes);
+        return result[0];
+    }
+
+    private static String checkKey(String sourceId, Instant at) {
+        return sourceId + "@" + at;
+    }
+
     // ------------------------------------------------------------------ Laden
 
     private void load() {
@@ -323,7 +430,8 @@ public final class StatusView implements View {
         List<Entry> result = new ArrayList<>();
         for (HarvestSource source : runtime.workspace().sources()) {
             AppContext.Connection connection = context.connection(source.id());
-            if (connection.checkedAt() == null) {
+            if (connection.checkedAt() == null || connection.checkedAt().isBefore(checksBefore)
+                    || hiddenChecks.contains(checkKey(source.id(), connection.checkedAt()))) {
                 continue;
             }
             switch (connection.state()) {
@@ -406,6 +514,7 @@ public final class StatusView implements View {
         if (e == null) {
             detail.setText("Ein Ereignis wählen, um alle Befunde und die Ausnahmekette zu sehen.");
             copy.setEnabled(false);
+            delete.setEnabled(false);
             return;
         }
         StringBuilder out = new StringBuilder();
@@ -428,6 +537,7 @@ public final class StatusView implements View {
         detail.setText(out.toString());
         detail.setCaretPosition(0);
         copy.setEnabled(true);
+        delete.setEnabled(true);
     }
 
     private static void line(StringBuilder out, String label, String value) {

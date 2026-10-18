@@ -55,6 +55,9 @@ public final class ActivitiesView implements View {
     private final ComposerButton content = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
     private final ComposerButton diagnosis = Comic.button("Diagnose ansehen", "Unter Status: Phasen, Fehlercode, "
             + "HTTP-Status, Proxy-Route, TLS-Befund und Ausnahmekette dieses Auftrags");
+    final ComposerButton delete = Comic.button("Löschen …", "Diesen beendeten Auftrag samt Diagnose löschen");
+    final ComposerButton deleteFinished = Comic.button("Abgeschlossene Aufträge löschen …",
+            "Alle beendeten Aufträge samt Diagnose löschen; laufende bleiben");
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
@@ -73,8 +76,13 @@ public final class ActivitiesView implements View {
         left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
         left.add(Comic.caption("Aufträge dieser App"), BorderLayout.NORTH);
         left.add(Comic.scroll(table), BorderLayout.CENTER);
-        left.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exportieren. Beendete "
-                + "Aufträge bleiben für die Aufbewahrungsfrist sichtbar."), BorderLayout.SOUTH);
+        JPanel leftSouth = new JPanel(new BorderLayout(0, 6));
+        leftSouth.setOpaque(false);
+        leftSouth.add(Comic.row(deleteFinished), BorderLayout.NORTH);
+        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exportieren. "
+                + "Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist endet oder sie gelöscht werden."),
+                BorderLayout.SOUTH);
+        left.add(leftSouth, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
@@ -87,13 +95,15 @@ public final class ActivitiesView implements View {
         content.addActionListener(e -> currentStatus().ifPresent(s ->
                 context.navigator().openSpace(s.sourceId(), s.partitionKey())));
         diagnosis.addActionListener(e -> currentStatus().ifPresent(s -> context.navigator().showDiagnosis(s.id())));
+        delete.addActionListener(e -> deleteSelected());
+        deleteFinished.addActionListener(e -> deleteFinished());
 
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
         head.add(title, BorderLayout.NORTH);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        south.add(Comic.row(diagnosis, cancel, again, files, content), BorderLayout.NORTH);
+        south.add(Comic.row(diagnosis, cancel, again, files, content, delete), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         head.add(south, BorderLayout.SOUTH);
 
@@ -153,6 +163,7 @@ public final class ActivitiesView implements View {
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
             model.set(jobs);
+            deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
             reselect();
             detail = data[1];
             render();
@@ -299,8 +310,9 @@ public final class ActivitiesView implements View {
         if (artifact.complete()) {
             feedback.success("Export vollständig: " + Texts.count(artifact.files().size(), "Datei", "Dateien"));
         } else {
-            feedback.warning("Export unvollständig", "Der Bestand war nicht bestätigt oder einzelne Seiten fehlten; "
-                    + "das Manifest nennt sie.");
+            feedback.warning("Export unvollständig", "Einzelne Seiten ließen sich nicht aus der Quelle lesen oder "
+                    + "die Quelle war nicht erreichbar und der Export nutzt einen unbestätigten Stand; das Manifest "
+                    + "nennt den Grund.");
         }
     }
 
@@ -327,6 +339,10 @@ public final class ActivitiesView implements View {
         files.setVisible(detail instanceof ExportDetail export && export.artifact() != null);
         content.setEnabled(current.isPresent());
         diagnosis.setEnabled(current.isPresent());
+        // Laufende Aufträge erst abbrechen; gelöscht wird nur, was beendet ist.
+        delete.setEnabled(current.isPresent() && !running);
+        delete.setToolTipText(running ? "Läuft noch: erst abbrechen, dann löschen"
+                : "Diesen beendeten Auftrag samt Diagnose löschen");
         // Ein gescheiterter Auftrag führt zuerst zu seiner Diagnose.
         boolean failed = current.map(s -> s.state() == JobState.FAILED).orElse(false);
         diagnosis.setText(failed ? "Fehler diagnostizieren" : "Diagnose ansehen");
@@ -345,6 +361,58 @@ public final class ActivitiesView implements View {
         }
         Background.run(() -> status.type() == JobType.SYNC ? runtime.workspace().cancelSync(status.id()).status()
                 : runtime.workspace().cancelExport(status.id()), s -> poll(), feedback::problem);
+    }
+
+    static final String KEPT = "Exportdateien, die unter „Dateien speichern …“ abgelegt wurden, und der Seitenbestand "
+            + "bleiben erhalten; die interne Kopie des Exports verschwindet mit dem Auftrag.";
+
+    private void deleteSelected() {
+        AppRuntime runtime = context.runtime();
+        Optional<JobStatus> current = currentStatus();
+        if (runtime == null || current.isEmpty() || !current.get().state().terminal()) {
+            return;
+        }
+        JobStatus status = current.get();
+        if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(status.type()) + " von " + status.partitionKey()
+                + " und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT, "Löschen")) {
+            return;
+        }
+        Background.execute(() -> runtime.workspace().deleteJob(status.id()), () -> {
+            selectedId = null;
+            detail = null;
+            table.clearSelection();
+            render();
+            feedback.success("Auftrag gelöscht");
+            poll();
+        }, feedback::problem);
+    }
+
+    private void deleteFinished() {
+        AppRuntime runtime = context.runtime();
+        // Genau die Aufträge, die der Dialog nennt; was danach erst endet, bleibt stehen.
+        List<String> confirmed = model.rows.stream().filter(j -> j.state().terminal()).map(JobStatus::id).toList();
+        long finished = confirmed.size();
+        if (runtime == null || finished == 0) {
+            return;
+        }
+        long running = model.rows.size() - finished;
+        if (!Dialogs.confirm(root, "Abgeschlossene Aufträge löschen?", Texts.count(finished, "beendeter Auftrag",
+                "beendete Aufträge") + " (abgeschlossen, gescheitert, abgebrochen) und ihre Diagnoseereignisse werden "
+                + "dauerhaft gelöscht." + (running == 0 ? "" : " " + Texts.count(running, "laufender Auftrag bleibt",
+                "laufende Aufträge bleiben") + ".") + " " + KEPT, "Löschen")) {
+            return;
+        }
+        boolean selectedFinished = currentStatus().map(s -> s.state().terminal()).orElse(false);
+        Background.run(() -> runtime.workspace().deleteJobs(confirmed), deleted -> {
+            if (selectedFinished) {
+                selectedId = null;
+                detail = null;
+                table.clearSelection();
+                render();
+            }
+            feedback.success(Texts.count(deleted, "Auftrag", "Aufträge") + " gelöscht");
+            poll();
+        }, feedback::problem);
     }
 
     private void restart() {

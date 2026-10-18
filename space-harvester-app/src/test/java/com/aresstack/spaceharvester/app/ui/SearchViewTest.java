@@ -79,6 +79,26 @@ class SearchViewTest {
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
     }
 
+    @Test
+    void searchIsKeywordOnlyWithADisabledSemanticCheckbox() throws Exception {
+        start();
+
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        AbstractButton semantic = button(view[0].component(), "Semantische Suche (experimentell)");
+        JTable table = find(view[0].component(), JTable.class).get(0);
+        List<String> columns = new ArrayList<>();
+        for (int column = 0; column < table.getModel().getColumnCount(); column++) {
+            columns.add(table.getModel().getColumnName(column));
+        }
+
+        assertThat(semantic.isEnabled()).isFalse();
+        assertThat(semantic.isSelected()).isFalse();
+        assertThat(columns).doesNotContain("Ähnlichkeit", "Bestand");
+        assertThat(find(view[0].component(), AbstractButton.class)).extracting(AbstractButton::getText)
+                .doesNotContain("Relevanz");
+    }
+
     private void start() throws Exception {
         StringBuilder sources = new StringBuilder();
         for (String id : List.of("alpha", "beta")) {
@@ -121,7 +141,8 @@ class SearchViewTest {
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
         // Sichtbare Häkchen: „Alle“ ist vorgegeben; die Space-Auswahl zeigt die Spaces beider Quellen mit Quelle.
-        List<javax.swing.JCheckBox> boxes = find(view[0].component(), javax.swing.JCheckBox.class);
+        List<javax.swing.JCheckBox> boxes = find(view[0].component(), javax.swing.JCheckBox.class).stream()
+                .filter(javax.swing.JCheckBox::isEnabled).toList();
         assertThat(boxes).extracting(javax.swing.JCheckBox::getText).containsExactly("Alle", "alpha", "beta");
         assertThat(boxes.get(0).isSelected()).isTrue();
         javax.swing.JComboBox<?> spaces = find(view[0].component(), javax.swing.JComboBox.class).get(0);
