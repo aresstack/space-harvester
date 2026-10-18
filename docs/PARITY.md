@@ -102,6 +102,7 @@ Nicht angebunden sind:
 | Seitenbaum ganzer Space live | live je Knoten | `core/application/navigation/PageNavigation#children` live je Knoten (#177), REST `…/spaces/{key}/children`, `…/pages/{pageId}/children`, `/ancestors`, `/links`; daneben `PageQueries#tree` aus dem Cache | gleich (Vergleichstest) |
 | Kindseiten eines Knotens live, in Confluence-Reihenfolge, mit `hasChildren` | `ConfluenceKnowledgeSource#children`, `#treeBatch` | `PageNavigation#children`: live, Reihenfolge der Quelle, `hasChildren`, Stapel mit Cursor | gleich (Vergleichstest) |
 | Vorfahren und Breadcrumbs mit Space-Namen | `#position`, `ConfluenceRestClient#lineage` | `PageNavigation#position`: Space mit Namen, Vorfahren von oben, Rechte je Vorfahr | gleich (Vergleichstest) |
+| Seiten über ihren Titel finden, auch nicht abgeglichene | — (nur exakter Titel bei der Adressauflösung: `ConfluenceRestClient#pageIdByTitle`) | `PageNavigation#findByTitle(caller, sourceId, spaceKeys, title, limit)` → `TitleMatches(sourceId, pages, truncated)`: „Titel enthält“, Spaces wählbar (leer = alle), `limit` 1 bis 100, braucht `metadata` auf die Quelle, jeder Treffer läuft durch die Zugriffsprüfung, `truncated` zählt nur sichtbare Seiten; Confluence über die CQL-Suche des EAC-Adapters mit Space-Filter und Titelprüfung (höchstens 1000 Funde geprüft), Ordner über den Dateinamen; Fähigkeit `title-search`; REST `GET /api/v1/sources/{id}/pages?title=…&spaceKey=…&limit=…` (Standard 25) (#305); in der App folgt der Titelfilter des Explorers (L) | SH+ |
 | Hierarchie anderer Quellen (Ordner in Git) | `PageNavigationSource` in `source-git` | keine | fehlt → #187 |
 
 ## 4. Seitenabruf
@@ -280,6 +281,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 
 Rückmeldungen an den Upstream (Enterprise AI Client):
 
+- `SourceQuery` (source-api) kennt keine Titeloption. Der Core sucht Titel deshalb über die Volltextsuche des Confluence-Adapters und prüft den Titel selbst; mit einer Titeloption (CQL `title ~`) im Upstream würde die Titelsuche auch Seiten finden, die die Volltextsuche nicht unter den ersten 1000 Funden liefert, und käme per Sync in den Core (#305).
 - `OpenAiCompatibleChatAdapter` (chat-openai) liest die Antwort ohne Größengrenze. Der Core begrenzt die Antwort für Suchvarianten über `max_tokens` 1024 und wertet höchstens 64 Ki Zeichen aus; eine Lesegrenze im Stream gehört in den Upstream-Adapter (#302).
 
 In Arbeit und deshalb ohne neues Issue:
