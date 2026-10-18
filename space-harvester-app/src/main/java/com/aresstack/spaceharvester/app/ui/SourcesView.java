@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
+import com.aresstack.spaceharvester.application.sync.SpaceCatalog;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
@@ -480,6 +481,7 @@ public final class SourcesView implements View {
         }
         spacesOf = entry.id();
         spacesModel.set(connection.spaces());
+        loadCatalogs(entry.id(), connection.spaces());
         updateExportButtons();
         reselect(keep);
         // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
@@ -909,6 +911,32 @@ public final class SourcesView implements View {
         }, feedback::problem);
     }
 
+    /**
+     * Lädt Katalogstand und Zähler der Spaces aus dem Cache, ohne die Quelle zu fragen; gilt nur, solange dieselbe
+     * Quelle gewählt ist.
+     */
+    private void loadCatalogs(String sourceId, List<Partition> partitions) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || partitions.isEmpty()) {
+            return;
+        }
+        Background.run(() -> {
+            Map<String, SpaceCatalog> catalogs = new LinkedHashMap<>();
+            for (Partition partition : partitions) {
+                try {
+                    catalogs.put(partition.key(), runtime.workspace().catalog(sourceId, partition.key()));
+                } catch (RuntimeException e) {
+                    // ohne Recht oder Quelle gerade nicht aktiv: die Zeile bleibt ohne Stand
+                }
+            }
+            return catalogs;
+        }, catalogs -> {
+            if (sourceId.equals(spacesOf)) {
+                spacesModel.catalogs(catalogs);
+            }
+        }, failure -> { });
+    }
+
     /** Die angehakten Spaces, ohne Häkchen der gewählte. */
     List<String> spaceTargets() {
         List<String> marked = spacesModel.marked();
@@ -1326,9 +1354,13 @@ public final class SourcesView implements View {
         static final int MARK = 0;
         static final int NAME = 1;
         static final int KEY = 2;
-        static final int EXPORT = 3;
+        static final int STATE = 3;
+        static final int PAGES = 4;
+        static final int EXPORT = 5;
 
         private List<Partition> rows = new ArrayList<>();
+        /** Katalogstand je Space-Key, sobald geladen. */
+        private Map<String, SpaceCatalog> catalogs = Map.of();
         /** Angehakte Spaces (Schlüssel); bleiben beim Neuladen derselben Quelle erhalten. */
         private final java.util.Set<String> marked = new java.util.LinkedHashSet<>();
         private Runnable onMarked = () -> { };
@@ -1336,7 +1368,17 @@ public final class SourcesView implements View {
         void set(List<Partition> partitions) {
             rows = new ArrayList<>(partitions);
             marked.retainAll(rows.stream().map(Partition::key).toList());
+            catalogs = Map.of();
             fireTableDataChanged();
+        }
+
+        void catalogs(Map<String, SpaceCatalog> loaded) {
+            catalogs = Map.copyOf(loaded);
+            fireTableDataChanged();
+        }
+
+        SpaceCatalog catalog(int row) {
+            return catalogs.get(rows.get(row).key());
         }
 
         void onMarked(Runnable listener) {
@@ -1361,7 +1403,7 @@ public final class SourcesView implements View {
 
         @Override
         public int getColumnCount() {
-            return 4;
+            return 6;
         }
 
         @Override
@@ -1369,6 +1411,8 @@ public final class SourcesView implements View {
             return switch (column) {
                 case NAME -> "Name";
                 case KEY -> "Schlüssel";
+                case STATE -> "Katalog";
+                case PAGES -> "Bekannt / im Index";
                 default -> "";
             };
         }
@@ -1404,8 +1448,37 @@ public final class SourcesView implements View {
                 case MARK -> marked.contains(partition.key());
                 case NAME -> partition.name();
                 case KEY -> partition.key();
+                case STATE -> catalogState(catalogs.get(partition.key()));
+                case PAGES -> pages(catalogs.get(partition.key()));
                 default -> "";
             };
         }
+    }
+
+    /** Katalogstand wie im Core: Unbekannt, Teilbestand oder Erfasst. */
+    static String catalogState(SpaceCatalog catalog) {
+        if (catalog == null) {
+            return "";
+        }
+        return switch (catalog.state()) {
+            case UNKNOWN -> "Unbekannt";
+            case PARTIAL -> "Teilbestand";
+            case CATALOGED -> "Erfasst";
+        };
+    }
+
+    /** „bekannte Seiten / Inhalte im Index“, mit veralteten und zurückgehaltenen, wo es welche gibt. */
+    static String pages(SpaceCatalog catalog) {
+        if (catalog == null) {
+            return "";
+        }
+        String text = catalog.knownPages() + " / " + catalog.cachedPages();
+        if (catalog.stalePages() > 0) {
+            text += " · " + catalog.stalePages() + " veraltet";
+        }
+        if (catalog.withheldPages() > 0) {
+            text += " · " + catalog.withheldPages() + " zurückgehalten";
+        }
+        return text;
     }
 }
