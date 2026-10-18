@@ -1,14 +1,21 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -21,7 +28,8 @@ import org.springframework.context.annotation.Configuration;
  * Embeddings über den externen KI-Dienst (ADR 0011). Ohne {@code space-harvester.ai.embedding-model} gibt es keinen
  * Embedding-Prozessor, und {@code sort=relevance} antwortet mit {@code semantic-search-unavailable}. Mit ihm müssen
  * {@code base-url} und {@code embedding-dimensions} gesetzt sein, sonst startet der Dienst nicht. Eingebettet wird im
- * begrenzten Hintergrund der Anreicherungen und nur für Quellen aus {@code external-processing-sources}.
+ * begrenzten Hintergrund der Anreicherungen und nur für Quellen aus {@code external-processing-sources}; die Freigabe je
+ * Quelle, Embedding- und Rerank-Modell folgen der Konfiguration zur Laufzeit ({@link LiveConfiguration}).
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AiProperties.class)
@@ -32,33 +40,92 @@ class AiConfiguration {
         return properties.toSettings();
     }
 
+    /**
+     * Das Embedding-Modell wechselt mit der Konfiguration ({@code ai.embedding-model}, {@code embedding-dimensions},
+     * {@code base-url}, ADR 0015); ohne Modell bettet der Prozessor nichts ein und {@code sort=relevance} antwortet mit
+     * {@code semantic-search-unavailable}. Die Kette (Prozessor, Hintergrund) entsteht nur, wenn beim Start ein Modell
+     * eingestellt ist: Embeddings erstmals einschalten wirkt erst nach einem Neustart.
+     */
     @Bean
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                          ObjectProvider<BuildProperties> build) {
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
         if (!settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
         }
-        return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent(build)).embeddings(),
-                properties.embeddingChunkChars(), KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
-                        properties.embeddingChunkOverlapSentences()), settings::mayProcessExternally);
+        String userAgent = userAgent(build);
+        Swappable<Optional<EmbeddingProvider>> model = Swappable.of(embeddingModel(live.current().ai(), catalog,
+                trust, userAgent));
+        live.listen(change -> {
+            if (!change.embeddingChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            Optional<EmbeddingProvider> next;
+            try {
+                next = embeddingModel(change.next().ai(), catalog, trust, userAgent);
+            } catch (RuntimeException e) {
+                throw new ConfigurationRejectedException("ai." + AiServiceSettings.EMBEDDING_MODEL,
+                        "Das Embedding-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
+            }
+            return () -> model.swap(next);
+        });
+        return new EmbeddingProcessor(() -> model.get().orElse(null), properties.embeddingChunkChars(),
+                KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
+                        properties.embeddingChunkOverlapSentences()), live::mayProcessExternally);
     }
 
     /**
-     * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Kosinusrangfolge um, mit Texten
-     * nur aus Quellen in {@code external-processing-sources}. Ohne {@code rerank-model} bleibt die Reihenfolge.
+     * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Kosinusrangfolge um, mit
+     * Texten nur aus Quellen in {@code external-processing-sources}. Modell und {@code search.rerank} wechseln zur
+     * Laufzeit (ADR 0015); ohne beides bleibt die Reihenfolge.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "rerank-model")
-    SearchReranker searchReranker(AiServiceSettings settings, ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                  ObjectProvider<BuildProperties> build) {
-        if (!settings.reranking()) {
+    SwappableReranker searchReranker(AiServiceSettings settings, ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                     ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        if (settings.rerankModel() != null && !settings.reranking()) {
             throw new IllegalStateException("space-harvester.ai.rerank-model braucht base-url");
         }
-        return new ModelReranker(settings.rerankModel(),
-                RemoteAi.of(settings, catalog, trust, userAgent(build)).reranker(), settings::mayProcessExternally);
+        String userAgent = userAgent(build);
+        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent,
+                live));
+        live.listen(change -> {
+            if (!change.rerankerChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            SearchReranker next;
+            try {
+                next = modelReranker(change.next(), catalog, trust, userAgent, live);
+            } catch (RuntimeException e) {
+                throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
+                        "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
+            }
+            return () -> reranker.swap(next);
+        });
+        return reranker;
+    }
+
+    /** Das Embedding-Modell des Dienstes oder leer ohne Embeddings. */
+    private static Optional<EmbeddingProvider> embeddingModel(AiServiceSettings ai, ConfiguredSourceCatalog catalog,
+                                                              TrustBundles trust, String userAgent) {
+        if (!ai.embeddings()) {
+            return Optional.empty();
+        }
+        EmbeddingProvider provider = RemoteAi.of(ai, catalog, trust, userAgent).embeddings();
+        EmbeddingProcessor.check(provider);
+        return Optional.of(provider);
+    }
+
+    /** Der Cross-Encoder, wenn die Konfiguration umordnen lässt; die Freigabe je Quelle gilt live. */
+    private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
+                                                TrustBundles trust, String userAgent, LiveConfiguration live) {
+        if (!configuration.reranking()) {
+            return SearchReranker.NONE;
+        }
+        AiServiceSettings ai = configuration.ai();
+        return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trust, userAgent).reranker(),
+                live::mayProcessExternally);
     }
 
     private static String userAgent(ObjectProvider<BuildProperties> build) {

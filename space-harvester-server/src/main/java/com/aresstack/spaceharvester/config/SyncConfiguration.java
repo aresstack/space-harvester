@@ -1,6 +1,10 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
@@ -9,6 +13,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.application.sync.SyncCommitted;
 import java.time.Clock;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -27,12 +32,13 @@ class SyncConfiguration {
 
     private static final Logger LOG = LoggerFactory.getLogger(SyncConfiguration.class);
 
+    /** Die Frist für gesperrte Seiten gilt je Quelle und folgt der Konfiguration zur Laufzeit beim nächsten Lauf. */
     @Bean
     SpaceSyncJobs spaceSyncJobs(Jobs jobs, SourceQueries queries, ObjectProvider<SyncBaselineStore> store,
                                 ObjectProvider<PageContentFetcher> fetcher, ObjectProvider<SyncCommitted> afterCommit,
-                                SyncProperties properties) {
+                                LiveConfiguration live) {
         return new SpaceSyncJobs(jobs, queries, store.getIfAvailable(), fetcher.getIfAvailable(), Clock.systemUTC(),
-                afterCommit.orderedStream().toList(), properties.withheldRetention());
+                afterCommit.orderedStream().toList(), live::withheldRetentionFor);
     }
 
     /** Für {@code ?refresh=true} (#27); {@link PageFreshness#available()} erst mit angebundenem Inhaltsabruf. */
@@ -43,42 +49,52 @@ class SyncConfiguration {
 
     /**
      * Regelmäßiger Abgleich (ADR 0014) der Spaces aus {@code space-harvester.sync.spaces} im Abstand
-     * {@code space-harvester.sync.interval}; ohne Abstand oder Spaces, oder solange Cache oder Inhaltsabruf fehlen, ist
-     * nichts eingeplant. {@code space-harvester.sync.mode} (Standard {@code catalog-only}) pflegt nur den Katalog;
-     * {@code sync-cache} lädt zusätzlich gecachte Seiten mit neuer Version neu, {@code full} hält die Spaces
-     * vollständig.
+     * {@code space-harvester.sync.interval} bzw. dem ihrer Quelle ({@code sync.sources.<Quelle>.interval}); ohne Abstand
+     * oder Spaces, oder solange Cache oder Inhaltsabruf fehlen, ist nichts eingeplant. {@code space-harvester.sync.mode}
+     * (Standard {@code catalog-only}, je Quelle überschreibbar) pflegt nur den Katalog; {@code sync-cache} lädt
+     * zusätzlich gecachte Seiten mit neuer Version neu, {@code full} hält die Spaces vollständig. Ändert die
+     * Konfiguration Spaces, Abstand oder Betriebsart, ersetzt der Server den Zeitplan; eine unbekannte Quelle oder ein
+     * Abstand unter einer Minute lehnt die Änderung ab.
      */
     @Bean
-    Reconciliation reconciliation(SpaceSyncJobs syncJobs, SyncProperties properties) {
+    Reconciliation reconciliation(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live) {
         Reconciliation reconciliation = new Reconciliation(syncJobs, null, Clock.systemUTC());
-        if (properties.interval() == null || properties.spaces().isEmpty()) {
-            return reconciliation;
-        }
         if (!syncJobs.available()) {
-            LOG.warn("Hintergrundabgleich konfiguriert, aber Cache-Speicher oder Inhaltsabruf fehlen; er startet nicht");
+            if (!ConfiguredSchedules.plan(live.current(), catalog, false).isEmpty()) {
+                LOG.warn("Hintergrundabgleich konfiguriert, aber Cache-Speicher oder Inhaltsabruf fehlen; "
+                        + "er startet nicht");
+            }
             return reconciliation;
         }
-        for (String space : properties.spaces()) {
-            int slash = space.indexOf('/');
-            reconciliation.schedule(space.substring(0, slash), space.substring(slash + 1), properties.interval(),
-                    properties.mode());
-        }
+        ConfiguredSchedules schedules = new ConfiguredSchedules(reconciliation);
+        schedules.replace(ConfiguredSchedules.plan(live.current(), catalog, false));
+        live.listen(change -> {
+            if (!change.syncChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            List<ConfiguredSchedules.Planned> planned = ConfiguredSchedules.plan(change.next(), catalog, true);
+            return () -> schedules.replace(planned);
+        });
         return reconciliation;
     }
 
     /**
      * Holt beim Start die verpassten Änderungen aller Spaces mit bestätigter Generation nach (ADR 0014,
-     * {@code space-harvester.sync.catch-up-on-start}, Standard aus).
+     * {@code space-harvester.sync.catch-up-on-start}, Standard aus), je Quelle mit ihrer Regel und Betriebsart.
      */
     @Bean
     org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
-            catchUpOnStart(SpaceSyncJobs syncJobs, SyncProperties properties) {
+            catchUpOnStart(SpaceSyncJobs syncJobs, LiveConfiguration live) {
         return event -> {
-            if (!properties.catchUpOnStart() || !syncJobs.available()) {
+            if (!syncJobs.available()) {
                 return;
             }
+            HarvesterConfiguration configuration = live.current();
             try {
-                int started = syncJobs.catchUpAll(null, properties.mode()).size();
+                int started = syncJobs.catchUpAll(null, sourceId -> {
+                    SyncSettings rules = configuration.syncFor(sourceId);
+                    return rules.catchUpOnStart() ? rules.mode() : null;
+                }).size();
                 if (started > 0) {
                     LOG.info("Nachholen beim Start: {} Spaces", started);
                 }

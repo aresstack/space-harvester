@@ -67,8 +67,17 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
   `syncFor`) beim nächsten Abruf bzw. Lauf, Embedding-Modell und Reranker für neue Suchen (alte Vektoren werden ohne
   neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht), der Zeitplan aus `sync.spaces` mit Abstand und
   Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen. Noch nicht live: Bestandsinventur-Zeitplan,
-  Webhooks, `before-search` und `search.prefetch-hits` (nur beim Bauen). Die Bausteine des Servers lesen ihre
-  Properties noch beim Start; dort ist eine neue Version gespeichert und abrufbar, aber noch nicht überall wirksam.
+  Webhooks, `before-search` und `search.prefetch-hits` (nur beim Bauen).
+- Im Server wirkt eine aktivierte Version ebenso sofort (`LiveConfiguration`): Aktualität (`cache.*`,
+  `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
+  beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
+  Reranker, Reranker an, aus oder neues Modell (`ai.rerank-model`, `ai.base-url`, `search.rerank`) für neue Suchen,
+  der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
+  einer Minute lehnt die Änderung ab) und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live
+  oder schaltet ab, wenn beim Start eines eingestellt war; **Embeddings erstmals einschalten braucht einen Neustart**
+  (die Kette entsteht nur mit `ai.embedding-model` beim Start). Noch nicht live im Server: Bestandsinventur-Zeitplan,
+  Webhooks, `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
+  gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Reihenfolge der Quellen
 
