@@ -20,9 +20,9 @@ import java.util.Locale;
 /**
  * Einstellungen und Diagnose in Reitern wie im Enterprise AI Client: „Allgemein“ (welche Datei gilt, was daran nicht
  * stimmt, wo die Daten liegen, Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
- * Quellen), „Netzwerk“ (Proxy und Serverzertifikate) und „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte
- * Seiten). Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“. Jede Änderung schreibt die Datei und startet die
- * Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
+ * Quellen), „Netzwerk“ (Proxy und Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für
+ * gesperrte Seiten) und „Sicherheit“ (Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“. Jede
+ * Änderung schreibt die Datei und startet die Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
 public final class SettingsView implements View {
 
@@ -31,6 +31,7 @@ public final class SettingsView implements View {
     static final String MODELS = "Modelle";
     static final String NETWORK = "Netzwerk";
     static final String CACHE = "Cache";
+    static final String SECURITY = "Sicherheit";
     static final String EXAMPLE = "/com/aresstack/spaceharvester/app/space-harvester-app.example.yml";
 
     private final AppContext context;
@@ -40,6 +41,8 @@ public final class SettingsView implements View {
     private final Facts storage = new Facts();
     private final Facts network = new Facts();
     private final Facts cache = new Facts();
+    /** Reiter „Sicherheit“: wo Geheimnisse liegen, je Eintrag nur „gespeichert“ oder „fehlt“, nie der Wert. */
+    final Facts security = new Facts();
     private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
             "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
     private final PillTabs tabs = new PillTabs();
@@ -128,6 +131,14 @@ public final class SettingsView implements View {
                 withButtons(network, proxy, tls))));
         tabs.tab(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
                 withButtons(cache, editCache))));
+        JPanel vault = new JPanel(new BorderLayout(0, 8));
+        vault.setOpaque(false);
+        vault.add(Comic.note("Geheimnisse stehen nie in der Konfigurationsdatei: Tokens, Passwörter, der API-Key des "
+                + "KI-Dienstes und das Proxy-Passwort liegen im Tresor dieses Windows-Kontos (DPAPI), in der Datei "
+                + "steht nur der Platzhalter ${NAME}. Ändern und entfernen an der Quelle, unter KI-Dienst bzw. Proxy."),
+                BorderLayout.NORTH);
+        vault.add(security, BorderLayout.CENTER);
+        tabs.tab(SECURITY, Comic.column(Comic.plate("Tresor", Comic.RED, vault)));
         tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
         root.add(tabs, BorderLayout.CENTER);
         context.onChange(ignored -> {
@@ -144,6 +155,42 @@ public final class SettingsView implements View {
             }
         });
         render();
+    }
+
+    private void renderSecurity(AppSettings settings) {
+        security.reset();
+        security.add("Tresor", context.vault().describe());
+        if (settings == null) {
+            return;
+        }
+        security.add("API-Key des KI-Dienstes", context.aiKeyAvailable() ? "gespeichert"
+                : settings.ai().configured() ? "fehlt" : "kein KI-Dienst eingerichtet");
+        ProxySettings proxy = settings.proxy();
+        if (proxy != null && proxy.authentication() != null) {
+            security.add("Proxy-Passwort", context.proxyPasswordAvailable(proxy.authentication().username())
+                    ? "gespeichert" : "fehlt");
+        }
+        for (AppSettings.SourceEntry source : settings.sources()) {
+            String state;
+            if (context.vault().has(source.id())) {
+                state = "im Tresor";
+            } else if (source.secretMissing()) {
+                state = "fehlt";
+            } else if (source.secretVariable() != null) {
+                state = "aus ${" + source.secretVariable() + "}";
+            } else {
+                state = "keins nötig";
+            }
+            security.add("Zugang " + source.config().title(), state);
+        }
+        try {
+            if (new ConfigFileEditor(context.loader()).fileHasPlaintextSecret(context.configFile())) {
+                security.add("Konfigurationsdatei", "enthält ein Geheimnis im Klartext; bitte durch ${NAME} ersetzen",
+                        Comic.RED);
+            }
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // Nicht lesbar: steht schon unter Allgemein als Problem.
+        }
     }
 
     @Override
@@ -245,6 +292,7 @@ public final class SettingsView implements View {
                 }
             }
         }
+        renderSecurity(settings);
         cache.reset();
         if (settings != null) {
             AppSettings.Cache c = settings.cache();
@@ -253,8 +301,9 @@ public final class SettingsView implements View {
                 cache.add(SettingDialogs.CACHE_MAX_AGE, ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage, danach "
                         + (c.versionCheck() ? "Version prüfen" : "neu laden"));
             }
-            cache.add(SettingDialogs.WITHHELD_RETENTION, Texts.count(c.withheldRetention().toDays(), "Tag",
-                            "Tagen"));
+            java.time.Duration kept = c.withheldRetention();
+            cache.add(SettingDialogs.WITHHELD_RETENTION, kept.equals(java.time.Duration.ofDays(kept.toDays()))
+                    ? Texts.count(kept.toDays(), "Tag", "Tagen") : ConfigFileEditor.duration(kept));
         }
         runtime.reset();
         AppRuntime current = context.runtime();

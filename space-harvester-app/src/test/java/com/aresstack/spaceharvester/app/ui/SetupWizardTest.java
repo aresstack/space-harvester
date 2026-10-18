@@ -94,6 +94,14 @@ class SetupWizardTest {
         assertThat(context.loader().read(config, text).setupCompleted()).isTrue();
     }
 
+    @Test
+    void theSecurityTabNamesWhereSecretsLiveButNeverTheirValues() throws Exception {
+        SettingsView[] view = new SettingsView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SettingsView(context));
+        assertThat(texts(view[0].security)).contains("Tresor", "API-Key des KI-Dienstes",
+                "kein KI-Dienst eingerichtet", "Zugang Firmenwiki", "keins nötig");
+    }
+
     private static java.util.List<String> texts(java.awt.Container container) {
         java.util.List<String> texts = new java.util.ArrayList<>();
         for (java.awt.Component child : container.getComponents()) {

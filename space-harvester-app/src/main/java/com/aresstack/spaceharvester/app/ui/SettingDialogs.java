@@ -426,14 +426,17 @@ final class SettingDialogs {
         refresh.addActionListener(e -> toggle.run());
         toggle.run();
         JTextField retention = Comic.field(6);
-        retention.setText(String.valueOf(current.withheldRetention().toDays()));
+        // Ganze Tage als Zahl, sonst wie in der Datei (z. B. 12h): Kürzere Fristen gehen so nicht verloren.
+        java.time.Duration kept = current.withheldRetention();
+        retention.setText(kept.equals(java.time.Duration.ofDays(kept.toDays())) ? String.valueOf(kept.toDays())
+                : ConfigFileEditor.duration(kept));
         Rows rows = new Rows();
         rows.add(REFRESH_TITLE, refresh, "Immer Version prüfen: jede Anzeige fragt die Version bei der Quelle ab und "
                 + "lädt nur Geänderte neu. Zeitbasiert: innerhalb der Frist gilt die gespeicherte Seite ohne "
                 + "Rückfrage, danach ohne Versionsprüfung neu laden bzw. erst die Version vergleichen");
         rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 30m, 6h oder 1d; höchstens 365 Tage");
         rows.add(WITHHELD_RETENTION, retention, "Tage, die eine Seite ohne Leserecht gesperrt im Bestand bleibt, "
-                + "bevor ein Abgleich sie endgültig entfernt; 0 sofort");
+                + "bevor ein Abgleich sie endgültig entfernt, oder eine Dauer wie 12h; 0 sofort");
         Supplier<AppSettings.Cache> draft = () -> {
             Object chosen = refresh.getSelectedItem();
             boolean always = ALWAYS_CHECK.equals(chosen);
@@ -454,7 +457,7 @@ final class SettingDialogs {
                 problems.add("Die Frist ist eine Dauer wie 30m, 6h oder 1d, mehr als 0 und höchstens 365 Tage.");
             }
             if (days(retention.getText()) == null) {
-                problems.add("Die Frist für gesperrte Seiten ist eine Zahl von Tagen ab 0.");
+                problems.add("Die Frist für gesperrte Seiten ist eine Zahl von Tagen ab 0 oder eine Dauer wie 12h.");
             }
             return problems;
         }, () -> {
@@ -484,9 +487,10 @@ final class SettingDialogs {
         };
     }
 
-    private static java.time.Duration days(String text) {
+    /** Eine Zahl sind Tage; sonst eine Dauer wie 12h oder 36h. */
+    static java.time.Duration days(String text) {
         String value = text == null ? "" : text.strip();
-        return value.matches("\\d{1,5}") ? java.time.Duration.ofDays(Long.parseLong(value)) : null;
+        return value.matches("\\d{1,5}") ? java.time.Duration.ofDays(Long.parseLong(value)) : duration(value);
     }
 
     private static JCheckBox checkbox(String text, boolean selected) {

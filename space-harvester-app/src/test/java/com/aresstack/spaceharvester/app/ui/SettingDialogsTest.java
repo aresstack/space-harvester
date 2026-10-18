@@ -345,6 +345,8 @@ class SettingDialogsTest {
         assertThat(SettingDialogs.duration("1d")).isEqualTo(java.time.Duration.ofDays(1));
         assertThat(SettingDialogs.duration("bald")).isNull();
         assertThat(SettingDialogs.duration("-1h")).isNull();
+        assertThat(SettingDialogs.days("30")).isEqualTo(java.time.Duration.ofDays(30));
+        assertThat(SettingDialogs.days("12h")).as("kürzere Fristen bleiben").isEqualTo(java.time.Duration.ofHours(12));
     }
 
     @Test
