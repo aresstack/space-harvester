@@ -86,10 +86,10 @@ public final class SourcesView implements View {
     private final TableRowSorter<SpacesModel> sorter = new TableRowSorter<>(spacesModel);
     private final JTextField filter = Comic.field(14);
     private final JLabel spacesHint = Comic.muted(" ");
-    final ComposerButton exportAll = Comic.button("Alle exportieren …",
-            "Exportieren mit allen Spaces dieser Quelle vorbelegt öffnen");
-    final ComposerButton exportMarked = Comic.button("Ausgewählte exportieren …",
-            "Exportieren mit den angehakten Spaces vorbelegt öffnen");
+    final ComposerButton exportAll = Comic.button("Alle herunterladen …",
+            "Herunterladen mit allen Spaces dieser Quelle vorbelegt öffnen");
+    final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen …",
+            "Herunterladen mit den angehakten Spaces vorbelegt öffnen");
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
@@ -135,7 +135,7 @@ public final class SourcesView implements View {
         // Derselbe runde Knopf wie an den Einstellungen, je Zeile mit Export-Symbol; der Rand erscheint beim
         // Darüberfahren.
         spaces.getColumnModel().getColumn(SpacesModel.EXPORT).setCellRenderer(new RowButton(Glyph.EXPORT,
-                "Exportieren mit diesem Space vorbelegt öffnen", () -> hoverRow));
+                "Herunterladen mit diesem Space vorbelegt öffnen", () -> hoverRow));
         spaces.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
@@ -700,7 +700,7 @@ public final class SourcesView implements View {
         }
     }
 
-    /** Öffnet Exportieren mit dieser Quelle und diesen Spaces; gestartet wird erst dort. */
+    /** Öffnet Herunterladen mit dieser Quelle und diesen Spaces; gestartet wird erst dort. */
     private void exportSpaces(List<String> keys) {
         String id = selectedId();
         if (id != null && !keys.isEmpty()) {
@@ -896,7 +896,7 @@ public final class SourcesView implements View {
             check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
             check.addActionListener(e -> SourcesView.this.check(entry));
             menu.add(check);
-            JMenuItem export = new JMenuItem("Exportieren …");
+            JMenuItem export = new JMenuItem("Herunterladen …");
             export.setToolTipText("Export vorbereiten, mit dem gewählten Space");
             export.setEnabled(running);
             export.addActionListener(e -> context.navigator().prepareExport(entry.id(),

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -12,6 +13,8 @@ import org.slf4j.LoggerFactory;
 
 import javax.swing.SwingUtilities;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -30,7 +33,7 @@ public final class AppContext {
     /** Die Bereiche der Hauptnavigation. */
     public enum Section {
         // Reihenfolge der Seitenleiste; die Suche ist die Startansicht.
-        SEARCH("Suche"), SOURCES("Wissensquellen"), CONTENT("Inhalte"), EXPORTS("Exportieren"),
+        SEARCH("Suche"), SOURCES("Wissensquellen"), CONTENT("Inhalte"), EXPORTS("Herunterladen"),
         ACTIVITIES("Aufträge"), STATUS("Status"), SETTINGS("Einstellungen");
 
         private final String title;
@@ -57,7 +60,7 @@ public final class AppContext {
         /** Status mit der Diagnose genau dieses Auftrags. */
         void showDiagnosis(String jobId);
 
-        /** Exportieren mit Quelle und diesen Spaces vorbelegt; gestartet wird erst dort. */
+        /** Herunterladen mit Quelle und diesen Spaces vorbelegt; gestartet wird erst dort. */
         void prepareExport(String sourceId, java.util.List<String> spaceKeys);
 
         default void prepareExport(String sourceId, String spaceKey) {
@@ -167,6 +170,28 @@ public final class AppContext {
             LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
         }
         return aiKey;
+    }
+
+    /**
+     * Speichert den Ausgabeordner in der Datei ({@code null} für Downloads) und übernimmt ihn ohne Neustart der
+     * Laufzeit: Nur die Oberfläche legt dort Dateien ab.
+     */
+    public void outputDirectory(Path directory, Runnable done, Consumer<Throwable> failed) {
+        Background.run(() -> {
+            ConfigFileEditor editor = new ConfigFileEditor(loader);
+            String text = Files.isRegularFile(configFile)
+                    ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withOutputDirectory(configFile,
+                    new ConfigFileEditor.Draft(text, null), directory);
+            editor.save(configFile, written, !editor.fileHasPlaintextSecret(configFile));
+            return written.settings().outputDirectory();
+        }, saved -> {
+            if (settings != null) {
+                settings = settings.withOutputDirectory(saved);
+            }
+            fire();
+            done.run();
+        }, failed);
     }
 
     /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */

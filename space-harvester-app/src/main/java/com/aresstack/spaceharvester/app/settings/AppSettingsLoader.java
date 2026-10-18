@@ -190,7 +190,8 @@ public final class AppSettingsLoader {
                     + "einrichten");
         }
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
-                storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems), problems);
+                storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
+                path(get(app, "output-directory"), problems), problems);
     }
 
     private AppSettings.SourceEntry source(Map<?, ?> source, int index, List<String> problems) {

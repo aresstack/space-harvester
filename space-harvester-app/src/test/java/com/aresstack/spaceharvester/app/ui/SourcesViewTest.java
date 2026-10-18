@@ -52,7 +52,7 @@ class SourcesViewTest {
 
         // Keine Knopfleiste mehr, weder über den Details noch über der Space-Tabelle.
         assertThat(find(root, AbstractButton.class)).noneMatch(b -> List.of("Verbindung prüfen", "Bearbeiten …",
-                "Entfernen …", "Öffnen", "Synchronisieren", "Exportieren …").contains(b.getText()));
+                "Entfernen …", "Öffnen", "Synchronisieren", "Herunterladen …").contains(b.getText()));
         List<IconButton> syncs = buttons(root, "Gewählten Space");
         List<IconButton> pencils = buttons(root, "Einstellungen der Quelle");
         assertThat(syncs).hasSize(2);
@@ -256,7 +256,7 @@ class SourcesViewTest {
         assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
-        // Exportieren übernimmt die Spaces; JSON ist vorgewählt, gestartet ist noch nichts.
+        // Herunterladen übernimmt die Spaces; JSON ist vorgewählt, gestartet ist noch nichts.
         ExportsView[] exports = new ExportsView[1];
         SwingUtilities.invokeAndWait(() -> {
             exports[0] = new ExportsView(context);
