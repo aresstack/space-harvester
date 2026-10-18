@@ -68,7 +68,7 @@ Nicht angebunden sind:
 | Labels samt Vollständigkeit | `#toPage`, `LABELS_COMPLETE` | Kopie; `attributesHash` | gleich |
 | Anhangsliste, Download mit Bytegrenze | `#storedAttachments`, `#loadAttachmentFile` | Kopie; `core/application/assets/Assets`; fremde Weiterleitungen bewusst aus (SSRF, #90) | gleich |
 | Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` | keine | fehlt → #183 |
-| CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | Kopie über `searchPages`; Space-Filter wird nachträglich angewendet, `excludedPartitions` ungenutzt | teilweise → #179 |
+| CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | dieselbe Quelle über `KnowledgeSourceHarvestSource#searchPages(text, limit, SearchSpaces)`: `KeywordSearch.Query` mit `spaceKeys`/`excludedSpaceKeys` (REST `spaceKey`, `excludeSpaceKey`) wird zu `space not in (…)` in der CQL; nur bestimmte Spaces werden als Ausschluss der übrigen gesetzt; ab 200 auszuschließenden Spaces filtern nur noch die Kopfdaten nach, und Treffer des gewählten Space können hinter fremden zurückbleiben (der EAC schließt ohne Obergrenze aus, `PartitionSelectingSourceProvider`) | teilweise → #179 |
 | URL-Auflösung: `pageId=`, `/spaces/K/pages/ID`, `/x/…` | `conf/ConfluenceLinks`, `#resolveAddress` | `core/application/query/PageUrls` | gleich |
 | URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | `Harvester.addresses()` (`PageAddresses`), `pageByUrl`, REST `GET /api/v1/addresses` (#239); dazu Lesezeichen `space-harvester://…` | gleich (Vergleichstest Adressen) |
 | Paginierung, Wiederholung bei 429/5xx mit Backoff, Fehlerabbildung, HTML-statt-Datei-Erkennung | `#paged`, `#retryable`, `#statusFailure`, `HtmlResponseDiagnosis` | Kopie; `maxRetries=2`, `InFlightLimit`, `SourceAccessException.Reason` | gleich |
@@ -245,7 +245,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #176 | Leseansicht (`body.view`/`export_view`) als Core-Use-Case | Q |
 | #177 | Live-Navigation: Kindseiten, Breadcrumbs, Querverweise | Q |
 | #178 | URL- und Ressourcenauflösung vollständig | Q |
-| #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q |
+| #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage (offen: Auswahl ab 200 Spaces) | Q |
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q |
 | #181 | Hybride Suche: Zerlegung, RRF, Rerank-Modell, verwandte Abschnitte | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
@@ -350,6 +350,6 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 ### Noch nicht abgedeckt
 
-Suche und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen: Space-Filter der Suche in der Anfrage #179, Text aus Anhängen #183,
+Suche und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen: Volltextindex, Index-Rückfall und Vorladen #180, Text aus Anhängen #183,
 Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.
