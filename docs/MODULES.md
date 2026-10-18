@@ -122,6 +122,16 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      Ein lokales Modell bleibt damit im Programm, nicht im Core (ADR 0011).
    - `reranker(SearchReranker)`: ordnet das Fenster der semantischen Suche nach der Ähnlichkeit neu, nur als Umordnung.
    - `imageDescriber(ImageDescriber)` und `accessPolicy(AccessPolicy)`.
+
+   Zur Laufzeit verwaltet `Harvester.sourceManagement()` die Quellen wie `KnowledgeSourceManagement` im Enterprise AI
+   Client:
+   - `validate`: Probleme ohne Werte.
+   - `test`: „Verbindung testen“, live, ohne Ablage.
+   - `add` und `change`: an Ort und Stelle; bei neuem Ziel (Typ oder Basisadresse) werden die alten Daten entfernt.
+   - `remove`: entfernt die Quelle samt ihrer Daten, also offene Aufträge, Seiten-Cache mit Suchindex und
+     Abgleichständen, Anreicherungen mit Embeddings und Lese-Ansichten sowie Assets. Exporte bleiben mit ihren Bildern.
+
+   Die Einstellungen dauerhaft ablegen bleibt Sache des Programms.
 6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
    Entwickler), Sources- und Javadoc-JAR; Koordinaten `com.aresstack:space-harvester-core`. Weil der Core die Kopie
    `enterprise-ai-sources` braucht, bekommt auch sie eine Publikation

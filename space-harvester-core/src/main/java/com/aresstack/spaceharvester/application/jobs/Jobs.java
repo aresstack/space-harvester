@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.jobs;
 
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -327,6 +329,38 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Bricht alle offenen Aufträge einer Quelle ab, etwa wenn sie entfernt wird (#188), und wartet, bis keiner mehr
+     * läuft. Laufende Aufträge enden an ihrem nächsten {@link JobContext#checkpoint()}.
+     *
+     * @return {@code true}, wenn innerhalb von {@code timeout} keiner der Quelle mehr offen ist
+     */
+    public boolean cancelSource(String sourceId, Duration timeout) throws InterruptedException {
+        Objects.requireNonNull(sourceId, "sourceId");
+        List<String> ids;
+        synchronized (lock) {
+            ids = open.values().stream().filter(job -> job.sourceId.equals(sourceId)).map(job -> job.id).toList();
+        }
+        for (String id : ids) {
+            try {
+                cancel(id);
+            } catch (UnknownJobException e) {
+                // inzwischen beendet und gelöscht
+            }
+        }
+        long deadline = System.nanoTime() + timeout.toNanos();
+        synchronized (lock) {
+            while (open.values().stream().anyMatch(job -> job.sourceId.equals(sourceId))) {
+                long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                if (left <= 0) {
+                    return false;
+                }
+                lock.wait(left);
+            }
+        }
+        return true;
+    }
+
+    /**
      * Fordert den Abbruch an. Ein wartender Auftrag ist danach {@link JobState#CANCELLED}, ein laufender trägt
      * {@link JobStatus#cancelRequested()} bis zu seinem nächsten {@link JobContext#checkpoint()}. Für einen beendeten
      * Auftrag ändert sich nichts.
@@ -342,6 +376,7 @@ public class Jobs implements AutoCloseable {
                 if (wasQueued) {
                     queued.remove(job);
                     open.remove(jobId);
+                    lock.notifyAll();
                     job.finish(JobState.CANCELLED, null, clock.instant());
                 }
                 // Erst das Ereignis, dann der Zustand: Ein beendeter Auftrag bekommt danach nie mehr ein Ereignis, sonst
@@ -521,6 +556,7 @@ public class Jobs implements AutoCloseable {
                 runningFollowUps--;
             }
             open.remove(job.id);
+            lock.notifyAll();
             finished = job.snapshot();
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.
             recordEnd(job, finished, cause);

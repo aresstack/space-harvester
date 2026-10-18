@@ -139,6 +139,7 @@ public final class Harvester implements AutoCloseable {
     private final Assets assets;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
+    private final SourceManagement sourceManagement;
     private final TrustBundles trustBundles;
     private final String userAgent;
 
@@ -235,8 +236,8 @@ public final class Harvester implements AutoCloseable {
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
-            this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
-                    builder.maxAssetBytes, clock, builder.imageDescriber);
+            FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
+            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, builder.imageDescriber);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
@@ -244,6 +245,8 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
+            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, assetStore,
+                    exportWriter, clock);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);
@@ -258,6 +261,14 @@ public final class Harvester implements AutoCloseable {
     /** Aufrufer für {@link #pages()} und {@link #search()}; die Richtlinie aus dem Builder entscheidet über ihn. */
     public AccessContext caller() {
         return caller;
+    }
+
+    /**
+     * Quellen zur Laufzeit prüfen, testen, hinzufügen, ändern und entfernen (#188), samt Entfernen ihrer abgeleiteten
+     * Daten. Prüft keine {@code AccessPolicy}: Die Verwaltung gehört dem Betreiber des einbettenden Programms.
+     */
+    public SourceManagement sourceManagement() {
+        return sourceManagement;
     }
 
     /** Quellen, Partitionen (Spaces), Live-Metadaten und Anhangslisten direkt bei der Quelle. */

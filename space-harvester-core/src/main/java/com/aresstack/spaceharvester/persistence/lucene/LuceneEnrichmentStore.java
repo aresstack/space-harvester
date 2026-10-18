@@ -33,16 +33,17 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
+import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
-import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.LockObtainFailedException;
 import org.apache.lucene.util.Bits;
+import org.apache.lucene.util.BytesRef;
 
 /**
  * Ablage der Anreicherungen ({@link EnrichmentStore}, #29) in einem eigenen Lucene-Index neben dem Seiten-Index: ein
@@ -218,6 +219,22 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         try {
             writer.deleteDocuments(new Term(PAGE, page(key)), new Term(VECTOR_PAGE, page(key)));
             changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    /** Entfernt alle Ergebnisse und Vektoren einer Quelle (#188), auch abgelegte Lese-Ansichten. */
+    public synchronized void removeSource(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        requireOpen();
+        String prefix = sourceId + SEPARATOR;
+        try {
+            writer.deleteDocuments(new PrefixQuery(new Term(PAGE, prefix)), new PrefixQuery(new Term(VECTOR_PAGE,
+                    prefix)));
+            writer.commit();
+            uncommitted = 0;
+            searchers.maybeRefreshBlocking();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
         }
