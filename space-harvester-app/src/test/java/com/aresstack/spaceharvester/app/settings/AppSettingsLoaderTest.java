@@ -158,4 +158,31 @@ class AppSettingsLoaderTest {
         AppSettings settings = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
         assertThat(settings.problems()).anyMatch(problem -> problem.contains("disabled-sources"));
     }
+
+    @Test
+    void sourceRulesTheCoreWouldRejectAreReportedAndFallBackToGlobal() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    sources:
+                      wiki:
+                        interval: PT30S
+                        inventory-interval: PT2H
+                        refresh-strategy: time-based
+                        withheld-retention: -P1D
+                      docs:
+                        max-age: P400D
+                """, Map.of());
+        assertThat(settings.problems())
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.interval"))
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.refresh-strategy"))
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.withheld-retention"))
+                .anyMatch(problem -> problem.contains("sync.sources.docs.max-age"));
+        var wiki = settings.syncRule("wiki");
+        assertThat(wiki.changeSearchInterval()).as("unter einer Minute gilt global").isNull();
+        assertThat(wiki.inventoryInterval()).isEqualTo(java.time.Duration.ofHours(2));
+        assertThat(wiki.refreshStrategy()).as("zeitbasiert ohne Frist gilt global").isNull();
+        assertThat(wiki.withheldRetention()).isNull();
+        assertThat(settings.syncRule("docs").maxAge()).isNull();
+    }
 }

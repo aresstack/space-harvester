@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncMode;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -197,20 +198,21 @@ public final class AppSettingsLoader {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
                     + "einrichten");
         }
+        AppSettings.Cache cache = cache(map(get(root, "cache")), map(get(root, "sync")), problems);
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
                 path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
-                tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems),
+                tls(get(network, "tls"), problems), cache,
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
-                syncRules(map(get(map(get(root, "sync")), "sources")), problems));
+                syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems));
     }
 
-    /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */
     /**
      * Regeln je Quelle unter {@code space-harvester.sync.sources.<Quelle>}, wie {@code HarvesterConfiguration} sie
-     * liest; ein fehlendes Feld gilt global.
+     * liest und prüft; ein fehlendes Feld gilt global, ein ungültiges wird gemeldet und gilt ebenfalls global.
      */
-    private Map<String, SourceSyncOverride> syncRules(Map<?, ?> sources, List<String> problems) {
+    private Map<String, SourceSyncOverride> syncRules(Map<?, ?> sources, Duration globalMaxAge,
+            List<String> problems) {
         Map<String, SourceSyncOverride> rules = new java.util.LinkedHashMap<>();
         for (Map.Entry<?, ?> entry : sources.entrySet()) {
             String id = String.valueOf(entry.getKey());
@@ -236,26 +238,55 @@ public final class AppSettingsLoader {
                             + "time-based-with-version-check");
                 }
             }
-            rules.put(id, new SourceSyncOverride(
-                    optionalDuration(get(rule, SourceSyncOverride.CHANGE_SEARCH_INTERVAL), prefix + "interval", problems),
-                    optionalDuration(get(rule, SourceSyncOverride.INVENTORY_INTERVAL), prefix + "inventory-interval",
-                            problems),
+            if (id.isBlank() || !id.equals(id.strip()) || id.contains(".")) {
+                problems.add("space-harvester.sync.sources: ungültige Quellen-ID „" + id + "“");
+                continue;
+            }
+            Duration changeSearch = interval(optionalDuration(get(rule, SourceSyncOverride.CHANGE_SEARCH_INTERVAL),
+                    prefix + "interval", problems), prefix + "interval", problems);
+            Duration inventory = interval(optionalDuration(get(rule, SourceSyncOverride.INVENTORY_INTERVAL),
+                    prefix + "inventory-interval", problems), prefix + "inventory-interval", problems);
+            Duration maxAge = optionalDuration(get(rule, SourceSyncOverride.MAX_AGE), prefix + "max-age", problems);
+            if (maxAge != null && (maxAge.isNegative() || maxAge.compareTo(CacheFreshness.MAX_AGE) > 0)) {
+                problems.add(prefix + "max-age liegt zwischen 0 und 365 Tagen");
+                maxAge = null;
+            }
+            Duration effectiveAge = maxAge == null ? globalMaxAge : maxAge;
+            if (strategy != null && strategy != RefreshStrategy.ALWAYS_CHECK_VERSION && effectiveAge.isZero()) {
+                problems.add(prefix + "refresh-strategy: die zeitbasierte Aktualisierung braucht eine Frist "
+                        + "(max-age)");
+                strategy = null;
+            }
+            Duration retention = optionalDuration(get(rule, SourceSyncOverride.WITHHELD_RETENTION),
+                    prefix + "withheld-retention", problems);
+            if (retention != null && retention.isNegative()) {
+                problems.add(prefix + "withheld-retention darf nicht negativ sein");
+                retention = null;
+            }
+            rules.put(id, new SourceSyncOverride(changeSearch, inventory,
                     optionalFlag(get(rule, SourceSyncOverride.EVENTS), prefix + "events", problems),
                     optionalFlag(get(rule, SourceSyncOverride.CATCH_UP_ON_START), prefix + "catch-up-on-start",
                             problems),
                     optionalFlag(get(rule, SourceSyncOverride.BEFORE_SEARCH), prefix + "before-search", problems),
-                    mode, strategy,
-                    optionalDuration(get(rule, SourceSyncOverride.MAX_AGE), prefix + "max-age", problems),
-                    optionalDuration(get(rule, SourceSyncOverride.WITHHELD_RETENTION), prefix + "withheld-retention",
-                            problems)));
+                    mode, strategy, maxAge, retention));
         }
         return rules;
+    }
+
+    /** Ein Abstand unter einer Minute wird gemeldet und gilt global, wie der Core ihn ablehnt. */
+    private Duration interval(Duration value, String key, List<String> problems) {
+        if (value != null && value.compareTo(SyncSettings.MIN_INTERVAL) < 0) {
+            problems.add(key + " muss mindestens eine Minute betragen");
+            return null;
+        }
+        return value;
     }
 
     private Boolean optionalFlag(Object raw, String key, List<String> problems) {
         return raw == null ? null : flag(raw, false, key, problems);
     }
 
+    /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */
     private AppSettings.Cache cache(Map<?, ?> cache, Map<?, ?> sync, List<String> problems) {
         Duration maxAge = duration(get(cache, "max-age"), Duration.ZERO, "space-harvester.cache.max-age", problems);
         if (maxAge.isNegative() || maxAge.compareTo(CacheFreshness.MAX_AGE) > 0) {
