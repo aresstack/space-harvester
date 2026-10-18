@@ -212,7 +212,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | nur Option `directory` | teilweise → #187 |
 | Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort` | keine | fehlt → #187 |
 | MediaWiki, Git, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
-| Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | `Harvester.sourceManagement()` (#227): `validate`, `test`, `add`, `change`, `remove` mit Rückzug von Cache, Anreicherungen und Assets | gleich (Vergleichstest Quellenverwaltung) außer: dasselbe Ziel unter neuer ID wird angenommen, Abschalten ohne Entfernen fehlt → #188 |
+| Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | `Harvester.sourceManagement()` (#227): `validate`, `test`, `add`, `change`, `remove` mit Rückzug von Cache, Anreicherungen und Assets | gleich (Vergleichstest Quellenverwaltung), mit `setEnabled` und Ablehnung desselben Ziels unter neuer ID |
 | Eigene Adapter, Embedding-Anbieter, Reranker, Secret-Speicher einhängen | Kompositionspunkt `app/composition` | `Harvester.builder()` mit `sourceAdapter`, `secretProvider`, `embeddings`, `reranker` (#226) | gleich |
 | Werkzeuge für Agenten (`knowledge_search`, `_read`, `_tree`, `_attachments`, `_resolve_url`) | `astu/acropolis/…/mcp/*Tool` | — | EAC (Adapter); die Use-Cases dahinter liefern #177, #178, #180 |
 
@@ -325,7 +325,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
 Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core behält sie. Quellenverwaltung:
-zwei bekannte Lücken für #188 (dasselbe Ziel unter neuer ID, Abschalten ohne Entfernen).
+keine bekannten Lücken.
 
 Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
 Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht, `text` zählt

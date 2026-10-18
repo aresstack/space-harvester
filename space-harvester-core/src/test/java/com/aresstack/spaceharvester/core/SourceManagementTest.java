@@ -107,6 +107,48 @@ class SourceManagementTest {
     }
 
     @Test
+    void theSameTargetUnderASecondIdIsRejected() {
+        try (Harvester harvester = Harvester.builder().source(wiki(SERVER.baseUrl())).dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            URI sameTarget = URI.create(SERVER.baseUrl().toString().replace("http://", "HTTP://") + "/");
+            SourceSettingsConfig copy = new SourceSettingsConfig("wiki-kopie", "confluence", "Wiki (Kopie)",
+                    sameTarget, SourceSettingsConfig.Auth.anonymous(), Map.of());
+
+            assertThat(sources.validate(copy, false))
+                    .containsExactly("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie 'wiki')");
+            assertThatThrownBy(() -> sources.add(copy)).isInstanceOf(InvalidSourceConfigurationException.class);
+            assertThat(sources.test(copy, false).successful()).isFalse();
+            // Dieselbe Quelle selbst darf ihr Ziel behalten.
+            assertThat(sources.validate(wiki(sameTarget), true)).isEmpty();
+        }
+    }
+
+    @Test
+    void aDisabledSourceKeepsItsDataButTakesPartInNothing() throws Exception {
+        try (Harvester harvester = Harvester.builder().source(wiki(SERVER.baseUrl())).dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30));
+
+            assertThat(sources.setEnabled("wiki", false)).isTrue();
+            assertThat(sources.setEnabled("wiki", false)).isFalse();
+            assertThat(sources.enabled("wiki")).isFalse();
+            assertThat(sources.sources()).extracting(SourceSettingsConfig::id).containsExactly("wiki");
+            assertThat(harvester.sources().sources()).isEmpty();
+            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
+                    .isInstanceOf(UnknownSourceException.class);
+            assertThatThrownBy(() -> harvester.sync("wiki", "DEV")).isInstanceOf(UnknownSourceException.class);
+            // Auch abgeschaltet belegt sie ihr Ziel.
+            assertThat(sources.validate(new SourceSettingsConfig("zweites", "confluence", null, SERVER.baseUrl(),
+                    null, Map.of()), false)).isNotEmpty();
+
+            assertThat(sources.setEnabled("wiki", true)).isTrue();
+            assertThat(sources.enabled("wiki")).isTrue();
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10).pages()).hasSize(1);
+            assertThatThrownBy(() -> sources.setEnabled("fehlt", true)).isInstanceOf(UnknownSourceException.class);
+        }
+    }
+
+    @Test
     void aFailedTestNamesTheKindOfProblemOnly() {
         try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
             SourceManagement sources = harvester.sourceManagement();
