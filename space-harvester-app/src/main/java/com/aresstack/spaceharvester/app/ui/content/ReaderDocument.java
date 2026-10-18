@@ -58,6 +58,11 @@ final class ReaderDocument {
                 document.insertString(0, NO_PREVIEW, null);
                 return new ReaderDocument(document, null, acronyms);
             }
+            if (text.text().isBlank()) {
+                document.insertString(0, "Aus dem Storage-Format konnte kein Text extrahiert werden. "
+                        + "Die Leseansicht kann weitere Inhalte darstellen.", null);
+                return new ReaderDocument(document, text, acronyms);
+            }
             document.insertString(0, text.text(), null);
             for (PageText.Section section : text.sections()) {
                 SimpleAttributeSet heading = new SimpleAttributeSet();
