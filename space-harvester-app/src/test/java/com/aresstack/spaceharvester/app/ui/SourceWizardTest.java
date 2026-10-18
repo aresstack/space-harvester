@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -408,22 +409,18 @@ class SourceWizardTest {
     }
 
     @Test
-    void underWindowsNewSourcesTrustTheWindowsCertificateStore() throws Exception {
+    void newSourcesFollowTheTrustOfAllSourcesWhichUnderWindowsIncludesTheWindowsStores() throws Exception {
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home, true),
                 home.resolve("app.yml"), "test");
         SwingUtilities.invokeAndWait(() -> {
             SourceWizard w = new SourceWizard(context);
-            assertThat(w.trust.getSelectedItem()).isEqualTo(SourceWizard.WINDOWS_TRUST);
-            assertThat(w.draft().trustBundle()).isEqualTo("windows");
-            assertThat(w.draft().yaml("")).contains("trust-bundle: \"windows\"");
-
-            w.trust.setSelectedItem("Zertifikate der Java-Laufzeit");
+            assertThat(w.trust.getSelectedItem()).isEqualTo(SourceWizard.NETWORK_TRUST);
             assertThat(w.draft().trustBundle()).isNull();
+            assertThat(w.draft().yaml("")).doesNotContain("trust-bundle");
         });
-        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home, false),
-                home.resolve("app.yml"), "test");
-        SwingUtilities.invokeAndWait(() -> assertThat(new SourceWizard(context).trust.getSelectedItem())
-                .isEqualTo("Zertifikate der Java-Laufzeit"));
+        assertThat(context.loader().defaultTls()).isEqualTo(TrustSettings.system());
+        assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, false).defaultTls())
+                .isEqualTo(TrustSettings.jvm());
     }
 
     @Test

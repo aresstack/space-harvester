@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -328,6 +329,57 @@ class ConfigFileEditorTest {
         assertThat(settings.proxy()).isEqualTo(proxy.settings());
         assertThat(settings.proxy().resolveTimeout()).isEqualTo(Duration.ofSeconds(7));
         assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("handbuch", "notizen");
+    }
+
+    @Test
+    void proxyUserAndPacScriptRoundTripButNoPasswordEverReachesTheFile() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        String script = "$url = (Get-ItemProperty 'HKCU:\\Software\\X').AutoConfigURL\r\n\tWrite-Output \"${url}\"";
+        ProxyDraft proxy = new ProxyDraft(ProxySettings.Mode.PAC_URL_POWERSHELL, null, null, null, null, null, null,
+                null, " proxy-nutzer ", script);
+
+        ConfigFileEditor.Draft draft = editor.withProxy(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                proxy);
+        editor.save(file, draft);
+
+        String text = Files.readString(file);
+        assertThat(text).contains("auth:\n", "username: \"proxy-nutzer\"", "pac-discovery-script: \"")
+                .doesNotContain("password");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.proxy().authentication().username()).isEqualTo("proxy-nutzer");
+        assertThat(settings.proxy().authentication().password()).isNull();
+        assertThat(settings.proxy().pacDiscoveryScript()).as("wörtlich, ${…} bleibt Teil des Skripts")
+                .isEqualTo(script.replace("\r\n", "\n"));
+        assertThat(ProxyDraft.of(settings.proxy()).settings()).isEqualTo(proxy.settings());
+
+        ProxyDraft manual = new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.firma.de", "3128", null,
+                null, null, null, "", script);
+        assertThat(manual.settings().authentication()).as("ohne Benutzer keine Anmeldung").isNull();
+        assertThat(manual.settings().pacDiscoveryScript()).as("Skript nur für PowerShell/VBScript").isNull();
+    }
+
+    @Test
+    void tlsSwitchesAndCaFileGoUnderNetworkNextToTheProxy() throws Exception {
+        Path file = home.resolve("app.yml");
+        Path ca = home.resolve("proxy-ca.pem");
+        Files.writeString(ca, "-----BEGIN CERTIFICATE-----\nkein Zertifikat\n-----END CERTIFICATE-----\n");
+        Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
+        TrustSettings broken = new TrustSettings(false, true, false, ca);
+        assertThatThrownBy(() -> editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                broken)).as("eine unbrauchbare CA-Datei kommt nicht in die Datei")
+                .isInstanceOf(IllegalArgumentException.class);
+
+        TrustSettings tls = new TrustSettings(true, true, true, null);
+        editor.save(file, editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null), tls));
+
+        assertThat(Files.readString(file)).contains("    proxy:\n      mode: disabled\n", "    tls:\n",
+                "use-jvm-default: true", "use-windows-root: true", "use-windows-ca-stores: true");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.tls()).isEqualTo(tls);
+        assertThat(settings.proxy().mode()).isEqualTo(ProxySettings.Mode.DISABLED);
     }
 
     @Test

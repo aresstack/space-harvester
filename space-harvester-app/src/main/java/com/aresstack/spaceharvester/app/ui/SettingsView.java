@@ -49,6 +49,8 @@ public final class SettingsView implements View {
     private final Facts output = new Facts();
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
+    private final ComposerButton tls = Comic.button("Serverzertifikate …",
+            "Festlegen, welchen Zertifizierungsstellen die App bei allen Quellen glaubt");
 
     public SettingsView(AppContext context) {
         this.context = context;
@@ -74,6 +76,8 @@ public final class SettingsView implements View {
         about.addActionListener(e -> AboutDialog.open(root, context));
         proxy.addActionListener(e -> SettingDialogs.proxy(root, context, null,
                 () -> feedback.success("Proxy übernommen")).open());
+        tls.addActionListener(e -> SettingDialogs.tls(root, context,
+                () -> feedback.success("Serverzertifikate übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -99,7 +103,7 @@ public final class SettingsView implements View {
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
-                Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy)),
+                Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy, tls)),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)));
         tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.component())));
         tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
@@ -189,13 +193,19 @@ public final class SettingsView implements View {
             if (proxy != null && proxy.proxyHost() != null) {
                 network.add("Proxy-Host", proxy.proxyHost() + (proxy.proxyPort() == null ? "" : ":" + proxy.proxyPort()));
             }
+            if (proxy != null && proxy.authentication() != null) {
+                String user = proxy.authentication().username();
+                network.add("Proxy-Anmeldung", user + (context.proxyPasswordAvailable(user) ? " · Passwort gespeichert"
+                        : " · Passwort fehlt"));
+            }
+            if (proxy != null && proxy.pacDiscoveryScript() != null) {
+                network.add("PAC-Skript", "eigenes Skript");
+            }
             if (proxy != null && !proxy.nonProxyHosts().isEmpty()) {
                 network.add("Ohne Proxy", String.join(", ", proxy.nonProxyHosts()));
             }
             network.add("Transport", settings.asyncTransport().name().toLowerCase(Locale.ROOT).replace('_', '-'));
-            if (settings.trustStores().isEmpty()) {
-                network.add("Vertrauensquellen", "nur die der Java-Laufzeit");
-            }
+            network.add("Serverzertifikate", settings.tls().describe() + " (alle Quellen ohne eigenes Bundle)");
             settings.trustStores().values().forEach(store -> network.add("Vertrauensquelle " + store.name(),
                     (store.pem() != null ? "PEM " + store.pem() : store.location() + " (" + (store.type() == null
                             ? "Typ nach Endung" : store.type()) + ")")

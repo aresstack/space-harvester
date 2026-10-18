@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.IOException;
@@ -229,6 +231,44 @@ public final class ConfigFileEditor {
 
     /** Ersetzt oder ergänzt {@code space-harvester.network.proxy}. */
     static String proxy(String text, ProxyDraft proxy) {
+        return network(text, "proxy", proxy::yaml);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Vertrauen für Quellen ohne eigenes {@code trust-bundle} unter
+     * {@code space-harvester.network.tls} (#189). Nur dieser Block ändert sich.
+     */
+    public Draft withTls(Path file, Draft base, TrustSettings tls) {
+        List<String> problems = TrustPolicy.problems(tls);
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = network(base.text(), "tls", indent -> tls(indent, tls));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.tls().equals(tls)) {
+            throw new IllegalArgumentException("Die Zertifikatseinstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.network.tls von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Der Block {@code tls:} mit allen Schaltern, damit die Vorgabe des Betriebssystems nicht mehr hineinspielt. */
+    static String tls(String indent, TrustSettings tls) {
+        String inner = indent + "  ";
+        StringBuilder yaml = new StringBuilder(indent).append("tls:\n")
+                .append(inner).append("use-jvm-default: ").append(tls.useJvmDefault()).append('\n')
+                .append(inner).append("use-windows-root: ").append(tls.useWindowsRoot()).append('\n')
+                .append(inner).append("use-windows-ca-stores: ").append(tls.useWindowsCaStores()).append('\n');
+        if (tls.caCertificatesFile() != null) {
+            yaml.append(inner).append("ca-certificates-file: \"").append(tls.caCertificatesFile().toString()
+                    .replace("\\", "\\\\").replace("\"", "\\\"")).append("\"\n");
+        }
+        return yaml.toString();
+    }
+
+    /** Ersetzt oder ergänzt den Block {@code key} unter {@code space-harvester.network}. */
+    private static String network(String text, String key, java.util.function.Function<String, String> yaml) {
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
@@ -248,7 +288,7 @@ public final class ConfigFileEditor {
             lines.add("");
             lines.add("space-harvester:");
             lines.add("  network:");
-            add(lines, lines.size(), proxy.yaml("    "));
+            add(lines, lines.size(), yaml.apply("    "));
             return String.join(newline, lines) + newline;
         }
         int rootEnd = blockEnd(lines, root, 0);
@@ -256,19 +296,19 @@ public final class ConfigFileEditor {
         int network = child(lines, root, rootEnd, childIndent, "network");
         if (network < 0) {
             lines.add(root + 1, " ".repeat(childIndent) + "network:");
-            add(lines, root + 2, proxy.yaml(" ".repeat(childIndent * 2)));
+            add(lines, root + 2, yaml.apply(" ".repeat(childIndent * 2)));
             return String.join(newline, lines) + newline;
         }
         int networkEnd = blockEnd(lines, network, childIndent);
         int proxyIndent = childIndent(lines, network, networkEnd, childIndent * 2);
-        int block = child(lines, network, networkEnd, proxyIndent, "proxy");
+        int block = child(lines, network, networkEnd, proxyIndent, key);
         if (block < 0) {
-            add(lines, network + 1, proxy.yaml(" ".repeat(proxyIndent)));
+            add(lines, network + 1, yaml.apply(" ".repeat(proxyIndent)));
             return String.join(newline, lines) + newline;
         }
         int end = blockEnd(lines, block, proxyIndent);
         lines.subList(block, end).clear();
-        add(lines, block, proxy.yaml(" ".repeat(proxyIndent)));
+        add(lines, block, yaml.apply(" ".repeat(proxyIndent)));
         return String.join(newline, lines) + newline;
     }
 

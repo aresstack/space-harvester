@@ -37,6 +37,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -75,8 +76,8 @@ final class SourceWizard {
     private static final String NO_CERTIFICATE = "Kein Client-Zertifikat";
     private static final String WINDOWS_MY = "Windows-Zertifikatsspeicher (CurrentUser\\My)";
     private static final String PKCS12 = "PKCS#12-Datei (.p12/.pfx)";
-    private static final String JAVA_TRUST = "Zertifikate der Java-Laufzeit";
-    static final String WINDOWS_TRUST = "Windows-Zertifikatspeicher und Java-Laufzeit";
+    /** Kein eigenes Bundle: das Vertrauen aller Quellen ({@code space-harvester.network.tls}, #189). */
+    static final String NETWORK_TRUST = "Wie für alle Quellen (Einstellungen › Serverzertifikate)";
     /** Öffentliche Confluence-Instanz (Atlassian-Dokumentation), lesbar ohne Anmeldung: Vorgabe zum Ausprobieren. */
     static final String DEFAULT_URL = "https://confluence.atlassian.com";
     static final String DEFAULT_TITLE = "Confluence-Hilfe (Atlassian)";
@@ -167,16 +168,10 @@ final class SourceWizard {
         certificate.addItem(NO_CERTIFICATE);
         certificate.addItem(WINDOWS_MY);
         certificate.addItem(PKCS12);
-        trust.addItem(JAVA_TRUST);
-        trust.addItem(WINDOWS_TRUST);
+        trust.addItem(NETWORK_TRUST);
         AppSettings settings = context.settings();
         if (settings != null) {
-            settings.trustStores().keySet().stream().sorted()
-                    .filter(name -> !TrustStores.WINDOWS.equals(name)).forEach(trust::addItem);
-        }
-        if (context.loader().windows()) {
-            // Wie Browser und PowerShell: Firmen-CAs aus dem Windows-Speicher gelten ohne eigenen Truststore
-            trust.setSelectedItem(WINDOWS_TRUST);
+            settings.trustStores().keySet().stream().sorted().forEach(trust::addItem);
         }
         for (ProxySettings.Mode mode : PROXY_MODES) {
             proxyMode.addItem(proxyLabel(mode));
@@ -364,8 +359,7 @@ final class SourceWizard {
                 : PKCS12.equals(certificate.getSelectedItem()) ? SourceSettingsConfig.CertificateStoreType.PKCS12
                 : null;
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
-        String bundle = WINDOWS_TRUST.equals(trust.getSelectedItem()) ? TrustStores.WINDOWS
-                : String.valueOf(trust.getSelectedItem());
+        String bundle = String.valueOf(trust.getSelectedItem());
         return new SourceDraft(id.getText(), confluence ? SourceDraft.CONFLUENCE : SourceDraft.FILES,
                 title.getText(), confluence ? address() : null, confluence ? null : directory.getText(),
                 confluence ? null : include.getText(), authType,
@@ -374,7 +368,7 @@ final class SourceWizard {
                 pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
                 certificateType == null ? null : alias.getText(),
                 certificateType == null ? null : thumbprint.getText(),
-                !confluence || JAVA_TRUST.equals(bundle) ? null : bundle,
+                !confluence || NETWORK_TRUST.equals(bundle) ? null : bundle,
                 editing == null ? null : editing.draft().extraOptions());
     }
 
@@ -579,7 +573,10 @@ final class SourceWizard {
         ProxySettings.Mode mode = PROXY_MODES.get(Math.max(0, proxyMode.getSelectedIndex()));
         return new ProxyDraft(mode, pacUrl.getText(), proxyHost.getText(), proxyPort.getText(),
                 proxyExceptions.hosts(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
-                currentProxy.failureTtl());
+                currentProxy.failureTtl(),
+                // Anmeldung am Proxy und PAC-Skript stellt der Dialog „Proxy“ ein; der Assistent behält sie.
+                currentProxy.authentication() == null ? null : currentProxy.authentication().username(),
+                currentProxy.pacDiscoveryScript());
     }
 
     /** Ob Schritt 3 vom bisherigen Proxy abweicht (nur für Confluence, Dateien brauchen kein Netz). */
@@ -647,10 +644,9 @@ final class SourceWizard {
         certificatePath.setText(source.certificatePath() == null ? "" : source.certificatePath());
         certificatePasswordVariable.setText(source.certificatePasswordVariable() == null ? ""
                 : source.certificatePasswordVariable());
-        if (source.trustBundle() == null) {
-            trust.setSelectedItem(JAVA_TRUST);
-        } else if (TrustStores.WINDOWS.equals(source.trustBundle())) {
-            trust.setSelectedItem(WINDOWS_TRUST);
+        AppSettings settings = context.settings();
+        if (TrustStores.followsNetwork(source.trustBundle(), settings == null ? Map.of() : settings.trustStores())) {
+            trust.setSelectedItem(NETWORK_TRUST);
         } else {
             boolean listed = false;
             for (int i = 0; i < trust.getItemCount(); i++) {
@@ -674,6 +670,8 @@ final class SourceWizard {
 
     AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
+        secrets.proxyPassword(context.secrets().proxyPassword());
         String sourceId = source.id();
         char[] value = sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {

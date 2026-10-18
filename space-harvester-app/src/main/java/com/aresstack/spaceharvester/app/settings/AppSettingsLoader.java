@@ -4,6 +4,8 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -193,7 +195,54 @@ public final class AppSettingsLoader {
         }
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
-                path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems));
+                path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
+                tls(get(network, "tls"), problems));
+    }
+
+    /**
+     * Vertrauen ohne {@code trust-bundle} wie {@code space-harvester.network.tls} beim Dienst (#189). Ohne Angabe gilt
+     * unter Windows die Vorgabe des Enterprise AI Client (JVM-Truststore und Windows-Speicher), sonst der
+     * JVM-Truststore. Eine unbrauchbare Angabe wird gemeldet und durch die Vorgabe ersetzt.
+     */
+    private TrustSettings tls(Object raw, List<String> problems) {
+        TrustSettings standard = defaultTls();
+        if (raw == null) {
+            return standard;
+        }
+        Map<?, ?> tls = map(raw);
+        if (tls.isEmpty()) {
+            return TrustSettings.jvm();
+        }
+        Path file = path(get(tls, "ca-certificates-file"), problems);
+        TrustSettings settings = new TrustSettings(flag(get(tls, "use-jvm-default"), true, problems),
+                flag(get(tls, "use-windows-root"), false, problems),
+                flag(get(tls, "use-windows-ca-stores"), false, problems), file);
+        List<String> found = TrustPolicy.problems(settings);
+        if (found.isEmpty()) {
+            return settings;
+        }
+        found.forEach(problem -> problems.add("space-harvester.network." + problem));
+        return standard;
+    }
+
+    /** Vertrauen ohne Angabe in der Datei: unter Windows wie im Enterprise AI Client, sonst der JVM-Truststore. */
+    public TrustSettings defaultTls() {
+        return windows ? TrustSettings.system() : TrustSettings.jvm();
+    }
+
+    private boolean flag(Object raw, boolean standard, List<String> problems) {
+        if (raw == null) {
+            return standard;
+        }
+        if (raw instanceof Boolean value) {
+            return value;
+        }
+        String text = text(raw, problems);
+        if ("true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text)) {
+            return Boolean.parseBoolean(text);
+        }
+        problems.add("space-harvester.network.tls: „" + text + "“ ist weder true noch false");
+        return standard;
     }
 
     /** Eine Liste von Kennungen, als YAML-Liste oder durch Kommas getrennt. */
@@ -311,7 +360,29 @@ public final class AppSettingsLoader {
                 port == null ? null : integer(port, 0, "space-harvester.network.proxy.proxy-port", problems), nonProxy,
                 optionalDuration(get(proxy, "resolve-timeout"), "space-harvester.network.proxy.resolve-timeout", problems),
                 optionalDuration(get(proxy, "cache-ttl"), "space-harvester.network.proxy.cache-ttl", problems),
-                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems));
+                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems),
+                proxyAuthentication(map(get(proxy, "auth")), problems), script(get(proxy, "pac-discovery-script")));
+    }
+
+    /**
+     * Nur der Benutzer steht in der Datei; das Passwort liegt im Tresor der App ({@code ProxySettings.SECRET_REF}) und
+     * wird beim Start dazugegeben. Ein Passwort in der Datei bleibt unbenutzt.
+     */
+    private ProxySettings.Authentication proxyAuthentication(Map<?, ?> auth, List<String> problems) {
+        if (auth.isEmpty()) {
+            return null;
+        }
+        if (get(auth, "password") != null) {
+            problems.add("space-harvester.network.proxy.auth.password wird nicht gelesen: Das Proxy-Passwort gehört "
+                    + "in den Tresor (Einstellungen › Proxy)");
+        }
+        String username = text(get(auth, "username"), problems);
+        return username == null || username.isBlank() ? null : ProxySettings.Authentication.basic(username);
+    }
+
+    /** Ein Skript wörtlich, ohne Platzhalter aufzulösen: {@code ${…}} ist dort Teil der Skriptsprache. */
+    private static String script(Object raw) {
+        return raw == null || raw instanceof Map<?, ?> || raw instanceof List<?> ? null : String.valueOf(raw);
     }
 
     private Map<String, AppSettings.TrustStoreSettings> trustStores(Map<?, ?> spring, List<String> problems) {

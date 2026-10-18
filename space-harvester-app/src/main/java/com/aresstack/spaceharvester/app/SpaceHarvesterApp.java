@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.MainWindow;
 import com.aresstack.spaceharvester.app.ui.Screenshots;
+import com.aresstack.spaceharvester.source.network.ProxyAuthenticator;
 
 import javax.swing.SwingUtilities;
 import java.nio.file.Path;
@@ -21,6 +22,9 @@ public final class SpaceHarvesterApp {
     }
 
     public static void main(String[] args) throws Exception {
+        // Das JDK liest die Freigabe von BASIC im HTTPS-Tunnel nur beim ersten Verbindungsaufbau; eine später (nach
+        // geänderten Einstellungen) eingerichtete Proxy-Anmeldung braucht sie deshalb schon jetzt (#189).
+        ProxyAuthenticator.allowBasicTunneling();
         Path config = null;
         Path screenshots = null;
         for (int i = 0; i < args.length; i++) {

@@ -355,7 +355,7 @@ public final class SourcesView implements View {
         } else {
             switch (connection.state()) {
                 case NOT_CHECKED -> {
-                    spacesHint.setText("Nicht geprüft. „Verbindung prüfen“ unter ⋯ an der Karte lädt die Spaces live.");
+                    spacesHint.setText("Nicht geprüft. „Verbindung prüfen …“ unter ⋯ an der Karte lädt die Spaces live.");
                     feedback.clear();
                 }
                 case CHECKING -> {
@@ -441,7 +441,7 @@ public final class SourcesView implements View {
                         Comic.INK, "Client-Zertifikat wählen",
                         () -> setting(entry, SettingDialogs::certificate)));
                 row(EditableProperty.action(SettingDialogs.TRUST_TITLE,
-                        SettingDialogs.trustLabel(config.trustBundle()), Comic.INK,
+                        SettingDialogs.trustLabel(config.trustBundle(), context.settings()), Comic.INK,
                         "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
                         () -> setting(entry, SettingDialogs::trust)));
                 row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())
@@ -553,8 +553,25 @@ public final class SourcesView implements View {
         });
     }
 
+    /**
+     * Lädt die Spaces live und zeigt die Verbindungsdiagnose des Core als Stufenliste (#189), damit sichtbar wird, an
+     * welcher Stufe (Proxy, Namensauflösung, TCP, TLS, Anmeldung, API) es hängt.
+     */
     private void check(AppSettings.SourceEntry entry) {
         context.checkConnection(entry.id(), () -> { });
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        String title = "Verbindung prüfen · " + (entry.config().title() == null || entry.config().title().isBlank()
+                ? entry.id() : entry.config().title());
+        Background.run(() -> runtime.workspace().diagnose(entry.id()), found -> {
+            if (found.isPresent()) {
+                Dialogs.view(root, title, new DiagnosisPanel(found.get()));
+            } else {
+                feedback.warning("Nicht prüfbar", "Die Quelle ist abgeschaltet oder wartet auf ihre Zugangsdaten.");
+            }
+        }, feedback::problem);
     }
 
     private void askSecret(AppSettings.SourceEntry entry) {
@@ -921,8 +938,8 @@ public final class SourcesView implements View {
             boolean off = disabled(entry);
             boolean running = context.runtime() != null && !off
                     && !context.runtime().waitingForSecret().contains(entry.id());
-            JMenuItem check = new JMenuItem("Verbindung prüfen");
-            check.setToolTipText("Meldet sich an und lädt die Spaces live");
+            JMenuItem check = new JMenuItem("Verbindung prüfen …");
+            check.setToolTipText("Prüft Proxy, Namensauflösung, TCP, TLS, Anmeldung und API und lädt die Spaces live");
             check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
             check.addActionListener(e -> SourcesView.this.check(entry));
             menu.add(check);
