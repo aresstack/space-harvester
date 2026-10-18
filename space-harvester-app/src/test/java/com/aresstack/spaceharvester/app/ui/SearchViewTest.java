@@ -118,6 +118,12 @@ class SearchViewTest {
     }
 
     @Test
+    void pagesStillLoadingIntoTheCacheAreCounted() {
+        assertThat(SearchView.loadingTitle(1)).isEqualTo("1 Seite wird noch in den Cache geladen");
+        assertThat(SearchView.loadingTitle(3)).isEqualTo("3 Seiten werden noch in den Cache geladen");
+    }
+
+    @Test
     void anUnreachableSourceIsNamedAndTheResultMarkedIncomplete() throws Exception {
         start(true);
         SearchView[] view = new SearchView[1];
