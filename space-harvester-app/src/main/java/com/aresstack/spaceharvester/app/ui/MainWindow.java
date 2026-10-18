@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.border.ComicBorder;
-import com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowDragger;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowHoldCloseButton;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowResizer;
@@ -17,8 +16,6 @@ import com.aresstack.spaceharvester.app.ui.brand.ApplicationIcons;
 import com.aresstack.spaceharvester.app.ui.content.ContentView;
 
 import javax.swing.BorderFactory;
-import javax.swing.Box;
-import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
 import javax.swing.Icon;
 import javax.swing.JComponent;
@@ -38,8 +35,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client, links die sieben Bereiche, oben die
- * globale Suche, unten die Statuszeile. {@link #content} baut den Inhalt ohne Fenster (für Bildschirmfotos und Tests).
+ * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben eine Icon-Leiste für die Hauptbereiche
+ * (Tooltip mit Namen, Strg+1 … Strg+7), rechts daneben Einstellungen und ✕; links die Seitenleiste des gewählten
+ * Bereichs ({@link View#sidebar()}, Breite veränderbar, einklappbar), rechts dessen Arbeitsfläche; über der
+ * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}). Navigation und
+ * Seitenleiste sind getrennte Bausteine. {@link #content} baut den Inhalt ohne Fenster (für Bildschirmfotos und
+ * Tests).
  */
 public final class MainWindow implements AppContext.Navigator {
 
@@ -51,8 +52,16 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel deck = new JPanel(cards);
     private final Map<AppContext.Section, View> views = new EnumMap<>(AppContext.Section.class);
     private final Map<AppContext.Section, ComposerToggleButton> nav = new EnumMap<>(AppContext.Section.class);
-    private final ComicSearchBar search = new ComicSearchBar("Suchen …", "Titel und Inhalt in den Quellen suchen",
-            Comic.PALETTE);
+    /** Seitenleisten der Bereiche; ein Bereich ohne Seitenleiste blendet sie aus. */
+    private final CardLayout sideCards = new CardLayout();
+    private final JPanel sideDeck = new JPanel(sideCards);
+    /** Aktions- und Fortschrittszeilen der Bereiche, direkt über der Statusleiste. */
+    private final CardLayout actionCards = new CardLayout();
+    private final JPanel actionDeck = new JPanel(actionCards);
+    private final javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT);
+    /** Zuletzt gezogene Breite der Seitenleiste; bleibt beim Wechsel der Bereiche. */
+    private int sideWidth = SIDEBAR_WIDTH;
+    static final int SIDEBAR_WIDTH = 260;
     private final JLabel status = Comic.muted(" ");
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
@@ -82,7 +91,16 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
-        search.addSearchAction(e -> search(search.getText()));
+        sideDeck.setBackground(Comic.SURFACE);
+        actionDeck.setOpaque(false);
+        views.forEach((section, view) -> {
+            if (view.sidebar() != null) {
+                sideDeck.add(view.sidebar(), section.name());
+            }
+            if (view.actions() != null) {
+                actionDeck.add(view.actions(), section.name());
+            }
+        });
         context.onChange(ignored -> updateStatus());
         updateStatus();
     }
@@ -124,7 +142,8 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     /**
-     * Der Fensterinhalt: Tintenrand, Kopfzeile mit Titel, Suche und ✕, Navigation, Bereiche, Statuszeile.
+     * Der Fensterinhalt: Tintenrand, Kopfzeile mit Titel, Icon-Leiste, Einstellungen und ✕, Seitenleiste und
+     * Arbeitsfläche, Aktionszeile, Statusleiste.
      *
      * @param close    Gedrückthalten des ✕
      * @param minimize Klick auf das ✕
@@ -139,43 +158,58 @@ public final class MainWindow implements AppContext.Navigator {
         title.setForeground(Comic.INK);
         title.setIcon(ApplicationIcons.titleLogo());
         title.setIconTextGap(8);
-        top.setOpaque(false);
-        top.setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 10));
-        top.add(title, BorderLayout.WEST);
-        JPanel searchHolder = new JPanel(new BorderLayout());
-        searchHolder.setOpaque(false);
-        searchHolder.setBorder(BorderFactory.createEmptyBorder(0, 80, 0, 80));
-        searchHolder.add(search, BorderLayout.CENTER);
-        top.add(searchHolder, BorderLayout.CENTER);
-        top.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)),
-                BorderLayout.EAST);
-        ComicWindowDragger.install(top);
-
-        JPanel side = new JPanel();
-        side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
-        side.setBackground(Comic.SURFACE);
-        side.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 0, 1, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 10, 10, 10)));
         ButtonGroup group = new ButtonGroup();
+        JPanel icons = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+        icons.setOpaque(false);
+        icons.setBorder(BorderFactory.createEmptyBorder(0, 28, 0, 0));
+        int number = 1;
         for (AppContext.Section section : AppContext.Section.values()) {
-            if (section == AppContext.Section.SETTINGS) {
-                side.add(Box.createVerticalGlue());
-            }
-            ComposerToggleButton button = new ComposerToggleButton(icon(section), section.title(), null);
-            button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-            button.setHorizontalAlignment(ComposerToggleButton.LEFT);
-            button.setIconTextGap(10);
-            button.setAlignmentX(0f);
-            button.setMaximumSize(new Dimension(Integer.MAX_VALUE, button.getPreferredSize().height));
-            button.addActionListener(e -> show(section));
+            ComposerToggleButton button = navButton(section, number++);
             group.add(button);
             nav.put(section, button);
-            side.add(button);
-            side.add(Box.createVerticalStrut(4));
+            if (section != AppContext.Section.SETTINGS) {
+                icons.add(button);
+            }
         }
-        Dimension width = new Dimension(190, 10);
-        side.setPreferredSize(new Dimension(width.width, side.getPreferredSize().height));
+        JPanel west = new JPanel(new BorderLayout());
+        west.setOpaque(false);
+        west.add(title, BorderLayout.WEST);
+        west.add(icons, BorderLayout.CENTER);
+        JPanel east = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 10, 0));
+        east.setOpaque(false);
+        east.add(nav.get(AppContext.Section.SETTINGS));
+        east.add(Dialogs.closeButton(new ComicWindowHoldCloseButton(Comic.PALETTE, minimize, close, 24)));
+        top.setOpaque(false);
+        top.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Comic.LINE),
+                BorderFactory.createEmptyBorder(8, 16, 8, 10)));
+        top.add(west, BorderLayout.WEST);
+        top.add(east, BorderLayout.EAST);
+        ComicWindowDragger.install(top);
+
+        sideDeck.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 10));
+        sideDeck.setMinimumSize(new Dimension(0, 0));
+        deck.setMinimumSize(new Dimension(320, 0));
+        split.setLeftComponent(sideDeck);
+        split.setRightComponent(deck);
+        split.setBorder(BorderFactory.createEmptyBorder());
+        split.setBackground(Comic.SURFACE);
+        split.setContinuousLayout(true);
+        split.setOneTouchExpandable(true);
+        split.setResizeWeight(0);
+        split.setDividerLocation(sideWidth);
+        if (split.getUI() instanceof javax.swing.plaf.basic.BasicSplitPaneUI basic) {
+            basic.getDivider().setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Comic.LINE));
+            basic.getDivider().setBackground(Comic.SURFACE);
+        }
+        split.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
+            if (sideDeck.isVisible() && split.getDividerLocation() > 0) {
+                sideWidth = split.getDividerLocation();
+            }
+        });
+
+        actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
+                Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
+        actionDeck.setVisible(false);
 
         JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
@@ -183,16 +217,42 @@ public final class MainWindow implements AppContext.Navigator {
                 BorderFactory.createEmptyBorder(6, 16, 6, 16)));
         foot.add(status, BorderLayout.WEST);
         foot.add(new CopyrightLink(), BorderLayout.EAST);
+        JPanel bottom = new JPanel(new BorderLayout());
+        bottom.setOpaque(false);
+        bottom.add(actionDeck, BorderLayout.NORTH);
+        bottom.add(foot, BorderLayout.SOUTH);
 
-        JPanel middle = new JPanel(new BorderLayout());
-        middle.setOpaque(false);
-        middle.add(side, BorderLayout.WEST);
-        middle.add(deck, BorderLayout.CENTER);
         surface.add(top, BorderLayout.NORTH);
-        surface.add(middle, BorderLayout.CENTER);
-        surface.add(foot, BorderLayout.SOUTH);
+        surface.add(split, BorderLayout.CENTER);
+        surface.add(bottom, BorderLayout.SOUTH);
         ComicWindowResizer.install(surface, RESIZE_GRIP);
+        installShortcuts(surface);
         return surface;
+    }
+
+    /** Nur ein Symbol; Name als Tooltip und für Bildschirmleser, Strg+Ziffer wählt den Bereich. */
+    private ComposerToggleButton navButton(AppContext.Section section, int number) {
+        ComposerToggleButton button = new ComposerToggleButton(icon(section), null,
+                section.title() + " (Strg+" + number + ")");
+        button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
+        button.getAccessibleContext().setAccessibleName(section.title());
+        button.addActionListener(e -> show(section));
+        return button;
+    }
+
+    private void installShortcuts(JComponent surface) {
+        int number = 1;
+        for (AppContext.Section section : AppContext.Section.values()) {
+            String key = "section-" + section.name();
+            surface.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(javax.swing.KeyStroke.getKeyStroke(
+                    java.awt.event.KeyEvent.VK_0 + number++, java.awt.event.InputEvent.CTRL_DOWN_MASK), key);
+            surface.getActionMap().put(key, new javax.swing.AbstractAction() {
+                @Override
+                public void actionPerformed(java.awt.event.ActionEvent e) {
+                    show(section);
+                }
+            });
+        }
     }
 
     /** Einstellungen mit dem Reiter „KI“. */
@@ -204,11 +264,28 @@ public final class MainWindow implements AppContext.Navigator {
     @Override
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
+        View view = views.get(section);
+        boolean side = view.sidebar() != null;
+        if (side) {
+            sideCards.show(sideDeck, section.name());
+        }
+        if (side != sideDeck.isVisible()) {
+            sideDeck.setVisible(side);
+            split.setDividerSize(side ? 8 : 0);
+            if (side) {
+                split.setDividerLocation(sideWidth);
+            }
+        }
+        boolean actions = view.actions() != null;
+        if (actions) {
+            actionCards.show(actionDeck, section.name());
+        }
+        actionDeck.setVisible(actions);
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);
         }
-        views.get(section).shown();
+        view.shown();
     }
 
     @Override
@@ -286,9 +363,9 @@ public final class MainWindow implements AppContext.Navigator {
         return switch (section) {
             case STATUS -> SidebarIcons.compass();
             case SOURCES -> SidebarIcons.folder();
-            case CONTENT -> SidebarIcons.pageTree();
+            case CONTENT -> ComposerIcons.openBook();
             case ACTIVITIES -> ComposerIcons.refresh();
-            case EXPORTS -> ComposerIcons.export();
+            case EXPORTS -> ComposerIcons.download();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();
         };

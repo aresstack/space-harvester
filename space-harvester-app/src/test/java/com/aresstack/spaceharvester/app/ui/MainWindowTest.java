@@ -83,8 +83,15 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        assertThat(buttonTexts(surface[0])).containsSubsequence("Suche", "Wissensquellen", "Inhalte",
-                "Herunterladen", "Aufträge", "Status", "Einstellungen");
+        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen.
+        assertThat(find(surface[0], AbstractButton.class).stream()
+                .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
+                .containsSubsequence("Suche", "Wissensquellen", "Inhalte", "Herunterladen", "Aufträge", "Status",
+                        "Einstellungen");
+        assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
+                .contains("Inhalte (Strg+3)");
+        assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
+                .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
         assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
                 .doesNotContain(AboutDialog.TAGLINE);
