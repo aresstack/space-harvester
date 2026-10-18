@@ -6,8 +6,12 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
+import com.aresstack.enterpriseai.source.api.CrossReferences;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
+import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
@@ -17,6 +21,7 @@ import com.aresstack.enterpriseai.source.api.ResourceMetadataSource;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
 import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceFile;
+import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
@@ -26,6 +31,7 @@ import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -36,12 +42,15 @@ import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceSearchMatch;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -55,6 +64,11 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /** Schema der öffentlichen Ressourcen-ID von Dateiquellen. */
     static final String FILES_SCHEME = "files";
+
+    /** Schlüssel der Wurzel einer Partition im Enterprise AI Client ({@code space:DEV}). */
+    private static final String SPACE_NODE = "space:";
+    /** Präfix des Cursors der Kindseiten; versioniert das Format. */
+    private static final String CURSOR_PREFIX = "c1.";
 
     private final String id;
     private final String type;
@@ -108,6 +122,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         if (port instanceof AttachmentListSource) {
             capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
+        }
+        if (port instanceof PageNavigationSource && port instanceof ResourceMetadataSource) {
+            capabilities.add(SourceCapability.NAVIGATION);
         }
         if (port instanceof SearchableKnowledgeSource) {
             capabilities.add(SourceCapability.LIVE_SEARCH);
@@ -322,6 +339,107 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
+    }
+
+    /**
+     * Wie im Enterprise AI Client ({@link PageNavigationSource}): Kinder in Confluence-Reihenfolge mit
+     * {@code hasChildren}; der Cursor ist der Folgelink der Quelle, undurchsichtig kodiert und an den Knoten gebunden.
+     */
+    @Override
+    public ChildPages children(String partitionKey, String parentPageId, String cursor) {
+        if (!(port instanceof PageNavigationSource navigation)) {
+            return HarvestSource.super.children(partitionKey, parentPageId, cursor);
+        }
+        try {
+            NavigationNode parent;
+            String partition;
+            if (parentPageId == null) {
+                partition = Objects.requireNonNull(partitionKey, "partitionKey");
+                parent = NavigationNode.root(SPACE_NODE + partition, partition, SPACE_NODE + partition,
+                        NavigationNode.Children.UNKNOWN);
+            } else {
+                KnowledgeResource page = resource(parentPageId);
+                partition = withSpace(page).partitionKey();
+                parent = NavigationNode.page(page.id(), null, NavigationNode.Children.UNKNOWN);
+            }
+            NavigationChildren batch = navigation.children(parent, decodeCursor(cursor));
+            return new ChildPages(partition, batch.nodes().stream().map(node -> node(node, partition)).toList(),
+                    batch.complete() ? null : encodeCursor(batch.nextCursor()));
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
+    public PagePosition position(String pageId) {
+        if (!(port instanceof PageNavigationSource navigation)) {
+            return HarvestSource.super.position(pageId);
+        }
+        try {
+            com.aresstack.enterpriseai.source.api.PagePosition position = navigation.position(resource(pageId).id());
+            String partition = position.root().key().startsWith(SPACE_NODE)
+                    ? position.root().key().substring(SPACE_NODE.length()) : position.root().key();
+            return new PagePosition(partition, position.root().title(),
+                    position.ancestors().stream().map(node -> node(node, partition)).toList(),
+                    node(position.page(), partition));
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    @Override
+    public PageReferences references(String pageId) {
+        if (!(port instanceof PageNavigationSource navigation)) {
+            return HarvestSource.super.references(pageId);
+        }
+        try {
+            CrossReferences references = navigation.crossReferences(resource(pageId).id());
+            return new PageReferences(links(references.outgoing()),
+                    references.incomingSupported() ? links(references.incoming()) : null);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+    }
+
+    private KnowledgeResource resource(String pageId) throws KnowledgeSourceException {
+        if (!(port instanceof ResourceMetadataSource single)) {
+            throw new KnowledgeSourceException(KnowledgeSourceException.Kind.UNSUPPORTED,
+                    "Quelle kann Seiten nicht über ihre ID finden");
+        }
+        return single.resourceMetadata(pageId);
+    }
+
+    private PageNode node(NavigationNode node, String partitionKey) {
+        Boolean children = switch (node.children()) {
+            case YES -> Boolean.TRUE;
+            case NO -> Boolean.FALSE;
+            case UNKNOWN -> null;
+        };
+        return new PageNode(nativeId(node.resource()), node.title(), partitionKey, children);
+    }
+
+    private List<PageNode> links(List<SourceLink> links) {
+        return links.stream().map(link -> new PageNode(nativeId(link.target()), link.label(), null, null)).toList();
+    }
+
+    private static String encodeCursor(String next) {
+        return CURSOR_PREFIX + Base64.getUrlEncoder().withoutPadding().encodeToString(
+                next.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String decodeCursor(String cursor) {
+        if (cursor == null || cursor.isEmpty()) {
+            return "";
+        }
+        try {
+            if (cursor.startsWith(CURSOR_PREFIX)) {
+                return new String(Base64.getUrlDecoder().decode(cursor.substring(CURSOR_PREFIX.length())),
+                        StandardCharsets.UTF_8);
+            }
+        } catch (IllegalArgumentException e) {
+            // unten: ungültig
+        }
+        throw new InvalidQueryException("Cursor gehört nicht zu diesem Knoten");
     }
 
     @Override

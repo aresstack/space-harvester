@@ -18,5 +18,7 @@ public enum SourceCapability {
     /** Anhangsliste einer Seite als Metadaten ({@link HarvestSource#attachments}, #9). */
     PAGE_ATTACHMENTS,
     /** Volltextsuche in der Quelle selbst über Titel und Inhalt ({@link HarvestSource#searchPages}). */
-    LIVE_SEARCH
+    LIVE_SEARCH,
+    /** Seitenbaum live und Querverweise ({@link HarvestSource#children}, {@link HarvestSource#position}, #177). */
+    NAVIGATION
 }

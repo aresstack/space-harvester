@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.sources;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -176,6 +177,105 @@ public interface HarvestSource {
     default ReadingPage readingPage(String pageId) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle hat keine Lese-Ansicht", null);
+    }
+
+    /**
+     * Direkte Kindseiten eines Knotens live, in der Reihenfolge der Quelle, stapelweise (#177). Die Quelle wählt die
+     * Stapelgröße; jeder Folgestapel kommt mit {@link ChildPages#nextCursor()}, eine Obergrenze gibt es nicht.
+     *
+     * @param partitionKey Partition (bei Confluence der Space), deren Wurzelseiten gemeint sind, wenn
+     *                     {@code parentPageId} {@code null} ist; sonst ohne Bedeutung
+     * @param parentPageId Seite, deren Kinder gemeint sind, oder {@code null} für die Wurzelseiten der Partition
+     * @param cursor       {@code null} für den ersten Stapel, sonst {@link ChildPages#nextCursor()} desselben Knotens
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne Hierarchie, {@code NOT_FOUND} für unbekannte Knoten,
+     *                               sonst wie {@link #pageMetadata(String)}
+     */
+    default ChildPages children(String partitionKey, String parentPageId, String cursor) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle hat keinen Seitenbaum", null);
+    }
+
+    /**
+     * Wo eine Seite im Baum steht: Partition mit Namen, Vorfahren von oben nach unten und die Seite selbst (#177).
+     *
+     * @throws SourceAccessException wie {@link #children}
+     */
+    default PagePosition position(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle hat keinen Seitenbaum", null);
+    }
+
+    /**
+     * Verweise einer Seite auf andere Seiten dieser Quelle (ausgehend, jede einmal, ohne Anhänge und ohne die Seite
+     * selbst) und, nur wenn die Quelle sie vollständig kennt, die eingehenden (#177). Die Quelle liest dazu den Inhalt
+     * mit ihren eigenen Zugangsdaten; was der Aufrufer davon sieht, entscheidet der Anwendungsfall.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne Verweise, sonst wie {@link #pageMetadata(String)}
+     */
+    default PageReferences references(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle liefert keine Querverweise", null);
+    }
+
+    /**
+     * Ein Knoten der Navigation.
+     *
+     * @param pageId       Seiten-ID
+     * @param title        Titel der Seite
+     * @param partitionKey Partition der Seite, wenn bekannt, sonst {@code null}
+     * @param hasChildren  ob die Seite Kinder hat, soweit die Quelle das ohne Laden weiß; {@code null} unbekannt
+     */
+    record PageNode(String pageId, String title, String partitionKey, Boolean hasChildren) {
+
+        public PageNode {
+            Objects.requireNonNull(pageId, "pageId");
+            title = title == null || title.isBlank() ? pageId : title;
+        }
+    }
+
+    /**
+     * Ein Stapel Kindseiten.
+     *
+     * @param partitionKey Partition der Kinder (bei Confluence der Space des Elternknotens)
+     * @param nextCursor   Cursor des nächsten Stapels oder {@code null}, wenn alle geliefert sind
+     */
+    record ChildPages(String partitionKey, List<PageNode> pages, String nextCursor) {
+
+        public ChildPages {
+            Objects.requireNonNull(partitionKey, "partitionKey");
+            pages = List.copyOf(pages);
+            nextCursor = nextCursor == null || nextCursor.isEmpty() ? null : nextCursor;
+        }
+    }
+
+    /**
+     * Die Lage einer Seite im Baum.
+     *
+     * @param partitionName Name der Partition (bei Confluence {@code space.name}), sonst der Schlüssel
+     * @param ancestors     Seiten zwischen Partition und Seite, von oben nach unten; leer für Wurzelseiten
+     */
+    record PagePosition(String partitionKey, String partitionName, List<PageNode> ancestors, PageNode page) {
+
+        public PagePosition {
+            Objects.requireNonNull(partitionKey, "partitionKey");
+            partitionName = partitionName == null || partitionName.isBlank() ? partitionKey : partitionName;
+            ancestors = List.copyOf(ancestors);
+            Objects.requireNonNull(page, "page");
+        }
+    }
+
+    /**
+     * Querverweise einer Seite.
+     *
+     * @param outgoing Seiten, auf die die Seite verweist, in Reihenfolge der Seite
+     * @param incoming Seiten, die auf sie verweisen, oder {@code null}, wenn die Quelle sie nicht vollständig kennt
+     */
+    record PageReferences(List<PageNode> outgoing, List<PageNode> incoming) {
+
+        public PageReferences {
+            outgoing = List.copyOf(outgoing);
+            incoming = incoming == null ? null : List.copyOf(incoming);
+        }
     }
 
     /**

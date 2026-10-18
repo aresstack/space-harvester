@@ -33,14 +33,15 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
-import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
-import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
@@ -122,6 +123,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFreshness freshness;
     private final PageQueries pages;
     private final ReadingViews readingViews;
+    private final PageNavigation navigation;
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
     private final RelevanceSearch relevance;
@@ -201,6 +203,7 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
                     builder.maxTreeNodes);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
+            this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
             this.keywordSearch = new KeywordSearch(catalog, access);
             PageRenewal renewal = null;
@@ -278,6 +281,14 @@ public final class Harvester implements AutoCloseable {
      */
     public ReadingViews readingViews() {
         return readingViews;
+    }
+
+    /**
+     * Live-Navigation (#177): Kindseiten in der Reihenfolge der Quelle mit {@code hasChildren}, Lage einer Seite mit
+     * Space-Namen und Vorfahren, Querverweise; Rechte je Knoten.
+     */
+    public PageNavigation navigation() {
+        return navigation;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
