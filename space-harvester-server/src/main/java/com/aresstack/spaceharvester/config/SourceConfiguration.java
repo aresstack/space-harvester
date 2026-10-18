@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.SourceAdapter;
+import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
@@ -85,6 +86,12 @@ class SourceConfiguration {
                 throw new IllegalArgumentException("SSL-Bundle '" + name + "' ist nicht konfiguriert", e);
             }
         };
+    }
+
+    /** Verbindungsdiagnose in Stufen (#189), {@code GET /api/v1/sources/{id}/diagnosis}. */
+    @Bean
+    SourceDiagnostics sourceDiagnostics(ConfiguredSourceCatalog catalog) {
+        return new SourceDiagnostics(catalog);
     }
 
     /** Prüfung durchgereichter Endnutzer-Anmeldungen bei Confluence-Quellen (#24, Teil C). */

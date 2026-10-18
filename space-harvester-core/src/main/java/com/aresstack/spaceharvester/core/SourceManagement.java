@@ -5,11 +5,13 @@ import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
+import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.time.Clock;
 import java.time.Duration;
@@ -49,6 +51,7 @@ public final class SourceManagement {
     private final FileSystemAssetStore assets;
     private final ExportArtifactWriter exports;
     private final Clock clock;
+    private final SourceDiagnostics diagnostics;
 
     SourceManagement(ConfiguredSourceCatalog catalog, Jobs jobs, LucenePageCache cache,
                      LuceneEnrichmentStore enrichments, FileSystemAssetStore assets, ExportArtifactWriter exports,
@@ -60,6 +63,7 @@ public final class SourceManagement {
         this.assets = Objects.requireNonNull(assets, "assets");
         this.exports = Objects.requireNonNull(exports, "exports");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.diagnostics = new SourceDiagnostics(catalog);
     }
 
     /** Die Einstellungen aller Quellen in ihrer Reihenfolge; ihr {@code toString} zeigt keine Geheimnisse. */
@@ -96,10 +100,25 @@ public final class SourceManagement {
         } catch (InvalidSourceConfigurationException e) {
             return ConnectionCheck.failure("Einstellungen: " + String.join("; ", e.problems()));
         } catch (SourceAccessException e) {
-            return ConnectionCheck.failure(reason(e.reason()));
+            return ConnectionCheck.failure(SourceDiagnostics.message(e.reason()));
         } catch (RuntimeException e) {
             return ConnectionCheck.failure("Unerwarteter Fehler (" + e.getClass().getSimpleName() + ")");
         }
+    }
+
+    /**
+     * Verbindungsdiagnose in Stufen (#189): Proxy-Route, Namensauflösung, TCP samt Proxy-Tunnel, TLS, Anmeldung, API;
+     * siehe {@link SourceDiagnostics}. Öffnet die Einstellungen nur für den Test und legt nichts ab.
+     *
+     * @throws InvalidSourceConfigurationException mit den Problemen der Einstellungen
+     */
+    public SourceDiagnosis diagnose(SourceSettingsConfig draft, boolean replacing) {
+        return diagnostics.diagnose(draft, replacing);
+    }
+
+    /** {@link #diagnose(SourceSettingsConfig, boolean)} für eine vorhandene Quelle; leer ohne diese ID. */
+    public Optional<SourceDiagnosis> diagnose(String sourceId) {
+        return diagnostics.diagnose(sourceId);
     }
 
     /**
@@ -212,17 +231,6 @@ public final class SourceManagement {
             }
         }
         return referenced;
-    }
-
-    private static String reason(SourceAccessException.Reason reason) {
-        return switch (reason) {
-            case ACCESS_DENIED -> "Anmeldung abgelehnt: Zugangsdaten fehlen, sind falsch oder reichen nicht aus";
-            case NOT_FOUND -> "Ziel nicht gefunden: Adresse prüfen";
-            case UNAVAILABLE -> "Nicht erreichbar: Netzweg, Proxy oder Zertifikat prüfen";
-            case RATE_LIMITED -> "Die Quelle drosselt gerade; später erneut versuchen";
-            case UNSUPPORTED -> "Die Quelle kann keine Partitionen auflisten";
-            case INVALID_RESPONSE -> "Antwort der Quelle nicht verwertbar: Adresse und Quellentyp prüfen";
-        };
     }
 
     /**
