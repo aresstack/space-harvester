@@ -89,6 +89,8 @@ class SourceWizardTest {
             w.directory.setText(notizen.toString());
             assertThat(w.id.getText()).isEqualTo("notizen");
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            assertThat(w.next()).as("KI-Dienst übersprungen").isTrue();
             assertThat(wizard[0].step()).as("Dateien brauchen keine Anmeldung").isEqualTo(SourceWizard.Step.CHECK);
         });
 
@@ -105,6 +107,57 @@ class SourceWizardTest {
                 .containsExactly("handbuch", "notizen");
         assertThat(context.runtime().workspace().sources()).extracting(HarvestSource::id)
                 .containsExactly("handbuch", "notizen");
+    }
+
+    @Test
+    void theOptionalAiStepSavesTheServiceWithTheSourceAndTheKeyOnlyInTheVault() throws Exception {
+        Path notizen = Files.createDirectories(home.resolve("notizen"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                """.formatted(home.resolve("data")));
+        SecretVault vault = new SecretVault(home.resolve("secrets"), new SecretVaultTest.FakeDpapi());
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test", vault);
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+
+        CountDownLatch saved = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            w.onSaved(id -> saved.countDown());
+            w.kind.setSelectedIndex(1);
+            w.directory.setText(notizen.toString());
+            assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            w.ai.baseUrl.setText("kein-link");
+            assertThat(w.next()).as("ungültige Adresse").isFalse();
+            assertThat(w.ai.feedback.text()).contains("http://");
+            w.ai.baseUrl.setText("https://ki.example.invalid/v1");
+            w.ai.embeddingModel.setText("text-embedding-3-small");
+            w.ai.apiKey.setText("sk-geheim");
+            w.ai.releaseThis.setSelected(true);
+            assertThat(w.next()).isTrue();
+            assertThat(w.checkNotes.getText()).contains("space-harvester.ai");
+            w.save();
+        });
+        assertThat(saved.await(30, TimeUnit.SECONDS)).isTrue();
+        String file = Files.readString(config);
+        assertThat(file).contains("- id: \"notizen\"", "base-url: \"https://ki.example.invalid/v1\"",
+                "external-processing-sources:\n      - \"notizen\"").doesNotContain("sk-geheim");
+        assertThat(context.settings().ai().configured()).isTrue();
+        assertThat(new String(context.aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)))
+                .isEqualTo("sk-geheim");
+
+        // Ist der KI-Dienst eingerichtet, fragt der Assistent nicht noch einmal.
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            w.kind.setSelectedIndex(1);
+            w.directory.setText(home.toString());
+            assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
+        });
     }
 
     @Test
@@ -284,10 +337,14 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.NETWORK);
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            assertThat(w.next()).as("KI-Dienst übersprungen").isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.draft().yaml("")).contains("token: ${WIKI_TOKEN}", "type: windows-my")
                     .doesNotContain("geheim-123");
             assertThat(w.checkNotes.getText()).contains("nur für diese Sitzung").doesNotContain("setx");
+            w.back();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
             w.back();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.NETWORK);
         });
@@ -327,6 +384,8 @@ class SourceWizardTest {
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            assertThat(w.next()).as("KI-Dienst übersprungen").isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.draft().baseUrl()).isEqualTo("https://confluence.atlassian.com");
             assertThat(w.draft().yaml("")).contains("confluence.atlassian.com", "confluence-atlassian");
@@ -413,6 +472,8 @@ class SourceWizardTest {
             w.proxyExceptions.remove.doClick();
             assertThat(w.proxyDraft().nonProxyHosts()).containsExactly("localhost", "*.intern");
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            assertThat(w.next()).as("KI-Dienst übersprungen").isTrue();
             assertThat(w.step()).isEqualTo(SourceWizard.Step.CHECK);
             assertThat(w.checkNotes.getText()).contains("ALLE Quellen", "manual-proxy");
             w.save();
@@ -447,6 +508,8 @@ class SourceWizardTest {
             w.sessionValue.setText("mein-token");
             assertThat(w.next()).isTrue();
             assertThat(w.next()).isTrue();
+            assertThat(w.step()).isEqualTo(SourceWizard.Step.AI);
+            assertThat(w.next()).as("KI-Dienst übersprungen").isTrue();
             assertThat(w.checkNotes.getText()).contains("verschlüsselt", "die App setzt es beim Start selbst");
             w.save();
         });

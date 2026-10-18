@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.app.settings.AiDraft;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ProxyDraft;
@@ -57,7 +58,8 @@ import java.util.stream.Collectors;
 final class SourceWizard {
 
     enum Step {
-        SOURCE("Quelle"), AUTH("Anmeldung"), NETWORK("Proxy und Netzwerk"), CHECK("Prüfen und speichern");
+        SOURCE("Quelle"), AUTH("Anmeldung"), NETWORK("Proxy und Netzwerk"), AI("KI-Dienst (optional)"),
+        CHECK("Prüfen und speichern");
 
         private final String title;
 
@@ -131,6 +133,9 @@ final class SourceWizard {
     final ComposerButton cancel = Comic.button("Abbrechen", null);
 
     private final SourceDraft.Editable editing;
+    /** Optionale Seite „KI-Dienst“, nur beim Hinzufügen und solange kein KI-Dienst eingerichtet ist. */
+    final AiSettingsPanel ai;
+    private final boolean offerAi;
     private Step step = Step.SOURCE;
     private String suggestedVariable;
     private String suggestedId = "";
@@ -148,6 +153,8 @@ final class SourceWizard {
     SourceWizard(AppContext context, SourceDraft.Editable editing) {
         this.context = context;
         this.editing = editing;
+        this.offerAi = editing == null && (context.settings() == null || !context.settings().ai().configured());
+        this.ai = new AiSettingsPanel(context, true);
         this.editor = new ConfigFileEditor(context.loader());
         root.setOpaque(false);
         root.setPreferredSize(new Dimension(700, 540));
@@ -267,6 +274,7 @@ final class SourceWizard {
         pages.add(address, Step.SOURCE.name());
         pages.add(login, Step.AUTH.name());
         pages.add(network, Step.NETWORK.name());
+        pages.add(ai.component(), Step.AI.name());
         pages.add(check, Step.CHECK.name());
 
         heading.setFont(Comic.semiBold(13f));
@@ -378,6 +386,14 @@ final class SourceWizard {
 
     /** Nächster Schritt, wenn die Eingaben dieses Schritts vollständig sind; sonst steht der Hinweis am Feld. */
     boolean next() {
+        if (step == Step.AI) {
+            List<String> aiProblems = ai.draft().problems();
+            if (!aiProblems.isEmpty()) {
+                ai.feedback.warning("Bitte prüfen", String.join(" ", aiProblems));
+                return false;
+            }
+            ai.feedback.clear();
+        }
         Form form = form(step);
         if (form != null) {
             form.clearErrors();
@@ -458,12 +474,29 @@ final class SourceWizard {
         }
         SourceDraft source = draft();
         char[] value = sessionValue.getPassword();
+        boolean withAi = offerAi && ai.changed();
+        AiDraft aiDraft = withAi ? ai.draftFor(source.id()) : null;
+        if (aiDraft != null && !aiDraft.problems().isEmpty()) {
+            feedback.warning("KI-Dienst prüfen", String.join(" ", aiDraft.problems()));
+            return;
+        }
+        char[] aiKey = withAi ? ai.apiKey.getPassword() : new char[0];
+        boolean aiVault = context.aiVault().available();
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         Background.run(() -> {
+            if (aiDraft != null) {
+                // Vor der Quelle: Scheitert die Quelle danach, schreibt ein zweiter Versuch denselben Block erneut,
+                // statt die Quelle doppelt anzuhängen.
+                AiSettingsPanel.store(context, aiDraft, aiVault ? aiKey.clone() : new char[0]);
+            }
             SourceSaving.store(context, editor, editing, source, write(source), value);
             return source.id();
         }, savedId -> {
+            if (!aiVault && aiKey.length > 0) {
+                context.sessionAiKey(aiKey);
+            }
+            Arrays.fill(aiKey, '\0');
             SourceSaving.remember(context, editing, source, value);
             Arrays.fill(value, '\0');
             clearSecret();
@@ -471,6 +504,7 @@ final class SourceWizard {
             context.reload(() -> saved.accept(savedId));
         }, error -> {
             Arrays.fill(value, '\0');
+            Arrays.fill(aiKey, '\0');
             save.setEnabled(true);
             feedback.problem(error);
         });
@@ -622,9 +656,12 @@ final class SourceWizard {
     }
 
     private List<Step> steps() {
-        return CONFLUENCE.equals(kind.getSelectedItem())
-                ? List.of(Step.values())
-                : List.of(Step.SOURCE, Step.CHECK);
+        List<Step> steps = new ArrayList<>(CONFLUENCE.equals(kind.getSelectedItem())
+                ? List.of(Step.values()) : List.of(Step.SOURCE, Step.AI, Step.CHECK));
+        if (!offerAi) {
+            steps.remove(Step.AI);
+        }
+        return steps;
     }
 
     private List<String> problems(Step current) {
@@ -657,7 +694,7 @@ final class SourceWizard {
             case SOURCE -> address;
             case AUTH -> login;
             case NETWORK -> network;
-            case CHECK -> null;
+            case AI, CHECK -> null;
         };
     }
 
@@ -889,6 +926,10 @@ final class SourceWizard {
                 && System.getProperty(source.certificatePasswordVariable()) == null) {
             notes.append("\n\nDas Zertifikatspasswort kommt aus der Java-Property bzw. Umgebungsvariable ")
                     .append(source.certificatePasswordVariable()).append("; sie ist noch nicht gesetzt.");
+        }
+        if (offerAi && ai.changed()) {
+            notes.append("\n\nDer KI-Dienst wird unter space-harvester.ai eingetragen; der API-Key kommt nur in den "
+                    + "Tresor.");
         }
         if (proxyChanged()) {
             notes.append("\n\nDer Proxy ändert sich für ALLE Quellen: ").append(proxyLabel(proxyDraft().mode()))
