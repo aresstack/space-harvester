@@ -1,7 +1,13 @@
 package com.aresstack.spaceharvester.source.ai;
 
+import com.aresstack.enterpriseai.astu.chat.ChatMessage;
+import com.aresstack.enterpriseai.astu.chat.ChatOptions;
+import com.aresstack.enterpriseai.astu.chat.ChatRequest;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelDescriptor;
+import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
+import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatAdapter;
+import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatConfig;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingException;
 import com.aresstack.enterpriseai.embedding.openai.OpenAiCompatibleEmbeddingAdapter;
@@ -17,9 +23,11 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
+import java.net.SocketTimeoutException;
 import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -33,8 +41,9 @@ import javax.net.ssl.X509TrustManager;
 
 /**
  * Der externe KI-Dienst über die unveränderten Adapter des Enterprise AI Client (ADR 0011):
- * {@code OpenAiCompatibleEmbeddingAdapter} für {@code POST /embeddings} und {@code KipitzModelCatalogAdapter} für
- * {@code GET /models}. Beide verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
+ * {@code OpenAiCompatibleEmbeddingAdapter} für {@code POST /embeddings}, {@code KipitzModelCatalogAdapter} für
+ * {@code GET /models}, {@code KipitzRerankAdapter} für {@code POST /rerank} und {@code OpenAiCompatibleChatAdapter} für
+ * {@code POST /chat/completions} (ADR 0017). Alle verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
  * Proxy, fail-closed) und über das Vertrauen aus {@code trust-bundle} oder der JVM. Der API-Key geht je Anfrage als
  * Bearer-Token mit und wird nie protokolliert; Meldungen der Adapter nennen nur Statuscodes und Pfade.
  */
@@ -126,6 +135,34 @@ public final class RemoteAi {
         };
     }
 
+    /** Obergrenze der Antwort des Chat-Modells für Suchvarianten in Tokens. */
+    static final int MAX_VARIANT_TOKENS = 1024;
+
+    /**
+     * Das Chat-Modell als Formulierer von Suchvarianten ({@code POST /chat/completions}, ADR 0017) über den
+     * unveränderten {@code OpenAiCompatibleChatAdapter}. An den Dienst geht
+     * nur die Frage des Nutzers, nie Inhalt einer Quelle; scheitert ein Aufruf, meldet das Modell
+     * {@link AiServiceException} ohne Frage, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public QueryVariantModel queryVariants() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        // Die Antwort ist eine kurze JSON-Liste; die Obergrenze hält auch einen fehlerhaften Dienst kurz.
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
+        return (instructions, question) -> {
+            try {
+                return adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)).content();
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        };
+    }
+
     /**
      * Die Modelle des Dienstes ({@code GET /models}).
      *
@@ -187,6 +224,23 @@ public final class RemoteAi {
         return config.build();
     }
 
+    /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
+    private OpenAiCompatibleChatConfig chatConfig() {
+        OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
+                .builder(settings.baseUrl(), settings.chatModel())
+                .routes(routes)
+                .userAgent(userAgent)
+                .connectTimeoutMillis(timeoutMillis())
+                .readTimeoutMillis(timeoutMillis());
+        if (settings.apiKey() != null) {
+            config.bearerToken(OpenAiCompatibleChatConfig.TokenSource.fixed(settings.apiKey()));
+        }
+        if (tls != null) {
+            config.sslSocketFactory(tls);
+        }
+        return config.build();
+    }
+
     private OpenAiCompatibleEmbeddingAdapter adapter(String model, int dimension) {
         OpenAiCompatibleEmbeddingConfiguration.Builder config = OpenAiCompatibleEmbeddingConfiguration
                 .builder(settings.baseUrl().toString(), model, dimension)
@@ -227,6 +281,19 @@ public final class RemoteAi {
             case REJECTED, INVALID_RESPONSE -> AiServiceException.Reason.INVALID_RESPONSE;
         };
         return new AiServiceException(reason, "Embedding-Dienst: " + e.kind());
+    }
+
+    /** Nur Art und Status: Die Meldung des Adapters kann gekürzte Serverantworten enthalten, die die Frage zitieren. */
+    private static AiServiceException chatFailure(ChatCompletionException e) {
+        AiServiceException.Reason reason = switch (e.kind()) {
+            case AUTHENTICATION -> AiServiceException.Reason.UNAUTHORIZED;
+            case TRANSPORT -> e.getCause() instanceof SocketTimeoutException ? AiServiceException.Reason.TIMEOUT
+                    : AiServiceException.Reason.UNREACHABLE;
+            case CREDENTIALS_UNAVAILABLE, RATE_LIMITED, PROVIDER_ERROR -> AiServiceException.Reason.UNREACHABLE;
+            case INVALID_REQUEST, PROTOCOL -> AiServiceException.Reason.INVALID_RESPONSE;
+        };
+        return new AiServiceException(reason, "Chat-Dienst: " + e.kind()
+                + (e.statusCode() > 0 ? " (HTTP " + e.statusCode() + ")" : ""));
     }
 
     private static AiServiceException catalogFailure(ModelCatalogException e) {

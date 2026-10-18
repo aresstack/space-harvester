@@ -51,13 +51,25 @@ public final class SearchOrchestrator implements AutoCloseable {
 
     private final VariantSearch search;
     private final QueryExpansionStrategy expansion;
+    private final QueryExpansionStrategy rules;
     private final HitScorer scorer;
     private final ExecutorService executor;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
+    /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
     public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, HitScorer scorer) {
+        this(search, expansion, expansion, scorer);
+    }
+
+    /**
+     * @param expansion Varianten für {@link SearchProfile.Expansion#AI}, etwa {@link AiQueryExpansion}
+     * @param rules     Varianten für {@link SearchProfile.Expansion#RULES}, etwa {@link RuleBasedExpansion}
+     */
+    public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, QueryExpansionStrategy rules,
+                              HitScorer scorer) {
         this.search = Objects.requireNonNull(search, "search");
         this.expansion = Objects.requireNonNull(expansion, "expansion");
+        this.rules = Objects.requireNonNull(rules, "rules");
         this.scorer = Objects.requireNonNull(scorer, "scorer");
         this.executor = Executors.newThreadPerTaskExecutor(Thread.ofVirtual().name("progressive-search-", 0)
                 .factory());
@@ -187,14 +199,27 @@ public final class SearchOrchestrator implements AutoCloseable {
 
         void coordinate() {
             try {
+                QueryExpansionStrategy strategy = profile.expansion() == SearchProfile.Expansion.RULES ? rules
+                        : expansion;
                 CompletableFuture<List<String>> expanded = CompletableFuture.supplyAsync(
-                        () -> expansion.expand(query.text(), profile.maxVariants()), executor);
+                        () -> strategy.expand(query.text(), profile.maxVariants()), executor);
                 variants.add(new QueryVariant(query.text(), 0));
                 states.add(Status.PENDING);
                 newHits.add(0);
                 CompletableFuture<KeywordSearch.Results> original = start(0);
                 publishVariants();
                 await(0, original, Math.min(deadline, started + profile.execution().variantTimeout().toNanos()));
+                // Genügt schon die ursprüngliche Anfrage, wartet die Suche nicht auf das Modell.
+                if (!cancelled() && successes > 0 && !budgetHit && System.nanoTime() < deadline
+                        && quality.satisfied(state())) {
+                    if (expanded.isDone()) {
+                        addVariants(awaitExpansion(expanded));
+                    } else {
+                        expanded.cancel(false);
+                    }
+                    finish(Completion.QUALITY_REACHED);
+                    return;
+                }
                 addVariants(awaitExpansion(expanded));
                 publishVariants();
                 int next = 1;
