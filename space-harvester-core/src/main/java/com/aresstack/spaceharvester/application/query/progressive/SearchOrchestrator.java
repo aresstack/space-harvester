@@ -21,6 +21,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -52,6 +53,7 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final QueryExpansionStrategy expansion;
     private final HitScorer scorer;
     private final ExecutorService executor;
+    private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, HitScorer scorer) {
         this.search = Objects.requireNonNull(search, "search");
@@ -76,14 +78,30 @@ public final class SearchOrchestrator implements AutoCloseable {
         Run run = new Run(caller, Objects.requireNonNull(query, "query"), Objects.requireNonNull(profile, "profile"),
                 Objects.requireNonNull(quality, "quality"), listener == null ? ProgressiveSearchListener.NONE
                 : listener);
+        active.add(run);
+        run.result.whenComplete((done, failure) -> active.remove(run));
         executor.execute(run::coordinate);
         return run;
     }
 
-    /** Nimmt keine Suchen mehr an; laufende enden ohne Unterbrechung. */
+    /** So lange wartet {@link #close()} auf laufende Suchanfragen. */
+    static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(10);
+
+    /**
+     * Bricht laufende Suchen ab und wartet bis {@link #CLOSE_TIMEOUT}, bis ihre Suchanfragen zurückgekehrt sind, damit
+     * danach Cache und Indizes schließen können. Unterbrochen wird nie.
+     */
     @Override
     public void close() {
+        active.forEach(Run::cancel);
         executor.shutdown();
+        try {
+            if (!executor.awaitTermination(CLOSE_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)) {
+                LOG.log(System.Logger.Level.WARNING, "Suchanfragen laufen nach {0} noch", CLOSE_TIMEOUT);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Ein Treffer der zusammengeführten Liste. */
@@ -128,7 +146,6 @@ public final class SearchOrchestrator implements AutoCloseable {
         private final List<Status> states = new ArrayList<>();
         private final List<Integer> newHits = new ArrayList<>();
         private final Map<Integer, CompletableFuture<KeywordSearch.Results>> late = new LinkedHashMap<>();
-        private final List<CompletableFuture<KeywordSearch.Results>> running = new ArrayList<>();
         private final List<String> loads = new ArrayList<>();
         private long sequence;
         private int searches;
@@ -187,13 +204,22 @@ public final class SearchOrchestrator implements AutoCloseable {
                         finish(Completion.CANCELLED);
                         return;
                     }
+                    boolean remaining = next < variants.size();
+                    if (!remaining && !late.isEmpty() && System.nanoTime() < deadline) {
+                        // Bis zur Gesamtfrist auf verspätete Antworten warten, statt sie zu verwerfen.
+                        awaitLate();
+                        continue;
+                    }
+                    // Die Frist zuerst: Eine Suche, die an der Zeit endet, behauptet nie das Qualitätsziel.
+                    if ((remaining || !late.isEmpty()) && (budgetHit || System.nanoTime() >= deadline)) {
+                        finish(Completion.BUDGET_EXHAUSTED);
+                        return;
+                    }
                     if (successes > 0 && quality.satisfied(state())) {
                         finish(Completion.QUALITY_REACHED);
                         return;
                     }
-                    boolean remaining = next < variants.size();
-                    if (remaining && (budgetHit || System.nanoTime() >= deadline
-                            || searches >= profile.searchBudget())) {
+                    if (remaining && searches >= profile.searchBudget()) {
                         finish(Completion.BUDGET_EXHAUSTED);
                         return;
                     }
@@ -247,7 +273,12 @@ public final class SearchOrchestrator implements AutoCloseable {
                     slots.release();
                 }
             }, executor);
-            running.add(future);
+            // Kehrt eine Suchanfrage erst nach dem Abbruch zurück, kennt finish ihr Laden nicht: hier abbrechen.
+            future.thenAccept(results -> {
+                if (cancelled() && results.progress() != null && !results.progress().done()) {
+                    cancelLoading(results.progress().id());
+                }
+            });
             return future;
         }
 
@@ -302,6 +333,23 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
         }
 
+        /** Wartet bis zur Gesamtfrist oder zum Abbruch auf die verspäteten Suchanfragen. */
+        private void awaitLate() {
+            try {
+                CompletableFuture.allOf(late.values().toArray(CompletableFuture[]::new))
+                        .applyToEither(cancelSignal, ignored -> null)
+                        .get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+            } catch (TimeoutException e) {
+                budgetHit = true;
+            } catch (ExecutionException | CompletionException e) {
+                // Gescheiterte bleiben gescheitert; mergeLate nimmt die übrigen.
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cancelSignal.complete(null);
+            }
+            mergeLate();
+        }
+
         /** Verspätete Antworten gescheiterter Suchanfragen werden noch nach Rang einsortiert. */
         private void mergeLate() {
             var iterator = late.entrySet().iterator();
@@ -350,9 +398,12 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             if (confirmed && !known.confirmed) {
                 // Bestätigt aus dem Cache: Kopfdaten und Auszug aus dem Inhalt, Platz nach der Bewertung.
+                boolean changed = !Objects.equals(known.hit.title(), hit.title())
+                        || !Objects.equals(known.hit.snippet(), hit.snippet());
                 known.hit = hit;
                 known.confirmed = true;
-                if (Double.isNaN(known.score)) {
+                // Neue Eingabe der Bewertung, also neu bewerten.
+                if (changed || Double.isNaN(known.score)) {
                     unscored.add(known);
                 }
             }
@@ -458,20 +509,21 @@ public final class SearchOrchestrator implements AutoCloseable {
                 }
             }
             if (reason == Completion.CANCELLED) {
-                running.forEach(future -> future.cancel(false));
-                for (String load : loads) {
-                    try {
-                        search.cancelLoading(load);
-                    } catch (RuntimeException e) {
-                        LOG.log(System.Logger.Level.INFO, "Laden nicht abgebrochen ({0})", e.getClass().getName());
-                    }
-                }
+                loads.forEach(this::cancelLoading);
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
                     Duration.ofNanos(System.nanoTime() - started));
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));
             result.complete(done);
+        }
+
+        private void cancelLoading(String load) {
+            try {
+                search.cancelLoading(load);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Laden nicht abgebrochen ({0})", e.getClass().getName());
+            }
         }
 
         private void emit(Runnable event) {

@@ -223,6 +223,106 @@ class SearchOrchestratorTest {
         assertThat(seen).isNotEmpty();
     }
 
+    @Test
+    void aSearchReturningAfterTheCancelStillHasItsLoadingCancelled() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        search.results(ORIGINAL, found("o"));
+        search.put("v1", new KeywordSearch.Results("wiki", List.of(), List.of(), null, false, 1, List.of(hit("a")),
+                new KeywordSearch.Progress("load-v1", 1, 0, 0)));
+        search.blocking("v1", release);
+        ProgressiveSearch running = orchestrator(List.of("v1"), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile(SearchProfile.Mode.ALL_VARIANTS, 3));
+
+        awaitCalls(2);
+        running.cancel();
+        assertThat(running.result().get(10, TimeUnit.SECONDS).reason()).isEqualTo(Completion.CANCELLED);
+        release.countDown();
+
+        long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (!search.cancelledLoads.contains("load-v1") && System.nanoTime() < until) {
+            TimeUnit.MILLISECONDS.sleep(10);
+        }
+        assertThat(search.cancelledLoads).contains("load-v1");
+    }
+
+    @Test
+    void lateHitsOfTheLastVariantAreWaitedForWithinTheTimeBudget() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        search.results(ORIGINAL, found("o"));
+        search.results("v1", found("late")).blocking("v1", release);
+        SearchProfile profile = profile(SearchProfile.Mode.ALL_VARIANTS, 1).withExecution(
+                new SearchExecutionPolicy(1, 1, Duration.ofMillis(200), 0));
+        ProgressiveSearch running = orchestrator(List.of("v1"), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile);
+
+        TimeUnit.MILLISECONDS.sleep(500);
+        release.countDown();
+        ProgressiveResult result = running.result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.hits()).extracting(hit -> hit.hit().pageId()).containsExactly("o", "late");
+        assertThat(result.variants()).extracting(Variant::status).containsOnly(Status.DONE);
+        assertThat(result.reason()).isEqualTo(Completion.ALL_VARIANTS_DONE);
+    }
+
+    @Test
+    void anExhaustedTimeBudgetWinsOverTheQualityGoal() throws Exception {
+        CountDownLatch never = new CountDownLatch(1);
+        search.results(ORIGINAL, found("o"));
+        search.results("v1", found("x")).blocking("v1", never);
+        search.results("v2", found("b"));
+        HitScorer good = (original, hits) -> hits.stream().mapToDouble(hit -> 0.9).toArray();
+        SearchProfile profile = SearchProfile.defaults().withQuality(2, 0.5).withBudget(Duration.ofMillis(300), 12)
+                .withExecution(new SearchExecutionPolicy(2, 2, Duration.ofSeconds(5), 0));
+
+        ProgressiveResult result = orchestrator(List.of("v1", "v2", "v3"), good).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile).result().get(10, TimeUnit.SECONDS);
+        never.countDown();
+
+        assertThat(result.reason()).isEqualTo(Completion.BUDGET_EXHAUSTED);
+    }
+
+    @Test
+    void aFindConfirmedByTheCacheIsScoredAgainWithItsNewExcerpt() throws Exception {
+        search.results(ORIGINAL, found("a", "b"));
+        search.put("v1", new KeywordSearch.Results("wiki", List.of(new KeywordSearch.Hit("wiki", "a", "DEV",
+                "Seite a", "Inhalt a", null, "1", null, null)), List.of(), null, true, 0, List.of(), null));
+        HitScorer scorer = (original, hits) -> hits.stream()
+                .mapToDouble(hit -> hit.snippet().startsWith("Inhalt") ? 0.9 : hit.pageId().equals("b") ? 0.5 : 0.1)
+                .toArray();
+
+        ProgressiveResult result = orchestrator(List.of("v1"), scorer).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), profile(SearchProfile.Mode.ALL_VARIANTS, 3))
+                .result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.hits()).extracting(hit -> hit.hit().pageId(), RankedHit::score)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("a", 0.9),
+                        org.assertj.core.groups.Tuple.tuple("b", 0.5));
+    }
+
+    @Test
+    void closingCancelsRunningSearchesAndWaitsForTheirQueries() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        search.results(ORIGINAL, found("o")).blocking(ORIGINAL, release);
+        ProgressiveSearch running = orchestrator(List.of(), HitScorer.none()).searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), SearchProfile.defaults());
+        awaitCalls(1);
+        Thread releaser = Thread.ofVirtual().start(() -> {
+            try {
+                TimeUnit.MILLISECONDS.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            release.countDown();
+        });
+
+        orchestrator.close();
+
+        assertThat(search.returned).hasValue(1);
+        assertThat(running.result()).isDone();
+        assertThat(running.result().join().reason()).isEqualTo(Completion.CANCELLED);
+        releaser.join();
+    }
+
     private SearchOrchestrator orchestrator(List<String> variants, HitScorer scorer) {
         orchestrator = new SearchOrchestrator(search, (original, max) -> variants, scorer);
         return orchestrator;
@@ -262,6 +362,7 @@ class SearchOrchestratorTest {
         private final Map<String, Integer> failures = new ConcurrentHashMap<>();
         private final List<String> calls = Collections.synchronizedList(new ArrayList<>());
         final List<String> cancelledLoads = Collections.synchronizedList(new ArrayList<>());
+        final java.util.concurrent.atomic.AtomicInteger returned = new java.util.concurrent.atomic.AtomicInteger();
 
         FakeSearch results(String text, KeywordSearch.Results result) {
             results.put(text, result);
@@ -323,6 +424,7 @@ class SearchOrchestratorTest {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            returned.incrementAndGet();
             return results.getOrDefault(text, found());
         }
 
