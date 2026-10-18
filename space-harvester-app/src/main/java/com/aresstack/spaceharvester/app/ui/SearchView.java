@@ -98,6 +98,8 @@ public final class SearchView implements View {
     private String progressId;
     /** Zuletzt gemeldete geladene Seiten; steigt die Zahl, sucht die Ansicht denselben Stapel erneut. */
     private int lastLoaded;
+    /** Ob der erste Stapel leer kam, während der Core noch lädt; „Keine Treffer“ erst nach dem Laden. */
+    private boolean awaitingHits;
     /** Ob ein erneutes Suchen desselben Stapels läuft; nie zwei zugleich. */
     private boolean refreshing;
     /** Ob das Laden abgebrochen wurde; dann sucht die Ansicht nicht erneut, denn das stieße das Laden wieder an. */
@@ -424,8 +426,13 @@ public final class SearchView implements View {
             batchStart = 0;
             model.set(hits(results));
             show(q, results);
-            track(results.progress());
+            awaitingHits = false;
             if (!results.ranked().isEmpty()) {
+                feedback.clear();
+            } else if (results.progress() != null && !results.progress().done()) {
+                // Delegierte Benutzer sehen keine vorläufigen Funde: Treffer erscheinen erst, wenn der Core die
+                // geladenen Seiten geprüft hat. Bis dahin spricht der Balken, kein vorzeitiges „Keine Treffer“.
+                awaitingHits = true;
                 feedback.clear();
             } else if (results.nextCursor() != null) {
                 // Dieser Stapel war leer, weitere Kandidaten folgen noch: kein endgültiges „Keine Treffer“.
@@ -438,6 +445,7 @@ public final class SearchView implements View {
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
                         : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
             }
+            track(results.progress());
         }, error -> {
             if (id != request) {
                 return;
@@ -831,6 +839,14 @@ public final class SearchView implements View {
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
     private void finished(boolean cancelled) {
+        if (awaitingHits) {
+            awaitingHits = !cancelled && model.rows.isEmpty() && refreshing;
+            if (model.rows.isEmpty() && !awaitingHits) {
+                feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
+            } else if (!model.rows.isEmpty()) {
+                feedback.clear();
+            }
+        }
         idle(cancelled ? "Abgebrochen" : "Fertig");
         progressText.setText((cancelled ? "Laden abgebrochen" : DONE) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
