@@ -383,6 +383,51 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void cacheFreshnessAndWithheldRetentionUseTheServerKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");
+        assertThat(loader.load(file).cache()).isEqualTo(AppSettings.Cache.DEFAULT);
+
+        AppSettings.Cache cache = new AppSettings.Cache(Duration.ofHours(6), false, Duration.ofDays(14));
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null), cache));
+
+        assertThat(Files.readString(file)).contains("    search-timeout: 5s   # bleibt", "    max-age: 6h",
+                "    version-check: false", "  sync:\n    withheld-retention: 14d");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.cache()).isEqualTo(cache);
+        assertThat(settings.storage().searchTimeout()).isEqualTo(Duration.ofSeconds(5));
+
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AppSettings.Cache.DEFAULT));
+        assertThat(Files.readString(file)).contains("max-age: 0s", "version-check: true", "withheld-retention: 30d")
+                .doesNotContain("6h", "14d");
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-age: 400d\n    version-check: vielleicht\n");
+        assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("max-age"))
+                .anyMatch(p -> p.contains("version-check"));
+    }
+
+    @Test
+    void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", null, "text-embedding-3-small", "1536", null,
+                java.util.List.of(), "bge-reranker", "500", "2");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("rerank-model: \"bge-reranker\"", "embedding-chunk-tokens: 500",
+                "embedding-chunk-overlap-sentences: 2");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().rerankModel()).isEqualTo("bge-reranker");
+        assertThat(settings.ai().chunkTokens()).isEqualTo(500);
+        assertThat(settings.ai().chunkOverlapSentences()).isEqualTo(2);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(new AiDraft("https://x", null, null, null, null, null, null, "4", "-1").problems())
+                .anyMatch(p -> p.contains("ab 8")).anyMatch(p -> p.contains("Überlappung"));
+    }
+
+    @Test
     void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
         ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
                 null, null, null, null, null);

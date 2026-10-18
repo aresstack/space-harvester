@@ -35,7 +35,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
                           AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
-                          TrustSettings tls) {
+                          TrustSettings tls, Cache cache) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -49,12 +49,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         problems = List.copyOf(problems);
         disabledSources = disabledSources == null ? Set.of() : Set.copyOf(disabledSources);
         tls = tls == null ? TrustSettings.jvm() : tls;
+        cache = cache == null ? Cache.DEFAULT : cache;
     }
 
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources, tls);
+                problems, disabledSources, tls, cache);
     }
 
     /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */
@@ -133,7 +134,8 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param timeout {@code null} für den Standard des Core
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
-                             Duration timeout, List<String> externalProcessingSources) {
+                             Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                             Integer chunkTokens, Integer chunkOverlapSentences) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
@@ -141,9 +143,33 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             externalProcessingSources = List.copyOf(externalProcessingSources);
         }
 
+        /** Ohne Rerank-Modell und mit der Zerlegung des Core. */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, null,
+                    null, null);
+        }
+
         /** Ob die semantische Suche damit möglich wäre: Adresse und Embedding-Modell sind gesetzt. */
         public boolean configured() {
             return baseUrl != null && embeddingModel != null;
+        }
+    }
+
+    /**
+     * Cache und Aufbewahrung, mit denselben Schlüsseln wie der Server: {@code space-harvester.cache.max-age} (Zeitfenster,
+     * in dem eine unveränderte Seite ohne Rückfrage gilt; die Rechte prüft der Core trotzdem),
+     * {@code space-harvester.cache.version-check} und {@code space-harvester.sync.withheld-retention} (wie lange eine
+     * gesperrte Seite im Bestand bleibt, ADR 0014).
+     */
+    public record Cache(Duration maxAge, boolean versionCheck, Duration withheldRetention) {
+
+        public static final Duration DEFAULT_RETENTION = Duration.ofDays(30);
+        public static final Cache DEFAULT = new Cache(Duration.ZERO, true, DEFAULT_RETENTION);
+
+        public Cache {
+            maxAge = maxAge == null ? Duration.ZERO : maxAge;
+            withheldRetention = withheldRetention == null ? DEFAULT_RETENTION : withheldRetention;
         }
     }
 }

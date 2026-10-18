@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 
 import javax.swing.JComponent;
@@ -17,14 +18,19 @@ import java.nio.file.Path;
 import java.util.Locale;
 
 /**
- * Einstellungen und Diagnose in zwei Reitern: „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten
- * liegen, Netz, Zertifikate und Versionen) und „KI“ (KI-Dienst für die semantische Suche, {@link AiSettingsPanel}). Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“; die Datei wird außerhalb
- * der App bearbeitet und mit „Neu laden“ übernommen.
+ * Einstellungen und Diagnose in Reitern wie im Enterprise AI Client: „Allgemein“ (welche Datei gilt, was daran nicht
+ * stimmt, wo die Daten liegen, Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
+ * Quellen), „Netzwerk“ (Proxy und Serverzertifikate) und „Cache“ (Zeitfenster, Versionsprüfung, Frist für gesperrte
+ * Seiten). Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“. Jede Änderung schreibt die Datei und startet die
+ * Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
 public final class SettingsView implements View {
 
     static final String GENERAL = "Allgemein";
-    static final String AI = "KI";
+    static final String AI = "KI-Dienst";
+    static final String MODELS = "Modelle";
+    static final String NETWORK = "Netzwerk";
+    static final String CACHE = "Cache";
     static final String EXAMPLE = "/com/aresstack/spaceharvester/app/space-harvester-app.example.yml";
 
     private final AppContext context;
@@ -33,6 +39,9 @@ public final class SettingsView implements View {
     private final JTextArea problems = Comic.note("");
     private final Facts storage = new Facts();
     private final Facts network = new Facts();
+    private final Facts cache = new Facts();
+    private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
+            "Zeitfenster, Versionsprüfung und Frist für gesperrte Seiten einstellen");
     private final PillTabs tabs = new PillTabs();
     private final AiSettingsPanel ai;
     private final Facts runtime = new Facts();
@@ -78,6 +87,8 @@ public final class SettingsView implements View {
                 () -> feedback.success("Proxy übernommen")).open());
         tls.addActionListener(e -> SettingDialogs.tls(root, context,
                 () -> feedback.success("Serverzertifikate übernommen")).open());
+        editCache.addActionListener(e -> SettingDialogs.cache(root, context,
+                () -> feedback.success("Cache-Einstellungen übernommen")).open());
         JPanel config = new JPanel(new BorderLayout(0, 8));
         config.setOpaque(false);
         config.add(file, BorderLayout.NORTH);
@@ -103,20 +114,25 @@ public final class SettingsView implements View {
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
-                Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy, tls)),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)));
-        tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.component())));
+        tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
+        tabs.tab(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
+        tabs.tab(NETWORK, Comic.column(Comic.plate("Netz und Zertifikate", Comic.ORANGE,
+                withButtons(network, proxy, tls))));
+        tabs.tab(CACHE, Comic.column(Comic.plate("Cache und Aufbewahrung", Comic.PETROL,
+                withButtons(cache, editCache))));
         tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
         root.add(tabs, BorderLayout.CENTER);
         context.onChange(ignored -> {
             render();
-            // Eingaben im offenen Reiter „KI“ bleiben stehen; beim nächsten Öffnen gilt der neue Stand.
-            if (!AI.equals(tabs.selected())) {
+            // Eingaben in den offenen Reitern „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
+            // neue Stand.
+            if (!AI.equals(tabs.selected()) && !MODELS.equals(tabs.selected())) {
                 ai.render();
             }
         });
         tabs.onSelect(name -> {
-            if (AI.equals(name)) {
+            if ((AI.equals(name) || MODELS.equals(name)) && !ai.changed()) {
                 ai.render();
             }
         });
@@ -134,7 +150,7 @@ public final class SettingsView implements View {
         ai.render();
     }
 
-    /** Öffnet den Reiter „KI“, z. B. vom Hinweis an der semantischen Suche. */
+    /** Öffnet den Reiter „KI-Dienst“, z. B. vom Hinweis an der semantischen Suche. */
     public void showAi() {
         tabs.select(AI);
     }
@@ -221,6 +237,15 @@ public final class SettingsView implements View {
                                     + Texts.shortHash(certificate.thumbprint())));
                 }
             }
+        }
+        cache.reset();
+        if (settings != null) {
+            AppSettings.Cache c = settings.cache();
+            cache.add(SettingDialogs.CACHE_MAX_AGE, c.maxAge().isZero() ? "keins – jede Anzeige fragt bei der Quelle"
+                            : ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage")
+                    .add("Versionsprüfung", c.versionCheck() ? "ja" : "nein – nach dem Zeitfenster neu laden")
+                    .add(SettingDialogs.WITHHELD_RETENTION, Texts.count(c.withheldRetention().toDays(), "Tag",
+                            "Tagen"));
         }
         runtime.reset();
         AppRuntime current = context.runtime();

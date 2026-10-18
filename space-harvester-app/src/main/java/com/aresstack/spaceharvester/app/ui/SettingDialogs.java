@@ -328,6 +328,9 @@ final class SettingDialogs {
         return shell;
     }
 
+    static final String CACHE_TITLE = "Cache und Aufbewahrung";
+    static final String CACHE_MAX_AGE = "Zeitfenster";
+    static final String WITHHELD_RETENTION = "Gesperrte Seiten entfernen nach";
     static final String TLS_TITLE = "Serverzertifikate für alle Quellen";
 
     /**
@@ -383,6 +386,77 @@ final class SettingDialogs {
             }
         }, context, saved);
         return shell;
+    }
+
+    /**
+     * Cache und Aufbewahrung für alle Quellen, mit denselben Schlüsseln wie der Server: Zeitfenster
+     * ({@code space-harvester.cache.max-age}), in dem eine unveränderte Seite ohne Rückfrage bei der Quelle gilt,
+     * Versionsprüfung ({@code version-check}) und die Frist, nach der gesperrte Seiten endgültig aus dem Bestand gehen
+     * ({@code space-harvester.sync.withheld-retention}, ADR 0014). Die Rechte prüft der Core immer.
+     */
+    static Shell cache(Component parent, AppContext context, Runnable saved) {
+        AppSettings.Cache current = context.settings() != null ? context.settings().cache() : AppSettings.Cache.DEFAULT;
+        JTextField maxAge = Comic.field(8);
+        maxAge.setText(ConfigFileEditor.duration(current.maxAge()));
+        JCheckBox versionCheck = checkbox("Version bei der Quelle prüfen, bevor eine Seite neu geladen wird",
+                current.versionCheck());
+        JTextField retention = Comic.field(6);
+        retention.setText(String.valueOf(current.withheldRetention().toDays()));
+        Rows rows = new Rows();
+        rows.add(CACHE_MAX_AGE, maxAge, "So lange gilt eine abgerufene Seite ohne Rückfrage, z. B. 30m, 6h oder 1d; "
+                + "0 fragt jedes Mal bei der Quelle nach");
+        rows.add("Versionsprüfung", versionCheck, "Nach dem Zeitfenster erst die Version vergleichen; aus: die Seite "
+                + "wird gleich neu geladen");
+        rows.add(WITHHELD_RETENTION, retention, "Tage, die eine Seite ohne Leserecht gesperrt im Bestand bleibt, "
+                + "bevor ein Abgleich sie endgültig entfernt; 0 sofort");
+        Supplier<AppSettings.Cache> draft = () -> new AppSettings.Cache(duration(maxAge.getText()),
+                versionCheck.isSelected(), days(retention.getText()));
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(wrapped("Gilt für alle Quellen. Leserechte prüft der Core bei jedem Abruf, auch im Zeitfenster."),
+                BorderLayout.NORTH);
+        body.add(rows, BorderLayout.CENTER);
+        Shell shell = new Shell(parent, CACHE_TITLE, body);
+        shell.onSaveFile(() -> {
+            List<String> problems = new ArrayList<>();
+            java.time.Duration age = duration(maxAge.getText());
+            if (age == null || age.compareTo(java.time.Duration.ofDays(365)) > 0) {
+                problems.add("Das Zeitfenster ist eine Dauer wie 0, 30m, 6h oder 1d, höchstens 365 Tage.");
+            }
+            if (days(retention.getText()) == null) {
+                problems.add("Die Frist für gesperrte Seiten ist eine Zahl von Tagen ab 0.");
+            }
+            return problems;
+        }, () -> {
+            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+            String text = Files.isRegularFile(context.configFile())
+                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withCache(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), draft.get());
+            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
+        }, () -> current.equals(draft.get()), context, saved);
+        return shell;
+    }
+
+    /** Eine Dauer wie 0, 45s, 30m, 6h oder 1d; {@code null}, wenn sie so nicht lesbar ist. */
+    static java.time.Duration duration(String text) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{1,6})\\s*([smhd]?)")
+                .matcher(text == null ? "" : text.strip().toLowerCase(java.util.Locale.ROOT));
+        if (!m.matches()) {
+            return null;
+        }
+        long amount = Long.parseLong(m.group(1));
+        return switch (m.group(2)) {
+            case "m" -> java.time.Duration.ofMinutes(amount);
+            case "h" -> java.time.Duration.ofHours(amount);
+            case "d" -> java.time.Duration.ofDays(amount);
+            default -> java.time.Duration.ofSeconds(amount);
+        };
+    }
+
+    private static java.time.Duration days(String text) {
+        String value = text == null ? "" : text.strip();
+        return value.matches("\\d{1,5}") ? java.time.Duration.ofDays(Long.parseLong(value)) : null;
     }
 
     private static JCheckBox checkbox(String text, boolean selected) {

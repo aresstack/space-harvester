@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -196,7 +197,24 @@ public final class AppSettingsLoader {
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
                 path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
-                tls(get(network, "tls"), problems));
+                tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems));
+    }
+
+    /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */
+    private AppSettings.Cache cache(Map<?, ?> cache, Map<?, ?> sync, List<String> problems) {
+        Duration maxAge = duration(get(cache, "max-age"), Duration.ZERO, "space-harvester.cache.max-age", problems);
+        if (maxAge.isNegative() || maxAge.compareTo(CacheFreshness.MAX_AGE) > 0) {
+            problems.add("space-harvester.cache.max-age liegt zwischen 0 und 365 Tagen");
+            maxAge = Duration.ZERO;
+        }
+        Duration retention = duration(get(sync, "withheld-retention"), AppSettings.Cache.DEFAULT_RETENTION,
+                "space-harvester.sync.withheld-retention", problems);
+        if (retention.isNegative()) {
+            problems.add("space-harvester.sync.withheld-retention darf nicht negativ sein");
+            retention = AppSettings.Cache.DEFAULT_RETENTION;
+        }
+        return new AppSettings.Cache(maxAge, flag(get(cache, "version-check"), true,
+                "space-harvester.cache.version-check", problems), retention);
     }
 
     /**
@@ -231,6 +249,10 @@ public final class AppSettingsLoader {
     }
 
     private boolean flag(Object raw, boolean standard, List<String> problems) {
+        return flag(raw, standard, "space-harvester.network.tls", problems);
+    }
+
+    private boolean flag(Object raw, boolean standard, String key, List<String> problems) {
         if (raw == null) {
             return standard;
         }
@@ -241,7 +263,7 @@ public final class AppSettingsLoader {
         if ("true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text)) {
             return Boolean.parseBoolean(text);
         }
-        problems.add("space-harvester.network.tls: „" + text + "“ ist weder true noch false");
+        problems.add(key + ": „" + text + "“ ist weder true noch false");
         return standard;
     }
 
@@ -442,14 +464,17 @@ public final class AppSettingsLoader {
         }
         AiDraft draft = new AiDraft(text(get(ai, "base-url"), problems), text(get(ai, "chat-model"), problems),
                 text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
-                optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released);
+                optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
+                text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
+                text(get(ai, "embedding-chunk-overlap-sentences"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
         draft.problems().forEach(problem -> problems.add("space-harvester.ai: " + problem));
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
-                draft.dimensions(), draft.timeout(), draft.externalProcessingSources());
+                draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
+                draft.tokens(), draft.overlap());
     }
 
     // ------------------------------------------------------------------ Werte
