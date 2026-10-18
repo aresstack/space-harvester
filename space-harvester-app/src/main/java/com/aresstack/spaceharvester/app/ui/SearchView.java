@@ -4,10 +4,9 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
-import com.aresstack.spaceharvester.application.query.PageSearchQuery;
-import com.aresstack.spaceharvester.application.query.SearchSort;
-import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
-import com.aresstack.spaceharvester.application.ranking.Reranking;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 
@@ -19,6 +18,7 @@ import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTable;
 import javax.swing.JTextField;
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
@@ -44,9 +44,9 @@ import java.util.TreeSet;
  * still „keine Treffer“ zu melden; ein unvollständiges Ergebnis ist so gekennzeichnet.
  * Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine einzelne Quelle
  * mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces der angehakten
- * Quellen an. Das Häkchen „Semantische Suche (experimentell)“ ist die Relevanzsuche des Core ({@code sort=relevance},
- * ADR 0011) über die bereits eingebetteten Seiten im Cache; es lässt sich erst setzen, wenn ein KI-Dienst mit
- * Embedding-Modell und Dimension eingerichtet ist, und liefert einen Block ohne „Weitere laden“.
+ * Quellen an. Das Häkchen „Semantische Suche“ ist die progressive Suche des Core (ADR 0017): Originalanfrage zuerst,
+ * dann Varianten (vom Chat-Modell, sonst nach Regeln) als Schlagwörter, alle Treffer gegen die Originalanfrage
+ * bewertet und eingeordnet, bis der Core einen Abschlussgrund meldet; ohne „Weitere laden“.
  * „Weitere laden“ folgt dem Cursor des Core, der nur für dieselbe Anfrage gilt. Nur die jeweils letzte Anfrage darf die
  * Liste ändern.
  */
@@ -61,14 +61,18 @@ public final class SearchView implements View {
     static final String DONE = "Die Suche ist abgeschlossen";
     /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
     private static final int POLL_MILLIS = 400;
-    static final String UNAVAILABLE = "noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten";
+    static final String SEMANTIC = "Semantische Suche";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final JTextField query = Comic.field(30);
-    /** Relevanzsuche ({@code sort=relevance}); nur mit eingerichtetem Embedding-Dienst aktivierbar. */
-    final JCheckBox semantic = checkBox("Semantische Suche (experimentell)",
-            "Sucht nach Bedeutung in den bereits eingebetteten Seiten freigegebener Quellen");
+    /** Progressive Suche des Core (ADR 0017): Originalanfrage, dann Varianten bis zum Qualitätsziel. */
+    final JCheckBox semantic = checkBox(SEMANTIC, "Sucht zusätzlich mit Varianten der Anfrage und ordnet alle Treffer "
+            + "nach ihrer Nähe zur ursprünglichen Anfrage");
+    /** Die Suchanfragen der semantischen Suche als Schlagwörter; die ursprüngliche steht im Suchfeld. */
+    final JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    /** Die laufende semantische Suche; {@code null}, wenn keine läuft. */
+    private ProgressiveSearch running;
     /** Der Umfang aus dem Explorer: „In: Alle Wissensquellen“ bzw. die gewählten Quellen und Spaces. */
     final JLabel scopeLabel = Comic.muted(" ");
     final ComposerButton everywhere = Comic.button("Überall suchen", "Auswahl im Explorer aufheben und in allen "
@@ -133,8 +137,8 @@ public final class SearchView implements View {
         cancel.setVisible(false);
         more.setVisible(false);
         semantic.setSelected(false);
-        semantic.setEnabled(false);
-        semantic.setToolTipText(UNAVAILABLE);
+        tags.setOpaque(false);
+        tags.setVisible(false);
         everywhere.addActionListener(e -> clearScope.run());
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -156,6 +160,7 @@ public final class SearchView implements View {
                 + "wählst du im Explorer links:<br>eine Wissensquelle, einen Space oder mit Strg-Klick mehrere; "
                 + "ohne Auswahl in allen.<br>"
                 + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) im Suchfeld öffnet die Seite direkt."
+                + "<br>Semantische Suche: zusätzlich Varianten der Anfrage, alle Treffer nach Nähe zur Anfrage geordnet."
                 + "<br>Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>");
         info.getAccessibleContext().setAccessibleName("Hinweise zur Suche");
         JPanel bar = new JPanel(new BorderLayout(10, 0));
@@ -174,7 +179,11 @@ public final class SearchView implements View {
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
         head.add(bar, BorderLayout.NORTH);
-        head.add(scopeRow, BorderLayout.CENTER);
+        JPanel middle = new JPanel(new BorderLayout(0, 6));
+        middle.setOpaque(false);
+        middle.add(scopeRow, BorderLayout.NORTH);
+        middle.add(tags, BorderLayout.CENTER);
+        head.add(middle, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         root.add(head, BorderLayout.NORTH);
         root.add(Comic.scroll(table), BorderLayout.CENTER);
@@ -267,16 +276,15 @@ public final class SearchView implements View {
                 .collect(java.util.stream.Collectors.toSet());
     }
 
-    /** Semantische Suche je nach KI-Dienst; entfernte Quellen fallen aus dem Umfang. */
+    /** Woher die Varianten der semantischen Suche kommen; entfernte Quellen fallen aus dem Umfang. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
-        boolean available = runtime != null && runtime.workspace().semanticSearch();
-        semantic.setEnabled(available);
-        if (!available) {
-            semantic.setSelected(false);
-        }
-        semantic.setToolTipText(available ? "Sucht nach Bedeutung: Embeddings über den KI-Dienst, nur Seiten "
-                + "freigegebener Quellen, die schon im Cache liegen" : UNAVAILABLE);
+        semantic.setEnabled(runtime != null);
+        semantic.setToolTipText(runtime == null ? null : runtime.workspace().aiVariants()
+                ? "Sucht zusätzlich mit Varianten der Anfrage vom Chat-Modell des KI-Dienstes und ordnet alle Treffer "
+                + "nach ihrer Nähe zur ursprünglichen Anfrage"
+                : "Sucht zusätzlich mit Varianten der Anfrage nach Regeln (kein Chat-Modell eingerichtet, unter "
+                + "Einstellungen › Modelle) und ordnet alle Treffer nach ihrer Nähe zur ursprünglichen Anfrage");
         scope(scopes);
     }
 
@@ -362,10 +370,6 @@ public final class SearchView implements View {
             open(runtime, text);
             return;
         }
-        if (semantic.isSelected()) {
-            relevance(runtime, text);
-            return;
-        }
         KeywordSearch.Query q;
         try {
             // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
@@ -376,7 +380,12 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        if (semantic.isSelected()) {
+            progressive(runtime, q);
+            return;
+        }
         stopLoading();
+        showVariants(List.of());
         int id = ++request;
         run.setEnabled(false);
         more.setVisible(false);
@@ -420,61 +429,137 @@ public final class SearchView implements View {
     }
 
     /**
-     * Semantische Suche: ein nach Ähnlichkeit geordneter Block aus dem Cache, ohne Cursor. Ohne Dienst meldet der Core
-     * {@code SemanticSearchUnavailableException}, nie still Titeltreffer.
+     * Semantische Suche (ADR 0017): Der Core sucht mit der ursprünglichen Anfrage und ihren Varianten und meldet nach
+     * jeder Freigabe die ganze Liste; die Ansicht sortiert ein, ohne die Auswahl zu verlieren, und zeigt am Ende, warum
+     * die Suche endete. Ereignisse einer überholten Suche werden verworfen.
      */
-    private void relevance(AppRuntime runtime, String text) {
-        PageSearchQuery q;
-        try {
-            if (text.length() > RelevanceSearch.MAX_TEXT_LENGTH) {
-                throw new InvalidQueryException("höchstens " + RelevanceSearch.MAX_TEXT_LENGTH + " Zeichen");
-            }
-            String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-            q = PageSearchQuery.of(sourceId, chosen.size() > 1 ? List.copyOf(chosen) : List.of(),
-                    List.copyOf(spaces), null, null, null, null, null, null, SearchSort.TITLE);
-        } catch (InvalidQueryException invalid) {
-            feedback.warning("Suche so nicht möglich", invalid.getMessage());
-            return;
-        }
+    private void progressive(AppRuntime runtime, KeywordSearch.Query q) {
         stopLoading();
         int id = ++request;
-        run.setEnabled(false);
-        more.setVisible(false);
+        states.clear();
+        incomplete = false;
+        lastQuery = null;
+        nextCursor = null;
+        model.set(List.of());
+        showVariants(List.of());
         feedback.clear();
-        starting("Semantische Suche läuft …");
-        Background.run(() -> runtime.workspace().relevance(q, text, Reranking.MAX_WINDOW), results -> {
-            if (id != request) {
-                return;
+        status.setText(" ");
+        starting("Suche läuft · Suchanfragen werden gebildet …");
+        cancel.setVisible(true);
+        cancel.setEnabled(true);
+        ProgressiveSearchListener listener = new ProgressiveSearchListener() {
+            @Override
+            public void variants(List<ProgressiveResult.Variant> variants) {
+                SwingUtilities.invokeLater(() -> {
+                    if (id == request) {
+                        showVariants(variants);
+                    }
+                });
             }
-            run.setEnabled(true);
-            states.clear();
-            incomplete = false;
-            model.set(results.hits().stream().map(Hit::of).toList());
-            reset();
-            // Unvollständig: ein Treffer war bei seiner Quelle nicht prüfbar und fehlt deshalb (Recht und Version live).
-            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
-                    + " · semantisch, nach Ähnlichkeit geordnet" + (results.complete() ? ""
-                    : " · unvollständig: nicht jeder Treffer ließ sich bei seiner Quelle prüfen"));
-            status.setForeground(results.complete() ? Comic.MUTED : Comic.ORANGE);
-            if (results.hits().isEmpty() && !results.complete()) {
-                feedback.warning("Keine Treffer, Suche unvollständig",
-                        "Nicht jeder Treffer ließ sich bei seiner Quelle prüfen; siehe Zeile unter der Liste.");
-            } else if (results.hits().isEmpty()) {
-                feedback.info("Keine Treffer", "Keine eingebettete Seite im Cache passt; die Schlagwortsuche ohne "
-                        + "Häkchen sucht direkt in den Quellen.");
-            } else {
-                feedback.clear();
+
+            @Override
+            public void ranked(List<ProgressiveResult.RankedHit> hits) {
+                SwingUtilities.invokeLater(() -> {
+                    if (id == request) {
+                        showRanked(hits);
+                    }
+                });
             }
-        }, error -> {
-            if (id != request) {
-                return;
+
+            @Override
+            public void completed(ProgressiveResult result) {
+                SwingUtilities.invokeLater(() -> {
+                    if (id == request) {
+                        ended(result);
+                    }
+                });
             }
-            run.setEnabled(true);
-            model.set(List.of());
-            states.clear();
-            reset();
-            feedback.problem(error);
+        };
+        running = runtime.workspace().progressiveSearch(q, listener);
+    }
+
+    /** Die ganze Liste nach einer Freigabe: neue Treffer eingeordnet, bekannte an ihrem neuen Platz, Auswahl bleibt. */
+    private void showRanked(List<ProgressiveResult.RankedHit> hits) {
+        Hit selected = selectedHit();
+        model.set(hits.stream().map(ranked -> Hit.of(ranked.hit())).toList());
+        select(selected);
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer") + " · semantisch, nach Nähe zur Anfrage");
+        status.setForeground(Comic.MUTED);
+    }
+
+    /** Ende der semantischen Suche: Endliste, Grund in der Fortschrittszeile, Hinweis bei keinen Treffern. */
+    private void ended(ProgressiveResult result) {
+        running = null;
+        showRanked(result.hits());
+        showVariants(result.variants());
+        progress.setIndeterminate(false);
+        progress.setVisible(false);
+        cancel.setVisible(false);
+        progressText.setText(completion(result.reason()) + " · "
+                + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        if (result.reason() == ProgressiveResult.Completion.FAILED) {
+            feedback.warning("Suche fehlgeschlagen", "Keine Suchanfrage ließ sich ausführen; die Quellen waren "
+                    + "nicht erreichbar.");
+        } else if (model.rows.isEmpty() && result.reason() != ProgressiveResult.Completion.CANCELLED) {
+            feedback.info("Keine Treffer", "Weder die Anfrage noch ihre Varianten fanden eine Seite, die du lesen "
+                    + "darfst.");
+        }
+    }
+
+    static String completion(ProgressiveResult.Completion reason) {
+        return switch (reason) {
+            case QUALITY_REACHED -> DONE + " · genug passende Treffer";
+            case ALL_VARIANTS_DONE -> DONE + " · alle Suchanfragen gelaufen";
+            case BUDGET_EXHAUSTED -> DONE + " · Zeit- oder Abfragebudget ausgeschöpft";
+            case CANCELLED -> "Suche abgebrochen";
+            case FAILED -> "Suche fehlgeschlagen";
+        };
+    }
+
+    /** Die Varianten als Schlagwörter und der Stand in der Fortschrittszeile („2 von 6 Suchanfragen“). */
+    private void showVariants(List<ProgressiveResult.Variant> variants) {
+        tags.removeAll();
+        int finished = 0;
+        for (ProgressiveResult.Variant variant : variants) {
+            ProgressiveResult.Status state = variant.status();
+            if (state != ProgressiveResult.Status.PENDING && state != ProgressiveResult.Status.RUNNING) {
+                finished++;
+            }
+            if (variant.query().priority() > 0) {
+                tags.add(tag(variant));
+            }
+        }
+        tags.setVisible(tags.getComponentCount() > 0);
+        tags.revalidate();
+        tags.repaint();
+        if (running != null && !variants.isEmpty()) {
+            progress.setIndeterminate(false);
+            progress.setMaximum(variants.size());
+            progress.setValue(finished);
+            progressText.setText("Suche läuft · " + finished + " von " + Texts.count(variants.size(), "Suchanfrage",
+                    "Suchanfragen") + " · " + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        }
+    }
+
+    private static JLabel tag(ProgressiveResult.Variant variant) {
+        JLabel tag = new JLabel(variant.query().text());
+        tag.setFont(Comic.regular(12f));
+        tag.setOpaque(true);
+        boolean useful = variant.status() == ProgressiveResult.Status.DONE && variant.newHits() > 0;
+        boolean dropped = variant.status() == ProgressiveResult.Status.FAILED
+                || variant.status() == ProgressiveResult.Status.SKIPPED;
+        tag.setBackground(useful ? Comic.YELLOW : java.awt.Color.WHITE);
+        tag.setForeground(dropped ? Comic.MUTED : Comic.INK);
+        tag.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(dropped ? Comic.LINE
+                : Comic.INK, 1, true), BorderFactory.createEmptyBorder(1, 7, 1, 7)));
+        tag.setToolTipText("Variante der Anfrage · " + switch (variant.status()) {
+            case PENDING -> "wartet";
+            case RUNNING -> "läuft";
+            case DONE -> Texts.count(variant.newHits(), "neuer Treffer", "neue Treffer");
+            case FAILED -> "fehlgeschlagen";
+            case SKIPPED -> "übersprungen";
         });
+        return tag;
     }
 
     /** Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. */
@@ -602,6 +687,12 @@ public final class SearchView implements View {
 
     /** Bricht das Laden ab; die Treffer bleiben, die Zeile meldet den Abbruch. */
     private void cancelLoading() {
+        if (running != null) {
+            // Der Core bricht Suchanfragen und Ladevorgänge ab und meldet completed(CANCELLED).
+            running.cancel();
+            cancel.setEnabled(false);
+            return;
+        }
         AppRuntime runtime = context.runtime();
         String id = progressId;
         if (runtime == null || id == null) {
@@ -617,6 +708,10 @@ public final class SearchView implements View {
 
     /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
     private void stopLoading() {
+        if (running != null) {
+            running.cancel();
+            running = null;
+        }
         AppRuntime runtime = context.runtime();
         String id = progressId;
         poll.stop();
@@ -794,18 +889,6 @@ public final class SearchView implements View {
 
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt());
-        }
-
-        /** Ein Treffer der semantischen Suche; statt eines Auszugs die Ähnlichkeit. */
-        static Hit of(RelevanceSearch.RankedHit ranked) {
-            var header = ranked.hit().page().header();
-            var metadata = header.metadata();
-            RelevanceSearch.Relevance relevance = ranked.relevance();
-            String snippet = relevance == null ? "Titeltreffer"
-                    : String.format(java.util.Locale.GERMANY, "Ähnlichkeit %.2f%s", relevance.similarity(),
-                    relevance.freshness() == RelevanceSearch.Freshness.STALE ? " (ältere Fassung)" : "");
-            return new Hit(header.key().sourceId(), header.key().pageId(), metadata.title(), metadata.partitionKey(),
-                    snippet, metadata.modifiedAt());
         }
     }
 

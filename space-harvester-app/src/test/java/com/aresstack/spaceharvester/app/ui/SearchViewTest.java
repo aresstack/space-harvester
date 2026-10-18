@@ -33,6 +33,7 @@ import javax.swing.JTable;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -208,60 +209,58 @@ class SearchViewTest {
     }
 
     @Test
-    void searchIsKeywordOnlyWithADisabledSemanticCheckbox() throws Exception {
+    void keywordSearchIsTheDefaultAndTheSemanticCheckboxNamesWhereVariantsComeFrom() throws Exception {
         start(false);
 
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
-        AbstractButton semantic = button(whole(view[0]), "Semantische Suche (experimentell)");
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
+        AbstractButton semantic = button(whole(view[0]), SearchView.SEMANTIC);
         JTable table = find(whole(view[0]), JTable.class).get(0);
         List<String> columns = new ArrayList<>();
         for (int column = 0; column < table.getModel().getColumnCount(); column++) {
             columns.add(table.getModel().getColumnName(column));
         }
 
-        assertThat(semantic.isEnabled()).isFalse();
-        assertThat(semantic.isSelected()).isFalse();
+        assertThat(semantic.isSelected()).as("Vorgabe bleibt die Schlagwortsuche").isFalse();
+        // Ohne Chat-Modell bildet der Core die Varianten nach Regeln; der Tooltip sagt es.
+        await(semantic::isEnabled);
+        assertThat(semantic.getToolTipText()).contains("nach Regeln");
         assertThat(columns).containsExactly("Titel", "Quelle", "Space", "Auszug", "Geändert");
         assertThat(find(whole(view[0]), AbstractButton.class)).extracting(AbstractButton::getText)
                 .doesNotContain("Relevanz", "Titel", "Neueste");
     }
 
     @Test
-    void theSemanticCheckboxIsTheRelevanceSearchOnceAnEmbeddingServiceIsConfigured() throws Exception {
-        HttpServer service = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
-        service.createContext("/v1/embeddings", exchange -> {
-            exchange.getRequestBody().readAllBytes();
-            byte[] body = """
-                    {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0]}]}"""
-                    .getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
-            try (OutputStream out = exchange.getResponseBody()) {
-                out.write(body);
-            }
-        });
-        service.start();
-        servers.add(service);
-        start(false, """
-                  ai:
-                    base-url: "http://127.0.0.1:%d/v1"
-                    embedding-model: "text-embedding-3-small"
-                    embedding-dimensions: 3
-                """.formatted(service.getAddress().getPort()));
-
+    void theSemanticCheckboxRunsTheProgressiveSearchOfTheCoreUntilItNamesWhyItEnded() throws Exception {
+        start(false);
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
-        assertThat(view[0].semantic.isEnabled()).isTrue();
-        assertThat(view[0].semantic.isSelected()).as("Vorgabe bleibt die Schlagwortsuche").isFalse();
+        await(() -> context.runtime() != null);
         SwingUtilities.invokeAndWait(() -> {
+            view[0].scope(List.of());
             view[0].semantic.setSelected(true);
-            view[0].search("Betrieb der Plattform");
+            view[0].search("Betrieb Plattform Wartung");
         });
+        // Sofort sichtbar, dass gesucht wird; am Ende der Grund aus dem Core, ohne „Weitere laden“.
+        assertThat(view[0].progressText.getText()).startsWith("Suche läuft");
+        await(() -> !view[0].progressText.getText().startsWith("Suche läuft"));
+        assertThat(view[0].progressText.getText()).startsWith(SearchView.DONE);
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        assertThat(table.getRowCount()).isPositive();
+        assertThat(view[0].statusText()).contains("semantisch");
+        assertThat(button(whole(view[0]), "Weitere laden").isVisible()).isFalse();
+        assertThat(view[0].progress.isVisible()).isFalse();
+    }
 
-        // Leerer Cache: ein erfolgreiches, leeres Ergebnis der Relevanzsuche statt eines Fehlers oder Titeltreffern.
-        await(() -> view[0].statusText().contains("semantisch"));
-        assertThat(view[0].statusText()).startsWith("0 Treffer").doesNotContain("unvollständig");
+    @Test
+    void everyEndOfTheProgressiveSearchReadsAsPlainWords() {
+        assertThat(SearchView.completion(ProgressiveResult.Completion.QUALITY_REACHED))
+                .isEqualTo("Die Suche ist abgeschlossen · genug passende Treffer");
+        assertThat(SearchView.completion(ProgressiveResult.Completion.BUDGET_EXHAUSTED))
+                .doesNotContain("genug passende");
+        assertThat(SearchView.completion(ProgressiveResult.Completion.CANCELLED)).isEqualTo("Suche abgebrochen");
     }
 
     @Test
