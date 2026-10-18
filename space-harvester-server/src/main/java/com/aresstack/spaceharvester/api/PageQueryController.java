@@ -243,26 +243,31 @@ public class PageQueryController {
     }
 
     @GetMapping("/{sourceId}/pages")
-    @Operation(summary = "Eine Seite über ihre URL: wie GET …/pages/{pageId}",
-            description = "Die URL muss die Seiten-ID enthalten: …?pageId=123 (viewpage.action), "
-                    + "…/spaces/KEY/pages/123[/Titel] oder ein Kurzlink …/x/AgAB. Formen ohne ID (/display/KEY/Titel) "
-                    + "werden nicht aufgelöst (400). Eine URL auf einen anderen Server als die bekannte URL der Seite "
-                    + "ergibt cache-miss. Antworten, Header, view und refresh wie bei der Route mit pageId.")
+    @Operation(summary = "Eine Seite über ihre Adresse: wie GET …/pages/{pageId}",
+            description = "Angenommen werden (#178): Seiten-URLs mit Seiten-ID (…?pageId=123, "
+                    + "…/spaces/KEY/pages/123[/Titel], Kurzlink …/x/AgAB), unter der Basis-URL der Quelle auch "
+                    + "/display/KEY/Titel, viewpage.action?spaceKey=…&title=… und die Space-Startseite /display/KEY "
+                    + "(live bei der Quelle aufgelöst), Bookmarks confluence://…, Ressourcen-IDs der Quelle und "
+                    + "Lesezeichen space-harvester://<Quelle>/page/<ID>[?version=<Version>]. Eine Adresse, die zur "
+                    + "Quelle passt, aber auf keine lesbare Seite zeigt (unbekannter Titel, anderer Server, andere "
+                    + "Quelle, keine Freigabe), ergibt cache-miss. Antworten, Header, view und refresh wie bei der "
+                    + "Route mit pageId.")
     @ApiResponse(responseCode = "200", description = "Wie GET …/pages/{pageId}")
-    @ApiResponse(responseCode = "400", description = "url ohne Seiten-ID oder unbekannte view (invalid-request)",
+    @ApiResponse(responseCode = "400", description = "url ist keine Adresse dieser Quelle, ein fehlerhaftes "
+            + "Lesezeichen oder unbekannte view (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "403", description = "Keine content-Freigabe für irgendeinen Space dieser Quelle "
             + "(access-denied)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "404", description = "Wie GET …/pages/{pageId}, oder URL eines anderen Servers "
-            + "(cache-miss)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+    @ApiResponse(responseCode = "404", description = "Wie GET …/pages/{pageId}, oder die Adresse zeigt auf keine "
+            + "lesbare Seite dieser Quelle (cache-miss)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     public ResponseEntity<?> pageByUrl(
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
-            @Parameter(description = "URL der Seite mit Seiten-ID",
+            @Parameter(description = "Adresse der Seite: URL, Lesezeichen oder Ressourcen-ID",
                     example = "https://wiki.example.org/pages/viewpage.action?pageId=123456", required = true)
             @RequestParam(required = false) String url,
             @Parameter(description = "true: vor der Auslieferung gegen die Quelle prüfen")

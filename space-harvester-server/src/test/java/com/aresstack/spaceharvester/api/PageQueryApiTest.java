@@ -334,13 +334,40 @@ class PageQueryApiTest {
         assertThat(json.readTree(get("/api/v1/sources/wiki/pages?view=extended&url="
                 + URLEncoder.encode("https://wiki.example.org/spaces/DEV/pages/100/Start", StandardCharsets.UTF_8))
                 .body()).get("metadata").get("page").get("pageId").asString()).isEqualTo("100");
-        // Ohne Seiten-ID nicht auflösbar, fremder Server wie eine unbekannte Seite.
+        // Titel-URL eines anderen Servers als der Basis-URL und fremder Server: wie eine unbekannte Seite (#178).
         assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
-                "https://wiki.example.org/display/DEV/Start", StandardCharsets.UTF_8)), 400, "invalid-request");
+                "https://wiki.example.org/display/DEV/Start", StandardCharsets.UTF_8)), 404, "cache-miss");
+        // Keine Adresse, und ein Lesezeichen in falscher Form.
+        assertProblem(get("/api/v1/sources/wiki/pages?url=Start"), 400, "invalid-request");
+        assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode("space-harvester://wiki/seite/1",
+                StandardCharsets.UTF_8)), 400, "invalid-request");
+        // Lesezeichen und Ressourcen-ID der Seite.
+        assertThat(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode("space-harvester://wiki/page/101",
+                StandardCharsets.UTF_8)).statusCode()).isEqualTo(200);
         assertProblem(get("/api/v1/sources/wiki/pages?url=" + URLEncoder.encode(
                 "https://evil.example.org/pages/viewpage.action?pageId=101", StandardCharsets.UTF_8)), 404,
                 "cache-miss");
         assertProblem(getAs(METADATA_TOKEN, "/api/v1/sources/wiki/pages?url=" + url), 403, "access-denied");
+    }
+
+    @Test
+    void addressesResolveOverAllSourcesWithABookmarkPerMatch() throws Exception {
+        String bookmark = URLEncoder.encode("space-harvester://wiki/page/101", StandardCharsets.UTF_8);
+        JsonNode resolved = json.readTree(get("/api/v1/addresses?address=" + bookmark).body());
+
+        assertThat(resolved.get("matches")).hasSize(1);
+        assertThat(resolved.get("matches").get(0).get("pageId").asString()).isEqualTo("101");
+        assertThat(resolved.get("matches").get(0).get("bookmark").asString())
+                .startsWith("space-harvester://wiki/page/101?version=");
+        assertThat(resolved.get("unavailableSources")).isEmpty();
+        // Über die URL ebenso; ohne content-Freigabe keine Treffer, ohne Hinweis auf die Seite.
+        String url = URLEncoder.encode("https://wiki.example.org/pages/viewpage.action?pageId=101",
+                StandardCharsets.UTF_8);
+        assertThat(json.readTree(get("/api/v1/addresses?address=" + url).body()).get("matches")).hasSize(1);
+        HttpResponse<String> hidden = getAs(METADATA_TOKEN, "/api/v1/addresses?address=" + bookmark);
+        assertThat(hidden.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(hidden.body()).get("matches")).isEmpty();
+        assertProblem(get("/api/v1/addresses?address=%20"), 400, "invalid-request");
     }
 
     @Test

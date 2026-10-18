@@ -8,9 +8,11 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
-import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
+import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.tree.PageTree;
@@ -300,21 +302,63 @@ public class PageQueries {
     }
 
     /**
-     * Eine Seite über ihre URL, wie {@link #page}. Die URL muss die Seiten-ID enthalten ({@link PageUrls}) und auf
-     * denselben Server zeigen wie die bekannte URL der Seite.
+     * Eine Seite über ihre Adresse, wie {@link #page} (#178). Angenommen werden:
+     * <ul>
+     *   <li>Lesezeichen {@code space-harvester://<Quelle>/page/<ID>} ({@link PageBookmark}),</li>
+     *   <li>alles, was die Quelle selbst auflöst ({@link HarvestSource#resolveAddress}): bei Confluence Adressen unter
+     *   der Basis-URL mit Seiten-ID, {@code display/KEY/Titel}, {@code viewpage.action?spaceKey=…&title=…}, die
+     *   Startseite {@code display/KEY}, Bookmarks {@code confluence://…} und Ressourcen-IDs; Titel und Startseite
+     *   fragt die Quelle live nach,</li>
+     *   <li>URLs mit Seiten-ID ({@link PageUrls}) auf demselben Server wie die bekannte URL der Seite, auch wenn
+     *   Confluence seine Links unter einem anderen Namen als der Basis-URL schreibt.</li>
+     * </ul>
+     * Rechte gelten am Ergebnis: eine Seite, die der Aufrufer nicht lesen darf, sieht aus wie eine unbekannte.
      *
-     * @throws InvalidQueryException wenn die URL keine Seiten-ID enthält
-     * @throws CacheMissException    wie bei {@link #page}, oder wenn die URL auf einen anderen Server zeigt
-     *                               oder die Seite keine bekannte URL hat
+     * @throws InvalidQueryException wenn die Eingabe keine Adresse dieser Quelle sein kann
+     * @throws CacheMissException    wie bei {@link #page}, oder wenn die Adresse auf keine Seite zeigt, auf einen
+     *                               anderen Server zeigt oder zu einer anderen Quelle gehört
+     * @throws SourceAccessException wenn die Quelle für die Auflösung eines Titels nicht erreichbar ist
      */
     public DeliveredPage pageByUrl(AccessContext caller, String sourceId, String url, boolean refresh) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
-        String pageId = PageUrls.pageId(url).orElseThrow(() -> new InvalidQueryException(
-                "url muss eine absolute Seiten-URL mit Seiten-ID sein (pageId=…, /spaces/KEY/pages/ID oder /x/…)"));
-        DeliveredPage page = page(caller, sourceId, pageId, refresh);
+        HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+        if (url == null || url.isBlank() || url.length() > PageUrls.MAX_URL_LENGTH) {
+            throw new InvalidQueryException("url fehlt oder ist länger als " + PageUrls.MAX_URL_LENGTH + " Zeichen");
+        }
+        String address = url.trim();
+        Optional<PageBookmark> bookmark;
+        try {
+            bookmark = PageBookmark.parse(address);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidQueryException(e.getMessage());
+        }
+        if (bookmark.isPresent()) {
+            if (!bookmark.get().sourceId().equals(sourceId)) {
+                throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+            }
+            return page(caller, sourceId, bookmark.get().pageId(), refresh);
+        }
+        boolean addressable = source.capabilities().contains(SourceCapability.ADDRESSES)
+                && source.addressable(address);
+        if (addressable) {
+            Optional<String> resolved = source.resolveAddress(address);
+            if (resolved.isPresent()) {
+                return page(caller, sourceId, resolved.get(), refresh);
+            }
+        }
+        Optional<String> pageId = PageUrls.pageId(address);
+        if (pageId.isEmpty()) {
+            if (addressable) {
+                // Passt zur Quelle, zeigt aber auf keine (sichtbare) Seite: wie eine unbekannte Seite.
+                throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+            }
+            throw new InvalidQueryException("url ist keine Adresse dieser Quelle (Seiten-URL, Titel-URL "
+                    + "/display/KEY/Titel, Startseite /display/KEY, Lesezeichen oder Ressourcen-ID)");
+        }
+        DeliveredPage page = page(caller, sourceId, pageId.get(), refresh);
         URI known = page.header().metadata().url();
         // Ohne bekannte URL lässt sich der Server nicht prüfen; fail closed wie bei einem fremden Server.
-        if (known == null || !PageUrls.sameServer(url, known)) {
+        if (known == null || !PageUrls.sameServer(address, known)) {
             throw new CacheMissException(sourceId, "Seite nicht vorhanden");
         }
         return page;

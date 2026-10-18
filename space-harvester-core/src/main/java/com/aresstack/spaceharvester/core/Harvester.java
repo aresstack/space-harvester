@@ -37,6 +37,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
@@ -130,6 +131,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceKeyCheck spaceKeys;
     private final PageFreshness freshness;
     private final PageQueries pages;
+    private final PageAddresses addresses;
     private final ReadingViews readingViews;
     private final PageNavigation navigation;
     private final PageSearch search;
@@ -218,6 +220,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
                     builder.maxTreeNodes);
+            this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
@@ -299,6 +302,15 @@ public final class Harvester implements AutoCloseable {
     /** Seiten, Baum und Einzelseiten aus dem Cache, mit {@code refresh} gegen die Quelle geprüft. */
     public PageQueries pages() {
         return pages;
+    }
+
+    /**
+     * Adressen über alle Quellen auflösen (#178): URLs mit und ohne Seiten-ID, Titel, Startseiten, Bookmarks und
+     * Ressourcen-IDs der Quellen sowie Lesezeichen {@code space-harvester://…}; in einer Quelle
+     * {@link PageQueries#pageByUrl}.
+     */
+    public PageAddresses addresses() {
+        return addresses;
     }
 
     /**
