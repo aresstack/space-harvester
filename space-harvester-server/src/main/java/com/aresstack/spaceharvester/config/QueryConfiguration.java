@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
@@ -40,6 +41,12 @@ class QueryConfiguration {
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
         return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
                 fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes);
+    }
+
+    /** Adressauflösung über alle Quellen (#178). */
+    @Bean
+    PageAddresses pageAddresses(SourceCatalog catalog, AccessGuard access, PageQueries pages) {
+        return new PageAddresses(catalog, access, pages);
     }
 
     /** Lese-Ansicht (#176); abgelegt neben dem Snapshot in der Ablage der Anreicherungen. */

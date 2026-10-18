@@ -70,7 +70,7 @@ class LocalFilesSourceApiTest {
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"id\":\"docs\"", "\"type\":\"files\"", "\"title\":\"Handbücher\"",
-                "\"capabilities\":[\"partitions\",\"page-listing\",\"page-metadata\",\"stored-page\"]")
+                "\"capabilities\":[\"partitions\",\"page-listing\",\"page-metadata\",\"stored-page\",\"addresses\"]")
                 .doesNotContain(DIR.toString());
     }
 

@@ -141,6 +141,14 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      DIAGNOSTICS.md), mit Ursache und Hinweis je gescheitertem Schritt.
 
    Die Einstellungen dauerhaft ablegen bleibt Sache des Programms.
+
+   Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
+   `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,
+   Titel, Space-Startseite, Bookmark `confluence://…`, Ressourcen-ID der Quelle oder Lesezeichen `PageBookmark`
+   (`space-harvester://<Quelle>/page/<ID>[?version=…]`, stabil über Umbenennen und Verschieben).
+   `Harvester.addresses().resolve(caller, adresse)` fragt jede passende Quelle einzeln und liefert je Treffer Seite und
+   Lesezeichen. Die Auflösung gehört der Quelle (`HarvestSource.resolveAddress`, Fähigkeit `ADDRESSES`); Rechte gelten
+   an der gefundenen Seite.
 6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
    Entwickler), Sources- und Javadoc-JAR; Koordinaten `com.aresstack:space-harvester-core`. Weil der Core die Kopie
    `enterprise-ai-sources` braucht, bekommt auch sie eine Publikation

@@ -691,8 +691,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 
 ## 14. Seite über ihre URL, Prüfung gegen die Quelle
 
-Seiten lassen sich auch über ihre Confluence-URL abrufen, sofern sie die Seiten-ID enthält (`pageId=…`,
-`/spaces/KEY/pages/ID` oder Kurzlink `/x/…`); die URL steht URL-kodiert in `url`:
+Seiten lassen sich auch über ihre Confluence-URL abrufen (`pageId=…`, `/spaces/KEY/pages/ID` oder Kurzlink `/x/…`);
+die URL steht URL-kodiert in `url`:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages?url=http%3A%2F%2F127.0.0.1%3A8090%2Fwiki%2Fpages%2Fviewpage.action%3FpageId%3D1001&view=extended"
@@ -702,14 +702,27 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 { "origin": "cache", "metadata": { "page": { "pageId": "1001", "title": "Architektur" } } }
 ```
 
-Eine URL ohne Seiten-ID (`/display/KEY/Titel`) löst der Dienst nicht über den Titel auf:
+Eine URL ohne Seiten-ID (`/display/KEY/Titel`, `viewpage.action?spaceKey=…&title=…`, die Space-Startseite
+`/display/KEY`) löst die Quelle live über Space und Titel auf (#178); die Rechte gelten an der gefundenen Seite:
 
 ```bash
-curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages?url=http%3A%2F%2F127.0.0.1%3A8090%2Fwiki%2Fdisplay%2FDEMO%2FArchitektur"
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages?url=http%3A%2F%2F127.0.0.1%3A8090%2Fwiki%2Fdisplay%2FDEMO%2FArchitektur&view=extended"
 ```
 
 ```json
-{ "status": 400, "type": "https://github.com/aresstack/space-harvester/problems/invalid-request" }
+{ "metadata": { "page": { "pageId": "1001", "title": "Architektur" } } }
+```
+
+Ohne Quelle fragt `/api/v1/addresses` jede passende Quelle einzeln. Jeder Treffer trägt sein Lesezeichen
+`space-harvester://<Quelle>/page/<ID>?version=<Version>`, eine stabile Ressourcen-ID, die beide Routen wieder
+annehmen:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/addresses?address=space-harvester%3A%2F%2Fdemo%2Fpage%2F1001"
+```
+
+```json
+{ "matches": [ { "sourceId": "demo", "pageId": "1001", "title": "Architektur" } ], "unavailableSources": [] }
 ```
 
 `refresh=true` prüft die Seite vor der Auslieferung gegen die Quelle. Ist sie unverändert, kommt der bestätigte
