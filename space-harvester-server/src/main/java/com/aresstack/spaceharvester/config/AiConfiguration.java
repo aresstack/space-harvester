@@ -114,6 +114,16 @@ class AiConfiguration {
         return reranker;
     }
 
+    /**
+     * Das Chat-Modell für die Suchvarianten der progressiven Suche (ADR 0017): folgt {@code ai.chat-model} und
+     * {@code base-url} der wirksamen Konfiguration, ohne beides formulieren die Regeln die Varianten.
+     */
+    @Bean
+    QueryVariantModels queryVariantModels(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new QueryVariantModels(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
     /** Das Embedding-Modell des Dienstes oder leer ohne Embeddings. */
     private static Optional<EmbeddingProvider> embeddingModel(AiServiceSettings ai, ConfiguredSourceCatalog catalog,
                                                               TrustBundles trust, String userAgent) {

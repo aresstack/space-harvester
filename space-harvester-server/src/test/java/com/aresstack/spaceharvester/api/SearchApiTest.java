@@ -135,6 +135,23 @@ class SearchApiTest {
     }
 
     @Test
+    void theProgressiveSearchUsesTheKeywordSearchAndEndsWithUnreachableSources() throws Exception {
+        HttpResponse<String> response = http.send(TestClient.authenticated(HttpRequest.newBuilder(
+                        uri("/api/v1/search/progressive"))).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"q\":\"Nachtlauf\",\"wait\":true}")).build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("done").asBoolean()).isTrue();
+        assertThat(body.get("reason").asString()).isIn("all-variants-done", "failed");
+        // Ohne Chat-Modell formulieren die Regeln die Varianten.
+        assertThat(body.get("expansion").asString()).isEqualTo("rules");
+        assertThat(body.get("variants").get(0).get("text").asString()).isEqualTo("Nachtlauf");
+        assertThat(body.get("hits")).isEmpty();
+    }
+
+    @Test
     void invalidParametersAre400() throws Exception {
         assertProblem(get("/api/v1/search?sourceId=wiki&sort=relevance"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?sourceId=wiki&modifiedFrom=gestern"), 400, "invalid-request");
