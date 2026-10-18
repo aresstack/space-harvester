@@ -359,8 +359,11 @@ public final class ActivitiesView implements View {
                 + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
             return;
         }
-        Background.run(() -> status.type() == JobType.SYNC ? runtime.workspace().cancelSync(status.id()).status()
-                : runtime.workspace().cancelExport(status.id()), s -> poll(), feedback::problem);
+        Background.run(() -> switch (status.type()) {
+            case SYNC -> runtime.workspace().cancelSync(status.id()).status();
+            case EXPORT -> runtime.workspace().cancelExport(status.id());
+            default -> runtime.workspace().cancelJob(status.id());
+        }, s -> poll(), feedback::problem);
     }
 
     static final String KEPT = "Exportdateien, die unter „Dateien speichern …“ abgelegt wurden, und der Seitenbestand "

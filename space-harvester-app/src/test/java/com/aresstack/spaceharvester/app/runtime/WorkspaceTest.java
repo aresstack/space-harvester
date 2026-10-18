@@ -132,7 +132,9 @@ class WorkspaceTest {
             assertThat(in.readAllBytes()).hasSize((int) first.bytes());
         }
 
-        assertThat(workspace.jobs()).extracting(JobStatus::type).containsExactly(JobType.EXPORT, JobType.SYNC);
+        // Die Anreicherung nach dem Abgleich ist ein eigener Auftrag und steht mit in der Liste.
+        assertThat(workspace.jobs()).extracting(JobStatus::type).contains(JobType.ENRICHMENT)
+                .filteredOn(type -> type != JobType.ENRICHMENT).containsExactly(JobType.EXPORT, JobType.SYNC);
         assertThat(CONFLUENCE.requestHeaders()).anySatisfy(headers ->
                 assertThat(headers.values()).contains("Bearer " + TOKEN));
         assertNoFileContains(home, TOKEN);
@@ -170,7 +172,8 @@ class WorkspaceTest {
         runtime.close();
         runtime = null;
 
-        assertThat(start().workspace().jobs()).extracting(JobStatus::id).containsExactly(id);
+        assertThat(start().workspace().jobs()).filteredOn(job -> job.type() != JobType.ENRICHMENT)
+                .extracting(JobStatus::id).containsExactly(id);
     }
 
     @Test

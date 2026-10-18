@@ -181,7 +181,9 @@ class ExportsTest {
             public Provisioned provision(com.aresstack.spaceharvester.application.jobs.JobContext context,
                                          String sourceId, String spaceKey) {
                 provisioned.add(sourceId + "/" + spaceKey);
+                // wie das echte Einlesen: Inventur und Beschaffung zählt das Einlesen, Schreiben der Export
                 context.discovered(2);
+                context.processed(2);
                 cache.publish(sourceId, spaceKey, confirmed("g1"), List.of(page(sourceId, spaceKey, "1", null),
                         page(sourceId, spaceKey, "2", "1")));
                 return new Provisioned(true, false, java.util.List.of());

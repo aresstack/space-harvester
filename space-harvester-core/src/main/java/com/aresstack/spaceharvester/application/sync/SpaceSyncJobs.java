@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 /**
  * Sync-Läufe als Aufträge ({@link JobType#SYNC}): starten, Status mit Delta, Abbruch. Je Space läuft höchstens ein
@@ -94,6 +96,17 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     @Override
     public Provisioned provision(JobContext context, String sourceId, String spaceKey) {
+        return provision(context, sourceId, spaceKey, header -> false);
+    }
+
+    /**
+     * Wie {@link #provision(JobContext, String, String)}; {@code discovered} und {@code processed} zählen nur Seiten,
+     * für die {@code counted} gilt, {@code written} und {@code failed} gar nicht (die gehören dem Export).
+     */
+    @Override
+    public Provisioned provision(JobContext context, String sourceId, String spaceKey,
+                                 Predicate<PageHeader> counted) {
+        Objects.requireNonNull(counted, "counted");
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -103,7 +116,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         SpaceSync.SyncRun run;
         try {
             context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, listener(context));
+            run = sync.run(sourceId, spaceKey, applier, provisionListener(context, counted));
         } catch (SyncConflictException e) {
             return new Provisioned(true, true, List.of());
         }
@@ -112,8 +125,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     sourceId, spaceKey, context.jobId(), run.notConfirmed());
             return Provisioned.NOT_CONFIRMED;
         }
-        context.phase(COMPONENT, "Anreichern");
-        afterCommit(run, sourceId, spaceKey);
+        afterCommit(run, sourceId, spaceKey, context.owner());
         return new Provisioned(true, false, failedPages(run));
     }
 
@@ -253,8 +265,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                     spaceKey, run.notConfirmed());
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
         }
-        context.phase(COMPONENT, "Anreichern");
-        afterCommit(run, sourceId, spaceKey);
+        afterCommit(run, sourceId, spaceKey, context.owner());
         if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
             throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
                     + " bestätigt, aber " + run.failedPageIds().size() + " Seiten konnten nicht abgeglichen werden "
@@ -273,16 +284,48 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                 .toList();
     }
 
-    private void afterCommit(SpaceSync.SyncRun run, String sourceId, String spaceKey) {
+    private void afterCommit(SpaceSync.SyncRun run, String sourceId, String spaceKey, String owner) {
         for (SyncCommitted next : afterCommit) {
             try {
-                next.committed(run);
+                next.committed(run, owner);
             } catch (RuntimeException e) {
                 // Folgearbeit ist neu berechenbar und darf den bestätigten Abgleich nicht scheitern lassen.
                 LOG.log(System.Logger.Level.WARNING, "Folgearbeit nach Abgleich {0}/{1} scheiterte ({2})", sourceId,
                         spaceKey, e.getClass().getName());
             }
         }
+    }
+
+    /** Fortschritt des Einlesens im Export: nur lesbare Seiten, nur gefunden und abgeglichen. */
+    private static SyncListener provisionListener(JobContext context, Predicate<PageHeader> counted) {
+        Set<String> visible = ConcurrentHashMap.newKeySet();
+        return new SyncListener() {
+
+            @Override
+            public void inventoried(Inventory inventory) {
+                context.phase(COMPONENT, "Seiten abrufen");
+                for (PageMetadataListing.Entry entry : inventory.pages()) {
+                    PageHeader header = new PageHeader(new PageKey(inventory.sourceId(), entry.page().pageId()),
+                            entry.page(), entry.metadataHash(), entry.attributesHash(), inventory.finishedAt());
+                    if (counted.test(header)) {
+                        visible.add(entry.page().pageId());
+                    }
+                }
+                context.discovered(visible.size());
+            }
+
+            @Override
+            public void pageDone(PageChange change, boolean written, boolean failed) {
+                if (visible.contains(change.pageId())) {
+                    context.processed(1);
+                }
+            }
+
+            @Override
+            public void checkpoint() {
+                context.checkpoint();
+            }
+        };
     }
 
     private static SyncListener listener(JobContext context) {

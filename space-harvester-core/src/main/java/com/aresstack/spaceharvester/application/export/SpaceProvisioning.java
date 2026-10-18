@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.export;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Stellt den Bestand eines Space im laufenden Exportauftrag bereit: liest ihn von der Quelle in den Cache ein und
@@ -25,6 +26,16 @@ public interface SpaceProvisioning {
      * @throws com.aresstack.spaceharvester.application.sources.SourceAccessException  wenn die Quelle nicht antwortet
      */
     Provisioned provision(JobContext context, String sourceId, String spaceKey);
+
+    /**
+     * Wie {@link #provision(JobContext, String, String)}, mit Fortschritt: {@code discovered} zählt die Seiten der
+     * Inventur, {@code processed} die abgeglichenen, jeweils nur solche, für die {@code counted} gilt. So verraten die
+     * Zähler keine Seiten, die der Auftraggeber nicht lesen darf.
+     */
+    default Provisioned provision(JobContext context, String sourceId, String spaceKey,
+                                  Predicate<PageHeader> counted) {
+        return provision(context, sourceId, spaceKey);
+    }
 
     /**
      * Ergebnis des Einlesens.

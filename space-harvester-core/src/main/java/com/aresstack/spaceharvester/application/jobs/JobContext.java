@@ -8,6 +8,11 @@ public interface JobContext {
 
     String jobId();
 
+    /** Auslösender Client oder {@code null} für interne Aufträge ({@link JobStatus#owner()}). */
+    default String owner() {
+        return null;
+    }
+
     /**
      * Kehrt zurück, solange der Auftrag weiterlaufen darf.
      *

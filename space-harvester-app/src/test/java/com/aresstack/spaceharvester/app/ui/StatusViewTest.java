@@ -75,7 +75,9 @@ class StatusViewTest {
         assertThat(all).isSortedAccordingTo((a, b) -> b.at().compareTo(a.at()));
 
         SwingUtilities.invokeAndWait(() -> view[0].filter(StatusView.Filter.JOBS));
-        assertThat(view[0].entries()).isNotEmpty().allSatisfy(e -> assertThat(e.jobId()).isEqualTo(job));
+        // Auftragsereignisse: der Abgleich und die Anreicherung, die er als eigenen Auftrag eingeplant hat.
+        assertThat(view[0].entries()).isNotEmpty().allSatisfy(e -> assertThat(e.jobId()).isNotNull())
+                .anySatisfy(e -> assertThat(e.jobId()).isEqualTo(job));
         SwingUtilities.invokeAndWait(() -> view[0].filter(StatusView.Filter.NETWORK));
         assertThat(view[0].entries()).isNotEmpty().allSatisfy(e -> assertThat(e.jobId()).isNull());
         SwingUtilities.invokeAndWait(() -> view[0].filter(StatusView.Filter.PROBLEMS));
@@ -115,10 +117,13 @@ class StatusViewTest {
 
         // Der Auftrag selbst lässt sich löschen und verschwindet aus der Liste.
         workspace.deleteJob(job);
-        assertThat(workspace.jobs()).isEmpty();
+        assertThat(workspace.jobs()).extracting(j -> j.id()).doesNotContain(job);
         String second = workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()).id();
-        await(() -> workspace.job(second).state().terminal());
-        assertThat(workspace.deleteFinishedJobs()).isEqualTo(1);
+        // Beendet heißt hier: der Abgleich und die Anreicherungen, die er als eigene Aufträge eingeplant hat.
+        await(() -> workspace.job(second).state().terminal()
+                && workspace.jobs().stream().allMatch(j -> j.state().terminal()));
+        int finished = workspace.jobs().size();
+        assertThat(workspace.deleteFinishedJobs()).isEqualTo(finished);
         assertThat(workspace.jobs()).isEmpty();
     }
 

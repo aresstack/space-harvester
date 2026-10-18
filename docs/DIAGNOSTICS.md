@@ -15,7 +15,7 @@ erklärbar ist. Die Status-Ansicht der App und die REST-API zeigen sie an.
 | `severity` | `INFO`, `WARNING`, `ERROR` |
 | `category` | `JOB` (Lebenslauf, Phasen), `NETWORK` (Verbindung, Proxy, TLS), `SOURCE` (Antworten der Quelle), `ACCESS` (Rechte des Auftraggebers), `STORAGE` (Cache, Ablage, Konvertierung) |
 | `component` | beteiligte Komponente, etwa `Exports`, `SpaceSync`, beim Scheitern die Klasse, die der Ursache am nächsten ist |
-| `phase` | Phase beim Ereignis, etwa `Bestand prüfen`, `Einlesen`, `Inventur`, `Seiten abrufen`, `Konvertieren (docx)`, `Ablegen` |
+| `phase` | Phase beim Ereignis, etwa `Bestand prüfen`, `Einlesen`, `Inventur`, `Seiten abrufen`, `Seiten exportieren`, `Konvertieren (docx)`, `Ablegen`; im eigenen Auftrag `ENRICHMENT` `Anreichern: <Prozessor> (i/n)` |
 | `code` | maschinenlesbarer Code, beim Scheitern der Fehlercode des Auftrags (`SOURCE_UNAVAILABLE`, `SYNC_INCOMPLETE` …) |
 | `message` | Meldung für Menschen |
 | `httpStatus` | HTTP-Status der Quelle, wenn die Ausnahmekette ihn nennt |
@@ -87,3 +87,15 @@ Eine nicht verfügbare Route (PAC nicht ladbar, Auswertung gescheitert) beendet 
 | Verbindungsprüfung, Space-Liste, Seitenliste, Seitenbaum, Metadaten | synchron (`HttpURLConnection` über `RouteConnections`) |
 | Einzelseite mit Inhalt (Lesen, Nachladen, Sync-Seitenabruf, Export) | `WebClient` (`WebClientConfluenceTransport`) |
 | Rechteprüfung delegierter Benutzer | `WebClient` (`DelegatedConfluenceHttp`) |
+
+## Fortschritt eines Exports und der Anreicherung
+
+Ein Export, der den Space selbst einliest, zählt in `discovered` die Seiten der Inventur und in `processed` die beim
+Einlesen abgerufenen oder geprüften Seiten, jeweils nur solche, die der Auftraggeber lesen darf; `written` und `failed`
+zählen die exportierten beziehungsweise fehlenden Seiten. Ohne Einlesen (bestätigter Bestand) zählt der Export alle vier
+selbst. Nichts wird doppelt gezählt.
+
+Die Anreicherungen nach einem Abgleich oder Einlesen laufen als eigener Auftrag `ENRICHMENT` desselben Auftraggebers;
+Abgleich und Export warten nicht darauf. Die Phase nennt den aktiven Prozessor, `discovered` zählt Seiten mal
+Prozessoren, `processed` erledigte Schritte, `written` neu berechnete und `failed` fehlgeschlagene Ergebnisse. Der
+Auftrag lässt sich wie jeder andere abbrechen; Berechnetes bleibt, der Rest folgt beim nächsten Abgleich.
