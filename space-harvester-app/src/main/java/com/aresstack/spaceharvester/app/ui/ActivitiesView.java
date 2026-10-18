@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -14,7 +15,7 @@ import com.aresstack.spaceharvester.application.sync.SyncSummary;
 
 import javax.swing.BorderFactory;
 import javax.swing.JComponent;
-import javax.swing.JFileChooser;
+import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -24,14 +25,18 @@ import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import java.awt.BorderLayout;
 import java.awt.Component;
-import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Aufträge: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
@@ -53,7 +58,22 @@ public final class ActivitiesView implements View {
     private final Feedback feedback = new Feedback();
     private final ComposerButton cancel = Comic.danger("Abbrechen", "Auftrag abbrechen");
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
-    private final ComposerButton files = Comic.button("Dateien speichern …", "Exportdateien in einen Ordner kopieren");
+    /** Karte „Exportieren als …“ eines fertigen Downloads: Formatwahl, Exportieren, Ausgabeordner. */
+    final JPanel card = new JPanel(new BorderLayout(0, 6));
+    private final JComponent cardPlate;
+    private final JLabel cardTitle = new JLabel();
+    private final JLabel cardLine = new JLabel();
+    final JComboBox<Format> format = Comic.combo();
+    final ComposerButton exportAs = Comic.primary("Exportieren", "Die Datei aus dem vorhandenen Datenbestand im "
+            + "Ausgabeordner erzeugen, ohne die Quelle erneut zu lesen");
+    private final JLabel output = new JLabel();
+    private final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner anzeigen");
+    /** Datenbestand, den die Karte gerade zeigt; die Formatwahl bleibt beim Auffrischen erhalten. */
+    private ExportDatasetInfo shownDataset;
+    /** Letzte Rückmeldung von „Exportieren“ je Download; sie bleibt stehen, während die Ansicht auffrischt. */
+    private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
+    /** Downloads, deren Konvertierung gerade läuft; ihr Knopf bleibt gesperrt. */
+    private final Set<String> converting = new HashSet<>();
     private final ComposerButton content = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
     private final ComposerButton diagnosis = Comic.button("Diagnose ansehen", "Unter Status: Phasen, Fehlercode, "
             + "HTTP-Status, Proxy-Route, TLS-Befund und Ausnahmekette dieses Auftrags");
@@ -95,7 +115,26 @@ public final class ActivitiesView implements View {
         progress.setForeground(Comic.BLUE);
         cancel.addActionListener(e -> cancelSelected());
         again.addActionListener(e -> restart());
-        files.addActionListener(e -> saveFiles());
+        exportAs.addActionListener(e -> exportAs());
+        openOutput.addActionListener(e -> {
+            if (context.settings() != null) {
+                SettingsView.open(context.settings().outputDirectory(), feedback);
+            }
+        });
+        cardTitle.setFont(Comic.semiBold(15f));
+        cardTitle.setForeground(Comic.INK);
+        cardLine.setFont(Comic.regular(13f));
+        cardLine.setForeground(Comic.INK);
+        output.setFont(Comic.regular(13f));
+        output.setForeground(Comic.INK);
+        JPanel cardHead = new JPanel(new BorderLayout(0, 2));
+        cardHead.setOpaque(false);
+        cardHead.add(cardTitle, BorderLayout.NORTH);
+        cardHead.add(cardLine, BorderLayout.SOUTH);
+        card.setOpaque(false);
+        card.add(cardHead, BorderLayout.NORTH);
+        card.add(Comic.row(format, exportAs), BorderLayout.CENTER);
+        card.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
         content.addActionListener(e -> currentStatus().ifPresent(s ->
                 context.navigator().openSpace(s.sourceId(), s.partitionKey())));
         diagnosis.addActionListener(e -> currentStatus().ifPresent(s -> context.navigator().showDiagnosis(s.id())));
@@ -107,13 +146,15 @@ public final class ActivitiesView implements View {
         head.add(title, BorderLayout.NORTH);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        south.add(Comic.row(diagnosis, cancel, again, files, content, delete), BorderLayout.NORTH);
+        south.add(Comic.row(diagnosis, cancel, again, content, delete), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         head.add(south, BorderLayout.SOUTH);
 
         JPanel right = new JPanel(new BorderLayout());
         right.setBackground(Comic.SURFACE);
-        right.add(Comic.column(head, Comic.plate("Auftrag", Comic.PETROL, facts),
+        cardPlate = Comic.plate("Exportieren als …", Comic.GREEN, card);
+        cardPlate.setVisible(false);
+        right.add(Comic.column(head, cardPlate, Comic.plate("Auftrag", Comic.PETROL, facts),
                 Comic.plate("Ergebnis", Comic.ORANGE, result)), BorderLayout.CENTER);
         // Der Fortschritt klebt am unteren Rand und bleibt sichtbar, während die Details darüber scrollen.
         JPanel bottom = progressBar;
@@ -164,7 +205,8 @@ public final class ActivitiesView implements View {
                 }
                 current = status.type() == JobType.SYNC ? runtime.workspace().syncStatus(id) : status;
                 if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
-                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
+                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null),
+                            runtime.workspace().exportDataset(id).orElse(null));
                 }
             }
             return new Object[] {jobs, current, currentPhase};
@@ -174,9 +216,12 @@ public final class ActivitiesView implements View {
             model.set(jobs);
             deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
             reselect();
-            detail = data[1];
-            phase = (String) data[2];
-            render();
+            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
+            if (java.util.Objects.equals(id, selectedId)) {
+                detail = data[1];
+                phase = (String) data[2];
+                render();
+            }
             boolean active = jobs.stream().anyMatch(j -> !j.state().terminal());
             if (!active && !root.isShowing()) {
                 timer.stop();
@@ -191,6 +236,8 @@ public final class ActivitiesView implements View {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
+            // Die Karte gehört zum bisherigen Auftrag: sofort ausblenden, nicht erst nach dem nächsten Abruf.
+            renderCard();
             feedback.clear();
             poll();
         }
@@ -224,6 +271,7 @@ public final class ActivitiesView implements View {
         if (current.isEmpty()) {
             title.setText(model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
             progressBar.setVisible(false);
+            renderCard();
             updateButtons();
             return;
         }
@@ -271,6 +319,7 @@ public final class ActivitiesView implements View {
         } else {
             renderTerminal(status, true);
         }
+        renderCard();
         updateButtons();
         root.revalidate();
     }
@@ -315,14 +364,21 @@ public final class ActivitiesView implements View {
     private void renderExport(ExportDetail export) {
         ExportArtifact artifact = export.artifact();
         if (artifact == null) {
-            feedback.warning("Export fertig, aber kein Artefakt", "Die Exportablage kennt diesen Export nicht mehr.");
+            feedback.warning("Download fertig, aber kein Datenbestand", "Die Ablage kennt diesen Download nicht mehr.");
             return;
         }
-        for (ExportArtifact.File file : artifact.files()) {
-            result.add(file.name(), Texts.bytes(file.bytes()) + " · SHA-256 " + Texts.shortHash(file.sha256()));
+        ExportDatasetInfo dataset = export.dataset();
+        if (dataset != null) {
+            result.add("Seiten", String.valueOf(dataset.pages()))
+                    .add("Datenbestand", "JSON vorhanden")
+                    .add("Bilder", images(dataset.images()), dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
+                            ? Comic.RED : Comic.INK);
         }
-        if (artifact.complete()) {
-            feedback.success("Export vollständig: " + Texts.count(artifact.files().size(), "Datei", "Dateien"));
+        Consumer<Feedback> conversion = converted.get(export.status().id());
+        if (conversion != null) {
+            conversion.accept(feedback);
+        } else if (artifact.complete()) {
+            feedback.success("Download vollständig");
         } else {
             feedback.warning("Export unvollständig", "Einzelne Seiten ließen sich nicht aus der Quelle lesen oder "
                     + "die Quelle war nicht erreichbar und der Export nutzt einen unbestätigten Stand; das Manifest "
@@ -344,13 +400,104 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Zeigt die Karte „Exportieren als …“, solange der gewählte Download einen Datenbestand hat. */
+    private void renderCard() {
+        ExportDatasetInfo dataset = detail instanceof ExportDetail export ? export.dataset() : null;
+        cardPlate.setVisible(dataset != null);
+        if (dataset == null) {
+            shownDataset = null;
+            return;
+        }
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
+        output.setText("Ausgabeordner: " + (directory == null ? "–" : name(directory)));
+        output.setToolTipText(directory == null ? null : directory.toString());
+        if (dataset.equals(shownDataset)) {
+            return;
+        }
+        boolean sameFormats = shownDataset != null && shownDataset.formats().equals(dataset.formats());
+        shownDataset = dataset;
+        cardTitle.setText("Export · " + dataset.spaceKey());
+        cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
+                + (dataset.complete() ? "" : " · unvollständig"));
+        if (!sameFormats) {
+            format.removeAllItems();
+            Format.ordered(dataset.formats()).forEach(format::addItem);
+        }
+        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(dataset.exportId()));
+    }
+
+    private void exportAs() {
+        AppRuntime runtime = context.runtime();
+        Format chosen = (Format) format.getSelectedItem();
+        if (runtime == null || chosen == null || shownDataset == null || context.settings() == null
+                || !shownDataset.exportId().equals(selectedId)) {
+            return;
+        }
+        String exportId = shownDataset.exportId();
+        if (!converting.add(exportId)) {
+            return;
+        }
+        Path directory = context.settings().outputDirectory();
+        exportAs.setEnabled(false);
+        showConverted(exportId, f -> f.working(chosen.title() + " wird erzeugt …"));
+        Background.run(() -> runtime.workspace().convertExport(exportId, chosen.id(), directory), file -> {
+            converting.remove(exportId);
+            showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)));
+        }, error -> {
+            converting.remove(exportId);
+            showConverted(exportId, f -> f.problem(error));
+        });
+    }
+
+    /** Merkt die Rückmeldung für ihren Download und zeigt sie nur, wenn die Karte gerade diesen Download zeigt. */
+    private void showConverted(String exportId, Consumer<Feedback> show) {
+        converted.put(exportId, show);
+        if (shownDataset == null || !shownDataset.exportId().equals(exportId)) {
+            return;
+        }
+        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(exportId));
+        show.accept(feedback);
+    }
+
+    private static String name(Path directory) {
+        Path name = directory.getFileName();
+        return name == null ? directory.toString() : name.toString();
+    }
+
+    private static String images(ExportDatasetInfo.Images images) {
+        return switch (images) {
+            case NOT_COLLECTED -> "noch nicht beschafft, Dokumente enthalten nur Verweise";
+            case COLLECTING -> "werden beschafft …";
+            case COMPLETE -> "vollständig";
+            case INCOMPLETE -> "unvollständig, fehlende Bilder nennt das Dokument";
+        };
+    }
+
+    /** Zielformat mit Anzeigenamen in der Reihenfolge aus Angelos Skizze; unbekannte folgen mit ihrem Kürzel. */
+    record Format(String id, String title) {
+
+        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "json");
+        private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
+                "markdown", "Markdown", "json", "JSON");
+
+        static List<Format> ordered(List<String> formats) {
+            return formats.stream().sorted(Comparator.comparingInt((String f) -> ORDER.contains(f) ? ORDER.indexOf(f)
+                    : ORDER.size())).map(f -> new Format(f, TITLES.getOrDefault(f, f.toUpperCase(Locale.ROOT))))
+                    .toList();
+        }
+
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
     private void updateButtons() {
         Optional<JobStatus> current = currentStatus();
         boolean running = current.map(s -> !s.state().terminal()).orElse(false);
         cancel.setEnabled(running && !current.get().cancelRequested());
         again.setVisible(current.map(s -> s.type() == JobType.SYNC).orElse(false));
         again.setEnabled(!running);
-        files.setVisible(detail instanceof ExportDetail export && export.artifact() != null);
         content.setEnabled(current.isPresent());
         diagnosis.setEnabled(current.isPresent());
         // Laufende Aufträge erst abbrechen; gelöscht wird nur, was beendet ist.
@@ -421,8 +568,8 @@ public final class ActivitiesView implements View {
         }
     }
 
-    static final String KEPT = "Exportdateien, die unter „Dateien speichern …“ abgelegt wurden, und der Seitenbestand "
-            + "bleiben erhalten; die interne Kopie des Exports verschwindet mit dem Auftrag.";
+    static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
+            + "des Downloads verschwindet mit dem Auftrag.";
 
     private void deleteSelected() {
         AppRuntime runtime = context.runtime();
@@ -484,43 +631,7 @@ public final class ActivitiesView implements View {
                 started -> show(started.id()), feedback::problem);
     }
 
-    private void saveFiles() {
-        AppRuntime runtime = context.runtime();
-        if (runtime == null || !(detail instanceof ExportDetail export) || export.artifact() == null) {
-            return;
-        }
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        chooser.setDialogTitle("Zielordner für die Exportdateien");
-        if (chooser.showSaveDialog(root) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        Path target = chooser.getSelectedFile().toPath().resolve(export.status().sourceId() + "-"
-                + export.status().partitionKey() + "-" + export.status().id());
-        feedback.working("Dateien werden gespeichert …");
-        Background.run(() -> {
-            Files.createDirectories(target);
-            int count = 0;
-            for (ExportArtifact.File file : export.artifact().files()) {
-                Optional<InputStream> in = runtime.workspace().exportFile(export.status().id(), file.name());
-                if (in.isPresent()) {
-                    Path out = target.resolve(file.name()).normalize();
-                    if (!out.startsWith(target)) {
-                        continue;
-                    }
-                    Files.createDirectories(out.getParent());
-                    try (InputStream stream = in.get()) {
-                        Files.copy(stream, out, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                    count++;
-                }
-            }
-            return count;
-        }, count -> feedback.success(Texts.count(count, "Datei", "Dateien") + " gespeichert in " + target),
-                feedback::problem);
-    }
-
-    private record ExportDetail(JobStatus status, ExportArtifact artifact) {
+    private record ExportDetail(JobStatus status, ExportArtifact artifact, ExportDatasetInfo dataset) {
     }
 
     private static final class JobsModel extends AbstractTableModel {

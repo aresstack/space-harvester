@@ -13,7 +13,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 |---|---|---|
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
-| `docx` | `pages.docx` | Word-Dokument (Office Open XML), Überschriften nach Seitentiefe, Textmarke je Seite |
+| `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
 | `pdf` | `pages.pdf` | PDF (A4), Lesezeichen entlang des Seitenbaums, jede Wurzelseite beginnt auf einer neuen Seite |
 
 ## Gemeinsame Regeln
@@ -36,14 +36,46 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 
-Markdown, Word und PDF setzen jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), mit
-Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
+Markdown und PDF setzen jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), Word unter
+dem Space-Kapitel (Abschnitt „Word“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
 zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
 
-Word und PDF sind deterministisch: feste Zeitstempel im Archiv beziehungsweise feste Dateikennung, keine Datumsangaben.
+Word und PDF sind deterministisch: feste Zeitstempel im Archiv und kein Erstelldatum beziehungsweise feste
+Dateikennung, keine Datumsangaben.
 Das PDF nutzt ohne Konfiguration Helvetica und Courier (WinAnsi, westeuropäische Zeichen); andere Zeichen erscheinen
 als `?`. Mit `space-harvester.export.pdf.font=/pfad/zur/Schrift.ttf` wird eine TrueType-Schrift eingebettet, die alle
 ihre Zeichen darstellt (fett und kursiv dann ohne eigenen Schnitt).
+
+## Word
+
+`pages.docx` schreibt der Word-Exporter des Enterprise AI Client (`DocxExportWriter`, `MarkdownDocxRenderer`,
+`ExportGraphics` auf Apache POI), als angepasste Kopie im Modul `:docx-export` (Herkunft und Abweichungen in
+[docx-export/UPSTREAM.md](../docx-export/UPSTREAM.md)). Der Core hängt nur von diesem Modul ab, nie von der
+Swing-Anwendung.
+
+- **Kapitelmodell.** Kapitel 1 ist der Space (Formatvorlage Überschrift 1), jede Seite ein Unterkapitel nach ihrer
+  Tiefe im Baum: Wurzelseiten Überschrift 2, ihre Kinder Überschrift 3 und so weiter bis Überschrift 9, tiefer fett.
+  Überschriften im Seiteninhalt liegen unter der Kapitelüberschrift ihrer Seite. Die Reihenfolge ist die
+  Baumreihenfolge aus `tree.json`; der Navigationsbereich von Word zeigt damit den Seitenbaum.
+- **Inhaltsverzeichnis.** Hat der Export mindestens eine Seite, steht vorn ein echtes Feld `TOC \o "1-9" \h \z \u`
+  über alle Überschriftenebenen, und das Dokument weist Word an, die Felder beim Öffnen zu aktualisieren
+  (`updateFields`). Bis dahin steht dort ein Hinweis (F9). LibreOffice aktualisiert das Feld erst über
+  „Extras › Aktualisieren“.
+- **Inhalt.** Aus dem Storage-Format über dasselbe Markdown wie `pages.md`: Listen als Word-Listen (jede nummerierte
+  Liste beginnt bei 1), Tabellen als Word-Tabellen mit wiederholter Kopfzeile, Links als Hyperlinks (nur
+  `http(s)`/`mailto`), Code als schattierter Block in Consolas, Infokästen als Zitat. Jede Seite trägt eine Textmarke
+  `page_<id>`; Verweise auf Seiten desselben Exports springen dorthin.
+- **Bilder und Diagramme.** Eingebettet wird nur, was als Bytes vorliegt (`data:` oder vom Aufrufer mitgegebene
+  Abbildungen). Ein Bild, das nur als Anhang oder Adresse vorliegt, gilt nicht als eingebettet: an seiner Stelle steht
+  kursiv „[Abbildung nicht verfügbar: …]“, nie ein Platzhalter, der wie ein Bild aussieht. Fremde Adressen werden nie
+  abgerufen. Mermaid und PlantUML bleiben Codeblock mit ihrer Textquelle, weil der Server keinen Diagramm-Renderer
+  mitbringt; draw.io und Gliffy erscheinen als Hinweis wie unten.
+- **Speicher.** Apache POI hält ein Dokument als XML-Objekte im Speicher, gemessen etwa 170 KiB je Seite mit 3 KB
+  Markdown (2000 Seiten: 327 MiB). Deshalb verlässt der Inhalt jedes Kapitels das POI-Dokument direkt nach dem
+  Kapitel als XML in eine temporäre Datei; beim Schreiben setzt der Exporter ihn an seine Stelle zurück. Im Speicher
+  bleiben nur das aktuelle Kapitel, Formatvorlagen, Listennummern, Linkziele und eingebettete Bilder: gemessen etwa
+  4 KiB je Seite (4000 Seiten: 18 MiB). Eine eigene Seitengrenze für Word gibt es deshalb nicht; es gilt
+  `max-converted-bytes`. Die temporären Dateien liegen im Temp-Verzeichnis der JVM und werden in jedem Fall gelöscht.
 
 ## Storage-Format und Formatverluste
 
@@ -59,7 +91,7 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | Makros `code`, `noformat` | Codeblock mit Sprache |
 | Makros `info`, `note`, `warning`, `tip`, `panel`, `expand` | Zitatblock mit Beschriftung |
 | `ac:link` auf eine Seite | Link auf deren Sprungmarke `#page-<id>`, wenn sie im Export liegt, sonst nur der Text |
-| `ac:link` auf Anhang, `ac:image` | Verweis `attachment:<Datei>`, das Bild selbst gehört nicht zum Export |
+| `ac:link` auf Anhang, `ac:image` | Verweis `attachment:<Datei>`, das Bild selbst gehört nicht zum Export; Word: „[Abbildung nicht verfügbar: …]“ |
 | PlantUML, Mermaid | Codeblock mit der Textquelle des Diagramms |
 | draw.io, Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include` | Hinweis auf die eingebundene Seite |

@@ -106,6 +106,11 @@ class WorkspaceTest {
         assertThat(workspace.tree("wiki", "DEV").tree()).isNotNull();
         DeliveredPage page = workspace.page("wiki", "102", false);
         assertThat(new String(page.snapshot().payload().bytes(), StandardCharsets.UTF_8)).contains("Der Dienst läuft.");
+        // Anreicherung ist ein eigener Auftrag nach dem Abgleich (#173) und kann hier noch laufen
+        Instant enriched = Instant.now().plus(Duration.ofSeconds(30));
+        while (workspace.enrichments(page).isEmpty() && Instant.now().isBefore(enriched)) {
+            Thread.sleep(50);
+        }
         assertThat(workspace.enrichments(page)).isNotEmpty();
 
         PageSearchQuery query = PageSearchQuery.of("wiki", List.of("DEV"), "wartung", null, null, null, null, null,

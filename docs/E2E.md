@@ -399,7 +399,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/exports/
 {
   "complete": true,
   "conversions": [
-    { "format": "markdown", "file": "pages.md", "converter": "markdown/2" },
+    { "format": "markdown", "file": "pages.md", "converter": "markdown/3" },
     { "format": "json", "file": "pages.json", "converter": "json-array/1" }
   ]
 }

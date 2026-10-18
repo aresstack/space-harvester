@@ -38,6 +38,10 @@ gson = "2.10.1"
 jsoup = "1.17.2"
 jgraphx = "4.2.2"
 junit4 = "4.13.2"
+# Word-Ausgabe (:docx-export, Kopie aus enterprise-ai-client): Markdown-Parser in derselben Fassung wie dort,
+# Apache POI in der aktuellen 5.x (dort 5.2.3 wegen Tika; hier gibt es keine Tika-Bindung)
+flexmark = "0.62.2"
+poi = "5.5.1"
 # Desktop-App (#103): YAML-Konfiguration ohne Spring, dieselbe Fassung wie über Spring Boot 4.1
 snakeyaml = "2.4"
 
@@ -68,6 +72,11 @@ opennlp-models-pos-de = { module = "org.apache.opennlp:opennlp-models-pos-de", v
 opennlp-models-lemmatizer-de = { module = "org.apache.opennlp:opennlp-models-lemmatizer-de", version.ref = "opennlpModelsDe" }
 jackson-jr-objects = { module = "com.fasterxml.jackson.jr:jackson-jr-objects", version.ref = "jacksonJr" }
 junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+flexmark = { module = "com.vladsch.flexmark:flexmark", version.ref = "flexmark" }
+flexmark-ext-tables = { module = "com.vladsch.flexmark:flexmark-ext-tables", version.ref = "flexmark" }
+flexmark-ext-autolink = { module = "com.vladsch.flexmark:flexmark-ext-autolink", version.ref = "flexmark" }
+flexmark-ext-gfm-strikethrough = { module = "com.vladsch.flexmark:flexmark-ext-gfm-strikethrough", version.ref = "flexmark" }
+poi-ooxml = { module = "org.apache.poi:poi-ooxml", version.ref = "poi" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 archunit-junit5 = { module = "com.tngtech.archunit:archunit-junit5", version.ref = "archunit" }
 

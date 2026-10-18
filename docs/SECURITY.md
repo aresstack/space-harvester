@@ -202,8 +202,8 @@ Job-Fehler, Exporte, Lucene-Felder, Dateipfade und Anfragegrößen. Nachgeprüft
   Adapter, die Liste ist auf `MAX_ATTACHMENTS` begrenzt und gehört nachweislich zur angefragten Seite. Sie liefert nur
   Metadaten und die Adresse in der Quelle, keine Inhalte und keine Download-Freigabe.
 - Converter Markdown, Word, PDF (#79): kein XXE (jsoup ohne DTD/Entitäten), kein Nachladen externer Ressourcen,
-  keine Zugangsdaten; Word escaped Text und Attribute, externe Beziehungen nur für `http(s)`/`mailto`-Links, feste
-  Zip-Einträge; PDF ohne JavaScript-Aktionen, Links nur `http(s)`/`mailto`.
+  keine Zugangsdaten; Word (Apache POI über `:docx-export`) escaped Text und Attribute, externe Beziehungen nur für
+  `http(s)`/`mailto`-Links, Bilder nur aus mitgelieferten Bytes oder `data:`, nie aus dem Netz, feste Zip-Einträge; PDF ohne JavaScript-Aktionen, Links nur `http(s)`/`mailto`.
 - Lokale Dateiquelle (#77): Wurzel nur aus der Konfiguration, IDs kanonisch Base64url und normalisiert, realer Pfad muss
   in der Wurzel liegen, Symlinks führen nicht hinaus; keine Anmeldedaten; Rechte wie bei jeder Quelle über den
   `AccessGuard`.

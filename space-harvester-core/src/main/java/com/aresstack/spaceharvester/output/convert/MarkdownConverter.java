@@ -44,7 +44,7 @@ import java.util.regex.Pattern;
 public final class MarkdownConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown";
-    public static final String VERSION = "markdown/2";
+    public static final String VERSION = "markdown/3";
 
     /** Zeichen am Zeilenanfang, die Markdown sonst als Überschrift, Liste oder Trennlinie läse. */
     private static final Pattern LINE_START = Pattern.compile("^(\\s*\\d*)([#=+-]|(?<=\\d)[.)])");
@@ -115,10 +115,16 @@ public final class MarkdownConverter implements ExportConverter {
     /** Blöcke, durch Leerzeilen getrennt; Überschriften im Inhalt liegen unter der Seitenüberschrift. */
     static String blocks(List<Block> blocks, int headingOffset) {
         StringBuilder text = new StringBuilder();
+        Block previous = null;
         for (Block block : blocks) {
             String rendered = block(block, headingOffset);
             if (!rendered.isEmpty()) {
+                if (previous instanceof ListBlock && block instanceof ListBlock) {
+                    // Zwei Listen direkt hintereinander läse Markdown als eine; der Kommentar trennt sie.
+                    text.append("<!-- -->\n\n");
+                }
                 text.append(rendered).append("\n\n");
+                previous = block;
             }
         }
         return text.toString();
@@ -311,7 +317,7 @@ public final class MarkdownConverter implements ExportConverter {
     }
 
     /** Linkziel; mit Leerzeichen oder Klammern in spitzen Klammern. */
-    private static String destination(String target) {
+    static String destination(String target) {
         if (target.isEmpty()) {
             return "<>";
         }
@@ -322,7 +328,7 @@ public final class MarkdownConverter implements ExportConverter {
     static String escape(String text) {
         StringBuilder escaped = new StringBuilder(text.length());
         for (char c : text.toCharArray()) {
-            if ("\\`*_[]<>|".indexOf(c) >= 0) {
+            if ("\\`*_[]<>|~".indexOf(c) >= 0) {
                 escaped.append('\\');
             }
             escaped.append(c);
