@@ -4,6 +4,8 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
@@ -73,6 +75,11 @@ public final class ActivitiesView implements View {
     private final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner anzeigen");
     /** Datenbestand, den die Karte gerade zeigt; die Formatwahl bleibt beim Auffrischen erhalten. */
     private ExportDatasetInfo shownDataset;
+    /** Hinweise der letzten Konvertierung des gezeigten Downloads (fehlende Bilder, Diagramme …), aufklappbar. */
+    final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
+    final JTextArea noticeList = Comic.note("");
+    /** Letzte erzeugte Datei je Download, für ihre Hinweise. */
+    private final Map<String, ExportConversions.ConvertedFile> lastFile = new HashMap<>();
     /** Letzte Rückmeldung von „Exportieren“ je Download; sie bleibt stehen, während die Ansicht auffrischt. */
     private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
     /** Downloads, deren Konvertierung gerade läuft; ihr Knopf bleibt gesperrt. */
@@ -137,7 +144,17 @@ public final class ActivitiesView implements View {
         cardHead.add(cardImages, BorderLayout.SOUTH);
         card.setOpaque(false);
         card.add(cardHead, BorderLayout.NORTH);
-        card.add(Comic.row(format, exportAs), BorderLayout.CENTER);
+        toggleNotices.setVisible(false);
+        noticeList.setVisible(false);
+        toggleNotices.addActionListener(e -> {
+            noticeList.setVisible(!noticeList.isVisible());
+            renderNotices();
+        });
+        JPanel actions = new JPanel(new BorderLayout(0, 4));
+        actions.setOpaque(false);
+        actions.add(Comic.row(format, exportAs, toggleNotices), BorderLayout.NORTH);
+        actions.add(noticeList, BorderLayout.CENTER);
+        card.add(actions, BorderLayout.CENTER);
         card.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
         content.addActionListener(e -> currentStatus().ifPresent(s ->
                 context.navigator().openSpace(s.sourceId(), s.partitionKey())));
@@ -419,7 +436,12 @@ public final class ActivitiesView implements View {
             return;
         }
         boolean sameFormats = shownDataset != null && shownDataset.formats().equals(dataset.formats());
+        boolean otherDownload = shownDataset == null || !shownDataset.exportId().equals(dataset.exportId());
         shownDataset = dataset;
+        if (otherDownload) {
+            noticeList.setVisible(false);
+        }
+        renderNotices();
         cardTitle.setText("Export · " + dataset.spaceKey());
         cardImages.setText(cardImages(dataset.images()));
         cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
@@ -448,7 +470,11 @@ public final class ActivitiesView implements View {
         showConverted(exportId, f -> f.working(chosen.title() + " wird erzeugt …"));
         Background.run(() -> runtime.workspace().convertExport(exportId, chosen.id(), directory), file -> {
             converting.remove(exportId);
-            showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)));
+            lastFile.put(exportId, file);
+            String notices = file.noticeCount() == 0 ? ""
+                    : ", " + Texts.count(file.noticeCount(), "Hinweis", "Hinweise");
+            showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)
+                    + notices));
         }, error -> {
             converting.remove(exportId);
             showConverted(exportId, f -> f.problem(error));
@@ -462,7 +488,68 @@ public final class ActivitiesView implements View {
             return;
         }
         exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(exportId));
+        noticeList.setVisible(false);
+        renderNotices();
         show.accept(feedback);
+    }
+
+    /** Knopf und Liste der Hinweise zur zuletzt erzeugten Datei des gezeigten Downloads. */
+    private void renderNotices() {
+        ExportConversions.ConvertedFile file = shownDataset == null ? null : lastFile.get(shownDataset.exportId());
+        boolean any = file != null && file.noticeCount() > 0;
+        toggleNotices.setVisible(any);
+        if (!any) {
+            noticeList.setVisible(false);
+            return;
+        }
+        toggleNotices.setText(noticeList.isVisible() ? "Hinweise ausblenden"
+                : Texts.count(file.noticeCount(), "Hinweis", "Hinweise") + " anzeigen");
+        noticeList.setText(notices(file));
+    }
+
+    /** Die Hinweise in verständlichen Worten, eine Zeile je Hinweis. */
+    static String notices(ExportConversions.ConvertedFile file) {
+        StringBuilder text = new StringBuilder();
+        for (ConversionNotice notice : file.notices()) {
+            if (!text.isEmpty()) {
+                text.append('\n');
+            }
+            text.append("Seite ").append(notice.pageId()).append(": ").append(kind(notice.kind()))
+                    .append(" „").append(notice.reference()).append('“');
+            String reason = reason(notice.reason());
+            if (reason != null) {
+                text.append(" (").append(reason).append(')');
+            }
+        }
+        int more = file.noticeCount() - file.notices().size();
+        if (more > 0) {
+            text.append("\n… und ").append(Texts.count(more, "weiterer Hinweis", "weitere Hinweise"));
+        }
+        return text.toString();
+    }
+
+    private static String kind(ConversionNotice.Kind kind) {
+        return switch (kind) {
+            case MISSING_IMAGE -> "fehlendes Bild";
+            case MISSING_DIAGRAM -> "fehlendes Diagramm";
+            case MISSING_ATTACHMENT -> "fehlender Anhang";
+            case OMITTED_CONTENT -> "ausgelassener Inhalt";
+        };
+    }
+
+    private static String reason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return null;
+        }
+        return switch (reason) {
+            case "missing" -> "bei der Quelle nicht gefunden";
+            case "forbidden" -> "keine Berechtigung";
+            case "too-large" -> "zu groß";
+            case "unavailable" -> "Quelle nicht erreichbar";
+            case "not-collected" -> "Bilder noch nicht beschafft";
+            case "render-failed" -> "Darstellung fehlgeschlagen";
+            default -> reason;
+        };
     }
 
     private static String name(Path directory) {

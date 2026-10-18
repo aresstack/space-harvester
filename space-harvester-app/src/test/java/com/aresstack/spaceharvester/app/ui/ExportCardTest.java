@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -88,6 +90,22 @@ class ExportCardTest {
         assertThat(ActivitiesView.Format.ordered(List.of("docx", "json", "markdown", "pdf", "epub")))
                 .extracting(ActivitiesView.Format::title)
                 .containsExactly("PDF-Dokument", "Word-Dokument", "Markdown", "JSON", "EPUB");
+    }
+
+    @Test
+    void noticesReadAsPlainWordsAndNameWhatWasLeftOut() {
+        ExportConversions.ConvertedFile file = new ExportConversions.ConvertedFile("e1", "docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Path.of("A.docx"), 10, "00",
+                List.of(new ConversionNotice("101", ConversionNotice.Kind.MISSING_IMAGE, "plan.png", "forbidden"),
+                        new ConversionNotice("102", ConversionNotice.Kind.MISSING_DIAGRAM, "mermaid", "render-failed"),
+                        new ConversionNotice("103", ConversionNotice.Kind.MISSING_ATTACHMENT, "liste.xlsx", null)),
+                5);
+
+        assertThat(ActivitiesView.notices(file)).isEqualTo("""
+                Seite 101: fehlendes Bild „plan.png“ (keine Berechtigung)
+                Seite 102: fehlendes Diagramm „mermaid“ (Darstellung fehlgeschlagen)
+                Seite 103: fehlender Anhang „liste.xlsx“
+                … und 2 weitere Hinweise""");
     }
 
     private static List<Path> list(Path directory) {
