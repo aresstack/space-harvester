@@ -171,6 +171,20 @@ public final class Workspace {
     }
 
     /**
+     * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
+     * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
+     */
+    public java.util.Optional<Assets.AssetContent> viewDiagram(ReadingView view, HarvestSource.ViewImage image) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE || !view.images().contains(image)) {
+            throw new IllegalArgumentException("Das Bild gehört nicht zu dieser Lese-Ansicht");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        return harvester.assets().viewDiagram(header.key().sourceId(), header.key().pageId(), view.version(), image);
+    }
+
+    /**
      * Das gezeichnete Mermaid-Diagramm einer Lese-Ansicht ({@link Assets#rendition}): einmal gezeichnet und abgelegt,
      * dieselben Quelldaten werden nie erneut gezeichnet (#190). Leer, wenn es sich nicht zeichnen lässt.
      */
