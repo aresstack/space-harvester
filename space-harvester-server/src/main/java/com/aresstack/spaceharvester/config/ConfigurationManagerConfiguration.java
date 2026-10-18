@@ -31,9 +31,8 @@ import org.springframework.core.env.Environment;
 /**
  * Konfiguration zur Laufzeit (ADR 0015): ein {@link ConfigurationManager} mit der Startkonfiguration aus den
  * gebundenen Properties ({@code space-harvester.ai}, {@code .search}, {@code .sync}, {@code .cache},
- * {@code .network}). Die bestehenden Beans (KI-Dienst, Suche, Zeitplan) bleiben unverändert und lesen ihre Properties
- * weiter selbst; wer zur Laufzeit wechseln will, meldet sich beim Manager als
- * {@link com.aresstack.spaceharvester.application.configuration.ConfigurationListener} an.
+ * {@code .network}). Aktualität, Frist, Freigabe an den KI-Dienst, Reranker, Embedding-Modell, Zeitplan und Nachholen
+ * beim Start folgen ihm über {@link LiveConfiguration}; was noch nicht live wirkt, nennt docs/CONFIGURATION.md.
  *
  * <p>Eine ungültige Startkonfiguration (etwa ein Chat-Modell ohne {@code ai.base-url}) verhindert den Start, wie
  * überall im Server.
@@ -51,6 +50,12 @@ class ConfigurationManagerConfiguration {
                                               boolean versionCheck, Environment environment) {
         return new ConfigurationManager(initial(ai, search, sync, cache, harvester.network(), maxAge, versionCheck,
                 Binder.get(environment)));
+    }
+
+    /** Die wirksame Konfiguration für die Beans, die ihr zur Laufzeit folgen. */
+    @Bean
+    LiveConfiguration liveConfiguration(ConfigurationManager manager) {
+        return new LiveConfiguration(manager);
     }
 
     /** Proxy und TLS für {@code GET /api/v1/configuration}, ohne Proxy-Passwort. */

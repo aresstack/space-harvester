@@ -247,7 +247,8 @@ public class Enrichments {
     private Enrichment compute(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
         try {
             EnrichmentOutput output = processor.process(text);
-            return new Enrichment(snapshot.key(), processor.id(), processor.version(), input, snapshot.revision(),
+            String version = output.version() != null ? output.version() : processor.version();
+            return new Enrichment(snapshot.key(), processor.id(), version, input, snapshot.revision(),
                     Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, clock.instant());
         } catch (RuntimeException e) {
             // Keine Meldung in Ergebnis oder Log: sie könnte Text der Seite enthalten.
