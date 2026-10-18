@@ -43,8 +43,10 @@ class ApiRouteCoverageTest {
     // Sammellöschungen betreffen nur eigene Aufträge: 200 mit {"deleted": 0}.
     // Die Adressauflösung ist ebenso global (#178): 200 ohne Treffer.
     // Der regelmäßige Abgleich (ADR 0014) zeigt nur Spaces mit sync-Freigabe: 200 mit leerer Liste.
+    // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
-            "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations");
+            "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
+            "/api/v1/sign-ins");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
