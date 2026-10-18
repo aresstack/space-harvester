@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
+import com.aresstack.spaceharvester.app.settings.AiAccess;
+import javax.swing.JComboBox;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceException;
@@ -61,6 +64,20 @@ final class AiSettingsPanel {
     /** Die Freigaben aus der Datei; dieses Panel ändert sie nicht. */
     private List<String> releasedIds = List.of();
     private Duration timeout;
+    /** „Zugangsdaten beziehen über“: KeePass (Vorgabe) oder Manuell, wie im Enterprise AI Client. */
+    final JComboBox<String> access = Comic.combo();
+    static final String KEEPASS = "KeePass";
+    static final String MANUAL = "Manuell";
+    final JLabel keePassStatus = Comic.text("Nicht gekoppelt");
+    final ComposerButton pair = Comic.button("Koppeln", "Mit KeePass koppeln (KeePassRPC); KeePass zeigt dabei ein "
+            + "Einmal-Passwort");
+    final JPanel keePassRow = Comic.row(keePassStatus, pair);
+    /** Editierbar: einen bestehenden Eintrag wählen oder einen neuen Titel eintippen. */
+    final JComboBox<String> entry = Comic.combo();
+    /** Die beim Koppeln gelesenen Titel; leer, solange nicht gekoppelt. */
+    List<String> titles = List.of();
+    /** Bezugsart, wie {@link #render()} sie zeigte; Maßstab für „geändert“. */
+    private AiAccess shownAccess = AiAccess.NONE;
     final JTextField rerankModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
@@ -90,6 +107,17 @@ final class AiSettingsPanel {
         this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
+        access.addItem(KEEPASS);
+        access.addItem(MANUAL);
+        entry.setEditable(true);
+        rows.add("Zugangsdaten beziehen über", access, "KeePass liest Basisadresse und API-Key aus einem Eintrag; "
+                + "Manuell legt den Key im Tresor dieses Windows-Kontos ab");
+        rows.add("KeePass", keePassRow, "KeePass muss laufen, mit dem Plugin KeePassRPC");
+        rows.add("Eintrag", entry, "Bestehenden Eintrag wählen oder einen neuen Namen eintippen; ein neuer Eintrag "
+                + "entsteht beim Speichern mit Basisadresse und API-Key");
+        access.addActionListener(e -> updateAccess());
+        pair.addActionListener(e -> pairKeePass());
+        entry.addActionListener(e -> entryChosen());
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
         modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
@@ -172,12 +200,135 @@ final class AiSettingsPanel {
         // Freigaben gehören zur Quelle; dieses Panel zeigt nur ihre Zahl und schreibt sie unverändert zurück.
         releasedIds = current.externalProcessingSources();
         released.setText(releasedText(settings, releasedIds));
+        AiAccess fileAccess = settings == null ? AiAccess.NONE : settings.aiAccess();
+        // Nichts gewählt: KeePass, außer es liegt schon ein Key im Tresor.
+        boolean manual = fileAccess.mode() == AiAccess.Mode.MANUAL
+                || fileAccess.mode() == null && context.aiVault().has(KEY_ID, KEY_LOGIN);
+        access.setSelectedItem(manual ? MANUAL : KEEPASS);
+        String title = fileAccess.entry() == null ? AiAccess.DEFAULT_ENTRY : fileAccess.entry();
+        if (titles.isEmpty()) {
+            entry.removeAllItems();
+            entry.addItem(title);
+        }
+        entry.setSelectedItem(title);
+        entry.getEditor().setItem(title);
+        keePassStatus.setText(context.keePass().paired() ? "Gekoppelt" : "Nicht gekoppelt");
+        updateAccess();
+        shownAccess = accessDraft();
         apiKey.setText("");
         boolean stored = context.aiKeyAvailable();
         rows.hint(apiKey, stored ? "Gespeichert; leer lassen, um ihn zu behalten"
                 : context.aiVault().available() ? "Fehlt; wird verschlüsselt im Tresor abgelegt"
                 : "Fehlt; ohne Windows-Tresor gilt er nur bis zum Schließen der App");
-        removeKey.setVisible(stored);
+        removeKey.setVisible(stored && !keePassChosen());
+        if (keePassChosen()) {
+            rows.hint(apiKey, titles.contains(entryTitle()) ? "Aus KeePass; leer lassen, um den Key des Eintrags "
+                    + "zu nutzen" : "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+        }
+    }
+
+    private AiAccess savedAccess() {
+        AppSettings settings = context.settings();
+        return settings == null ? AiAccess.NONE : settings.aiAccess();
+    }
+
+    boolean keePassChosen() {
+        return KEEPASS.equals(access.getSelectedItem());
+    }
+
+    /** Der eingetragene oder gewählte Titel, getrimmt. */
+    String entryTitle() {
+        Object item = entry.isEditable() ? entry.getEditor().getItem() : entry.getSelectedItem();
+        return item == null ? "" : item.toString().strip();
+    }
+
+    /** Bezugsart und Eintrag, wie sie gespeichert würden. */
+    AiAccess accessDraft() {
+        return keePassChosen() ? new AiAccess(AiAccess.Mode.KEEPASS, entryTitle())
+                : new AiAccess(AiAccess.Mode.MANUAL, null);
+    }
+
+    private void updateAccess() {
+        boolean keePass = keePassChosen();
+        rows.visible(keePassRow, keePass);
+        rows.visible(entry, keePass);
+        root.revalidate();
+        root.repaint();
+    }
+
+    /** Koppelt (KeePass zeigt ein Einmal-Passwort) und liest die Einträge für das Auswahlfeld. */
+    void pairKeePass() {
+        pair.setEnabled(false);
+        keePassStatus.setText("Verbinde mit KeePass …");
+        String keep = entryTitle();
+        Background.run(() -> context.keePass().titles(), read -> {
+            pair.setEnabled(true);
+            titles = List.copyOf(read);
+            entry.removeAllItems();
+            read.forEach(entry::addItem);
+            if (!keep.isEmpty() && !read.contains(keep)) {
+                entry.addItem(keep);
+            }
+            entry.setSelectedItem(keep.isEmpty() && !read.isEmpty() ? read.get(0) : keep);
+            entry.getEditor().setItem(entry.getSelectedItem());
+            keePassStatus.setText("Gekoppelt · " + Texts.count(read.size(), "Eintrag", "Einträge") + " lesbar");
+            entryChosen();
+        }, error -> {
+            pair.setEnabled(true);
+            keePassStatus.setText("Nicht gekoppelt");
+            feedback.warning("KeePass nicht erreichbar", keePassReason(error));
+        });
+    }
+
+    /** Ein bestehender Eintrag liefert die Basisadresse; ein neuer Titel verlangt den API-Key. */
+    private void entryChosen() {
+        String title = entryTitle();
+        if (!keePassChosen() || title.isEmpty() || !titles.contains(title)) {
+            if (keePassChosen()) {
+                rows.hint(apiKey, "Für einen neuen Eintrag: wird in KeePass unter diesem Namen gespeichert");
+            }
+            return;
+        }
+        rows.hint(apiKey, "Aus KeePass; leer lassen, um den Key des Eintrags zu nutzen");
+        Background.run(() -> {
+            try (var read = context.keePass().read(title)) {
+                return read.location();
+            }
+        }, location -> {
+            if (title.equals(entryTitle()) && location != null && !location.isBlank()) {
+                baseUrl.setText(location);
+            }
+        }, error -> feedback.warning("Eintrag nicht lesbar", keePassReason(error)));
+    }
+
+    static String keePassReason(Throwable error) {
+        if (error instanceof SecretUnavailableException unavailable) {
+            return switch (unavailable.reason()) {
+                case NOT_AVAILABLE -> "KeePass läuft nicht oder das Plugin KeePassRPC fehlt; KeePass starten und "
+                        + "erneut koppeln.";
+                case ACCESS_DENIED -> "KeePass hat die Kopplung abgelehnt; bitte erneut koppeln.";
+                case CANCELLED -> "Kopplung abgebrochen.";
+                case NOT_FOUND -> "Kein Eintrag mit diesem Namen in KeePass.";
+                case ALREADY_EXISTS -> "Ein Eintrag mit diesem Namen existiert schon in KeePass und bleibt "
+                        + "unverändert.";
+            };
+        }
+        return Problems.describe(error).title();
+    }
+
+    /**
+     * Der Key für eine Anfrage an den Dienst: eingetippt, sonst aus dem gewählten KeePass-Eintrag, sonst aus Tresor
+     * oder Sitzung. Maßgeblich ist die gewählte Bezugsart, nicht die gespeicherte: Sonst ginge nach einem Wechsel auf
+     * „Manuell“ der KeePass-Key an eine neu eingetragene Adresse. Im Hintergrund; der Aufrufer leert ihn.
+     */
+    char[] currentKey(char[] typed, AiAccess chosen, boolean known) {
+        if (typed.length > 0) {
+            return typed.clone();
+        }
+        if (chosen.fromKeePass()) {
+            return known ? context.keePass().credentials(chosen.entry()).apiKey() : null;
+        }
+        return context.manualAiKey();
     }
 
     AiDraft draft() {
@@ -210,7 +361,7 @@ final class AiSettingsPanel {
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || apiKey.getPassword().length > 0;
+        return !draft().equals(current) || apiKey.getPassword().length > 0 || !accessDraft().equals(shownAccess);
     }
 
     private void save(ComposerButton save, Feedback feedback) {
@@ -222,8 +373,20 @@ final class AiSettingsPanel {
         char[] key = apiKey.getPassword();
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        if (draft.equals(current) && key.length == 0) {
+        AiAccess chosen = accessDraft();
+        if (draft.equals(current) && key.length == 0 && chosen.equals(shownAccess)) {
             feedback.info("Nichts geändert", null);
+            return;
+        }
+        if (chosen.mode() == AiAccess.Mode.KEEPASS && chosen.entry() == null) {
+            Arrays.fill(key, '\0');
+            feedback.warning("Eintrag fehlt", "Bitte einen KeePass-Eintrag wählen oder einen neuen Namen eintippen.");
+            return;
+        }
+        boolean known = chosen.entry() != null && titles.contains(chosen.entry()) || chosen.equals(savedAccess());
+        if (chosen.fromKeePass() && !known && key.length == 0) {
+            feedback.warning("API-Key fehlt", "Für den neuen KeePass-Eintrag „" + chosen.entry() + "“ bitte den "
+                    + "API-Key eingeben; er wird nur in KeePass gespeichert.");
             return;
         }
         if (!Dialogs.restartAllowed(root, context)) {
@@ -235,11 +398,28 @@ final class AiSettingsPanel {
         boolean vault = context.aiVault().available();
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
-            Measured measured = measure(context, runtime, draft, key);
-            store(context, measured.draft(), vault ? key.clone() : new char[0]);
+            if (chosen.fromKeePass()) {
+                // Neuer Eintrag: Basisadresse und Key gehen nach KeePass, nie in Tresor oder Datei.
+                if (!known) {
+                    context.keePass().create(chosen.entry(), draft.baseUrl(), key);
+                }
+                char[] resolved = currentKey(key, chosen, true);
+                try {
+                    Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
+                            false);
+                    store(context, measured.draft(), new char[0], chosen);
+                    return measured;
+                } finally {
+                    if (resolved != null) {
+                        Arrays.fill(resolved, '\0');
+                    }
+                }
+            }
+            Measured measured = measure(context, runtime, draft, key, true);
+            store(context, measured.draft(), vault ? key.clone() : new char[0], chosen);
             return measured;
         }, measured -> {
-            if (!vault && key.length > 0) {
+            if (!chosen.fromKeePass() && !vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
             Arrays.fill(key, '\0');
@@ -266,11 +446,18 @@ final class AiSettingsPanel {
      * @param key eingegebener API-Key, leer zum Behalten; wird geleert
      */
     static void store(AppContext context, AiDraft draft, char[] key) throws IOException {
+        AppSettings settings = context.settings();
+        store(context, draft, key, settings == null ? AiAccess.NONE : settings.aiAccess());
+    }
+
+    /** Wie {@link #store(AppContext, AiDraft, char[])}, dazu Bezugsart und KeePass-Eintrag des Keys. */
+    static void store(AppContext context, AiDraft draft, char[] key, AiAccess access) throws IOException {
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         String text = Files.isRegularFile(context.configFile())
                 ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
         ConfigFileEditor.Draft written = editor.withAi(context.configFile(), new ConfigFileEditor.Draft(text, null),
                 draft);
+        written = editor.withAiAccess(context.configFile(), written, access);
         boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
         if (key.length == 0) {
             editor.save(context.configFile(), written, backup);
@@ -304,9 +491,10 @@ final class AiSettingsPanel {
      * Dimension noch die alte ist. Läuft im Hintergrund (Tresor, Netz); scheitert die Messung, bleibt das Feld leer
      * und die semantische Suche aus.
      *
-     * @param key eingegebener API-Key oder leer für den gespeicherten; bleibt unverändert
+     * @param key    eingegebener oder aufgelöster API-Key, leer für den manuell gespeicherten; bleibt unverändert
+     * @param manual ob der Key manuell bezogen wird; nur dann fällt ein leerer Key auf Tresor oder Sitzung zurück
      */
-    static Measured measure(AppContext context, AppRuntime runtime, AiDraft draft, char[] key) {
+    static Measured measure(AppContext context, AppRuntime runtime, AiDraft draft, char[] key, boolean manual) {
         String model = blankToNull(draft.embeddingModel());
         if (model == null || blankToNull(draft.baseUrl()) == null) {
             return new Measured(draft, null);
@@ -324,7 +512,8 @@ final class AiSettingsPanel {
         if (runtime == null) {
             return new Measured(without, "Die Dimension ließ sich nicht messen, weil die App nicht gestartet ist.");
         }
-        char[] stored = key.length > 0 ? null : context.storedAiKey();
+        // Ohne eingetippten Key nur der manuell gespeicherte, und nur bei „Manuell“; aus KeePass löst der Aufrufer auf.
+        char[] stored = key.length > 0 || !manual ? null : context.manualAiKey();
         try {
             int measured = runtime.workspace().aiEmbeddingDimension(service(without, key.length > 0 ? key : stored),
                     model);
@@ -385,10 +574,12 @@ final class AiSettingsPanel {
             return;
         }
         char[] typed = apiKey.getPassword();
+        AiAccess chosenAccess = accessDraft();
+        boolean knownEntry = chosenAccess.entry() != null && titles.contains(chosenAccess.entry()) || chosenAccess.equals(savedAccess());
         loadModels.setEnabled(false);
         modelsFeedback.working("Modelle werden geladen …");
         Background.run(() -> {
-            char[] key = typed.length > 0 ? typed : context.storedAiKey();
+            char[] key = currentKey(typed, chosenAccess, knownEntry);
             try {
                 return runtime.workspace().aiModels(service(draft, key));
             } finally {

@@ -205,7 +205,17 @@ public final class AppSettingsLoader {
                 tls(get(network, "tls"), problems), cache,
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
-                sync(map(get(root, "sync")), cache, problems));
+                sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems));
+    }
+
+    /** {@code space-harvester-app.ai-access} und {@code .ai-keepass-entry}; Unbekanntes gilt als nicht gewählt. */
+    private AiAccess aiAccess(Map<?, ?> app, List<String> problems) {
+        String modeText = text(get(app, "ai-access"), problems);
+        AiAccess.Mode mode = AiAccess.Mode.parse(modeText);
+        if (modeText != null && mode == null) {
+            problems.add("space-harvester-app.ai-access ist keepass oder manual, nicht '" + modeText + "'");
+        }
+        return new AiAccess(mode, text(get(app, "ai-keepass-entry"), problems));
     }
 
     /** Die globalen Werte unter {@code space-harvester.sync}, geprüft wie im Core; ungültige gelten wie die Vorgabe. */

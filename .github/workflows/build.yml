@@ -26,9 +26,10 @@ jobs:
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
       - run: ./gradlew build --console=plain
-      # Kopien in enterprise-ai-sources und comic-controls gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
+      # Kopien in enterprise-ai-sources, comic-controls und enterprise-ai-keepass gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - run: comic-controls/sync-from-upstream.sh verify
+      - run: enterprise-ai-keepass/sync-from-upstream.sh verify
       # Paritätsbericht Core gegen Enterprise AI Client (ADR 0012, docs/PARITY.md)
       - name: Paritätsbericht
         if: always()

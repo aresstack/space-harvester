@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.app.settings.AiAccess;
 import com.aresstack.enterpriseai.ui.comic.bubble.BubbleSide;
 import com.aresstack.enterpriseai.ui.comic.bubble.SpeechBubblePanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
@@ -300,7 +301,9 @@ final class SetupWizard {
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
         summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
-        summary.add("API-Key", context.aiKeyAvailable() ? "im Tresor" : "fehlt");
+        AiAccess access = settings.aiAccess();
+        summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()
+                ? "aus KeePass („" + access.entry() + "“)" : "im Tresor");
         summary.add("Freigegeben für den KI-Dienst",
                 AiSettingsPanel.releasedText(settings, settings.ai().externalProcessingSources()));
         summary.add("Konfigurationsdatei", context.configFile().toAbsolutePath().toString());

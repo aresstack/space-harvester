@@ -35,6 +35,7 @@ jacksonJr = "2.20.0"
 junit = "5.13.4"
 # enterprise-ai-sources: dieselben Versionen wie im Upstream (aresstack/enterprise-ai-client)
 gson = "2.10.1"
+javaWebsocket = "1.5.2"
 jsoup = "1.17.2"
 jgraphx = "4.2.2"
 junit4 = "4.13.2"
@@ -56,6 +57,7 @@ reactor-netty-http = { module = "io.projectreactor.netty:reactor-netty-http", ve
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+java-websocket = { module = "org.java-websocket:Java-WebSocket", version.ref = "javaWebsocket" }
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
