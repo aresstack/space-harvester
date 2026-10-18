@@ -125,6 +125,26 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.
 
+## Verwandte Abschnitte
+
+`GET /api/v1/sources/{sourceId}/pages/{pageId}/related?chunk=<n>` liefert die Nachbarschaft eines eingebetteten Stücks,
+wie `KnowledgeRelationsPort` mit `IndexKnowledgeRelations` im Enterprise AI Client (#181); im Core
+`harvester.relevance().related(caller, sourceId, pageId, chunk, RelatedSections.Query.all())`. Die Kanten entstehen bei
+der Abfrage aus Vektorablage und Kopfdaten; es gibt kein neues Embedding, und nichts geht an den KI-Dienst.
+
+- `similar-to`: Kosinussuche mit dem gespeicherten Vektor des Stücks über alle lesbaren Quellen (oder
+  `targetSourceId`), ab `minSimilarity` (Standard 0,80), ohne das Stück selbst und seine direkten Nachbarstücke, die
+  sich durch die Überlappung Text teilen.
+- `parent`: die Elternseite, mit ihrem ersten Stück, wenn sie eingebettet ist.
+- `next`/`previous`: das folgende bzw. vorige Stück derselben Seite.
+- `same-section`: weitere Stücke derselben Seite unter derselben Überschriftenkette, die nächstgelegenen zuerst.
+
+Jedes Ziel erscheint einmal (die erste Kante in dieser Reihenfolge gewinnt), je Art höchstens `limit` (Standard 3,
+höchstens 20). Die Ausgangsseite und jede Zielseite brauchen `metadata` und `content`; mit Live-Prüfung gilt das für den
+heute bei der Quelle gemeldeten Space. Eine gesperrte Zielseite fehlt ohne Spur, eine nicht prüfbare ebenfalls, dann
+mit `complete: false`. Ist die Seite nicht mit dem aktuellen Modell eingebettet, gibt es nur `parent`, und `origin`
+fehlt. Verweise (`LINKS_TO`) kennt auch der Enterprise AI Client noch nicht.
+
 ## Fehlerverhalten
 
 - Ist der Dienst nicht erreichbar, lehnt er den Key ab oder liefert er falsche Vektoren (Dimension, Anzahl), steht nur

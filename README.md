@@ -356,6 +356,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/children[?cursor=…]` | Direkte Kindseiten einer Seite live, wie oben (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/ancestors` | Breadcrumbs: Space mit Namen, Vorfahren von oben nach unten, die Seite selbst; live (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/links` | Querverweise auf andere Seiten der Quelle (ausgehend; eingehend nur, wenn die Quelle sie vollständig kennt, `incomingSupported`); verlangt `content`, Ziele ohne Freigabe fehlen (#177) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/related[?chunk=…&kind=…]` | Verwandte Abschnitte eines eingebetteten Stücks wie im Enterprise AI Client: ähnliche Stücke (`similar-to`, ab `minSimilarity` 0,80), Elternseite, Nachbarstücke, gleicher Abschnitt; aus den gespeicherten Vektoren, nichts geht an den KI-Dienst; verlangt `content`, Ziele ohne Freigabe fehlen (#181, [EMBEDDINGS.md](docs/EMBEDDINGS.md#verwandte-abschnitte)) |
 | `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre Adresse: URL mit Seiten-ID, `/display/KEY/Titel`, Space-Startseite, `confluence://…`, Ressourcen-ID oder Lesezeichen `space-harvester://…` (#178) |
 | `GET /api/v1/addresses?address=…` | Eine Adresse über alle Quellen auflösen; je Treffer Seite und Lesezeichen (#178) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |

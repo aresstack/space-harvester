@@ -60,6 +60,9 @@ class RelevanceLiveCheckTest {
 
     private final HarvestSource source = (HarvestSource) Proxy.newProxyInstance(
             HarvestSource.class.getClassLoader(), new Class<?>[] {HarvestSource.class}, (proxy, method, args) -> {
+                if (method.getName().equals("id")) {
+                    return "wiki";
+                }
                 if (!method.getName().equals("pageMetadata")) {
                     return null;
                 }
@@ -312,6 +315,27 @@ class RelevanceLiveCheckTest {
         assertThat(ids(results)).containsExactly("1", "2");
         assertThat(documents).containsOnlyKeys("1", "2").containsEntry("1", "Betrieb eins\nGeheimtext 1");
         assertThat(metadataCalls).contains("5");
+    }
+
+    @Test
+    void relatedSectionsAreCheckedLiveToo() {
+        // 2 wäre der ähnlichste Nachbar, liegt bei der Quelle aber inzwischen im gesperrten Space; 4 ist unter 0,80.
+        live.put("2", metadata("SECRET", "2", "1"));
+        AccessPolicy noSecret = (context, scope, kind) -> "SECRET".equals(scope.spaceKey())
+                ? AccessDecision.DENY : AccessDecision.ALLOW;
+
+        RelatedSections.Results results = search(noSecret).related(CALLER, "wiki", "1", 0,
+                RelatedSections.Query.all());
+
+        assertThat(results.relations()).extracting(relation -> relation.page().page().header().key().pageId())
+                .containsExactly("3");
+        assertThat(results.complete()).isTrue();
+
+        live.put("3", new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null));
+        RelatedSections.Results unchecked = search(noSecret).related(CALLER, "wiki", "1", 0,
+                RelatedSections.Query.all());
+        assertThat(unchecked.relations()).isEmpty();
+        assertThat(unchecked.complete()).isFalse();
     }
 
     private RelevanceSearch search(AccessPolicy policy) {
