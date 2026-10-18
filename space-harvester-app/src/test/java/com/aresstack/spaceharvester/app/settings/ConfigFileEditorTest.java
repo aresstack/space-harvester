@@ -396,6 +396,28 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void disabledSourcesAreAListInTheAppBlockAndVanishWhenAllAreOn() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                space-harvester-app:
+                  data-directory: /daten
+                space-harvester:
+                  sources: []
+                """);
+        assertThat(loader.load(file).disabledSources()).isEmpty();
+
+        editor.save(file, editor.withDisabledSources(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                java.util.Set.of("wiki", "handbuch")));
+
+        assertThat(Files.readString(file)).contains("  disabled-sources: [\"handbuch\", \"wiki\"]", "data-directory");
+        assertThat(loader.load(file).disabledSources()).containsExactlyInAnyOrder("wiki", "handbuch");
+        assertThat(loader.load(file).disabled("wiki")).isTrue();
+        editor.save(file, editor.withDisabledSources(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                java.util.Set.of()));
+        assertThat(Files.readString(file)).doesNotContain("disabled-sources").contains("data-directory: /daten");
+    }
+
+    @Test
     void writesTheAiBlockWithoutAKeyAndRemovesItWhenEmpty() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, """

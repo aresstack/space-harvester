@@ -178,6 +178,11 @@ public final class Workspace {
         return harvester.sourceManagement().validate(draft, replacing);
     }
 
+    /** Ob die Quelle im Core eingeschaltet ist ({@code SourceManagement.enabled}); {@code false} auch für unbekannte. */
+    public boolean sourceEnabled(String sourceId) {
+        return harvester.sourceManagement().enabled(sourceId);
+    }
+
     /**
      * Übernimmt geänderte Einstellungen einer Quelle in den laufenden Core ({@code SourceManagement.change}, #188).
      * Zeigt sie danach auf ein anderes Ziel (Typ oder Adresse), entfernt der Core ihre bisherigen Daten.

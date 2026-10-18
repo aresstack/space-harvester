@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Die gelesene Konfiguration der App: dieselben Schlüssel unter {@code space-harvester} wie beim Dienst (Quellen,
@@ -23,11 +24,13 @@ import java.util.Objects;
  * @param outputDirectory Ausgabeordner für Dateien, die der Benutzer aus einem Export erzeugt
  *                        ({@code space-harvester-app.output-directory}, Vorgabe der Ordner Downloads)
  * @param problems    verständliche Hinweise auf Fehler der Datei; Quellen mit Fehlern fehlen in {@code sources}
+ * @param disabledSources abgeschaltete Quellen ({@code space-harvester-app.disabled-sources}): bleiben eingerichtet
+ *                        samt Bestand, der Core kennt sie aber nicht ({@code SourceManagement.setEnabled})
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
-                          AiSettings ai, Path outputDirectory, List<String> problems) {
+                          AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -39,12 +42,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         ai = ai == null ? AiSettings.NONE : ai;
         outputDirectory = outputDirectory == null ? defaultOutputDirectory() : outputDirectory;
         problems = List.copyOf(problems);
+        disabledSources = disabledSources == null ? Set.of() : Set.copyOf(disabledSources);
     }
 
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems);
+                problems, disabledSources);
+    }
+
+    /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */
+    public boolean disabled(String sourceId) {
+        return disabledSources.contains(sourceId);
     }
 
     /** Vorgabe des Ausgabeordners: Downloads im Benutzerverzeichnis. */

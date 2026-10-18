@@ -344,15 +344,42 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Setzt {@code space-harvester-app.disabled-sources}; leer entfernt den Schlüssel, dann sind alle Quellen an.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withDisabledSources(Path file, Draft base, Set<String> disabled) {
+        String value = disabled.isEmpty() ? null : "disabled-sources: [" + disabled.stream().sorted()
+                .map(id -> "\"" + id.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
+                .collect(java.util.stream.Collectors.joining(", ")) + "]";
+        String text = appValue(base.text(), "disabledsources", value);
+        AppSettings settings = loader.read(file, text);
+        if (!settings.disabledSources().equals(Set.copyOf(disabled))) {
+            throw new IllegalArgumentException("Die abgeschalteten Quellen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.disabled-sources von Hand bearbeiten.");
+        }
+        return new Draft(text, settings);
+    }
+
     /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
     static String outputDirectory(String text, String directory) {
+        return appValue(text, "outputdirectory", directory == null ? null
+                : "output-directory: \"" + directory.replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
+    }
+
+    /**
+     * Ersetzt, ergänzt oder entfernt einen einzeiligen Schlüssel unter {@code space-harvester-app}.
+     *
+     * @param key   normalisierter Schlüssel ({@link AppSettingsLoader#normalize})
+     * @param value ganze Zeile ohne Einrückung, {@code null} entfernt den Schlüssel
+     */
+    private static String appValue(String text, String key, String value) {
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
             lines.remove(lines.size() - 1);
         }
-        String value = directory == null ? null
-                : "output-directory: \"" + directory.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
         int root = -1;
         for (int i = 0; i < lines.size(); i++) {
             if (isKey(ROOT, lines.get(i), 1, "spaceharvesterapp")) {
@@ -374,9 +401,9 @@ public final class ConfigFileEditor {
         int childIndent = childIndent(lines, root, rootEnd, 2);
         int line = -1;
         for (int i = root + 1; i < rootEnd && line < 0; i++) {
-            Matcher key = SCALAR_KEY.matcher(lines.get(i));
-            if (!blankOrComment(lines.get(i)) && indent(lines.get(i)) == childIndent && key.lookingAt()
-                    && AppSettingsLoader.normalize(key.group(1)).equals("outputdirectory")) {
+            Matcher found = SCALAR_KEY.matcher(lines.get(i));
+            if (!blankOrComment(lines.get(i)) && indent(lines.get(i)) == childIndent && found.lookingAt()
+                    && AppSettingsLoader.normalize(found.group(1)).equals(key)) {
                 line = i;
             }
         }
