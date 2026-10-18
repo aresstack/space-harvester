@@ -717,7 +717,8 @@ public final class SourcesView implements View {
     private void updateExportButtons() {
         int marked = spacesModel.marked().size();
         exportMarked.setEnabled(marked > 0);
-        exportMarked.setText(marked == 0 ? "Ausgewählte exportieren …" : "Ausgewählte exportieren (" + marked + ") …");
+        exportMarked.setText(marked == 0 ? "Ausgewählte herunterladen …"
+                : "Ausgewählte herunterladen (" + marked + ") …");
         exportAll.setEnabled(!spacesModel.rows.isEmpty());
     }
 
