@@ -110,9 +110,27 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
 | Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
+| Regelmäßige Bestandsinventur (nur Metadaten) | `sync.inventory-interval` (ohne: keine) | ja |
+| Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
+
+### Regeln je Quelle
+
+Der Reiter „Synchronisierung“ der Wissensquellen stellt die Regeln je Quelle ein; was er nicht setzt, kommt aus den
+globalen Werten oben. Modelle gelten immer global. Schlüssel `sync.sources.<Quelle>.<Feld>` (oder
+`sync.sources[<Quelle>].<Feld>`), gegliedert wie in der Oberfläche:
+
+| Bereich | Feld | Bedeutung |
+| --- | --- | --- |
+| Erkennung | `interval` | automatische Änderungssuche (CQL `lastmodified`) in diesem Abstand, mindestens `PT1M` |
+| Erkennung | `inventory-interval` | regelmäßige Bestandsinventur, nur Metadaten (global: `sync.inventory-interval`) |
+| Erkennung | `events`, `catch-up-on-start`, `before-search`, `mode` | Webhooks, Nachholen beim Start, vor jeder Suche, Betriebsart |
+| Aktualisierung | `refresh-strategy`, `max-age` | Aktualität vorhandener Inhalte; ohne eigenes Zeitfenster gilt `cache.max-age` |
+| Bereinigung | `withheld-retention` | wie lange gesperrte Rohdaten bleiben |
+
+Im Core liefern `HarvesterConfiguration.syncFor(sourceId)` und `freshnessFor(sourceId)` die wirksamen Werte.
 
 Alle Änderungsquellen (`sync.*`) sind optional und standardmäßig aus. Ohne sie bleibt der Cache über die
 Aktualisierungsstrategie je Seite und die Beschaffung der Suchtreffer aktuell; Webhooks ergänzen das, wo ein

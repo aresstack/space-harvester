@@ -8,6 +8,8 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -49,22 +51,32 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
     /**
      * @param semanticActive  ob die semantische Suche tatsächlich läuft (Haken und Embedding-Modell)
      * @param rerankingActive ob Treffer umgeordnet werden (Option und Rerank-Modell)
+     * @param refreshStrategy wie in {@code cache.refresh-strategy}, etwa {@code always-check-version}
      */
     public record Search(boolean semantic, boolean rerank, boolean prefetchHits, String cacheMaxAge,
-                         boolean cacheVersionCheck, boolean semanticActive, boolean rerankingActive) {
+                         boolean cacheVersionCheck, boolean semanticActive, boolean rerankingActive,
+                         String refreshStrategy) {
 
         static Search of(HarvesterConfiguration c) {
             SearchSettings s = c.search();
             return new Search(s.semantic(), s.rerank(), s.prefetchHits(), text(s.cacheFreshness().maxAge()),
-                    s.cacheFreshness().versionCheck(), c.semanticSearch(), c.reranking());
+                    s.cacheFreshness().versionCheck(), c.semanticSearch(), c.reranking(), s.refreshStrategy().key());
         }
     }
 
+    /**
+     * @param sources abweichende Regeln je Quelle als Feld → Wert, Schlüssel wie unter
+     *                {@code sync.sources.<Quelle>.<Feld>}
+     */
     public record Sync(boolean events, String interval, List<String> spaces, boolean beforeSearch,
-                       String withheldRetention) {
+                       String withheldRetention, boolean catchUpOnStart, String mode, String inventoryInterval,
+                       Map<String, Map<String, String>> sources) {
 
         static Sync of(SyncSettings s) {
-            return new Sync(s.events(), text(s.interval()), s.spaces(), s.beforeSearch(), text(s.withheldRetention()));
+            Map<String, Map<String, String>> sources = new TreeMap<>();
+            s.sources().forEach((id, o) -> sources.put(id, ConfigurationOverlay.fields(o)));
+            return new Sync(s.events(), text(s.interval()), s.spaces(), s.beforeSearch(), text(s.withheldRetention()),
+                    s.catchUpOnStart(), s.mode().key(), text(s.inventoryInterval()), sources);
         }
     }
 

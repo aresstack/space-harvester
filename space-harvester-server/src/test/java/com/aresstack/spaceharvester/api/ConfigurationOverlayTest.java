@@ -69,6 +69,21 @@ class ConfigurationOverlayTest {
     }
 
     @Test
+    void sourceRulesRoundTripAndReplaceInBothSpellings() {
+        HarvesterConfiguration first = ConfigurationOverlay.overlay(FULL, Map.of(
+                "sync.sources[wiki].interval", "PT30M", "sync.sources.wiki.refresh-strategy", "time-based",
+                "sync.sources.wiki.max-age", "PT2H")).orThrow();
+        HarvesterConfiguration second = ConfigurationOverlay.overlay(first, Map.of(
+                "sync.sources.wiki.interval", "PT1H", "sync.sources[wiki].max-age", "")).orThrow();
+
+        assertThat(HarvesterConfiguration.fromProperties(ConfigurationOverlay.toProperties(first)).orThrow()
+                .withNetwork(FULL.network())).isEqualTo(first);
+        assertThat(second.syncFor("wiki").interval()).isEqualTo(Duration.ofHours(1));
+        assertThat(second.sync().override("wiki").maxAge()).isNull();
+        assertThat(second.freshnessFor("wiki").versionCheck()).isFalse();
+    }
+
+    @Test
     void unknownKeysNetworkAndObjectsAreProblems() {
         HarvesterConfiguration.Parsed parsed = ConfigurationOverlay.overlay(FULL, Map.of("ai.model", "x",
                 "network.proxy.mode", "disabled", "search.rerank", Map.of("a", "b")));

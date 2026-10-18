@@ -4,9 +4,11 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,6 +37,7 @@ public final class ConfigurationOverlay {
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
             SyncSettings.WITHHELD_RETENTION, SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE,
+            SyncSettings.INVENTORY_INTERVAL,
             StorageSettings.DATA_DIRECTORY);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
@@ -42,6 +45,9 @@ public final class ConfigurationOverlay {
             SyncSettings.SPACES);
 
     private static final Pattern INDEXED = Pattern.compile("(.+)\\[\\d+]");
+
+    /** Regeln je Quelle: {@code sync.sources.<Quelle>.<Feld>} oder {@code sync.sources[<Quelle>].<Feld>}. */
+    private static final Pattern SOURCE_KEY = Pattern.compile("sync\\.sources(?:\\.([^.\\[\\]]+)|\\[([^\\]]+)])\\.([a-z-]+)");
 
     private ConfigurationOverlay() {
     }
@@ -83,6 +89,9 @@ public final class ConfigurationOverlay {
         put(properties, SyncSettings.WITHHELD_RETENTION, sync.withheldRetention());
         put(properties, SyncSettings.CATCH_UP_ON_START, sync.catchUpOnStart());
         put(properties, SyncSettings.MODE, sync.mode().key());
+        put(properties, SyncSettings.INVENTORY_INTERVAL, sync.inventoryInterval());
+        sync.sources().forEach((id, override) -> fields(override)
+                .forEach((field, value) -> properties.setProperty(SourceSyncOverride.key(id, field), value)));
         put(properties, StorageSettings.DATA_DIRECTORY, configuration.storage().dataDirectory());
         return properties;
     }
@@ -110,7 +119,14 @@ public final class ConfigurationOverlay {
         for (Map.Entry<String, ?> entry : values.entrySet()) {
             String key = strip(entry.getKey());
             var indexed = INDEXED.matcher(key);
-            boolean known = KEYS.contains(key) || indexed.matches() && LISTS.contains(indexed.group(1));
+            var source = SOURCE_KEY.matcher(key);
+            if (source.matches()) {
+                // Einheitlich mit Punkt, damit ein Wert die gespeicherte Abweichung ersetzt statt sie zu verdoppeln.
+                key = SourceSyncOverride.key(source.group(1) != null ? source.group(1) : source.group(2),
+                        source.group(3));
+            }
+            boolean known = KEYS.contains(key) || indexed.matches() && LISTS.contains(indexed.group(1))
+                    || source.matches();
             if (!known) {
                 problems.add(new ConfigurationProblem(key, key.startsWith("network.")
                         ? "Proxy und TLS wechseln über die Konfigurationsquelle, nicht über diese Schnittstelle"
@@ -146,6 +162,28 @@ public final class ConfigurationOverlay {
             return String.join(",", list.stream().map(String.class::cast).toList());
         }
         return null;
+    }
+
+    /** Die gesetzten Felder einer Abweichung als Unterschlüssel → Wert. */
+    static Map<String, String> fields(SourceSyncOverride o) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        putField(fields, SourceSyncOverride.CHANGE_SEARCH_INTERVAL, o.changeSearchInterval());
+        putField(fields, SourceSyncOverride.INVENTORY_INTERVAL, o.inventoryInterval());
+        putField(fields, SourceSyncOverride.EVENTS, o.events());
+        putField(fields, SourceSyncOverride.CATCH_UP_ON_START, o.catchUpOnStart());
+        putField(fields, SourceSyncOverride.BEFORE_SEARCH, o.beforeSearch());
+        putField(fields, SourceSyncOverride.MODE, o.mode() == null ? null : o.mode().key());
+        putField(fields, SourceSyncOverride.REFRESH_STRATEGY, o.refreshStrategy() == null ? null
+                : o.refreshStrategy().key());
+        putField(fields, SourceSyncOverride.MAX_AGE, o.maxAge());
+        putField(fields, SourceSyncOverride.WITHHELD_RETENTION, o.withheldRetention());
+        return fields;
+    }
+
+    private static void putField(Map<String, String> fields, String field, Object value) {
+        if (value != null) {
+            fields.put(field, value.toString());
+        }
     }
 
     private static String strip(String name) {
