@@ -272,6 +272,20 @@ class SettingDialogsTest {
         exchange.close();
     }
 
+    @Test
+    void theOutputDirectoryIsSavedWithoutRestartingTheRuntime() throws Exception {
+        var before = context.runtime();
+        Path chosen = home.resolve("ausgabe");
+        CountDownLatch done = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.outputDirectory(chosen, done::countDown,
+                error -> { throw new AssertionError(error); }));
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(context.settings().outputDirectory()).isEqualTo(chosen);
+        assertThat(context.runtime()).as("keine Rückfrage, kein Neustart").isSameAs(before);
+        assertThat(Files.readString(config)).contains("output-directory:", "# Kommentar bleibt");
+    }
+
     private SourceDraft.Editable editable() {
         try {
             return new ConfigFileEditor(context.loader()).editable(config, "wiki");

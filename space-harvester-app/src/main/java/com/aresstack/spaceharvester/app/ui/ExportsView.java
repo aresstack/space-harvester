@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Exportieren: Quelle und einen oder mehrere Spaces wählen (oft vorbelegt aus Wissensquellen), Formate wählen, starten;
+ * Herunterladen: Quelle und einen oder mehrere Spaces wählen (oft vorbelegt aus Wissensquellen), Formate wählen, starten;
  * je Space entsteht ein Auftrag. JSON ist vorgewählt, die übrigen Formate sind optional. Das Raw-First-Artefakt
  * (Originaldaten und Manifest) entsteht immer. Ein vorheriger Abgleich ist nicht nötig: Fehlende Seiten liest der
  * Export selbst aus der Quelle. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
@@ -37,11 +37,11 @@ public final class ExportsView implements View {
     private final SourcePicker picker;
     private final JPanel formatsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
     private final Map<String, JCheckBox> formats = new LinkedHashMap<>();
-    /** Ab so vielen Spaces fragt „Export starten“ nach. */
+    /** Ab so vielen Spaces fragt „Herunterladen“ nach. */
     static final int CONFIRM_FROM = 10;
     static final String DEFAULT_FORMAT = "json";
 
-    private final ComposerButton start = Comic.primary("Export starten", "Je gewähltem Space einen Export starten");
+    private final ComposerButton start = Comic.primary("Herunterladen", "Je gewähltem Space einen Download starten");
     private final ComposerButton addSpace = Comic.button("Hinzufügen", "Den Space aus der Auswahl übernehmen");
     private final ComposerButton clearSpaces = Comic.button("Alle entfernen", "Gewählte Spaces leeren");
     private final JPanel chosenPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
@@ -103,11 +103,11 @@ public final class ExportsView implements View {
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setOpaque(false);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
-        list.add(Comic.muted("Doppelklick zeigt den Export unter Aufträge, dort lassen sich die Dateien speichern."),
+        list.add(Comic.muted("Doppelklick zeigt den Download unter Aufträge, dort lassen sich die Dateien speichern."),
                 BorderLayout.SOUTH);
 
-        root.add(Comic.plate("Neuer Export", Comic.ORANGE, form), BorderLayout.NORTH);
-        root.add(Comic.plate("Letzte Exporte", Comic.PETROL, list), BorderLayout.CENTER);
+        root.add(Comic.plate("Neuer Download", Comic.ORANGE, form), BorderLayout.NORTH);
+        root.add(Comic.plate("Letzte Downloads", Comic.PETROL, list), BorderLayout.CENTER);
         context.onChange(ignored -> refreshFormats());
         refreshFormats();
         renderChosen();
@@ -183,8 +183,8 @@ public final class ExportsView implements View {
             chosenPanel.add(chip);
         }
         clearSpaces.setVisible(!chosen.isEmpty());
-        start.setText(chosen.size() > 1 ? Texts.count(chosen.size(), "Export", "Exporte") + " starten"
-                : "Export starten");
+        start.setText(chosen.size() > 1 ? Texts.count(chosen.size(), "Space", "Spaces") + " herunterladen"
+                : "Herunterladen");
         chosenPanel.revalidate();
         chosenPanel.repaint();
     }
@@ -230,15 +230,15 @@ public final class ExportsView implements View {
             feedback.warning("Space hinzufügen", "Oben einen Space wählen und „Hinzufügen“ klicken.");
             return;
         }
-        if (keys.size() >= CONFIRM_FROM && !Dialogs.confirm(root, "Viele Exporte starten?",
-                Texts.count(keys.size(), "Space", "Spaces") + " von " + sourceId + " werden exportiert, je Space ein "
-                        + "Auftrag. Fehlende Seiten liest jeder Export aus der Quelle; das kann dauern.",
-                Texts.count(keys.size(), "Export", "Exporte") + " starten")) {
+        if (keys.size() >= CONFIRM_FROM && !Dialogs.confirm(root, "Viele Spaces herunterladen?",
+                Texts.count(keys.size(), "Space", "Spaces") + " von " + sourceId + " werden heruntergeladen, je Space ein "
+                        + "Auftrag. Fehlende Seiten liest jeder Download aus der Quelle; das kann dauern.",
+                "Herunterladen")) {
             return;
         }
         List<String> chosenFormats = chosenFormats();
         start.setEnabled(false);
-        feedback.working(keys.size() == 1 ? "Export wird gestartet …" : "Exporte werden gestartet …");
+        feedback.working(keys.size() == 1 ? "Download wird gestartet …" : "Downloads werden gestartet …");
         Background.run(() -> {
             List<JobStatus> started = new ArrayList<>();
             List<String> failed = new ArrayList<>();
@@ -257,10 +257,10 @@ public final class ExportsView implements View {
             start.setEnabled(true);
             refreshList();
             if (result.failed().isEmpty()) {
-                feedback.success(result.jobs().size() == 1 ? "Export gestartet"
-                        : Texts.count(result.jobs().size(), "Export", "Exporte") + " gestartet");
+                feedback.success(result.jobs().size() == 1 ? "Download gestartet"
+                        : Texts.count(result.jobs().size(), "Download", "Downloads") + " gestartet");
             } else {
-                feedback.warning(Texts.count(result.failed().size(), "Export ließ", "Exporte ließen")
+                feedback.warning(Texts.count(result.failed().size(), "Download ließ", "Downloads ließen")
                         + " sich nicht starten", String.join("; ", result.failed()));
             }
             // Mit Fehlern bleibt die Ansicht stehen, damit die Meldung sichtbar ist.
