@@ -27,6 +27,19 @@ class ParityComparisonTest {
                 .isEqualTo(Verdict.GLEICH);
     }
 
+    @Test
+    void aRepeatedPageTitleIsNoExtraLevel() {
+        DocumentOutline eac = withHeadings(List.of(new DocumentOutline.Heading(1, "Handbuch"),
+                new DocumentOutline.Heading(2, "Handbuch"), new DocumentOutline.Heading(2, "Zweck")));
+        DocumentOutline core = withHeadings(List.of(new DocumentOutline.Heading(1, "Handbuch"),
+                new DocumentOutline.Heading(2, "Zweck")));
+        assertThat(finding(eac, core, "ebenen").verdict()).isEqualTo(Verdict.GLEICH);
+    }
+
+    private static DocumentOutline withHeadings(List<DocumentOutline.Heading> headings) {
+        return new DocumentOutline("md", headings, false, false, false, 0, 0, 0, List.of(), Set.of(), 0, 0, "");
+    }
+
     private static Finding finding(DocumentOutline eac, DocumentOutline core, String check) {
         return ParityComparison.compare(eac, core).stream().filter(f -> f.check().equals(check)).findFirst()
                 .orElseThrow();

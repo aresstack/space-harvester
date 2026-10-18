@@ -129,8 +129,22 @@ public final class ParityComparison {
         return compareNumbers(format, "ebenen", "Tiefste Gliederungsebene", eacDepth, coreDepth);
     }
 
+    /**
+     * Tiefste Ebene ohne Wiederholungen: Der Enterprise AI Client wiederholt den Seitentitel eine Ebene tiefer als
+     * Überschrift im Kapitelinhalt. Das ist Layout, keine zusätzliche Gliederungsebene (gewollte Abweichung).
+     */
     private static int maxLevel(DocumentOutline outline) {
-        return outline.headings().stream().mapToInt(Heading::level).max().orElse(0);
+        int max = 0;
+        Heading previous = null;
+        for (Heading heading : outline.headings()) {
+            boolean repeated = previous != null && heading.level() == previous.level() + 1
+                    && normalize(heading.text()).equals(normalize(previous.text()));
+            if (!repeated) {
+                max = Math.max(max, heading.level());
+            }
+            previous = heading;
+        }
+        return max;
     }
 
     private static Finding flag(String format, String check, String title, boolean eac, boolean core) {

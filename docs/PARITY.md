@@ -309,10 +309,14 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 
-Stand beim ersten Lauf: Der Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core
-behält sie. Tabellen und Markdown-Text sind gleich. Offen (in `known-gaps.properties`): Space-Name als oberstes
-Kapitel, Überschriften bis Ebene 9, Inhaltsverzeichnis und Felder in Word (#175), Inhaltsverzeichnisseite,
-Seitenzahlen und Lesezeichen im PDF, eingebettete Bilder in allen Formaten (Strang R, Asset-Manifest aus Runde 7).
+Stand nach #175 (Word über `:docx-export`): Der Enterprise AI Client verliert die Ziele externer Links in allen
+Formaten, der Core behält sie. Tabellen, Text, Inhaltsverzeichnis und Felder in Word sind gleich. Offen (in
+`known-gaps.properties`): Space-Name als oberstes Kapitel (wartet auf den Space-Namen im Konvertier-Eingang),
+Inhaltsverzeichnisseite, Seitenzahlen und Lesezeichen im PDF (#202), eingebettete Bilder in allen Formaten (Strang R,
+Asset-Manifest aus Runde 7).
+
+Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
+Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht.
 
 ### Live-Lauf gegen echte Daten
 
