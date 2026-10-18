@@ -50,7 +50,8 @@ public final class DocxConverter implements ExportConverter {
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         String title = ExportChapters.title(input);
-        DocxExportWriter writer = new DocxExportWriter(ExportGraphics.rendering(), "Space Harvester");
+        ExportGraphics graphics = ExportGraphics.rendering();
+        DocxExportWriter writer = new DocxExportWriter(graphics, "Space Harvester");
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
             chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
             input.forEachPage(page -> {
@@ -58,6 +59,7 @@ public final class DocxConverter implements ExportConverter {
                 figures.notices().forEach(input::report);
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                         figures.markdown(), figures.images(), ExportChapters.depth(page));
+                ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
             });
             chapters.finish(out);
         }

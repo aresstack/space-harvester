@@ -90,7 +90,8 @@ public final class PdfConverter implements ExportConverter {
         }
         MessageDigest identity = sha256();
         identity.update((input.sourceId() + "\n" + input.spaceKey() + "\n").getBytes(StandardCharsets.UTF_8));
-        PdfExportWriter writer = new PdfExportWriter(ExportGraphics.rendering(), font, maxPages, "Space Harvester");
+        ExportGraphics graphics = ExportGraphics.rendering();
+        PdfExportWriter writer = new PdfExportWriter(graphics, font, maxPages, "Space Harvester");
         try (PdfExportWriter.Chapters chapters = writer.open(title, input.headers().size() + 1, anchors)) {
             chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
             try {
@@ -102,6 +103,7 @@ public final class PdfConverter implements ExportConverter {
                         figures.notices().forEach(input::report);
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                                 figures.markdown(), figures.images(), ExportChapters.depth(page));
+                        ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }

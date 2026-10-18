@@ -75,7 +75,8 @@ public final class MarkdownConverter implements ExportConverter {
     @Override
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
-        MarkdownExportWriter markdown = new MarkdownExportWriter(ExportGraphics.rendering());
+        ExportGraphics graphics = ExportGraphics.rendering();
+        MarkdownExportWriter markdown = new MarkdownExportWriter(graphics);
         Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
         String title = ExportChapters.title(input);
         writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, VERSION), List.of(), 1));
@@ -86,6 +87,7 @@ public final class MarkdownConverter implements ExportConverter {
                     figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
                             figures.markdown(), figures.images(), ExportChapters.depth(page)));
+                    ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
