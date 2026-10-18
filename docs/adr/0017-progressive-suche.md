@@ -5,7 +5,8 @@
 - Gilt für die **semantische Suche** (Haken, ADR 0013). Die Schlagwortsuche bleibt Standard und unverändert.
 - Umgesetzt: `SearchOrchestrator` im Core mit regelbasierten Varianten, Wellen, Prioritätsfreigabe, Qualitätsziel
   und Budgets (Paket `application.query.progressive`, `Harvester.progressiveSearch()`).
-- Offen: Varianten über ein Modell des KI-Dienstes, REST-Schnittstelle, Anbindung an die semantische Suche und die App.
+- Umgesetzt: Varianten über ein Modell des KI-Dienstes, REST-Schnittstelle (`/api/v1/search/progressive`).
+- Offen: Anbindung an die semantische Suche und die App.
 
 ## Kontext
 
@@ -102,8 +103,28 @@ Reihenfolge geht nach abnehmender Genauigkeit: zuerst möglichst viele Begriffe 
   keinem Log und keiner Meldung; Fehler nennen nur Art und Status. Der Aufruf nutzt dieselbe Proxy-Route
   (fail-closed), dasselbe Vertrauen und denselben Bearer-Token wie die übrigen Aufrufe.
 
+## Umsetzung (dritter Schritt: REST)
+
+Der Server verdrahtet den `SearchOrchestrator` wie der Harvester: die `KeywordSearch` als `VariantSearch`, Varianten
+vom Chat-Modell der wirksamen Konfiguration mit den Regeln als Rückfall, bewertet vom Cross-Encoder
+(`ai.rerank-model`). Er schließt vor Schlagwortsuche und Cache, ohne laufende Suchanfragen zu unterbrechen.
+
+- `POST /api/v1/search/progressive` mit `q` und den Filtern der Schlagwortsuche; die Werte des `SearchProfile` sind
+  einzeln überschreibbar (`mode` `quality`/`all-variants`, `maxVariants`, `minRelevantHits`, `minScore`,
+  `timeBudgetMs` bis 120 s, `searchBudget`, `limitPerSearch`, `expansion` `ai`/`rules`). Ohne `wait` 202 mit dem
+  Stand, für eine Oberfläche, die zusieht. Mit `wait: true` wartet die Anfrage bis zum Abschluss und liefert die
+  fertige, sortierte Liste mit `reason`, für einen Agenten. Delegierte Benutzer warten immer, weil ihre Anmeldung den
+  Aufruf nicht überdauert.
+- `GET /api/v1/search/progressive/{id}` liefert unterwegs den letzten Stand aus den Ereignissen (`variants`,
+  sortierte `hits`, `reason: null`), danach das Ergebnis. `DELETE` bricht ab (`cancelled`).
+- Jede Suche gehört ihrem Aufrufer (Art, Kennung und durchreichender Client); ein anderer bekommt 404 wie bei einer
+  unbekannten. Höchstens 256 Suchen sind bekannt, beendete 5 Minuten lang; ist der Platz voll, weicht die älteste
+  beendete, laufen alle, antwortet der Dienst mit 429.
+- Ungültige Angaben ergeben 400 (`invalid-request`). Eine Quelle ohne Freigabe liefert nichts; scheitert jede
+  Suchanfrage, endet die Suche mit `failed`.
+
 ## Folgen
 
 - Desktop-App und Agenten nutzen denselben Dienst; die App braucht keine eigene Suchlogik.
-- Nächste Schritte sind REST (ein Agent wartet auf das Ergebnis, die App
-  bekommt Ereignisse) und die Anbindung an die semantische Suche.
+- Über REST wartet ein Agent auf das Ergebnis, eine Oberfläche fragt den Stand ab. Nächster Schritt ist die
+  Anbindung an die semantische Suche.

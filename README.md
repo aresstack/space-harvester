@@ -366,6 +366,7 @@ space-harvester:
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Mit `text` Schlagwortsuche über Titel und Inhalt in der Suche der Quellen, ohne Nachladen, mit Textauszügen; sonst Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
+| `POST /api/v1/search/progressive`, `GET`/`DELETE /api/v1/search/progressive/{id}` | Progressive Suche ([ADR 0017](docs/adr/0017-progressive-suche.md)): `q` sofort, dann Varianten in Wellen, bewertet gegen `q`; ohne `wait` 202 mit Stand und `Location`, mit `wait: true` 200 mit der fertigen Liste und `reason`; Abfrage und Abbruch nur für den eigenen Aufrufer |
 | `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend; eine fehlende Einzelseite wird wie bei der Seiten-API nachgeladen; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
@@ -515,6 +516,30 @@ endet am Qualitätsziel des `SearchProfile` oder an Zeit- und Abfragebudget. `se
 Liste mit Abschlussgrund, ein `ProgressiveSearchListener` meldet unterwegs Varianten und die neu geordnete Liste.
 Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 [ADR 0016](docs/adr/0016-auswahl-beschaffung-hintergrund.md).
+
+Über REST startet `POST /api/v1/search/progressive` dieselbe Suche, mit einem JSON-Körper: `q` (Pflicht, höchstens
+200 Zeichen), `sourceId` oder `sourceIds`, `spaceKeys`, `excludeSpaceKeys` wie bei der Schlagwortsuche, dazu
+`mode` (`quality`, Standard, oder `all-variants` für einen Agenten, der alle Varianten will), `maxVariants` (0 bis 32,
+Standard 8), `minRelevantHits` (Standard 5), `minScore` (Standard 0,5), `timeBudgetMs` (bis 120000, Standard 30000),
+`searchBudget` (Standard 12), `limitPerSearch` (1 bis 100, Standard 20), `expansion` (`ai`, Standard, ohne
+`ai.chat-model` wie `rules`; oder `rules`) und `wait`. Ohne `wait` antwortet der Dienst sofort mit 202, `Location` und
+dem Stand; `GET /api/v1/search/progressive/{id}` fragt nach, bis `done` wahr ist, `DELETE` bricht ab (204, danach
+`reason: cancelled`). Mit `wait: true` wartet die Anfrage bis zum Abschluss (höchstens Zeitbudget plus 5 s) und
+antwortet mit 200; delegierte Benutzer warten immer. Der Stand nennt `id`, `status` (`running`, `done`), `done`,
+`reason` (`null`, solange die Suche läuft; dann `quality-reached`, `all-variants-done`, `budget-exhausted`,
+`cancelled` oder `failed`), `mode`, `expansion`, `hits` (je Treffer `sourceId`, `pageId`, `spaceKey`, `title`,
+`snippet`, `url`, `version`, `modifiedAt`, `parentPageId`, `score` oder `null` ohne Bewertung, `foundBy` als Priorität
+der findenden Suchanfrage, `confirmed`), `variants` (`text`, `priority`, `status`, `newHits`), `loads` (nach dem
+Abschluss die Kennungen für `/api/v1/search/progress/{id}`) und `elapsedMs`. Jede Suche gehört ihrem Aufrufer; ein
+anderer bekommt 404. Bekannt sind die letzten 256 Suchen, beendete 5 Minuten lang; laufen 256, antwortet der Dienst
+mit 429 (`too-many-searches`). Rechte prüft die Schlagwortsuche je Suchanfrage: Nicht sichtbare Seiten erscheinen
+weder als Treffer noch in einer Zahl.
+
+```sh
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"q":"Wie läuft der nächtliche Betrieb?","mode":"all-variants","wait":true}' \
+  "http://localhost:8080/api/v1/search/progressive"
+```
 
 Eine längere Frage (mehr als 6 Wörter) geht nicht als Satz an die Quelle: Wie im Enterprise AI Client werden daraus
 zuerst ihre stärksten wörtlichen Begriffe (Kürzel wie `HaVdB` oder `BS-PIMA` in ihrer Schreibung), dann ihre
