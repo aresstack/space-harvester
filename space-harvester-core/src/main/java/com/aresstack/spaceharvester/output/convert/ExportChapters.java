@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.document.ExportGraphics;
@@ -15,6 +16,7 @@ import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -86,7 +88,22 @@ final class ExportChapters {
      * übrigen bleiben Hinweis mit Link.
      */
     static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets) {
-        String markdown = markdown(page, parser);
+        return figures(page, parser, assets, Optional.empty());
+    }
+
+    /**
+     * Wie {@link #figures(ConvertiblePage, StorageParser, ExportAssets)}, ausgeführte Makros ({@code include},
+     * {@code excerpt-include}, {@code children}) mit ihrem Inhalt aus der abgelegten Lese-Ansicht der Seite; ohne sie
+     * bleibt der Hinweis, gemeldet als {@link ConversionNotice.Kind#OMITTED_CONTENT}.
+     */
+    static Figures figures(ConvertiblePage page, StorageParser parser, ConversionInput input) {
+        return figures(page, parser, input.assets(), input.readingView(page.pageId()));
+    }
+
+    private static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets,
+                                   Optional<ExportReadingView> view) {
+        List<ConversionNotice> omitted = new ArrayList<>();
+        String markdown = markdown(page, parser, view, omitted);
         List<ExportImage> images = new ArrayList<>();
         Map<String, String> codes = new HashMap<>();
         for (Entry entry : assets.forPage(page.pageId())) {
@@ -120,7 +137,9 @@ final class ExportChapters {
             }
         }
         String content = images.isEmpty() ? markdown : withKnownExternalImages(markdown, images);
-        return new Figures(content, images, notices(page.pageId(), content, images, codes));
+        List<ConversionNotice> notices = new ArrayList<>(omitted);
+        notices.addAll(notices(page.pageId(), content, images, codes));
+        return new Figures(content, images, List.copyOf(notices));
     }
 
     /** Hinweise für Mermaid-Diagramme einer Seite, die der Writer nicht zeichnen konnte (bleiben Quelltext). */
@@ -290,6 +309,12 @@ final class ExportChapters {
 
     /** Seiten-ID, Version und Link in Confluence, darunter der Inhalt; Überschriften ab Ebene 1 (verschiebt der Writer). */
     static String markdown(ConvertiblePage page, StorageParser parser) {
+        return markdown(page, parser, Optional.empty(), new ArrayList<>());
+    }
+
+    /** Wie {@link #markdown(ConvertiblePage, StorageParser)}; fehlende ausgeführte Makros landen in {@code omitted}. */
+    private static String markdown(ConvertiblePage page, StorageParser parser, Optional<ExportReadingView> view,
+                                   List<ConversionNotice> omitted) {
         PageMetadata metadata = page.header().metadata();
         StringBuilder facts = new StringBuilder("Seite " + MarkdownConverter.escape(page.pageId()));
         if (metadata.version() != null) {
@@ -299,8 +324,31 @@ final class ExportChapters {
             facts.append(" · [In Confluence öffnen](").append(MarkdownConverter.destination(metadata.url().toString()))
                     .append(')');
         }
-        List<Block> blocks = PageBody.storage(page.snapshot().payload()).map(parser::parse)
+        ExportReadingView available = view.filter(ExportReadingView::available).orElse(null);
+        Optional<StorageParser.Parsed> parsed = PageBody.storage(page.snapshot().payload()).map(storage -> available
+                == null ? parser.parse(storage, null, null)
+                : parser.parse(storage, available.html(), available.baseUri()));
+        List<Block> blocks = parsed.map(StorageParser.Parsed::blocks)
                 .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
+        String reason = omittedReason(view);
+        parsed.ifPresent(p -> p.omitted().forEach(reference -> omitted.add(new ConversionNotice(page.pageId(),
+                ConversionNotice.Kind.OMITTED_CONTENT, reference, reason))));
         return "*" + facts + "*\n\n" + MarkdownConverter.blocks(blocks, 0);
+    }
+
+    /**
+     * Grund für eingebundenen Inhalt, der fehlt: {@code not-collected} ohne abgelegte Ansicht, der Grund der Ansicht
+     * ({@code foreign-content}, {@code no-reading-view}, {@code page-changed}, {@code source-unavailable}), bei
+     * vorliegender Ansicht ohne gerendertes Makro {@code not-rendered}.
+     */
+    private static String omittedReason(Optional<ExportReadingView> view) {
+        if (view.isEmpty()) {
+            return "not-collected";
+        }
+        if (view.get().available()) {
+            return "not-rendered";
+        }
+        String reason = view.get().reason();
+        return reason == null || reason.isBlank() ? view.get().status().name().toLowerCase(Locale.ROOT) : reason;
     }
 }

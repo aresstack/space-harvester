@@ -14,7 +14,10 @@ import com.aresstack.spaceharvester.output.convert.StorageDocument.Paragraph;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Rule;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Table;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Text;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +40,11 @@ import org.jsoup.parser.Parser;
  * steht ein {@link Note} mit dem Diagrammnamen. Bilder bleiben {@link ImageRef}. Was sich nicht abbilden lässt, wird als
  * {@link Note} sichtbar, nie still verworfen.
  *
+ * <p>Ausgeführte Makros ({@code include}, {@code excerpt-include}, {@code children}) zeigen ihren Inhalt nur in der
+ * gerenderten Lese-Ansicht der Quelle. Mit {@link #parse(String, String, String)} nimmt der Parser ihn von dort: das
+ * n-te Makro eines Namens im Storage ist das n-te Element mit diesem {@code data-macro-name} in der Ansicht (nur
+ * äußerste). Fehlt es, bleibt der Hinweis, und das Makro steht in {@link Parsed#omitted()}.
+ *
  * <p>Verschachtelung ist auf {@link #MAX_NESTING} Ebenen begrenzt (#90): Tiefer liegender Inhalt wird als reiner Text
  * übernommen, mit einem Hinweis. So bleiben Parser und Converter bei bösartig tiefem Storage ohne
  * {@code StackOverflowError}; jsoup selbst parst und liest Text ohne Rekursion.
@@ -53,6 +61,8 @@ public final class StorageParser {
             "ac:layout-section", "ac:layout-cell", "ac:rich-text-body", "center");
     private static final Set<String> TRANSPARENT_MACROS = Set.of("details", "section", "column", "div", "excerpt",
             "ui-tabs", "ui-tab", "ui-expand", "center");
+    /** Makros, deren Inhalt Confluence beim Rendern aus anderen Seiten berechnet. */
+    static final Set<String> RENDERED_MACROS = Set.of("include", "excerpt-include", "children");
     private static final Set<String> INLINE_MACROS = Set.of("status", "anchor", "jira", "emoticon");
 
     /** Höchste Verschachtelung von Blöcken und Inline-Elementen, die als Struktur übernommen wird. */
@@ -64,6 +74,20 @@ public final class StorageParser {
     /** Findet zu Space und Titel einer verlinkten Seite das Ziel im Export, sonst {@code null}. */
     private final BiFunction<String, String, String> pageTargets;
 
+    /** Gerenderte Inhalte der ausgeführten Makros aus der Lese-Ansicht, je Makroname in Dokumentreihenfolge. */
+    private Map<String, Deque<Element>> rendered = Map.of();
+
+    /** Ausgeführte Makros ohne Inhalt aus der Lese-Ansicht: Titel der eingebundenen Seite oder Makroname. */
+    private final List<String> omitted = new ArrayList<>();
+
+    /**
+     * Blöcke einer Seite und die ausgeführten Makros, deren Inhalt fehlt.
+     *
+     * @param omitted Titel der eingebundenen Seite ({@code include}, {@code excerpt-include}) oder {@code children}
+     */
+    public record Parsed(List<Block> blocks, List<String> omitted) {
+    }
+
     /**
      * @param pageTargets Space-Key (oder {@code null} für denselben Space) und Titel → Linkziel wie
      *                    {@code #page-123}, oder {@code null}, wenn die Seite nicht im Export liegt
@@ -73,9 +97,46 @@ public final class StorageParser {
     }
 
     public List<Block> parse(String storage) {
+        return parse(storage, null, null).blocks();
+    }
+
+    /**
+     * Wie {@link #parse(String)}, die ausgeführten Makros mit ihrem Inhalt aus der gerenderten Lese-Ansicht.
+     *
+     * @param view    HTML der Lese-Ansicht oder {@code null}
+     * @param baseUri Basis für relative Bildadressen der Ansicht
+     */
+    public Parsed parse(String storage, String view, String baseUri) {
         Element root = Jsoup.parse("<body>" + storage + "</body>", "", Parser.xmlParser()).selectFirst("body");
         depth = 0;
-        return blocks(root);
+        omitted.clear();
+        rendered = view == null || view.isBlank() ? Map.of() : rendered(view, baseUri == null ? "" : baseUri);
+        try {
+            return new Parsed(blocks(root), List.copyOf(omitted));
+        } finally {
+            rendered = Map.of();
+        }
+    }
+
+    /** Äußerste gerenderte Makros der Ansicht je Name; Unsichtbares (Diagrammdaten, Skripte) ist entfernt. */
+    private static Map<String, Deque<Element>> rendered(String view, String baseUri) {
+        Element body = Jsoup.parse(view, baseUri).body();
+        body.select("script, style, noscript, [style~=(?i)display\\s*:\\s*none], [hidden]").remove();
+        Map<String, Deque<Element>> rendered = new HashMap<>();
+        for (Element macro : body.select("[data-macro-name]")) {
+            String name = macro.attr("data-macro-name").toLowerCase(Locale.ROOT);
+            if (!RENDERED_MACROS.contains(name)) {
+                continue;
+            }
+            boolean nested = false;
+            for (Element parent = macro.parent(); parent != null && !nested; parent = parent.parent()) {
+                nested = RENDERED_MACROS.contains(parent.attr("data-macro-name").toLowerCase(Locale.ROOT));
+            }
+            if (!nested) {
+                rendered.computeIfAbsent(name, n -> new ArrayDeque<>()).add(macro);
+            }
+        }
+        return rendered;
     }
 
     /** Blöcke eines Containers; lose Inline-Inhalte werden zu Absätzen zusammengefasst. */
@@ -240,10 +301,21 @@ public final class StorageParser {
             blocks.add(new Panel(label, blocks(richBody)));
         } else if (TRANSPARENT_MACROS.contains(name)) {
             blocks.addAll(blocks(richBody));
-        } else if (name.equals("include") || name.equals("excerpt-include")) {
-            Element page = macro.selectFirst("ri|page");
-            String title = page == null ? "unbekannt" : page.attr("ri:content-title");
-            blocks.add(new Note("Eingebundener Inhalt der Seite „" + title + "“ wird dort exportiert"));
+        } else if (RENDERED_MACROS.contains(name)) {
+            Deque<Element> views = rendered.get(name);
+            Element view = views == null ? null : views.poll();
+            if (view != null) {
+                blocks.addAll(blocks(view));
+            } else if (name.equals("children")) {
+                omitted.add(name);
+                blocks.add(new Note("Liste der Unterseiten wird in Confluence berechnet und ist nicht übernommen"));
+            } else {
+                Element page = macro.selectFirst("ri|page");
+                String title = page == null || page.attr("ri:content-title").isBlank() ? "unbekannt"
+                        : page.attr("ri:content-title");
+                omitted.add(page == null || page.attr("ri:content-title").isBlank() ? name : title);
+                blocks.add(new Note("Eingebundener Inhalt der Seite „" + title + "“ wird dort exportiert"));
+            }
         } else if (richBody != null) {
             blocks.add(new Note("Makro „" + name + "“ nicht unterstützt; sein Inhalt folgt"));
             blocks.addAll(blocks(richBody));
@@ -302,6 +374,14 @@ public final class StorageParser {
             case "a" -> out.add(new Link(collapse(element.text()).trim(), emptyToNull(element.attr("href"))));
             case "ac:link" -> out.add(link(element));
             case "ac:image" -> out.add(image(element));
+            case "img" -> {
+                // Nur in der Lese-Ansicht: die Adresse wie im Datenbestand (absolut zur Basis der Ansicht)
+                String src = element.absUrl("src").isEmpty() ? element.attr("src") : element.absUrl("src");
+                if (!src.isBlank()) {
+                    String alt = element.attr("alt").isBlank() ? "Bild" : element.attr("alt");
+                    out.add(new ImageRef(alt, src));
+                }
+            }
             case "ac:emoticon" -> out.add(Text.plain(":" + element.attr("ac:name") + ":"));
             case "ac:placeholder", "ac:parameter" -> {
                 // Platzhalter des Editors und Makroparameter sind kein Seiteninhalt.
