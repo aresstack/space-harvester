@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -199,6 +200,11 @@ public class ExportConversions {
             @Override
             public ExportAssets assets() {
                 return assets;
+            }
+
+            @Override
+            public Optional<ExportReadingView> readingView(String pageId) {
+                return dataset.readingView(pageId);
             }
 
             @Override

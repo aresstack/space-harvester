@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
@@ -197,7 +198,7 @@ public class ExportAssetCollection {
                     return;
                 }
                 try {
-                    if (!collectPage(context, dataset, page.snapshot(), entries)) {
+                    if (!collectPage(context, exportId, dataset, page.snapshot(), entries)) {
                         complete[0] = false;
                     }
                 } catch (SourceUnreachable e) {
@@ -219,7 +220,7 @@ public class ExportAssetCollection {
     }
 
     /** @return ob die Seite vollständig geprüft werden konnte */
-    private boolean collectPage(JobContext context, ConversionInput dataset, PageSnapshot snapshot,
+    private boolean collectPage(JobContext context, String exportId, ConversionInput dataset, PageSnapshot snapshot,
                                 List<ExportAssetManifest.Entry> entries) {
         String sourceId = dataset.sourceId();
         String pageId = snapshot.key().pageId();
@@ -265,7 +266,9 @@ public class ExportAssetCollection {
         boolean foreign = ForeignContent.of(snapshot).present();
         boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
         try {
-            for (HarvestSource.ViewImage image : assets.viewImages(sourceId, pageId)) {
+            List<HarvestSource.ViewImage> viewImages = readingView(exportId, sourceId, snapshot,
+                    foreign && !mayShowForeign);
+            for (HarvestSource.ViewImage image : viewImages) {
                 if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
                     continue;
                 }
@@ -300,6 +303,51 @@ public class ExportAssetCollection {
                     rendered(sourceId, pageId, Assets.MERMAID_RENDITION, text)));
         }
         return checked;
+    }
+
+    /**
+     * Holt die Lese-Ansicht der Seite einmal, legt sie im Datenbestand ab (#218) und liefert ihre Bilder. Rechte wie in
+     * der Lese-Ansicht (#176): Bindet die Seite Fremdes ein und darf der Besitzer nicht die ganze Quelle lesen, bleibt
+     * sie ohne Inhalt ({@code RESTRICTED}). Nur die Ansicht zur exportierten Version wird abgelegt.
+     */
+    private List<HarvestSource.ViewImage> readingView(String exportId, String sourceId, PageSnapshot snapshot,
+                                                      boolean restricted) {
+        String pageId = snapshot.key().pageId();
+        String version = snapshot.metadata().version();
+        HarvestSource.ReadingPage live;
+        try {
+            live = assets.readingPage(sourceId, pageId);
+        } catch (SourceAccessException e) {
+            if (e.reason() == SourceAccessException.Reason.UNSUPPORTED) {
+                putView(exportId, ExportReadingView.without(pageId, version, ExportReadingView.Status.UNSUPPORTED,
+                        "no-reading-view"));
+                // Eine Quelle kann Bilder der Ansicht kennen, ohne die Ansicht selbst zu liefern.
+                return assets.viewImages(sourceId, pageId);
+            }
+            putView(exportId, ExportReadingView.without(pageId, version, ExportReadingView.Status.UNAVAILABLE,
+                    "source-unavailable"));
+            throw e;
+        }
+        ExportReadingView view;
+        if (restricted) {
+            view = ExportReadingView.without(pageId, version, ExportReadingView.Status.RESTRICTED, "foreign-content");
+        } else if (live.version() == null || !live.version().equals(version)) {
+            view = ExportReadingView.without(pageId, version, ExportReadingView.Status.UNAVAILABLE, "page-changed");
+        } else {
+            view = ExportReadingView.available(pageId, version, live.html(), live.baseUri(), live.text());
+        }
+        putView(exportId, view);
+        return live.images();
+    }
+
+    /** Ablegen darf die Bilder nie verhindern; ohne Ansicht melden die Converter den eingebundenen Inhalt fehlend. */
+    private void putView(String exportId, ExportReadingView view) {
+        try {
+            writer.putReadingView(exportId, view);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Lese-Ansicht für Export {0} nicht abgelegt ({1})", exportId,
+                    e.getClass().getName());
+        }
     }
 
     /** Zeichnet ein Diagramm einmal und legt die Grafik ab (#190); ein Fehler kostet nur die Grafik. */

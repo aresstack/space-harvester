@@ -202,6 +202,11 @@ public class Assets {
         return new AssetContent(asset, content);
     }
 
+    /** Die Lese-Ansicht einer Seite mit Lesetext und Bildern ({@link HarvestSource#readingPage}); lädt keine Bytes. */
+    public HarvestSource.ReadingPage readingPage(String sourceId, String pageId) {
+        return source(sourceId).readingPage(pageId);
+    }
+
     /** Die Bilder der Lese-Ansicht einer Seite ({@link HarvestSource#viewImages}); lädt keine Bytes. */
     public List<HarvestSource.ViewImage> viewImages(String sourceId, String pageId) {
         return source(sourceId).viewImages(pageId);

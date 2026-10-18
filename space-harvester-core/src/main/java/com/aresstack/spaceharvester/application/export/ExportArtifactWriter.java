@@ -79,6 +79,15 @@ public interface ExportArtifactWriter {
         return Optional.empty();
     }
 
+    /**
+     * Legt die Lese-Ansicht einer Seite im veröffentlichten Datenbestand ab (#218); eine vorhandene derselben Seite wird
+     * ersetzt.
+     */
+    default void putReadingView(String exportId, com.aresstack.spaceharvester.application.convert.ExportReadingView
+            view) {
+        throw new UnsupportedOperationException("Ablage kennt keine Lese-Ansichten");
+    }
+
     /** IDs aller veröffentlichten Artefakte. */
     Set<String> published();
 

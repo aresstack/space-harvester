@@ -19,9 +19,11 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 ## Gemeinsame Regeln
 
 - **Nur aus dem Datenbestand.** Ein Converter sieht über `ConversionInput` die exportierten Seiten einer
-  Cache-Generation, ihren ID-Baum und die beim Herunterladen abgelegten Bilder (`assets()`, aus `assets.json`). Er ruft
-  nie Confluence oder fremde Adressen auf und ändert weder Cache noch Rohdaten: einmal beschaffen, beliebig oft
-  konvertieren.
+  Cache-Generation, ihren ID-Baum, die beim Herunterladen abgelegten Bilder (`assets()`, aus `assets.json`) mit den
+  gezeichneten Diagrammen (`assets().rendition(entry)`) und die Lese-Ansicht je Seite (`readingView(pageId)`, aus
+  `views/`, #218) mit dem Inhalt ausgeführter Makros (`include`, `excerpt-include`, `children`). Er ruft nie Confluence
+  oder fremde Adressen auf und ändert weder Cache noch Rohdaten: einmal beschaffen, beliebig oft konvertieren. Ohne
+  verfügbare Lese-Ansicht bleibt der Hinweis auf das Makro, gemeldet als `OMITTED_CONTENT`.
 - **Linear in Baumreihenfolge.** Konvertierte Dateien folgen dem Baum in Tiefensuche (Geschwister wie in `tree.json`).
   `pages.ndjson` bleibt nach Seiten-ID sortiert. Die Hierarchie wird nie in die Seitenliste eingebettet.
 - **Nachvollziehbar.** `manifest.json` nennt unter `conversions` je Datei Format, Medientyp, Converter-Version und den
