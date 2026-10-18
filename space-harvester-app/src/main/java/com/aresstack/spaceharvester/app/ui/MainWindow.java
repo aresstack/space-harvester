@@ -316,6 +316,15 @@ public final class MainWindow implements AppContext.Navigator {
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
 
+    @Override
+    public void downloadPage(String sourceId, String spaceKey, String pageId) {
+        notice("Download wird gestartet …", Comic.MUTED);
+        Downloads.startPage(context, sourceId, spaceKey, pageId, started -> {
+            notice("Download der Seite samt Unterseiten gestartet", Comic.MUTED);
+            showJob(started.jobs().get(0).id());
+        }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
     /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */
     private void notice(String text, java.awt.Color color) {
         updateStatus();

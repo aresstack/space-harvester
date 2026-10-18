@@ -92,9 +92,10 @@ class ExportCardTest {
 
     @Test
     void formatsAppearInTheOrderOfTheSketchWithReadableNames() {
-        assertThat(ActivitiesView.Format.ordered(List.of("docx", "json", "markdown", "pdf", "epub")))
+        assertThat(ActivitiesView.Format.ordered(List.of("docx", "json", "markdown-package", "markdown", "pdf",
+                        "epub")))
                 .extracting(ActivitiesView.Format::title)
-                .containsExactly("PDF-Dokument", "Word-Dokument", "Markdown", "JSON", "EPUB");
+                .containsExactly("PDF-Dokument", "Word-Dokument", "Markdown", "Markdown mit Medien", "JSON", "EPUB");
     }
 
     @Test

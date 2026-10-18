@@ -86,6 +86,8 @@ public final class SearchView implements View {
     /** Schmale Zeile unter dem Suchfeld, solange gefundene Seiten in den Cache laden: Balken und Zähler. */
     final JProgressBar progress = new JProgressBar();
     final JLabel progressText = Comic.muted(" ");
+    /** Mittig im Balken nach dem Ende: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“, wie im globalen Balken. */
+    final JLabel endState = new JLabel(" ");
     /** Aktionszeile über der Statusleiste: Fortschritt über die volle Breite, Zeile mit Stand, Abbrechen und „Weitere laden“. */
     private final JPanel actions = new JPanel(new BorderLayout(12, 4));
     final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
@@ -96,6 +98,8 @@ public final class SearchView implements View {
     private String progressId;
     /** Zuletzt gemeldete geladene Seiten; steigt die Zahl, sucht die Ansicht denselben Stapel erneut. */
     private int lastLoaded;
+    /** Ob der erste Stapel leer kam, während der Core noch lädt; „Keine Treffer“ erst nach dem Laden. */
+    private boolean awaitingHits;
     /** Ob ein erneutes Suchen desselben Stapels läuft; nie zwei zugleich. */
     private boolean refreshing;
     /** Ob das Laden abgebrochen wurde; dann sucht die Ansicht nicht erneut, denn das stieße das Laden wieder an. */
@@ -132,8 +136,12 @@ public final class SearchView implements View {
         more.setEnabled(false);
         poll.setRepeats(false);
         cancel.addActionListener(e -> cancelLoading());
-        progress.setPreferredSize(new java.awt.Dimension(160, 6));
-        progress.setVisible(false);
+        progress.setPreferredSize(new java.awt.Dimension(200, 26));
+        progress.setStringPainted(false);
+        progress.setForeground(Comic.BLUE);
+        endState.setFont(Comic.semiBold(13f));
+        endState.setForeground(Comic.INK);
+        endState.setVisible(false);
         cancel.setVisible(false);
         more.setVisible(false);
         semantic.setSelected(false);
@@ -189,18 +197,34 @@ public final class SearchView implements View {
         root.add(Comic.scroll(table), BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
+        // Derselbe Balken wie der globale der Aufträge: links der Stand, mittig Abbrechen bzw. der Endzustand.
         actions.setOpaque(false);
-        actions.add(progress, BorderLayout.NORTH);
-        JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        line.setOpaque(false);
-        line.add(progressText);
-        line.add(status);
-        actions.add(line, BorderLayout.CENTER);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        buttons.setOpaque(false);
-        buttons.add(cancel);
-        buttons.add(more);
-        actions.add(buttons, BorderLayout.EAST);
+        JPanel center = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        center.setOpaque(false);
+        center.add(cancel);
+        center.add(endState);
+        JPanel overlay = new JPanel(new BorderLayout());
+        overlay.setOpaque(false);
+        overlay.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+        overlay.add(progressText, BorderLayout.WEST);
+        overlay.add(center, BorderLayout.CENTER);
+        JPanel layered = new JPanel();
+        layered.setOpaque(false);
+        layered.setLayout(new javax.swing.OverlayLayout(layered));
+        overlay.setAlignmentX(0.5f);
+        overlay.setAlignmentY(0.5f);
+        progress.setAlignmentX(0.5f);
+        progress.setAlignmentY(0.5f);
+        overlay.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        progress.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        layered.add(overlay);
+        layered.add(progress);
+        actions.add(layered, BorderLayout.CENTER);
+        JPanel side = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        side.setOpaque(false);
+        side.add(status);
+        side.add(more);
+        actions.add(side, BorderLayout.EAST);
     }
 
     @Override
@@ -402,8 +426,13 @@ public final class SearchView implements View {
             batchStart = 0;
             model.set(hits(results));
             show(q, results);
-            track(results.progress());
+            awaitingHits = false;
             if (!results.ranked().isEmpty()) {
+                feedback.clear();
+            } else if (results.progress() != null && !results.progress().done()) {
+                // Delegierte Benutzer sehen keine vorläufigen Funde: Treffer erscheinen erst, wenn der Core die
+                // geladenen Seiten geprüft hat. Bis dahin spricht der Balken, kein vorzeitiges „Keine Treffer“.
+                awaitingHits = true;
                 feedback.clear();
             } else if (results.nextCursor() != null) {
                 // Dieser Stapel war leer, weitere Kandidaten folgen noch: kein endgültiges „Keine Treffer“.
@@ -416,6 +445,7 @@ public final class SearchView implements View {
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
                         : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
             }
+            track(results.progress());
         }, error -> {
             if (id != request) {
                 return;
@@ -492,9 +522,11 @@ public final class SearchView implements View {
         running = null;
         showRanked(result.hits());
         showVariants(result.variants());
-        progress.setIndeterminate(false);
-        progress.setVisible(false);
-        cancel.setVisible(false);
+        idle(switch (result.reason()) {
+            case CANCELLED -> "Abgebrochen";
+            case FAILED -> "Fehlgeschlagen";
+            default -> "Fertig";
+        });
         progressText.setText(completion(result.reason()) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
         if (result.reason() == ProgressiveResult.Completion.FAILED) {
@@ -716,8 +748,7 @@ public final class SearchView implements View {
         String id = progressId;
         poll.stop();
         progressId = null;
-        progress.setVisible(false);
-        cancel.setVisible(false);
+        idle(null);
         progressText.setText("");
         if (runtime != null && id != null) {
             Background.run(() -> runtime.workspace().cancelKeywordSearch(id), ignored -> { }, ignored -> { });
@@ -800,7 +831,7 @@ public final class SearchView implements View {
         progress.setMaximum(Math.max(1, state.total()));
         progress.setValue(state.loaded() + state.failed());
         progressText.setText(progressLine(state.loaded(), state.total(), model.rows.size()));
-        progress.setVisible(true);
+        endState.setVisible(false);
         cancel.setVisible(true);
         updateMore();
         poll.restart();
@@ -808,18 +839,33 @@ public final class SearchView implements View {
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
     private void finished(boolean cancelled) {
-        progress.setIndeterminate(false);
-        progress.setVisible(false);
+        if (awaitingHits) {
+            awaitingHits = !cancelled && model.rows.isEmpty() && refreshing;
+            if (model.rows.isEmpty() && !awaitingHits) {
+                feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
+            } else if (!model.rows.isEmpty()) {
+                feedback.clear();
+            }
+        }
+        idle(cancelled ? "Abgebrochen" : "Fertig");
         progressText.setText((cancelled ? "Laden abgebrochen" : DONE) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
-        cancel.setVisible(false);
         updateMore();
+    }
+
+    /** Leere Spur ohne Abbrechen; mittig der Endzustand, {@code null} ohne. */
+    private void idle(String end) {
+        progress.setIndeterminate(false);
+        progress.setValue(0);
+        cancel.setVisible(false);
+        endState.setText(end == null ? " " : end);
+        endState.setVisible(end != null);
     }
 
     /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
     private void starting(String text) {
         progress.setIndeterminate(true);
-        progress.setVisible(true);
+        endState.setVisible(false);
         progressText.setText(text);
         cancel.setVisible(false);
         more.setVisible(false);

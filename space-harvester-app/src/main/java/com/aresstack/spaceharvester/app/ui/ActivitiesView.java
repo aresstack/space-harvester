@@ -471,7 +471,7 @@ public final class ActivitiesView implements View {
             return;
         }
         JobStatus status = current.get();
-        title.setText(Texts.type(status.type()) + " " + status.sourceId() + " / " + status.partitionKey());
+        title.setText(Texts.type(status.type()) + " " + where(status));
         JobProgress p = status.progress();
         renderBar(status);
         Counters counters = Counters.of(status.type());
@@ -480,6 +480,7 @@ public final class ActivitiesView implements View {
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status.state())))
                 .add("Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
+                .add("Startseite", startPage(status))
                 .add("Angelegt", Texts.time(status.createdAt()))
                 .add("Gestartet", Texts.time(status.startedAt()))
                 .add("Beendet", Texts.time(status.finishedAt()))
@@ -573,6 +574,10 @@ public final class ActivitiesView implements View {
                     .add("Datenbestand", "JSON vorhanden")
                     .add("Bilder", images(dataset.images()), dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
                             ? Comic.RED : Comic.INK);
+            if (dataset.media().total() > 0) {
+                result.add("Medien", media(dataset.media()), dataset.media().missing()
+                        + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
+            }
         }
         Consumer<Feedback> conversion = converted.get(export.status().id());
         if (conversion != null) {
@@ -622,8 +627,9 @@ public final class ActivitiesView implements View {
         }
         renderNotices();
         cardTitle.setText("Export · " + dataset.spaceKey());
-        cardImages.setText(cardImages(dataset.images()));
-        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
+        cardImages.setText(cardImages(dataset.images(), dataset.media()));
+        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
+                || dataset.media().missing() + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
         cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
                 + (dataset.complete() ? "" : " · unvollständig"));
     }
@@ -755,6 +761,20 @@ public final class ActivitiesView implements View {
         return name == null ? directory.toString() : name.toString();
     }
 
+    /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
+    static String where(JobStatus status) {
+        String where = status.sourceId() + " / " + status.partitionKey();
+        return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
+    }
+
+    /** Titel der Startseite, solange der Auftrag sie noch nicht gelesen hat ihre ID; „–“ für ganze Spaces. */
+    static String startPage(JobStatus status) {
+        if (status.rootPageId() == null) {
+            return "–";
+        }
+        return status.rootTitle() == null ? "Seite " + status.rootPageId() : status.rootTitle();
+    }
+
     /** Zeile der Karte; Exportieren bleibt in jedem Stand möglich. */
     static String cardImages(ExportDatasetInfo.Images images) {
         return switch (images) {
@@ -764,6 +784,30 @@ public final class ActivitiesView implements View {
             case COMPLETE -> "Bilder: vollständig";
             case INCOMPLETE -> "Bilder: unvollständig · fehlende Bilder nennt das Dokument";
         };
+    }
+
+    /** Wie {@link #cardImages(ExportDatasetInfo.Images)}, dazu die Zählung der Medien, sobald welche bekannt sind. */
+    static String cardImages(ExportDatasetInfo.Images images, ExportDatasetInfo.Media media) {
+        String line = cardImages(images);
+        return media.total() == 0 ? line : line + "\nMedien: " + media(media);
+    }
+
+    /** Die Medien eines Downloads in Worten; nur Zähler über null erscheinen. */
+    static String media(ExportDatasetInfo.Media media) {
+        List<String> parts = new ArrayList<>();
+        if (media.stored() > 0) {
+            parts.add(media.stored() + " gesichert");
+        }
+        if (media.missing() > 0) {
+            parts.add(media.missing() + (media.missing() == 1 ? " fehlt" : " fehlen"));
+        }
+        if (media.signInRequired() > 0) {
+            parts.add(media.signInRequired() + " Anmeldung erforderlich");
+        }
+        if (media.redundant() > 0) {
+            parts.add(media.redundant() + " bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+        }
+        return parts.isEmpty() ? "keine" : String.join(" · ", parts);
     }
 
     private static String images(ExportDatasetInfo.Images images) {
@@ -778,9 +822,11 @@ public final class ActivitiesView implements View {
     /** Zielformat mit Anzeigenamen in der Reihenfolge aus Angelos Skizze; unbekannte folgen mit ihrem Kürzel. */
     record Format(String id, String title) {
 
-        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "json-package", "json");
+        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "markdown-package", "json-package",
+                "json");
         private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
-                "markdown", "Markdown", "json-package", "JSON mit Medien", "json", "JSON");
+                "markdown", "Markdown", "markdown-package", "Markdown mit Medien", "json-package", "JSON mit Medien",
+                "json", "JSON");
 
         static String title(String format) {
             return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
@@ -1038,7 +1084,7 @@ public final class ActivitiesView implements View {
             JobStatus status = rows.get(row);
             return switch (column) {
                 case 0 -> Texts.type(status.type());
-                case 1 -> status.sourceId() + " / " + status.partitionKey();
+                case 1 -> where(status);
                 case 2 -> status.state();
                 case 3 -> (status.type() == JobType.EXPORT ? status.progress().written() : status.progress().processed())
                         + "/" + status.progress().discovered()

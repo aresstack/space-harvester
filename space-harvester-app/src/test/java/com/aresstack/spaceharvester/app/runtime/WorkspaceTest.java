@@ -73,6 +73,11 @@ class WorkspaceTest {
         server = new HttpsFakeConfluenceServer(CONFLUENCE, certificates.serverContext(), true);
     }
 
+    private static final String MXFILE = "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+            + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+            + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+            + "</root></mxGraphModel></diagram></mxfile>";
+
     @TempDir
     Path home;
 
@@ -324,6 +329,42 @@ class WorkspaceTest {
         assertThat(diagnosis.successful()).as(diagnosis.summary()).isTrue();
         assertThat(diagnosis.toString()).doesNotContain(TOKEN);
         assertThat(workspace.diagnose("gibt-es-nicht")).isEmpty();
+    }
+
+    @Test
+    void theDrawioPreviewOfTheReadingViewIsShownAsTheGraphicOfTheCore() throws Exception {
+        // Eigenes Confluence, damit die übrigen Tests ihren Space unverändert sehen: eine Seite mit draw.io-Diagramm
+        // und der Vorschau, die das Plugin daneben ablegt.
+        FakeConfluence diagrams = new FakeConfluence();
+        diagrams.space("DEV", "Entwicklung");
+        String html = "<p><img src=\"/wiki/download/attachments/300/ablauf.png?version=1\" alt=\"Ablauf\"></p>";
+        diagrams.page("300", "Ablauf", "DEV", html).exportView(html);
+        diagrams.attachment("att301", "300", "ablauf.drawio", "application/vnd.jgraph.mxfile", MXFILE);
+        diagrams.attachment("att302", "300", "ablauf.png", "image/png", "Vorschau");
+        diagrams.homepage("DEV", "300");
+        HttpsFakeConfluenceServer shared = server;
+        try (HttpsFakeConfluenceServer own = new HttpsFakeConfluenceServer(diagrams, certificates.serverContext(),
+                true)) {
+            server = own;
+            drawsTheDrawioPreview();
+        } finally {
+            server = shared;
+        }
+    }
+
+    private void drawsTheDrawioPreview() throws Exception {
+        AppRuntime started = start();
+        Workspace workspace = started.workspace();
+
+        var view = workspace.readingView("wiki", "300", false);
+        assertThat(view.images()).as(view.toString()).hasSize(1);
+        HarvestSource.ViewImage preview = view.images().get(0);
+
+        // Wie Mermaid: die Grafik des Core statt der Vorschau der Quelle.
+        byte[] shown = com.aresstack.spaceharvester.app.ui.content.PageDetailPanel.image(started, view, preview);
+        assertThat(shown).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        assertThat(javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(shown)).getWidth()).isGreaterThan(100);
+        assertThat(workspace.viewDiagram(view, preview)).isPresent();
     }
 
     @Test
