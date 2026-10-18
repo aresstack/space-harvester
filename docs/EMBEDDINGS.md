@@ -30,8 +30,9 @@ space-harvester:
     rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
 ```
 
-Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei; den API-Key legt der Reiter „KI“ im
-Tresor ab und gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
+Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf `embedding-chunk-chars`
+und vorerst `rerank-model` (der Reiter „KI“ bekommt das Feld noch); den API-Key legt der Reiter „KI“ im Tresor ab und
+gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
 etwa `AiServiceSettings.fromProperties(properties)`.
 
 **Freigabe für externe Verarbeitung.** Das Leserecht eines Benutzers genügt nicht, um Seiteninhalte an den Dienst zu
