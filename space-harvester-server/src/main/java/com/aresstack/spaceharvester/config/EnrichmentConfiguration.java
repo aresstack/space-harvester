@@ -17,7 +17,9 @@ import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProje
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -31,13 +33,14 @@ import org.springframework.context.annotation.Configuration;
 class EnrichmentConfiguration {
 
     @Bean
-    Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding) {
+    Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
+                            @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
-        // Embeddings nur mit konfiguriertem Modell (EmbeddingConfiguration, #89)
+        // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
         return new Enrichments(new ConfluenceStorageTextProjector(), processors,
-                store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC());
+                store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
     }
 
     @Bean

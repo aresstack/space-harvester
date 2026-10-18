@@ -182,25 +182,25 @@ class RelevanceSearchTest {
     }
 
     @Test
-    void withoutAModelTitleHitsKeepTheirOrder() {
+    void withoutAServiceTheSearchIsUnavailable() {
         RelevanceSearch withoutModel = new RelevanceSearch(CATALOG, index, new AccessGuard(ALLOW_ALL), store, store,
                 null);
 
-        RelevanceSearch.RelevanceResults results = withoutModel.search(CALLER, query("betrieb"), "Betrieb", 10);
-
         assertThat(withoutModel.semantic()).isFalse();
-        assertThat(results.reranker()).isEqualTo("none");
-        assertThat(ids(results)).containsExactly("12", "21");
-        assertThat(results.hits()).allSatisfy(hit -> assertThat(hit.relevance()).isNull());
+        // ADR 0011: kein stiller Rückfall auf die Titelsuche, auch mit title.
+        assertThatThrownBy(() -> withoutModel.search(CALLER, query("betrieb"), "Betrieb", 10))
+                .isInstanceOf(SemanticSearchUnavailableException.class);
         assertThatThrownBy(() -> withoutModel.search(CALLER, query(null), "Betrieb", 10))
                 .isInstanceOf(SemanticSearchUnavailableException.class);
     }
 
     @Test
-    void aFailingModelFallsBackToTitleHitsOrIsUnavailable() {
+    void aFailingServiceMakesTheSearchUnavailable() {
         modelDown = true;
 
-        assertThat(ids(search(ALLOW_ALL).search(CALLER, query("betrieb"), "Betrieb", 10))).containsExactly("12", "21");
+        assertThatThrownBy(() -> search(ALLOW_ALL).search(CALLER, query("betrieb"), "Betrieb", 10))
+                .isInstanceOf(SemanticSearchUnavailableException.class)
+                .hasMessageNotContaining("Betrieb");
         assertThatThrownBy(() -> search(ALLOW_ALL).search(CALLER, query(null), "Betrieb", 10))
                 .isInstanceOf(SemanticSearchUnavailableException.class)
                 .hasMessageNotContaining("Betrieb");

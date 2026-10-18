@@ -34,7 +34,16 @@ import java.util.Set;
  * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche über die Quellen
  * ({@link com.aresstack.spaceharvester.application.query.KeywordSearch}). Diese Klasse ist die semantische Suche der
  * Checkbox „Semantische Suche (experimentell)“ und bleibt der einzige Weg dafür ({@code sort=relevance}, kein eigener
- * Endpunkt); ihr Umbau auf einen externen Embedding-Dienst steht in ADR 0011.
+ * Endpunkt). Die Vektoren kommen aus dem externen Embedding-Dienst (ADR 0011); ohne ihn antwortet sie mit
+ * {@link SemanticSearchUnavailableException}, nie still mit Titeltreffern. Die Zielarchitektur (erst Schlagwortsuche in
+ * den Quellen, Treffer prüfen und ablegen, fehlende Vektoren berechnen, dann semantisch im gemeinsamen Cache) steht in
+ * ADR 0011; die Mischung aus Titel- und Vektortreffern hier entfällt dann.
+ *
+ * <p><b>Erweiterungspunkt Schlagwortgenerierung</b> (ADR 0011, bewusst noch nicht gebaut): Vor Schritt 1 der
+ * Zielarchitektur kann ein Chat-Modell ({@code space-harvester.ai.chat-model}) aus der Frage gezielt Schlagworte für
+ * die Schlagwortsuche der Quellen erzeugen, wie {@code KnowledgeResearch}, {@code LexicalDiscoveryStrategy} und
+ * {@code ResearchQueries} im Enterprise AI Client. Die Frage geht dabei an den Dienst; Seiteninhalte nur aus Quellen
+ * mit Freigabe für externe Verarbeitung ({@code external-processing-sources}).
  *
  * <p>Suche nach Relevanz ({@code sort=relevance}, #89, ADR 0004): ein Fenster von höchstens {@value Reranking#MAX_WINDOW}
  * freigegebenen Kandidaten aus Vektorsuche und Titelsuche, umgeordnet nach der Kosinusähnlichkeit der Anfrage zu den
@@ -81,8 +90,8 @@ public class RelevanceSearch {
     /**
      * @param store     Ablage der Embeddings oder {@code null}
      * @param vectors   Vektorsuche über diese Ablage oder {@code null}
-     * @param embedding Prozessor des eingerichteten Modells oder {@code null}, wenn keines eingerichtet ist; dann
-     *                  bleibt nur die Titelsuche in der Reihenfolge des Index
+     * @param embedding Prozessor des eingerichteten Embedding-Dienstes oder {@code null}, wenn keiner eingerichtet ist;
+     *                  dann antwortet jede Suche mit {@link SemanticSearchUnavailableException}
      */
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding) {
@@ -95,7 +104,7 @@ public class RelevanceSearch {
         this.embedding = semantic ? embedding : null;
     }
 
-    /** Ob Anfragen ohne Titelwörter beantwortet werden können. */
+    /** Ob ein Embedding-Dienst eingerichtet ist; ohne antwortet jede Suche mit einem Fehler. */
     public boolean semantic() {
         return embedding != null;
     }
@@ -109,8 +118,8 @@ public class RelevanceSearch {
      * @throws AccessDeniedException                wenn ein genannter Space oder die Quelle nicht für {@code metadata}
      *                                              freigegeben ist
      * @throws InvalidQueryException                ohne Anfragetext und Titelwörter, bei zu langem Text oder Limit
-     * @throws SemanticSearchUnavailableException   wenn es keine Titelwörter gibt und kein Modell eingerichtet oder
-     *                                              erreichbar ist
+     * @throws SemanticSearchUnavailableException   wenn kein Embedding-Dienst eingerichtet oder er nicht erreichbar ist;
+     *                                              es gibt keinen Rückfall auf die Titelsuche (ADR 0011)
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, int limit) {
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
@@ -125,39 +134,30 @@ public class RelevanceSearch {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
         scope.requireKnown(catalog);
-        SearchIndexState state = scope.state(index).orElse(null);
-        if (state == null && query.titleTerms().isEmpty() && embedding == null) {
-            throw new SemanticSearchUnavailableException(
-                    "Für die Suche ohne title ist kein Embedding-Modell eingerichtet");
+        if (embedding == null) {
+            // ADR 0011: kein stiller Rückfall auf die Titelsuche.
+            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+        SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
             return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of());
         }
 
         float[] vector = queryVector(queryText);
-        if (vector == null && query.titleTerms().isEmpty()) {
-            throw new SemanticSearchUnavailableException(embedding == null
-                    ? "Für die Suche ohne title ist kein Embedding-Modell eingerichtet"
-                    : "Das Embedding-Modell ist gerade nicht verfügbar");
-        }
-        List<SearchHit> semantic = vector == null ? List.of()
-                : semanticCandidates(caller, query, scope, state, vector);
+        List<SearchHit> semantic = semanticCandidates(caller, query, scope, state, vector);
         List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of()
                 : lexicalCandidates(caller, query, scope, state);
         List<SearchHit> window = interleave(semantic, lexical);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
-        if (vector != null) {
-            for (SearchHit hit : window) {
-                Score score = score(caller, hit, vector);
-                if (score != null) {
-                    scores.put(hit, score);
-                }
+        for (SearchHit hit : window) {
+            Score score = score(caller, hit, vector);
+            if (score != null) {
+                scores.put(hit, score);
             }
         }
-        SearchReranker reranker = vector == null ? SearchReranker.NONE
-                : new CosineReranker("embedding-cosine@" + embedding.version(), hit -> {
+        SearchReranker reranker = new CosineReranker("embedding-cosine@" + embedding.version(), hit -> {
                     Score score = scores.get(hit);
                     return score == null ? null : score.similarity();
                 });
@@ -174,16 +174,12 @@ public class RelevanceSearch {
     }
 
     private float[] queryVector(String text) {
-        if (embedding == null) {
-            return null;
-        }
         try {
             return EmbeddingIndex.normalized(embedding.embedQuery(text));
         } catch (EmbeddingUnavailableException e) {
             // Kein Anfragetext im Log.
-            LOG.log(System.Logger.Level.WARNING, "Anfrage nicht eingebettet ({0}); nur Titelsuche",
-                    e.getClass().getName());
-            return null;
+            LOG.log(System.Logger.Level.WARNING, "Anfrage nicht eingebettet ({0})", e.getClass().getName());
+            throw new SemanticSearchUnavailableException("Der Embedding-Dienst ist gerade nicht verfügbar");
         }
     }
 

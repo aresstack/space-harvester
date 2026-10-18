@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
-import com.aresstack.spaceharvester.embedding.onnx.E5Defaults;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -186,9 +185,12 @@ public final class AppSettingsLoader {
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
                 maxAsset, searchTimeout, maxTreeNodes, pdfFont);
 
+        if (get(root, "embedding") != null) {
+            problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
+                    + "einrichten");
+        }
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
-                storage, jobLimits(map(get(root, "jobs")), problems), embedding(map(get(root, "embedding")), problems),
-                ai(map(get(root, "ai")), problems), problems);
+                storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems), problems);
     }
 
     private AppSettings.SourceEntry source(Map<?, ?> source, int index, List<String> problems) {
@@ -351,44 +353,6 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources());
-    }
-
-    private AppSettings.EmbeddingSettings embedding(Map<?, ?> embedding, List<String> problems) {
-        String provider = text(get(embedding, "provider"), problems);
-        if (provider == null || provider.isBlank() || "none".equalsIgnoreCase(provider.trim())) {
-            return AppSettings.EmbeddingSettings.DISABLED;
-        }
-        if (!"onnx".equalsIgnoreCase(provider.trim())) {
-            problems.add("space-harvester.embedding.provider kennt nur none und onnx");
-            return AppSettings.EmbeddingSettings.DISABLED;
-        }
-        Map<?, ?> onnx = map(get(embedding, "onnx"));
-        Path dir = path(get(onnx, "model-dir"), problems);
-        Path model = path(get(onnx, "model-file"), problems);
-        Path tokenizer = path(get(onnx, "tokenizer-file"), problems);
-        if (model == null && dir != null) {
-            model = dir.resolve(E5Defaults.MODEL_FILE);
-        }
-        if (tokenizer == null && dir != null) {
-            tokenizer = dir.resolve(E5Defaults.TOKENIZER_FILE);
-        }
-        if (model == null || tokenizer == null) {
-            problems.add("space-harvester.embedding.onnx.model-dir fehlt; die semantische Suche bleibt aus");
-            return AppSettings.EmbeddingSettings.DISABLED;
-        }
-        String prefix = "space-harvester.embedding.onnx.";
-        return new AppSettings.EmbeddingSettings(true, model, tokenizer,
-                orDefault(text(get(onnx, "model-sha256"), problems), E5Defaults.MODEL_SHA256),
-                orDefault(text(get(onnx, "tokenizer-sha256"), problems), E5Defaults.TOKENIZER_SHA256),
-                orDefault(text(get(onnx, "model-id"), problems), E5Defaults.MODEL_ID),
-                integer(get(onnx, "dimensions"), E5Defaults.DIMENSIONS, prefix + "dimensions", problems),
-                integer(get(onnx, "max-tokens"), E5Defaults.MAX_TOKENS, prefix + "max-tokens", problems),
-                integer(get(onnx, "batch-size"), 16, prefix + "batch-size", problems),
-                integer(get(onnx, "threads"), 2, prefix + "threads", problems),
-                integer(get(onnx, "max-concurrent"), 1, prefix + "max-concurrent", problems),
-                duration(get(onnx, "acquire-timeout"), Duration.ofMinutes(2), prefix + "acquire-timeout", problems),
-                duration(get(onnx, "retry-after"), Duration.ofMinutes(5), prefix + "retry-after", problems),
-                integer(get(embedding, "max-chunk-chars"), 1500, "space-harvester.embedding.max-chunk-chars", problems));
     }
 
     // ------------------------------------------------------------------ Werte

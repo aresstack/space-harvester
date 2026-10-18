@@ -173,15 +173,14 @@ class GlobalRelevanceSearchTest {
     }
 
     @Test
-    void withoutAModelTheGlobalTitleSearchStillWorks() {
+    void withoutAServiceTheSearchIsUnavailableInsteadOfFallingBackToTitles() {
         twoSources();
         RelevanceSearch withoutModel = new RelevanceSearch(catalog, index, new AccessGuard(ALLOW_ALL), store, store,
                 null);
 
-        RelevanceSearch.RelevanceResults results = withoutModel.search(CALLER, global("betrieb"), "Betrieb", 10);
-
-        assertThat(results.reranker()).isEqualTo("none");
-        assertThat(keys(results)).containsExactly("wiki-b/10", "wiki-a/20");
+        // ADR 0011: kein stiller Rückfall auf die Titelsuche.
+        assertThatThrownBy(() -> withoutModel.search(CALLER, global("betrieb"), "Betrieb", 10))
+                .isInstanceOf(SemanticSearchUnavailableException.class);
         assertThatThrownBy(() -> withoutModel.search(CALLER, global(null), "Betrieb", 10))
                 .isInstanceOf(SemanticSearchUnavailableException.class);
     }

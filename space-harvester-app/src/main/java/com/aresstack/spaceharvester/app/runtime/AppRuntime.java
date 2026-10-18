@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -7,12 +8,11 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.core.Harvester;
-import com.aresstack.spaceharvester.embedding.onnx.E5Defaults;
-import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingSettings;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -37,6 +37,7 @@ public final class AppRuntime implements AutoCloseable {
     private final AppSettings settings;
     private final Harvester harvester;
     private final Workspace workspace;
+    private static final System.Logger LOG = System.getLogger(AppRuntime.class.getName());
     private static final Pattern SOURCE_POSITION = Pattern.compile("sources\\[(\\d+)]");
 
     private final Set<String> waitingForSecret;
@@ -79,7 +80,7 @@ public final class AppRuntime implements AutoCloseable {
             // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
             policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
             try {
-                harvester = builder(settings, settings.storage(), sources, policy, version, true).build();
+                harvester = builder(settings, settings.storage(), sources, policy, version, sessionSecrets).build();
             } catch (InvalidSourceConfigurationException e) {
                 Set<Integer> invalid = new TreeSet<>(Comparator.reverseOrder());
                 for (String problem : e.problems()) {
@@ -126,7 +127,7 @@ public final class AppRuntime implements AutoCloseable {
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null);
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
-        try (Harvester harvester = builder(settings, storage, List.of(source), policy, version, false).build()) {
+        try (Harvester harvester = builder(settings, storage, List.of(source), policy, version, null).build()) {
             Workspace workspace = new Workspace(harvester, new AccessGuard(policy),
                     new ActivityLog(scratch.resolve("activities.txt")));
             return workspace.spaces(sourceId);
@@ -154,7 +155,7 @@ public final class AppRuntime implements AutoCloseable {
 
     private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
                                              List<SourceSettingsConfig> sources, AccessPolicy policy, String version,
-                                             boolean withEmbedding) {
+                                             SessionSecrets withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
                 .dataDirectory(storage.dataDirectory())
@@ -170,15 +171,34 @@ public final class AppRuntime implements AutoCloseable {
                 .maxTreeNodes(storage.maxTreeNodes())
                 .pdfFont(storage.pdfFont());
         builder.accessPolicy(policy);
-        AppSettings.EmbeddingSettings embedding = settings.embedding();
-        if (withEmbedding && embedding.enabled()) {
-            builder.embedding(new OnnxEmbeddingSettings(embedding.modelFile(), embedding.tokenizerFile(),
-                    embedding.modelSha256(), embedding.tokenizerSha256(), embedding.modelId(), embedding.dimensions(),
-                    embedding.maxTokens(), embedding.batchSize(), embedding.threads(), embedding.maxConcurrent(),
-                    embedding.acquireTimeout(), embedding.retryAfter(), E5Defaults.PASSAGE_PREFIX,
-                    E5Defaults.QUERY_PREFIX, E5Defaults.PAD_TOKEN_ID), embedding.maxChunkChars());
+        if (withAi != null) {
+            builder.ai(aiService(settings.ai(), withAi.aiKey(), version));
         }
         return builder;
+    }
+
+    /**
+     * Der KI-Dienst für den Core (ADR 0011) mit dem API-Key aus Tresor oder Sitzung. Ohne Dimension bleibt die
+     * semantische Suche aus, alles andere startet.
+     */
+    static AiServiceSettings aiService(AppSettings.AiSettings ai, String apiKey, String version) {
+        if (ai.baseUrl() == null) {
+            return AiServiceSettings.NONE;
+        }
+        AiServiceSettings service;
+        try {
+            service = new AiServiceSettings(URI.create(ai.baseUrl()), apiKey, ai.chatModel(), ai.embeddingModel(),
+                    ai.embeddingDimensions(), ai.timeout(), null, Set.copyOf(ai.externalProcessingSources()));
+        } catch (IllegalArgumentException e) {
+            LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
+            return AiServiceSettings.NONE;
+        }
+        if (service.embeddingModel() != null && service.embeddingDimensions() == null) {
+            // Die Dimension steht in keinem Modellkatalog; der Reiter „KI“ misst sie mit Harvester#aiEmbeddingDimension.
+            LOG.log(System.Logger.Level.WARNING, "Dimension des Embedding-Modells fehlt; die semantische Suche bleibt "
+                    + "aus");
+        }
+        return service;
     }
 
     public AppSettings settings() {
@@ -214,6 +234,7 @@ public final class AppRuntime implements AutoCloseable {
         }
 
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
+        private volatile String aiKey;
 
         /**
          * Wofür ein Wert gilt: Anmeldeart, (bei Basic) Benutzer und Platzhalter. Ändert sich eins davon in der Datei,
@@ -268,6 +289,18 @@ public final class AppRuntime implements AutoCloseable {
             };
             return new SourceSettingsConfig(config.id(), config.type(), config.title(), config.baseUrl(), filled,
                     config.options(), config.clientCertificate(), config.trustBundle());
+        }
+
+        /** API-Key des KI-Dienstes für diese Sitzung oder {@code null}; das übergebene Feld wird geleert. */
+        public void aiKey(char[] key) {
+            aiKey = key == null || key.length == 0 ? null : new String(key);
+            if (key != null) {
+                java.util.Arrays.fill(key, '\0');
+            }
+        }
+
+        String aiKey() {
+            return aiKey;
         }
 
         @Override

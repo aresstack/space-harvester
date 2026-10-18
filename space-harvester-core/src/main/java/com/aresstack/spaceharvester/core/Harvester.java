@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.core;
 
+import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
@@ -38,8 +40,6 @@ import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
-import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingProvider;
-import com.aresstack.spaceharvester.embedding.onnx.OnnxEmbeddingSettings;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
@@ -54,6 +54,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
@@ -123,6 +124,9 @@ public final class Harvester implements AutoCloseable {
     private final Exports exports;
     private final Assets assets;
     private final Enrichments enrichments;
+    private final ConfiguredSourceCatalog catalog;
+    private final TrustBundles trustBundles;
+    private final String userAgent;
 
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
@@ -130,6 +134,9 @@ public final class Harvester implements AutoCloseable {
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
                     builder.trustBundles, builder.proxy, builder.asyncTransport);
             opened.add(catalog);
+            this.catalog = catalog;
+            this.trustBundles = builder.trustBundles;
+            this.userAgent = builder.userAgent;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
             opened.add(cache);
@@ -154,10 +161,18 @@ public final class Harvester implements AutoCloseable {
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
             opened.add(enrichmentStore);
             EmbeddingProcessor embedding = null;
-            if (builder.embedding != null) {
-                OnnxEmbeddingProvider provider = new OnnxEmbeddingProvider(builder.embedding);
-                opened.add(provider);
-                embedding = new EmbeddingProcessor(provider, builder.maxChunkChars);
+            ExecutorService background = null;
+            if (builder.ai.embeddings()) {
+                // ADR 0011: nur über den externen Dienst, im Hintergrund, nur für freigegebene Quellen.
+                AiServiceSettings ai = builder.ai;
+                embedding = new EmbeddingProcessor(RemoteAi.of(ai, catalog, builder.trustBundles, builder.userAgent)
+                        .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
+                ExecutorService started = Enrichments.background(1000);
+                background = started;
+                opened.add(() -> {
+                    started.shutdownNow();
+                    started.awaitTermination(10, TimeUnit.SECONDS);
+                });
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
@@ -166,7 +181,7 @@ public final class Harvester implements AutoCloseable {
                 processors.add(embedding);
             }
             this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
-                    clock);
+                    clock, background);
 
             this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
@@ -246,7 +261,7 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
-     * Suche nach Relevanz ({@code sort=relevance}): semantisch mit {@link Builder#embedding}, sonst nur Titeltreffer.
+     * Suche nach Relevanz ({@code sort=relevance}, experimentell): nur mit Embedding-Dienst ({@link Builder#ai}).
      */
     public RelevanceSearch relevance() {
         return relevance;
@@ -255,6 +270,28 @@ public final class Harvester implements AutoCloseable {
     /** Anhänge und Bilder einer Seite, abgelegt unter dem Asset-Verzeichnis. */
     public Assets assets() {
         return assets;
+    }
+
+    /**
+     * Die Modelle des KI-Dienstes für „Modelle laden“, auch mit noch nicht gespeicherten Einstellungen aus der
+     * Oberfläche. Fragt {@code GET {base-url}/models} über dieselbe Proxy-Route wie die Quellen ab (PAC, Proxy,
+     * fail-closed).
+     *
+     * @throws com.aresstack.spaceharvester.ai.AiServiceException ohne Dienst oder wenn er nicht wie erwartet antwortet
+     * @throws IllegalArgumentException                          wenn {@code trust-bundle} nicht konfiguriert ist
+     */
+    public List<AiModel> aiModels(AiServiceSettings settings) {
+        return RemoteAi.of(settings, catalog, trustBundles, userAgent).models();
+    }
+
+    /**
+     * Misst die Vektordimension eines Embedding-Modells mit einem kurzen, festen Text, für
+     * {@code embedding-dimensions}; dieselbe Route wie {@link #aiModels}.
+     *
+     * @throws com.aresstack.spaceharvester.ai.AiServiceException ohne Dienst oder wenn er nicht wie erwartet antwortet
+     */
+    public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
+        return RemoteAi.of(settings, catalog, trustBundles, userAgent).measureDimension(embeddingModel);
     }
 
     /** Anreicherungen (Akronyme, Gliederung, Sprache, optional Embeddings); nach jedem Abgleich aktualisiert. */
@@ -468,7 +505,7 @@ public final class Harvester implements AutoCloseable {
         private Path assetDirectory;
         private long maxAssetBytes = 50L * 1024 * 1024;
         private ImageDescriber imageDescriber;
-        private OnnxEmbeddingSettings embedding;
+        private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
 
         private Builder() {
@@ -498,9 +535,17 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Lokales Embedding-Modell (ADR 0004); ohne gibt es keine semantische Suche. */
-        public Builder embedding(OnnxEmbeddingSettings embedding, int maxChunkChars) {
-            this.embedding = embedding;
+        /**
+         * Der externe KI-Dienst (ADR 0011); ohne Embedding-Modell gibt es keine semantische Suche
+         * ({@code sort=relevance} antwortet mit {@code semantic-search-unavailable}).
+         */
+        public Builder ai(AiServiceSettings ai) {
+            this.ai = Objects.requireNonNull(ai, "ai");
+            return this;
+        }
+
+        /** Höchstens so viele Zeichen je eingebettetem Stück; Standard 1500. */
+        public Builder embeddingChunkChars(int maxChunkChars) {
             this.maxChunkChars = maxChunkChars;
             return this;
         }

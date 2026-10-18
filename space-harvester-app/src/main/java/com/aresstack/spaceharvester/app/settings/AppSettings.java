@@ -13,7 +13,7 @@ import java.util.Objects;
 
 /**
  * Die gelesene Konfiguration der App: dieselben Schlüssel unter {@code space-harvester} wie beim Dienst (Quellen,
- * Netzwerk, Export, Anhänge, Embeddings, {@code spring.ssl.bundle.*} für Vertrauen), dazu die eigenen unter
+ * Netzwerk, Export, Anhänge, KI-Dienst, {@code spring.ssl.bundle.*} für Vertrauen), dazu die eigenen unter
  * {@code space-harvester-app}. Geheimnisse liegen hier nur aufgelöst im Speicher; {@code toString} der
  * Einstellungstypen zeigt keine.
  *
@@ -25,7 +25,7 @@ import java.util.Objects;
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
-                          EmbeddingSettings embedding, AiSettings ai, List<String> problems) {
+                          AiSettings ai, List<String> problems) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -34,7 +34,6 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         trustStores = Map.copyOf(trustStores);
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(jobLimits, "jobLimits");
-        embedding = embedding == null ? EmbeddingSettings.DISABLED : embedding;
         ai = ai == null ? AiSettings.NONE : ai;
         problems = List.copyOf(problems);
     }
@@ -96,21 +95,6 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
             return "TrustStoreSettings[name=" + name + ", location=" + location + ", type=" + type + ", password="
                     + (password == null ? "-" : "***") + ", pem=" + pem + "]";
         }
-    }
-
-    /**
-     * Lokales Embedding-Modell ({@code space-harvester.embedding}); wie beim Dienst standardmäßig aus.
-     *
-     * @param modelFile     ONNX-Datei
-     * @param tokenizerFile Tokenizer
-     */
-    public record EmbeddingSettings(boolean enabled, Path modelFile, Path tokenizerFile, String modelSha256,
-                                    String tokenizerSha256, String modelId, int dimensions, int maxTokens,
-                                    int batchSize, int threads, int maxConcurrent, Duration acquireTimeout,
-                                    Duration retryAfter, int maxChunkChars) {
-
-        public static final EmbeddingSettings DISABLED = new EmbeddingSettings(false, null, null, null, null, null, 0,
-                0, 0, 0, 0, null, null, 0);
     }
 
     /**

@@ -33,9 +33,6 @@ dependencies {
     implementation libs.jsoup
     // PDF-Ausgabe (#30), nur im Paket output.convert
     implementation libs.pdfbox
-    // Lokales Embedding-Modell (#89), nur im Paket embedding.onnx; ohne Provider onnx unbenutzt
-    implementation libs.onnxruntime
-    implementation libs.djl.tokenizers
 
     // Testversionen aus der Spring-Boot-BOM; nur Testklassenpfad, nicht in der veröffentlichten POM
     testImplementation platform(libs.spring.boot.dependencies)

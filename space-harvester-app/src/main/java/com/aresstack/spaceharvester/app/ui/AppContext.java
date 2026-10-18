@@ -262,6 +262,16 @@ public final class AppContext {
 
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
+        char[] aiKey = sessionAiKey();
+        try {
+            if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
+                aiKey = aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
+            }
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
+        }
+        // Der Core bekommt den Key nur zur Laufzeit (ADR 0011).
+        secrets.aiKey(aiKey);
         for (AppSettings.SourceEntry entry : loaded.sources()) {
             if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
                     || !vault.has(entry.id())) {

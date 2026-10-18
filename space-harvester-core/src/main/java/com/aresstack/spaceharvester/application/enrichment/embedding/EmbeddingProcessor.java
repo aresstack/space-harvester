@@ -4,9 +4,11 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -27,8 +29,28 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     private final EmbeddingProvider provider;
     private final int maxChunkChars;
+    private final Predicate<String> sources;
+    private final boolean remote;
 
+    /** Für alle Quellen, im aufrufenden Thread (Tests, eingebettete Modelle). */
     public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars) {
+        this(provider, maxChunkChars, sourceId -> true, false);
+    }
+
+    /**
+     * Für einen externen Dienst (ADR 0011): nur Seiten aus Quellen, deren Inhalte an ihn gehen dürfen, und im
+     * Hintergrund von {@link com.aresstack.spaceharvester.application.enrichment.Enrichments}.
+     *
+     * @param mayProcessExternally ob Inhalte der Quelle an den Dienst gehen dürfen
+     */
+    public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, Predicate<String> mayProcessExternally) {
+        this(provider, maxChunkChars, mayProcessExternally, true);
+    }
+
+    private EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, Predicate<String> sources,
+                               boolean remote) {
+        this.sources = Objects.requireNonNull(sources, "sources");
+        this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
         if (!MODEL_ID.matcher(provider.modelId()).matches()) {
             throw new IllegalArgumentException("Ungültige Modellkennung");
@@ -45,6 +67,21 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     @Override
     public String id() {
         return "embedding";
+    }
+
+    @Override
+    public boolean appliesTo(PageKey key) {
+        return sources.test(key.sourceId());
+    }
+
+    /** Ob Inhalte dieser Quelle eingebettet werden. */
+    public boolean covers(String sourceId) {
+        return sources.test(sourceId);
+    }
+
+    @Override
+    public boolean background() {
+        return remote;
     }
 
     @Override

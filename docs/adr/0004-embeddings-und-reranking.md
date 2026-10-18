@@ -1,8 +1,9 @@
 # ADR 0004: Embeddings und Reranking als zweite Ausbaustufe der Suche
 
-- Status: **Vorgeschlagen** (Strang D, 17.10.2026; Ausbaurichtung von Angelo: „Embeddings und Reranking ggf.
-  ergänzen, um die Suchergebnisse zu verbessern“). Schnittstellen und Fakes liegen auf main, ein Modell ist nicht
-  angebunden.
+- Status: **Ersetzt durch [ADR 0011](0011-embeddings-ueber-externen-ki-dienst.md)** (18.10.2026). Embeddings als
+  Anreicherung, Vektorablage und Kosinus-Reranking gelten weiter; das lokale Modell (ONNX) ist entfernt, Embeddings
+  kommen nur noch von einem externen, OpenAI-kompatiblen Dienst. Ursprünglich: Vorgeschlagen (Strang D, 17.10.2026;
+  Ausbaurichtung von Angelo: „Embeddings und Reranking ggf. ergänzen, um die Suchergebnisse zu verbessern“).
 - Baut auf: [ADR 0003](0003-lucene-cache.md) (Lucene als einziger Speicher), #28 (Titel- und Metadatensuche), #29
   (Anreicherungen).
 

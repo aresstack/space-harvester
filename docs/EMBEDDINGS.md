@@ -1,67 +1,45 @@
-# Embeddings: lokales Modell (#89)
+# Embeddings über einen externen KI-Dienst
 
-Embeddings sind eine optionale Anreicherung ([ADR 0004](adr/0004-embeddings-und-reranking.md)). Ohne Konfiguration
-gibt es keine Embeddings, keine Modellbibliothek wird geladen, und am Abgleich, am Export und an der Suche ändert sich
-nichts.
+Embeddings sind eine optionale Anreicherung ([ADR 0004](adr/0004-embeddings-und-reranking.md)) und kommen nur von
+einem externen, OpenAI-kompatiblen KI-Dienst ([ADR 0011](adr/0011-embeddings-ueber-externen-ki-dienst.md)). Ein
+lokales Modell gibt es nicht mehr. Ohne Konfiguration gibt es keine Embeddings, und an Abgleich, Lesen, Export und
+Schlagwortsuche ändert sich nichts; `sort=relevance` antwortet dann mit `semantic-search-unavailable`.
 
-## Modell
+## Dienst
 
-| | |
-|---|---|
-| Modell | [`intfloat/multilingual-e5-small`](https://huggingface.co/intfloat/multilingual-e5-small), MIT-Lizenz |
-| Revision | `614241f622f53c4eeff9890bdc4f31cfecc418b3` (Stand 2026-04-02) |
-| Dateien | `onnx/model.onnx` (470 MB), SHA-256 `ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665`; `tokenizer.json` (17 MB), SHA-256 `0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39` |
-| Vektoren | 384 Dimensionen, Mean-Pooling über die Attention-Maske, L2-normiert |
-| Eingabe | höchstens 512 Token je Text; längere Texte werden am Ende abgeschnitten. Dokumenttexte bekommen das Präfix `passage: `, Anfragen `query: ` |
-| Kennung | `intfloat/multilingual-e5-small@614241f622f5`; sie steckt in der Prozessorversion, ein Wechsel macht alle Vektoren veraltet |
-
-Ausgeführt wird im Prozess über ONNX Runtime und den Hugging-Face-Tokenizer (DJL); beide bringen ihre nativen
-Bibliotheken für Linux, Windows und macOS im Jar mit. Kein Text verlässt den Prozess, und nichts wird nachgeladen: Die
-Tokenizer-Bibliothek läuft im Offline-Modus und ohne Telemetrie.
-
-## Bereitstellen
-
-Die Dateien kommen vom Betrieb, nicht aus dem Repository und nicht zur Laufzeit aus dem Netz. Auf einem Rechner mit
-Internetzugang:
-
-```bash
-rev=614241f622f53c4eeff9890bdc4f31cfecc418b3
-base=https://huggingface.co/intfloat/multilingual-e5-small/resolve/$rev
-mkdir -p e5/onnx
-curl -L -o e5/onnx/model.onnx "$base/onnx/model.onnx"
-curl -L -o e5/tokenizer.json "$base/tokenizer.json"
-sha256sum e5/onnx/model.onnx e5/tokenizer.json
-```
-
-Das Verzeichnis `e5/` dann auf den Server kopieren, z. B. nach `/opt/space-harvester/models/e5`. Unter Windows
-`Get-FileHash -Algorithm SHA256` statt `sha256sum`.
+Der Dienst bietet `GET <base-url>/models` und `POST <base-url>/embeddings` im OpenAI-Format (`input`, `model`,
+`data[].embedding`, Bearer-Token). Der Core nutzt dafür die unveränderten Adapter des Enterprise AI Client
+(`OpenAiCompatibleEmbeddingAdapter`, `KipitzModelCatalogAdapter`). Die Verbindung läuft über dieselbe Proxy-Route je
+Ziel wie die Quellen (PAC, Proxy, fail-closed) und über das Vertrauen aus `trust-bundle` oder der JVM.
 
 ## Einschalten
 
+Server (`application.yml` oder jede andere Spring-Property-Quelle):
+
 ```yaml
 space-harvester:
-  embedding:
-    provider: onnx                 # Standard: none
-    max-chunk-chars: 1500          # Zeichen je eingebettetem Stück
-    onnx:
-      model-dir: /opt/space-harvester/models/e5
-      threads: 2                   # Rechenthreads je Modellaufruf
-      batch-size: 16               # Texte je Modellaufruf
-      max-concurrent: 1            # gleichzeitige Modellaufrufe
+  ai:
+    base-url: https://ki.example.org/v1
+    api-key: ${KI_API_KEY}              # aus dem Secret-Speicher des Betriebs, nie im Klartext einchecken
+    embedding-model: text-embedding-3-small
+    embedding-dimensions: 1536          # Pflicht; Harvester.aiEmbeddingDimension misst sie
+    timeout: PT30S                      # Standard
+    trust-bundle: ki                    # optional, ein spring.ssl.bundle; sonst Vertrauen der JVM
+    external-processing-sources: confluence,wiki2   # Standard: keine
+    embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
 ```
 
-Weitere Schlüssel unter `space-harvester.embedding.onnx` mit ihren Standardwerten:
+Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei; den API-Key legt der Reiter „KI“ im
+Tresor ab und gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
+etwa `AiServiceSettings.fromProperties(properties)`.
 
-- `model-file` (`<model-dir>/onnx/model.onnx`) und `tokenizer-file` (`<model-dir>/tokenizer.json`);
-- `model-sha256` und `tokenizer-sha256` (die Werte oben);
-- `model-id`, `dimensions` (384) und `max-tokens` (512);
-- `acquire-timeout` (`2m`): So lange wartet ein Aufruf auf das ausgelastete Modell;
-- `retry-after` (`5m`): Frühestens so spät wird nach einem gescheiterten Laden erneut geladen.
+**Freigabe für externe Verarbeitung.** Das Leserecht eines Benutzers genügt nicht, um Seiteninhalte an den Dienst zu
+schicken. Nur Seiten der Quellen in `external-processing-sources` gehen hinaus und bekommen Embeddings; Standard ist
+keine. Suchanfragen gehen an den Dienst, sobald jemand `sort=relevance` benutzt.
 
-Andere Dateien als die gepinnten lädt der Harvester nur, wenn auch Prüfsummen und `model-id` angegeben sind.
-
-Danach berechnet jeder bestätigte Abgleich die Anreicherung `embedding` für neue und geänderte Seiten
-(`POST …/pages/{pageId}/enrichments` für eine einzelne Seite). Ergebnis je Seite:
+Danach berechnet jeder bestätigte Abgleich die Anreicherung `embedding` für neue und geänderte Seiten im begrenzten
+Hintergrund (ein Thread, höchstens 1000 wartende Seiten); Abgleich, Lesen und Export warten nicht darauf.
+`POST …/pages/{pageId}/enrichments` rechnet eine Seite sofort. Ergebnis je Seite:
 `{"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}` unter `enrichments` in
 `view=extended`.
 
@@ -90,7 +68,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/api/v1/search?sourceId=confluence&sort=relevance&q=Wie+l%C3%A4uft+der+n%C3%A4chtliche+Betrieb%3F"
 ```
 
-- Die Anfrage wird mit dem Präfix `query: ` eingebettet, die Seiten mit `passage: ` (wie in der Modellkarte).
+- Die Anfrage geht über `POST /embeddings` an den Dienst (wie die Seiten, ohne Präfixe; das Modell bestimmt der Dienst).
 - Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle (ohne `sourceId`: aller freigegebenen Quellen zusammen, eine
   Einbettung der Anfrage und eine Vektorsuche, #114) unter genau der aktuellen Prozessorversion, zu Seiten
   (`sourceId + pageId`) zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
@@ -104,39 +82,22 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
   Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
   Kopfdaten; es wird beim nächsten Abgleich neu berechnet.
-- Fällt das Modell bei der Anfrage aus, bleiben mit `title` die Titeltreffer in Titelreihenfolge (`reranker: none`);
-  ohne `title` antwortet die Suche mit 503 `semantic-search-unavailable`. Der Anfragetext steht nie im Log.
+- Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
+  `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
+  im Log.
 
 ## Fehlerverhalten
 
-- Das Modell wird beim ersten Bedarf geladen, nicht beim Start. Fehlt eine Datei, stimmt eine Prüfsumme nicht oder
-  passt die Ausgabe des Modells nicht zu 384 Dimensionen, steht nur die Anreicherung `embedding` auf `failed`, mit
-  dem Grund in der Meldung. Abgleich, Export, Suche und die übrigen Anreicherungen laufen weiter. Der nächste
-  Ladeversuch folgt nach `retry-after`.
-- Fehlen die Dateien schon beim Start, steht eine Warnung im Log; der Dienst startet trotzdem.
-- Ist das Modell länger als `acquire-timeout` ausgelastet, scheitert der Aufruf als „ausgelastet“ statt zu warten.
-- Texte erscheinen nie in Logs oder Fehlermeldungen.
-
-## Ressourcen
-
-Grob, auf einem aktuellen x86-Server, zu messen auf eigenen Daten (#89 Punkt 4):
-
-- Speicher: etwa 0,6 bis 1 GB für Modell und Laufzeit, dazu je Aufruf etwa `batch-size` × 512 × 384 × 4 Byte für die
-  Ausgabe (16 Texte: rund 12 MB). `max-concurrent` multipliziert den Anteil je Aufruf.
-- Rechenzeit: Ein Stück von 512 Token braucht auf zwei Threads einige zehn Millisekunden.
+- Ist der Dienst nicht erreichbar, lehnt er den Key ab oder liefert er falsche Vektoren (Dimension, Anzahl), steht nur
+  die Anreicherung `embedding` dieser Seite auf `failed`. Abgleich, Export, Suche und die übrigen Anreicherungen
+  laufen weiter.
+- Ist der Hintergrund voll, wird die Seite übersprungen und später nachgeholt.
+- Fehlen `base-url` oder `embedding-dimensions` bei gesetztem `embedding-model`, startet der Server nicht.
+- Texte und der API-Key erscheinen nie in Logs oder Fehlermeldungen; Meldungen nennen nur Art und Statuscode.
 
 ## Prüfen
 
-- `OnnxEmbeddingProviderTest` (im Build) prüft Präfixe, Mean-Pooling, Normierung, Stapel, Abschneiden und das
-  Verhalten bei fehlenden oder falschen Dateien mit einem Spielzeugmodell (`space-harvester-core/src/test/resources/embedding/tiny`).
-- `E5ReferenceTest` vergleicht die Vektoren und Token-IDs des Harvesters mit Referenzvektoren aus der
-  PyTorch-Implementierung der Modellkarte (`tools/embedding/e5_reference.py`,
-  `space-harvester-core/src/test/resources/embedding/multilingual-e5-small/reference.json`; Kosinus > 0,9999). Er läuft im Workflow
-  `.github/workflows/embedding-model.yml`, der die gepinnte Revision lädt und die Prüfsummen prüft, oder lokal:
-
-  ```bash
-  SPACE_HARVESTER_E5_DIR=/opt/space-harvester/models/e5 ./gradlew :space-harvester-core:test --tests '*E5ReferenceTest'
-  ```
-
-Eine neue Revision des Modells verlangt neue Werte in `E5Defaults`, neue Referenzvektoren und einen Eintrag in
-ADR 0004.
+- `RemoteAiTest` prüft `/models`, `/embeddings`, Bearer-Token, die Proxy-Route und die Fehler gegen einen lokalen
+  OpenAI-kompatiblen Dienst; `AiServiceSettingsTest` die Properties und die Maskierung des Keys.
+- `EnrichmentsTest` prüft Hintergrund und Freigabe je Quelle, `RelevanceSearchTest` und `RelevanceSearchApiTest` die
+  Suche.

@@ -4,6 +4,7 @@ import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTest
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -11,7 +12,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.Test;
 
 /** Berechnen, Aktualität und Fehlerisolierung der Anreicherungen. */
@@ -173,8 +178,107 @@ class EnrichmentsTest {
                 .containsExactly("outline", "acronyms");
     }
 
+    @Test
+    void backgroundProcessorsRunOutsideTheCallerAndOnlyOncePerPage() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        Remote remote = new Remote(key -> true, release);
+        ExecutorService background = Enrichments.background(10);
+        try {
+            Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote, new OutlineProcessor()), store,
+                    CLOCK, background);
+            PageSnapshot page = text("wiki", "101", "1", "Text");
+
+            // Der Aufrufer wartet nicht auf den Dienst; dieselbe Seite wird nicht doppelt eingeplant.
+            assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+            assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 1, 0));
+            assertThat(store.find(page.key())).extracting(Enrichment::processorId).containsExactly("outline");
+
+            release.countDown();
+            background.shutdown();
+            assertThat(background.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(remote.calls.get()).isEqualTo(1);
+            assertThat(store.find(page.key())).extracting(Enrichment::processorId)
+                    .containsExactlyInAnyOrder("outline", "remote");
+            assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 2, 0));
+        } finally {
+            background.shutdownNow();
+        }
+    }
+
+    @Test
+    void aFullBackgroundDropsWorkWithoutFailingTheCaller() {
+        ExecutorService closed = Enrichments.background(1);
+        closed.shutdown();
+        Remote remote = new Remote(key -> true, new CountDownLatch(0));
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(remote), store, CLOCK, closed);
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(store.find(page.key())).isEmpty();
+        // Auf ausdrücklichen Wunsch im aufrufenden Thread.
+        assertThat(enrichments.recompute(page, "remote")).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+    }
+
+    @Test
+    void processorsSkipPagesTheyDoNotApplyTo() {
+        Remote remote = new Remote(key -> key.sourceId().equals("approved"), new CountDownLatch(0));
+        Enrichments enrichments = enrichments(remote);
+
+        assertThat(enrichments.refresh(text("wiki", "101", "1", "Text")))
+                .isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(enrichments.recompute(text("wiki", "101", "1", "Text"), null))
+                .isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(enrichments.refresh(text("approved", "101", "1", "Text")))
+                .isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+        assertThat(remote.calls.get()).isEqualTo(1);
+    }
+
     private Enrichments enrichments(EnrichmentProcessor... processors) {
         return new Enrichments(PROJECTOR, List.of(processors), store, CLOCK);
+    }
+
+    /** Wie ein Prozessor, der über das Netz rechnet: im Hintergrund, nur für freigegebene Quellen. */
+    private static final class Remote implements EnrichmentProcessor {
+
+        private final Predicate<PageKey> applies;
+        private final CountDownLatch release;
+        private final AtomicInteger calls = new AtomicInteger();
+
+        private Remote(Predicate<PageKey> applies, CountDownLatch release) {
+            this.applies = applies;
+            this.release = release;
+        }
+
+        @Override
+        public String id() {
+            return "remote";
+        }
+
+        @Override
+        public String version() {
+            return "1";
+        }
+
+        @Override
+        public boolean appliesTo(PageKey key) {
+            return applies.test(key);
+        }
+
+        @Override
+        public boolean background() {
+            return true;
+        }
+
+        @Override
+        public EnrichmentOutput process(PageText text) {
+            try {
+                release.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            calls.incrementAndGet();
+            return EnrichmentOutput.of("{}");
+        }
     }
 
     /** Liefert immer dasselbe Ergebnis oder scheitert, wenn keines vorgegeben ist. */

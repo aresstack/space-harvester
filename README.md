@@ -413,10 +413,11 @@ liegt in einem eigenen Lucene-Index (`enrichments/` neben `pages/`), getrennt vo
 bestätigten Abgleich werden fehlende oder veraltete Ergebnisse berechnet und die entfernter Seiten gelöscht; scheitert
 ein Prozessor, steht nur sein Ergebnis auf `failed`, Abgleich und Export laufen weiter. In `view=extended` steht je
 Ergebnis `freshness` (`current` oder `stale`, wenn Text, Gliederung oder Prozessorversion sich geändert haben).
-Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`. Embeddings sind optional:
-mit `space-harvester.embedding.provider=onnx` berechnet ein lokales Modell (`intfloat/multilingual-e5-small`, fest
-gepinnt, Dateien vom Betrieb) die Anreicherung `embedding`; ohne diese Einstellung ändert sich nichts
-([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md), [ADR 0004](docs/adr/0004-embeddings-und-reranking.md)).
+Anreicherungen sind aus dem Inhalt abgeleitet und verlangen darum wie die Payload `content`. Embeddings sind optional
+und kommen nur von einem externen, OpenAI-kompatiblen KI-Dienst (`space-harvester.ai.*`): Er berechnet die Anreicherung
+`embedding` im begrenzten Hintergrund, und nur für Quellen aus `space-harvester.ai.external-processing-sources`; ohne
+diese Einstellungen ändert sich nichts ([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md),
+[ADR 0011](docs/adr/0011-embeddings-ueber-externen-ki-dienst.md)).
 
 **Schlagwortsuche ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 9):** Mit `text` sucht
 der Harvester in jeder Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über `/rest/api/search` wie die
@@ -461,8 +462,9 @@ die Wörter aus `title`) liefert genau einen Stapel (`complete=true`, kein `curs
 Vektorsuche und der Titelsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet
 nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
 weiter. Kandidaten der Vektorsuche brauchen `content` für ihre Seite; `relevance` (Ähnlichkeit, Abschnitt, `freshness`)
-steht nur an Treffern mit `content`-Freigabe. Ohne eingerichtetes Modell bleiben die Titeltreffer in Titelreihenfolge
-(`reranker: none`); ohne `title` antwortet die Suche dann mit `semantic-search-unavailable` (503). Einzelheiten:
+steht nur an Treffern mit `content`-Freigabe. Ohne eingerichteten KI-Dienst, oder wenn er die Anfrage nicht
+einbetten kann, antwortet die Suche immer mit `semantic-search-unavailable` (503), auch mit `title`; es gibt keinen
+stillen Rückfall auf die Titelsuche (ADR 0011). Einzelheiten:
 [docs/EMBEDDINGS.md](docs/EMBEDDINGS.md#suchen).
 
 **Space-Fingerprint:** `spaceFingerprint` (Schema `space-inventory/v1`) ist `sha256:<hex>` über
