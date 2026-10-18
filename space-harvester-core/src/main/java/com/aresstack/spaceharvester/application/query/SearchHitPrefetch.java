@@ -4,10 +4,13 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -45,7 +48,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     private final ExecutorService background;
     private final Duration wait;
     private final AutoCloseable stop;
-    private final Map<PageKey, Future<?>> running = new ConcurrentHashMap<>();
+    private final Map<PageKey, CompletableFuture<Boolean>> running = new ConcurrentHashMap<>();
 
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
@@ -76,40 +79,38 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     }
 
     @Override
-    public int prefetch(AccessContext caller, List<KeywordSearch.Hit> hits) {
+    public Fill prefetch(AccessContext caller, List<KeywordSearch.Hit> hits) {
         if (background == null) {
-            return 0;
+            return Fill.NONE;
         }
-        List<Future<?>> waiting = new ArrayList<>();
-        List<Future<?>> own = new ArrayList<>();
-        int rejected = 0;
+        Map<KeywordSearch.Hit, CompletableFuture<Boolean>> waiting = new LinkedHashMap<>();
+        Set<CompletableFuture<Boolean>> own = new HashSet<>();
+        List<KeywordSearch.Hit> pending = new ArrayList<>();
         for (KeywordSearch.Hit hit : hits) {
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
             Optional<String> cached = cachedVersion.apply(key);
             if (cached.isPresent() && hit.version() != null && hit.version().equals(cached.get())) {
                 continue;
             }
-            Future<?> existing = running.get(key);
+            CompletableFuture<Boolean> done = new CompletableFuture<>();
+            CompletableFuture<Boolean> existing = running.putIfAbsent(key, done);
             if (existing != null) {
-                waiting.add(existing);
-                continue;
-            }
-            CompletableFuture<Void> done = new CompletableFuture<>();
-            if (running.putIfAbsent(key, done) != null) {
-                waiting.add(running.get(key));
+                waiting.put(hit, existing);
                 continue;
             }
             try {
                 Future<?> task = background.submit(() -> {
+                    boolean stored = false;
                     try {
                         load.accept(caller, key);
+                        stored = true;
                     } catch (RuntimeException e) {
-                        // Ohne Seiten-ID; die Suche zeigt die Seite dann nicht.
+                        // Ohne Seiten-ID; die Suche zeigt die Seite dann nicht und ist unvollständig.
                         LOG.log(System.Logger.Level.INFO, "Laden eines Suchtreffers in {0} gescheitert ({1})",
                                 key.sourceId(), e.getClass().getName());
                     } finally {
                         running.remove(key, done);
-                        done.complete(null);
+                        done.complete(stored);
                     }
                 });
                 done.whenComplete((ignored, failure) -> {
@@ -118,35 +119,38 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                         running.remove(key, done);
                     }
                 });
-                waiting.add(done);
+                waiting.put(hit, done);
                 own.add(done);
             } catch (RejectedExecutionException e) {
                 running.remove(key, done);
-                rejected++;
+                pending.add(hit);
             }
         }
         long deadline = System.nanoTime() + wait.toNanos();
-        int pending = rejected;
-        for (Future<?> future : waiting) {
+        int failed = 0;
+        for (Map.Entry<KeywordSearch.Hit, CompletableFuture<Boolean>> entry : waiting.entrySet()) {
+            CompletableFuture<Boolean> future = entry.getValue();
             try {
-                future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                if (!future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                    failed++;
+                }
             } catch (TimeoutException e) {
-                pending++;
+                pending.add(entry.getKey());
                 if (caller.credential() != null && own.contains(future)) {
                     // Die Anmeldung des Benutzers bleibt in seinem Aufruf.
                     future.cancel(false);
                 }
             } catch (CancellationException e) {
                 // Ein delegierter Benutzer hat seinen Abruf beendet; die Seite fehlt noch.
-                pending++;
+                pending.add(entry.getKey());
             } catch (ExecutionException e) {
-                // Das Laden fängt seine Fehler selbst.
+                failed++;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                pending++;
+                pending.add(entry.getKey());
             }
         }
-        return pending;
+        return new Fill(pending, failed);
     }
 
     /** Lädt nichts, etwa ohne Cache. */

@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -90,12 +91,14 @@ class QueryConfiguration {
      * verdrängt.
      */
     @Bean(destroyMethod = "close")
-    SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache, PageQueries pages) {
+    SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache,
+                                        ObjectProvider<PageTextIndexing> texts, PageQueries pages) {
         LucenePageCache available = cache.getIfAvailable();
-        if (available == null) {
+        PageTextIndexing indexing = texts.getIfAvailable();
+        if (available == null || indexing == null) {
             return SearchHitPrefetch.disabled();
         }
-        return new SearchHitPrefetch(key -> available.findHeader(key).map(header -> header.metadata().version()),
+        return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
                 (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
                 SearchHitPrefetch.background(4, 200));
     }

@@ -241,8 +241,7 @@ public final class Harvester implements AutoCloseable {
             SearchHitPrefetch prefetch = null;
             if (builder.prefetchSearchHits) {
                 // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
-                prefetch = new SearchHitPrefetch(key -> cache.findHeader(key)
-                        .map(header -> header.metadata().version()),
+                prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
                         (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
                         SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200));
                 opened.add(prefetch);

@@ -29,7 +29,7 @@ class SearchHitPrefetchTest {
         IntStream.range(10, 30).forEach(i -> hits.add(hit(String.valueOf(i), "1")));
 
         try (SearchHitPrefetch prefetch = prefetch(Duration.ofSeconds(10), null)) {
-            assertThat(prefetch.prefetch(APP, hits)).isZero();
+            assertThat(prefetch.prefetch(APP, hits)).isEqualTo(KeywordSearch.Prefetch.Fill.NONE);
         }
 
         // Nicht nur die ersten zehn: jede gefundene Seite des Stapels, die gleiche Version nicht noch einmal.
@@ -40,7 +40,9 @@ class SearchHitPrefetchTest {
     void whatIsStillLoadingIsCountedAndKeepsLoadingForTechnicalCallers() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
         try (SearchHitPrefetch prefetch = prefetch(Duration.ofMillis(100), release)) {
-            assertThat(prefetch.prefetch(APP, List.of(hit("5", "1"), hit("6", "1")))).isEqualTo(2);
+            KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, List.of(hit("5", "1"), hit("6", "1")));
+            assertThat(fill.pending()).extracting(KeywordSearch.Hit::pageId).containsExactly("5", "6");
+            assertThat(fill.failed()).isZero();
 
             release.countDown();
         }
@@ -54,7 +56,7 @@ class SearchHitPrefetchTest {
         List<KeywordSearch.Hit> hits = IntStream.range(40, 50).mapToObj(i -> hit(String.valueOf(i), "1")).toList();
 
         try (SearchHitPrefetch prefetch = prefetch(Duration.ofMillis(100), release)) {
-            assertThat(prefetch.prefetch(user, hits)).isEqualTo(10);
+            assertThat(prefetch.prefetch(user, hits).pending()).hasSize(10);
 
             release.countDown();
             TimeUnit.MILLISECONDS.sleep(200);
@@ -65,8 +67,25 @@ class SearchHitPrefetchTest {
 
     @Test
     void aDisabledPrefetchLoadsNothing() {
-        assertThat(SearchHitPrefetch.disabled().prefetch(APP, List.of(hit("9", "1")))).isZero();
+        assertThat(SearchHitPrefetch.disabled().prefetch(APP, List.of(hit("9", "1"))))
+                .isEqualTo(KeywordSearch.Prefetch.Fill.NONE);
         assertThat(loaded).isEmpty();
+    }
+
+    @Test
+    void aFailedLoadIsCountedAsAGapNotAsLoaded() throws Exception {
+        try (SearchHitPrefetch prefetch = new SearchHitPrefetch(key -> Optional.empty(), (caller, key) -> {
+            if (key.pageId().equals("7")) {
+                throw new IllegalStateException("Quelle antwortet nicht");
+            }
+            loaded.add(key);
+        }, SearchHitPrefetch.background(2, 50), Duration.ofSeconds(10))) {
+            KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, List.of(hit("7", "1"), hit("8", "1")));
+
+            assertThat(fill.failed()).isEqualTo(1);
+            assertThat(fill.pending()).isEmpty();
+        }
+        assertThat(loaded).extracting(PageKey::pageId).containsExactly("8");
     }
 
     private SearchHitPrefetch prefetch(Duration wait, CountDownLatch release) {
