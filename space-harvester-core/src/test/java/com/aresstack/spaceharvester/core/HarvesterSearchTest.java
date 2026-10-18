@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -60,26 +61,43 @@ class HarvesterSearchTest {
     }
 
     @Test
-    void findsContentInANeverSyncedSourceWithoutLoadingOrStoringPages() {
-        // Ohne Vorladen (#180), das sichtbare Treffer sonst im Hintergrund in den Cache legt.
-        try (Harvester harvester = harvester(Harvester.builder().prefetchSearchHits(false))) {
+    void findsContentInANeverSyncedSourceByLoadingTheFoundPagesIntoTheCacheFirst() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
             assertThat(harvester.sources().sources().getFirst().capabilities()).contains(SourceCapability.LIVE_SEARCH);
 
             KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
-            // In der Rangfolge der Quelle, mit Space aus den live gelesenen Kopfdaten.
+            // ADR 0013: Die Quelle findet, der Cache liefert; Space aus den live gelesenen Kopfdaten.
             assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId, KeywordSearch.Hit::spaceKey,
-                    KeywordSearch.Hit::title).containsExactly(tuple("102", "DEV", "Prüfung"),
+                    KeywordSearch.Hit::title).containsExactlyInAnyOrder(tuple("102", "DEV", "Prüfung"),
                     tuple("200", "OPS", "Bereitschaft"));
-            assertThat(results.hits().getFirst().parentPageId()).isEqualTo("100");
+            assertThat(results.hits()).filteredOn(hit -> hit.pageId().equals("102")).singleElement()
+                    .satisfies(hit -> {
+                        assertThat(hit.parentPageId()).isEqualTo("100");
+                        assertThat(hit.snippet()).contains("Nachtlauf startet um zwei");
+                    });
             assertThat(results.sources()).containsExactly(new KeywordSearch.SourceState("wiki",
                     KeywordSearch.SourceState.Status.SEARCHED, null));
+            assertThat(results.loading()).isZero();
             assertThat(results.nextCursor()).isNull();
             assertThat(results.complete()).isTrue();
-            // Nichts im Bestand: die Suche lädt und speichert keine Seiten.
-            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
-                    .isInstanceOf(CacheMissException.class);
+            // Kein Abgleich: genau die gefundenen Seiten liegen jetzt im Cache, die Startseite nicht.
+            assertThat(harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10).pages())
+                    .extracting(page -> page.header().key().pageId()).containsExactly("102");
+        }
+    }
+
+    @Test
+    void withoutLoadingTheSearchFindsOnlyWhatIsAlreadyCached() {
+        try (Harvester harvester = harvester(Harvester.builder().prefetchSearchHits(false))) {
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).isEmpty();
+
+            harvester.pages().page(harvester.caller(), "wiki", "200", false);
+
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
         }
     }
 
@@ -158,6 +176,21 @@ class HarvesterSearchTest {
     }
 
     @Test
+    void aPageCachedForOneCallerStaysHiddenFromAnotherWithoutContentRights() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).hasSize(2);
+        }
+        // Derselbe Cache, ein Aufrufer ohne Inhaltsrecht an 102: Fundstelle und Auszug stammen aus dem Inhalt.
+        try (Harvester harvester = harvester(Harvester.builder().prefetchSearchHits(false).accessPolicy(
+                (context, scope, kind) -> kind == AccessKind.CONTENT && "102".equals(scope.pageId())
+                        ? AccessDecision.DENY : AccessDecision.ALLOW))) {
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+        }
+    }
+
+    @Test
     void anUnreachableSourceDoesNotDiscardTheOthers() {
         try (Harvester harvester = harvester(Harvester.builder().source(new SourceSettingsConfig("down",
                 "confluence", "Weg", java.net.URI.create("http://127.0.0.1:1"), SourceSettingsConfig.Auth.anonymous(),
@@ -165,7 +198,7 @@ class HarvesterSearchTest {
             KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
-            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102", "200");
+            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactlyInAnyOrder("102", "200");
             assertThat(results.sources()).extracting(KeywordSearch.SourceState::sourceId,
                     KeywordSearch.SourceState::status).containsExactlyInAnyOrder(
                     tuple("wiki", KeywordSearch.SourceState.Status.SEARCHED),
@@ -177,7 +210,9 @@ class HarvesterSearchTest {
                     KeywordSearch.Query.of("Nachtlauf"), null, 1);
             KeywordSearch.Results last = harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), first.nextCursor(), 1);
-            assertThat(last.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+            // Beide liegen schon im Cache; der Cache ordnet, keine Seite kommt doppelt.
+            assertThat(List.of(first.hits().getFirst().pageId(), last.hits().getFirst().pageId()))
+                    .containsExactlyInAnyOrder("102", "200");
             assertThat(last.nextCursor()).isNull();
             assertThat(last.complete()).isFalse();
         }

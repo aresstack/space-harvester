@@ -30,8 +30,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Volltextindex über den Cache (#180): Quellen ohne eigene Suche (lokale Dateien) sucht der Index, sobald ihre Seiten
- * im Cache liegen; Treffer der Live-Suche lädt ein begrenzter Hintergrund in den Cache.
+ * Volltextindex über den Cache (#180, ADR 0013): Quellen ohne eigene Suche (lokale Dateien) sucht der Index, sobald
+ * ihre Seiten im Cache liegen; was die Quellensuche findet, wird vor der Suche im Cache geladen.
  */
 class HarvesterFullTextTest {
 
@@ -145,25 +145,21 @@ class HarvesterFullTextTest {
     }
 
     @Test
-    void visibleLiveHitsAreLoadedIntoTheCacheInTheBackground() throws InterruptedException {
+    void foundPagesAreInTheCacheWhenTheSearchAnswers() {
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
                     null, 10).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102");
 
-            Instant deadline = Instant.now().plusSeconds(10);
-            while (!cached(harvester) && Instant.now().isBefore(deadline)) {
-                Thread.sleep(50);
-            }
             assertThat(cached(harvester)).isTrue();
         }
     }
 
     @Test
-    void withoutPrefetchTheSearchLoadsNothing() throws InterruptedException {
+    void withoutPrefetchTheSearchLoadsNothingAndFindsNothingNew() {
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).prefetchSearchHits(false)
                 .build()) {
-            harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null, 10);
-            Thread.sleep(300);
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
+                    null, 10).hits()).isEmpty();
 
             assertThat(cached(harvester)).isFalse();
         }
