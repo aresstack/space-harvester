@@ -69,6 +69,8 @@ import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -146,12 +148,14 @@ public final class Harvester implements AutoCloseable {
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
         try {
+            TrustBundles trustBundles = TrustBundles.withDefault(builder.trustBundles,
+                    TrustPolicy.defaultTrust(builder.trust));
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
-                    builder.trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
+                    trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
                     builder.secretProvider);
             opened.add(catalog);
             this.catalog = catalog;
-            this.trustBundles = builder.trustBundles;
+            this.trustBundles = trustBundles;
             this.userAgent = builder.userAgent;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
@@ -185,7 +189,7 @@ public final class Harvester implements AutoCloseable {
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
                                 builder.embeddingSources)
-                        : new EmbeddingProcessor(RemoteAi.of(ai, catalog, builder.trustBundles, builder.userAgent)
+                        : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
                                 .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
@@ -568,6 +572,7 @@ public final class Harvester implements AutoCloseable {
         private String userAgent = "space-harvester-core";
         private ProxySettings proxy = ProxySettings.disabled();
         private TrustBundles trustBundles = TrustBundles.NONE;
+        private TrustSettings trust = TrustSettings.jvm();
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
         private AccessPolicy accessPolicy = new TrustedCaller();
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
@@ -732,6 +737,23 @@ public final class Harvester implements AutoCloseable {
         /** Vertrauensquellen für {@code trust-bundle} der Quellen; Standard keine. */
         public Builder trustBundles(TrustBundles trustBundles) {
             this.trustBundles = Objects.requireNonNull(trustBundles, "trustBundles");
+            return this;
+        }
+
+        /**
+         * Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle} wie {@code space-harvester.network.tls}
+         * (#189); Standard nur der JVM-Truststore. Die Windows-Speicher werden erst bei der ersten TLS-Verbindung
+         * gelesen.
+         *
+         * @throws IllegalArgumentException mit den Problemen, etwa einer unlesbaren CA-Datei
+         */
+        public Builder trust(TrustSettings trust) {
+            Objects.requireNonNull(trust, "trust");
+            List<String> problems = TrustPolicy.problems(trust);
+            if (!problems.isEmpty()) {
+                throw new IllegalArgumentException(String.join("; ", problems));
+            }
+            this.trust = trust;
             return this;
         }
 

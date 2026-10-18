@@ -1,8 +1,9 @@
 package com.aresstack.spaceharvester.config;
 
-import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -19,7 +20,7 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
 
     public SpaceHarvesterProperties {
         sources = sources == null ? List.of() : List.copyOf(sources);
-        network = network == null ? new Network(null, null) : network;
+        network = network == null ? new Network(null, null, null) : network;
     }
 
     /**
@@ -29,10 +30,12 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      * @param asyncTransport {@code web-client} (Standard): native Seiten-Snapshots nicht blockierend über Spring
      *                       WebClient (#47), mit derselben Route, demselben Vertrauen und demselben Client-Zertifikat;
      *                       {@code disabled}: Rückfall auf den synchronen Transport
+     * @param tls            Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle} (#189)
      */
-    public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport) {
+    public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport, Tls tls) {
 
         public Network {
+            tls = tls == null ? new Tls(null, null, null, null) : tls;
             proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null, null) : proxy;
             asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT : asyncTransport;
         }
@@ -60,6 +63,24 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
         ProxySettings toSettings() {
             return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
                     failureTtl, auth == null ? null : auth.toAuthentication());
+        }
+    }
+
+    /**
+     * Vertrauensquellen wie {@code network.tls} im Enterprise AI Client; ein Zertifikat gilt, sobald eine Quelle es
+     * akzeptiert. Ohne Angabe nur der JVM-Truststore.
+     *
+     * @param useJvmDefault      JVM-Truststore (Standard {@code true})
+     * @param useWindowsRoot     Windows-Stammzertifikate (Standard {@code false}; nur unter Windows)
+     * @param useWindowsCaStores Windows-Speicher Root und CA samt Zwischenzertifikaten (Standard {@code false})
+     * @param caCertificatesFile PEM- oder DER-Datei mit weiteren CA-Zertifikaten (optional)
+     */
+    public record Tls(Boolean useJvmDefault, Boolean useWindowsRoot, Boolean useWindowsCaStores,
+                      Path caCertificatesFile) {
+
+        TrustSettings toSettings() {
+            return new TrustSettings(useJvmDefault == null || useJvmDefault, Boolean.TRUE.equals(useWindowsRoot),
+                    Boolean.TRUE.equals(useWindowsCaStores), caCertificatesFile);
         }
     }
 
@@ -93,7 +114,7 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      * @param options weitere Adapter-Einstellungen, z. B. {@code pageSize}
      * @param clientCertificate TLS-Client-Zertifikat (mTLS, optional), unabhängig von {@code auth}
      * @param trustBundle Name eines Spring-SSL-Bundles ({@code spring.ssl.bundle.*}) mit den vertrauenswürdigen
-     *                    Server-/Proxy-CAs (optional; ohne Angabe das Vertrauen der JVM)
+     *                    Server-/Proxy-CAs (optional; ohne Angabe {@code network.tls})
      */
     public record Source(String id, String type, String title, URI baseUrl, Auth auth, Map<String, String> options,
                          ClientCertificate clientCertificate, String trustBundle) {

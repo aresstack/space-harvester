@@ -249,6 +249,23 @@ space-harvester:
           username: proxy-nutzer
           password: ${PROXY_PASSWORD}
   ```
+- **TLS-Vertrauen** ([#189](https://github.com/aresstack/space-harvester/issues/189)) für Quellen und KI-Dienst
+  ohne eigenes `trust-bundle`, wie `network.tls` im Enterprise AI Client: JVM-Truststore (`use-jvm-default`,
+  Standard an), Windows-Stammzertifikate (`use-windows-root`), Windows-Speicher Root und CA samt
+  Zwischenzertifikaten (`use-windows-ca-stores`) und eine PEM-/DER-Datei mit weiteren CAs
+  (`ca-certificates-file`, z. B. die CA eines TLS-prüfenden Firmen-Proxys). Ein Zertifikat gilt, sobald eine Quelle
+  es akzeptiert; Kette, Gültigkeit und Hostname prüft die Java-Laufzeit. Die Windows-Speicher liest der Core erst
+  bei der ersten TLS-Verbindung (außerhalb von Windows bleiben sie mit Hinweis im Protokoll aus); prozessweit wird
+  nichts umgestellt. Bibliothek: `Harvester.builder().trust(new TrustSettings(…))`.
+
+  ```yaml
+  space-harvester:
+    network:
+      tls:
+        use-windows-root: true
+        use-windows-ca-stores: true
+        ca-certificates-file: C:/firma/proxy-ca.pem
+  ```
 - **Windows-Dienst:** `pac-url-powershell`, `pac-url-windows-settings`, `pac-url-wscript` und `windows-static-proxy`
   lesen `HKCU` des **ausführenden Dienstkontos**, nicht die Einstellungen des angemeldeten Benutzers. Hat das
   Dienstkonto keine `AutoConfigURL`, `pac-url-manual` mit der PAC-Adresse des Unternehmens verwenden.

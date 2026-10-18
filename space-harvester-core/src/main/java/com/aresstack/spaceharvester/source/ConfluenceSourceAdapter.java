@@ -109,7 +109,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         }
         X509TrustManager trust;
         try {
-            trust = config.trustBundle() == null ? null : context.trustBundles().trustManager(config.trustBundle());
+            trust = config.trustBundle() == null ? context.trustBundles().defaultTrust() : context.trustBundles().trustManager(config.trustBundle());
         } catch (IllegalArgumentException e) {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }

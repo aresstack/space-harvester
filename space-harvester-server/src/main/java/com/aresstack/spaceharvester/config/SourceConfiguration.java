@@ -9,7 +9,10 @@ import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.TrustBundles;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.util.Arrays;
+import java.util.List;
 import javax.net.ssl.X509TrustManager;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -40,15 +43,30 @@ class SourceConfiguration {
         return new LocalFilesSourceAdapter();
     }
 
+    /**
+     * Vertrauen der Quellen und des KI-Dienstes: {@code trust-bundle} aus {@code spring.ssl.bundle.*}, ohne Bundle
+     * {@code space-harvester.network.tls} (#189). Eine Bean, damit die Windows-Speicher nur einmal gelesen werden.
+     */
+    @Bean
+    TrustBundles sourceTrustBundles(SpaceHarvesterProperties properties, ObjectProvider<SslBundles> sslBundles) {
+        TrustSettings tls = properties.network().tls().toSettings();
+        List<String> problems = TrustPolicy.problems(tls);
+        if (!problems.isEmpty()) {
+            throw new IllegalStateException("space-harvester.network." + String.join("; ", problems));
+        }
+        SslBundles bundles = sslBundles.getIfAvailable();
+        return TrustBundles.withDefault(bundles == null ? TrustBundles.NONE : trustBundles(bundles),
+                TrustPolicy.defaultTrust(tls));
+    }
+
     @Bean
     ConfiguredSourceCatalog sourceCatalog(SpaceHarvesterProperties properties, ObjectProvider<BuildProperties> build,
-                                ObjectProvider<SslBundles> sslBundles, ObjectProvider<SourceAdapter> adapters) {
+                                TrustBundles trustBundles, ObjectProvider<SourceAdapter> adapters) {
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
-        SslBundles bundles = sslBundles.getIfAvailable();
         return ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
-                bundles == null ? TrustBundles.NONE : trustBundles(bundles), properties.network().proxy().toSettings(),
+                trustBundles, properties.network().proxy().toSettings(),
                 properties.network().asyncTransport(), adapters.orderedStream().toList());
     }
 
