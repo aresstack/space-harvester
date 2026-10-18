@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -50,6 +51,12 @@ class RemoteAiTest {
             bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, """
                     {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0]}]}""");
+        });
+        server.createContext("/v1/rerank", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"results":[{"index":1,"relevance_score":0.9},{"index":0,"relevance_score":0.2}]}""");
         });
         server.start();
     }
@@ -94,6 +101,30 @@ class RemoteAiTest {
         assertThatThrownBy(() -> ai.embeddings().embed(List.of("vertraulicher Text")))
                 .isInstanceOf(EmbeddingUnavailableException.class)
                 .hasMessageNotContaining(KEY).hasMessageNotContaining("vertraulich");
+    }
+
+    @Test
+    void reranksOverTheServiceWithBearerModelAndDocuments() {
+        double[] scores = remote(settings(null, null).withRerankModel("bge-reranker")).reranker()
+                .score("Nachtbetrieb", List.of("Urlaub", "Betrieb in der Nacht"));
+
+        assertThat(scores).containsExactly(0.2, 0.9);
+        assertThat(authorizations).containsOnly("Bearer " + KEY);
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"bge-reranker\"")
+                .contains("Nachtbetrieb").contains("Betrieb in der Nacht");
+    }
+
+    @Test
+    void aFailingRerankerNamesTheReasonButNeverTheKeyOrTheText() {
+        status = 500;
+        ModelReranker.Scorer scorer = remote(settings(null, null).withRerankModel("bge-reranker")).reranker();
+
+        assertThatThrownBy(() -> scorer.score("vertrauliche Frage", List.of("vertraulicher Text", "zweiter")))
+                .isInstanceOf(AiServiceException.class)
+                .hasMessageNotContaining(KEY).hasMessageNotContaining("vertraulich");
+        assertThatThrownBy(() -> remote(settings(null, null)).reranker()).isInstanceOfSatisfying(
+                AiServiceException.class,
+                e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.NOT_CONFIGURED));
     }
 
     @Test

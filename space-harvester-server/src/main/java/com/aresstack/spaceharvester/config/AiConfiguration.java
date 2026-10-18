@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.config;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
+import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
@@ -38,10 +40,28 @@ class AiConfiguration {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
         }
-        BuildProperties info = build.getIfAvailable();
-        String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
-        return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent).embeddings(),
+        return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent(build)).embeddings(),
                 properties.embeddingChunkChars(), settings::mayProcessExternally);
+    }
+
+    /**
+     * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Fusion um, mit Texten
+     * nur aus Quellen in {@code external-processing-sources}. Ohne {@code rerank-model} bleibt die Reihenfolge.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "rerank-model")
+    SearchReranker searchReranker(AiServiceSettings settings, ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                  ObjectProvider<BuildProperties> build) {
+        if (!settings.reranking()) {
+            throw new IllegalStateException("space-harvester.ai.rerank-model braucht base-url");
+        }
+        return new ModelReranker(settings.rerankModel(),
+                RemoteAi.of(settings, catalog, trust, userAgent(build)).reranker(), settings::mayProcessExternally);
+    }
+
+    private static String userAgent(ObjectProvider<BuildProperties> build) {
+        BuildProperties info = build.getIfAvailable();
+        return "space-harvester/" + (info != null ? info.getVersion() : "unknown");
     }
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */

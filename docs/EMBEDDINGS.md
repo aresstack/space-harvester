@@ -27,10 +27,12 @@ space-harvester:
     trust-bundle: ki                    # optional, ein spring.ssl.bundle; sonst Vertrauen der JVM
     external-processing-sources: confluence,wiki2   # Standard: keine
     embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
+    rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
 ```
 
-Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei; den API-Key legt der Reiter „KI“ im
-Tresor ab und gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
+Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf `embedding-chunk-chars`
+und vorerst `rerank-model` (der Reiter „KI“ bekommt das Feld noch); den API-Key legt der Reiter „KI“ im Tresor ab und
+gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
 etwa `AiServiceSettings.fromProperties(properties)`.
 
 **Freigabe für externe Verarbeitung.** Das Leserecht eines Benutzers genügt nicht, um Seiteninhalte an den Dienst zu
@@ -88,6 +90,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   per Reciprocal Rank Fusion (k = 60, gleiche Gewichte, wie `ReciprocalRankFusion` im Enterprise AI Client) aus der
   Volltext- und der Kosinus-Rangfolge (`reranker: rrf(fulltext,embedding-cosine@<Prozessorversion>)`); Treffer ohne
   beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch.
+- Cross-Encoder (#181, wie `KipitzRerankAdapter` und `CrossEncoderRanking` im Enterprise AI Client): Mit
+  `rerank-model` bewertet der Dienst über `POST <base-url>/rerank` jeden Treffer einzeln gegen den Anfragetext und
+  ordnet die Treffer der Antwort danach um (`reranker: …+cross-encoder@<Modell>`). Er kommt erst nach der
+  Live-Prüfung und sieht den Titel und, nur mit `content`-Freigabe im heute gemeldeten Space, höchstens 2000 Zeichen
+  des Lesetexts um das ähnlichste Stück, nie die Adresse. Es gehen nur
+  Treffer aus Quellen in `external-processing-sources` hinaus; die übrigen behalten ihren Platz. Anders als im
+  Enterprise AI Client verwirft er nichts, er ordnet nur um. Scheitert der Dienst, bleibt die Reihenfolge, und die Suche
+  antwortet trotzdem. Ein eigener Reranker des Programms (`Harvester.builder().reranker(…)`) ersetzt ihn.
 - Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
   Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
   Kopfdaten; es wird beim nächsten Abgleich neu berechnet.

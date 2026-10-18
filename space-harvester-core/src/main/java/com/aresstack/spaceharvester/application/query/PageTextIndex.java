@@ -24,6 +24,14 @@ public interface PageTextIndex {
     /** Der abgelegte Stand ({@link Entry#inputSha256()}) der Seite, wenn sie im Index liegt. */
     Optional<String> inputSha256(PageKey key);
 
+    /**
+     * Der abgelegte Lesetext der Seite (#181, für den Rerank-Dienst), wenn sie im Index liegt. Entscheidet nicht über
+     * Rechte; der Aufrufer prüft {@code content} vorher.
+     */
+    default Optional<String> text(PageKey key) {
+        return Optional.empty();
+    }
+
     /** Entfernt eine Seite; unbekannte Seiten sind kein Fehler. */
     void remove(PageKey key);
 

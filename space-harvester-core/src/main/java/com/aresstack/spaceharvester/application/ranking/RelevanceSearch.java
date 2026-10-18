@@ -101,6 +101,9 @@ public class RelevanceSearch {
     /** Gleichzeitige Metadatenabrufe der Live-Prüfung je Suche. */
     static final int PARALLEL_CHECKS = 6;
 
+    /** Längster Auszug des Lesetexts, den ein Reranker je Treffer als Dokument bekommt (#181). */
+    static final int MAX_DOCUMENT_CHARS = 2000;
+
     /** Längster Anfragetext. */
     public static final int MAX_TEXT_LENGTH = 500;
 
@@ -243,14 +246,10 @@ public class RelevanceSearch {
             ordered = ReciprocalRankFusion.fuse(ordered, List.of(ranked, bySimilarity));
             rerankerId = "rrf(fulltext," + rerankerId + ")";
         }
-        if (this.reranker != SearchReranker.NONE) {
-            Reranking custom = new Reranking(this.reranker);
-            ordered = custom.apply(query, ordered);
-            rerankerId = rerankerId + "+" + custom.rerankerId();
-        }
         Set<PageKey> contentRanked = new LinkedHashSet<>();
         ranked.forEach(hit -> contentRanked.add(hit.page().header().key()));
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
+        Map<SearchHit, String> partitions = new IdentityHashMap<>();
         boolean complete = true;
         int next = 0;
         // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
@@ -260,9 +259,22 @@ public class RelevanceSearch {
                 complete &= !verified.failed();
                 if (verified.hit() != null && hits.size() < limit) {
                     hits.add(verified.hit());
+                    partitions.put(verified.hit().hit(), verified.partition());
                 }
             }
             next = end;
+        }
+        if (this.reranker != SearchReranker.NONE) {
+            // Erst nach der Live-Prüfung: An den Reranker gehen nur Texte von Seiten, die der Aufrufer jetzt lesen
+            // darf, geprüft gegen ihren heutigen Space.
+            Map<SearchHit, RankedHit> byHit = new IdentityHashMap<>();
+            hits.forEach(hit -> byHit.put(hit.hit(), hit));
+            Reranking custom = new Reranking(this.reranker);
+            List<SearchHit> reranked = custom.apply(new SearchReranker.Request(query, queryText,
+                    hits.stream().map(RankedHit::hit).toList(),
+                    hit -> document(caller, hit, scores.get(hit), partitions.get(hit))));
+            hits = reranked.stream().map(byHit::get).toList();
+            rerankerId = rerankerId + "+" + custom.rerankerId();
         }
         return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete);
     }
@@ -276,7 +288,7 @@ public class RelevanceSearch {
     private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
                                   Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
         if (renewal == null) {
-            return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false)).toList();
+            return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false, indexed(hit))).toList();
         }
         Semaphore slots = new Semaphore(PARALLEL_CHECKS);
         List<Future<Verified>> futures = new ArrayList<>(batch.size());
@@ -328,7 +340,7 @@ public class RelevanceSearch {
             }
             if (e.reason() == SourceAccessException.Reason.UNSUPPORTED) {
                 // Die Quelle kann keine Einzelseite prüfen (wie beim Lesen ohne Inhaltsabruf): Policy und Index.
-                return new Verified(ranked(hit, score), false);
+                return new Verified(ranked(hit, score), false, indexed(hit));
             }
             // Ohne Seiten-ID im Log.
             LOG.log(System.Logger.Level.INFO, "Kopfdaten eines Relevanztreffers in {0} nicht lesbar ({1})",
@@ -351,7 +363,7 @@ public class RelevanceSearch {
                 checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE);
             }
         }
-        return new Verified(ranked(hit, checked), false);
+        return new Verified(ranked(hit, checked), false, live.partitionKey());
     }
 
     private void renew(AccessContext caller, PageKey key) {
@@ -369,11 +381,18 @@ public class RelevanceSearch {
                         score.freshness()));
     }
 
-    /** Ergebnis der Live-Prüfung: Treffer, weggefallen ({@code hit == null}) oder nicht prüfbar ({@code failed}). */
-    private record Verified(RankedHit hit, boolean failed) {
+    private static String indexed(SearchHit hit) {
+        return hit.page().header().metadata().partitionKey();
+    }
 
-        static final Verified DROPPED = new Verified(null, false);
-        static final Verified FAILED = new Verified(null, true);
+    /**
+     * Ergebnis der Live-Prüfung: Treffer, weggefallen ({@code hit == null}) oder nicht prüfbar ({@code failed}), mit
+     * dem geprüften Space.
+     */
+    private record Verified(RankedHit hit, boolean failed, String partition) {
+
+        static final Verified DROPPED = new Verified(null, false, null);
+        static final Verified FAILED = new Verified(null, true, null);
     }
 
     /**
@@ -554,6 +573,36 @@ public class RelevanceSearch {
         Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
                 : Freshness.STALE;
         return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness);
+    }
+
+    /**
+     * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, ein Auszug des
+     * Lesetexts aus dem Volltextindex, um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
+     */
+    private String document(AccessContext caller, SearchHit hit, Score score, String partition) {
+        String title = hit.page().header().metadata().title();
+        title = title == null ? "" : title.strip();
+        PageKey key = hit.page().header().key();
+        if (texts == null || !access.permits(caller, ResourceScope.page(key.sourceId(), partition, key.pageId()),
+                AccessKind.CONTENT)) {
+            return title;
+        }
+        String text;
+        try {
+            text = texts.text(hit.page().header().key()).orElse("");
+        } catch (RuntimeException e) {
+            return title;
+        }
+        int start = score == null ? 0 : Math.clamp(score.charStart(), 0, text.length());
+        int end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
+            // Das Stück mittig, soweit der Text reicht.
+            int spare = MAX_DOCUMENT_CHARS - (Math.min(score.charEnd(), text.length()) - start);
+            start = Math.max(0, start - spare / 2);
+            end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        }
+        String excerpt = text.substring(start, end).strip();
+        return title.isEmpty() ? excerpt : excerpt.isEmpty() ? title : title + "\n" + excerpt;
     }
 
     private boolean permits(AccessContext caller, SearchHit hit, AccessKind kind) {
