@@ -43,10 +43,12 @@ class ApiRouteCoverageTest {
     // Sammellöschungen betreffen nur eigene Aufträge: 200 mit {"deleted": 0}.
     // Die Adressauflösung ist ebenso global (#178): 200 ohne Treffer.
     // Der regelmäßige Abgleich (ADR 0014) zeigt nur Spaces mit sync-Freigabe: 200 mit leerer Liste.
+    // Die progressive Suche (ADR 0017) ist ebenso global; mit wait=true 200 ohne Treffer.
+    private static final String PROGRESSIVE = "/api/v1/search/progressive";
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
-            "/api/v1/sign-ins");
+            "/api/v1/sign-ins", PROGRESSIVE);
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -120,7 +122,8 @@ class ApiRouteCoverageTest {
         HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getRequiredProperty("local.server.port") + path))
                 .header("Content-Type", "application/json")
-                .method(route.method(), HttpRequest.BodyPublishers.ofString("{}"));
+                .method(route.method(), HttpRequest.BodyPublishers.ofString(PROGRESSIVE.equals(route.path())
+                        ? "{\"q\":\"x1\",\"wait\":true}" : "{}"));
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
         }

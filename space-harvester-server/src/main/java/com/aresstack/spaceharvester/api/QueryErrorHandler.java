@@ -67,6 +67,12 @@ class QueryErrorHandler {
                 + "verfügbar", e.getMessage() + "; mit title sucht sort=relevance in den Titeltreffern.");
     }
 
+    @ExceptionHandler(ProgressiveSearches.CapacityExceededException.class)
+    ProblemDetail tooManySearches(ProgressiveSearches.CapacityExceededException e) {
+        return problem(HttpStatus.TOO_MANY_REQUESTS, "too-many-searches", "Zu viele laufende Suchen",
+                "Es laufen zu viele progressive Suchen; eine beenden oder später erneut versuchen.");
+    }
+
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
         problem.setType(URI.create(TYPE_BASE + type));

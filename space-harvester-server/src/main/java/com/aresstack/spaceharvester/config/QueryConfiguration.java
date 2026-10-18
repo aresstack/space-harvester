@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.api.ProgressiveSearches;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -19,6 +20,12 @@ import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
+import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -41,9 +48,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Verdrahtet die cachegestützte Query-API (#27) und die Suche (#28). Solange kein {@link PageCacheReader} bzw.
- * {@link PageSearchIndex} als Bean existiert (der Lucene-Cache aus #26 liefert sie), antworten ihre Routen mit
- * {@code cache-unavailable}.
+ * Verdrahtet die cachegestützte Query-API (#27), die Suche (#28) und die progressive Suche (ADR 0017). Solange kein
+ * {@link PageCacheReader} bzw. {@link PageSearchIndex} als Bean existiert (der Lucene-Cache aus #26 liefert sie),
+ * antworten ihre Routen mit {@code cache-unavailable}.
  */
 @Configuration(proxyBeanMethods = false)
 class QueryConfiguration {
@@ -105,18 +112,49 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
-        SearchReranker current = reranker.getIfUnique();
-        ExcerptPriority excerpts;
+        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
+                excerpts(reranker.getIfUnique(), excerptRanking), loads);
+    }
+
+    /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
+    private static ExcerptPriority excerpts(SearchReranker current, boolean excerptRanking) {
         if (!excerptRanking) {
-            excerpts = ExcerptPriority.off();
-        } else if (current instanceof SwappableReranker live) {
-            // Folgt dem Reranker der wirksamen Konfiguration (ADR 0015).
-            excerpts = ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
-                    ? cross.excerptPriority() : ExcerptPriority.off());
-        } else {
-            excerpts = current instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+            return ExcerptPriority.off();
         }
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts, loads);
+        if (current instanceof SwappableReranker live) {
+            // Folgt dem Reranker der wirksamen Konfiguration (ADR 0015).
+            return ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
+                    ? cross.excerptPriority() : ExcerptPriority.off());
+        }
+        return current instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+    }
+
+    /**
+     * Progressive Suche (ADR 0017) wie {@code Harvester.progressiveSearch()}: die Schlagwortsuche mit ihren
+     * Rechteprüfungen je Suchanfrage, Varianten vom Chat-Modell der wirksamen Konfiguration mit den Regeln als Rückfall,
+     * bewertet gegen die ursprüngliche Anfrage vom Cross-Encoder ({@code rerank-model}, nur Quellen in
+     * {@code external-processing-sources}; ohne ihn keine Bewertung). Schließt vor der Schlagwortsuche und dem Cache:
+     * bricht laufende Suchen ab und wartet auf ihre Suchanfragen, ohne sie zu unterbrechen.
+     */
+    @Bean(destroyMethod = "close")
+    SearchOrchestrator searchOrchestrator(KeywordSearch keywords, ObjectProvider<SearchReranker> reranker,
+                                          QueryVariantModels models,
+                                          @Value("${space-harvester.search.excerpt-ranking:true}")
+                                          boolean excerptRanking) {
+        RuleBasedExpansion rules = new RuleBasedExpansion();
+        return new SearchOrchestrator(VariantSearch.of(keywords),
+                new AiQueryExpansion(models, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
+                HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)));
+    }
+
+    /**
+     * Die progressiven Suchen der REST-API (ADR 0017), je Aufrufer; Standardprofil mit Varianten vom Chat-Modell,
+     * wenn die wirksame Konfiguration eines hat, sonst nach Regeln.
+     */
+    @Bean(destroyMethod = "close")
+    ProgressiveSearches progressiveSearches(SearchOrchestrator orchestrator, QueryVariantModels models) {
+        return new ProgressiveSearches(orchestrator, () -> SearchProfile.defaults().withExpansion(
+                models.get().isPresent() ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES));
     }
 
     /**
