@@ -19,6 +19,8 @@ dependencies {
     // PDF-Ausgabe (PdfExportWriter)
     api libs.pdfbox
     implementation libs.flexmark
+    // Mermaid-Diagramme und SVG-Bilder offline als PNG (GraalJS + Batik, ohne Browser und Netz)
+    implementation libs.mermaid.java
     implementation libs.flexmark.ext.tables
     implementation libs.flexmark.ext.autolink
     implementation libs.flexmark.ext.gfm.strikethrough

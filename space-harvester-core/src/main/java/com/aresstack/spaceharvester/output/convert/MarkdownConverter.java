@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.output.convert;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.document.ExportGraphics;
+import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.document.MarkdownExportWriter;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.CodeBlock;
@@ -37,16 +38,17 @@ import java.util.regex.Pattern;
  * darunter Seiten-ID, Version und Adresse. Der Inhalt kommt aus dem Storage-Format; Verweise auf Seiten desselben
  * Exports zeigen auf deren Sprungmarke.
  *
- * <p>Formatverluste: Bilder, die nur als Anhang vorliegen, gelten nicht als eingebettet und erscheinen als
- * „Abbildung nicht verfügbar“; externe Bilder bleiben Links; draw.io- und Gliffy-Diagramme
- * erscheinen als Hinweis mit ihrem Namen, PlantUML und Mermaid als Codeblock mit ihrer Textquelle; Infokästen werden
+ * <p>Bilder, die der Datenbestand abgelegt hat, stehen als {@code data:}-URI im Text; Mermaid als Codeblock mit seiner
+ * Textquelle und darunter als gezeichnetes Bild. Formatverluste: nicht abgelegte Bilder erscheinen als „Abbildung
+ * nicht verfügbar“ mit Grund, externe zusätzlich mit ihrer Adresse; draw.io- und Gliffy-Diagramme
+ * erscheinen als Hinweis mit ihrem Namen, PlantUML als Codeblock mit seiner Textquelle; Infokästen werden
  * Zitatblöcke; Zellen mit Listen oder mehreren Absätzen werden einzeilig; Farben, Ausrichtung und verbundene Zellen
  * entfallen. Nicht unterstützte Makros stehen als Hinweis im Text. Siehe {@code docs/CONVERTERS.md}.
  */
 public final class MarkdownConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown";
-    public static final String VERSION = "markdown/4";
+    public static final String VERSION = "markdown/5";
 
     /** Zeichen am Zeilenanfang, die Markdown sonst als Überschrift, Liste oder Trennlinie läse. */
     private static final Pattern LINE_START = Pattern.compile("^(\\s*\\d*)([#=+-]|(?<=\\d)[.)])");
@@ -74,15 +76,16 @@ public final class MarkdownConverter implements ExportConverter {
     @Override
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
-        MarkdownExportWriter markdown = new MarkdownExportWriter(ExportGraphics.standard());
+        MarkdownExportWriter markdown = new MarkdownExportWriter(ExportGraphics.rendering());
         Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
         String title = ExportChapters.title(input);
         writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, VERSION), List.of(), 1));
         try {
             input.forEachPage(page -> {
                 try {
+                    List<ExportImage> images = ExportChapters.images(page, input.assets());
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
-                            ExportChapters.markdown(page, parser), List.of(), ExportChapters.depth(page)));
+                            ExportChapters.markdown(page, parser, images), images, ExportChapters.depth(page)));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }

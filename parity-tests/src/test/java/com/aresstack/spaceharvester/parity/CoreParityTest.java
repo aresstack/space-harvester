@@ -2,7 +2,7 @@ package com.aresstack.spaceharvester.parity;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
-import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -16,6 +16,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -55,22 +56,22 @@ class CoreParityTest {
                         SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
                 .dataDirectory(data)
                 .build()) {
-            JobStatus export = harvester.await(harvester.export("wiki", ParitySpace.SPACE, List.of(FORMATS)).id(),
+            // Wie in der App: herunterladen (JSON-Datenbestand), Bilder beschaffen lassen, dann aus dem Datenbestand
+            // konvertieren; die Konverter fragen die Quelle nicht an
+            JobStatus export = harvester.await(harvester.export("wiki", ParitySpace.SPACE, List.of("json")).id(),
                     Duration.ofSeconds(60));
             assertThat(export.state()).isEqualTo(JobState.COMPLETED);
-            ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
+            JobStatus assets = harvester.await(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS).get(0).id(),
+                    Duration.ofSeconds(60));
+            assertThat(assets.state()).isEqualTo(JobState.COMPLETED);
             // Neben dem Bericht ablegen, damit man die Core-Exporte öffnen und mit den Referenzen vergleichen kann
             Path exports = reportFile().getParent().resolve("core");
             Files.createDirectories(exports);
-            for (ExportArtifact.File file : artifact.files()) {
-                String extension = extension(file.name());
-                if (!List.of("docx", "pdf", "md").contains(extension) || CORE.containsKey(extension)) {
-                    continue;
-                }
+            for (String format : FORMATS) {
+                String extension = format.equals("markdown") ? "md" : format;
                 Path target = exports.resolve("core." + extension);
-                try (InputStream in = harvester.exports().artifactFile(export.id(), Harvester.OWNER, file.name())
-                        .orElseThrow()) {
-                    Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                try (OutputStream out = Files.newOutputStream(target)) {
+                    harvester.conversions().convert(export.id(), Harvester.OWNER, format, out);
                 }
                 CORE.put(extension, target);
             }

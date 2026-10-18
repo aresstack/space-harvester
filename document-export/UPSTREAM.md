@@ -3,8 +3,9 @@
 Word- und PDF-Ausgabe des [Enterprise AI Client](https://github.com/aresstack/enterprise-ai-client) als eigene Bibliothek für
 Space Harvester. Angelo wollte keinen zweiten, einfacheren Word-Writer: der Export von Space Harvester soll genauso
 aussehen wie der des Enterprise AI Client, mit echtem Inhaltsverzeichnis, Word-Überschriften, Listen, Tabellen,
-Links, Codeblöcken und Abbildungen. Diese Klassen hängen dort an der Swing-Anwendung; hier stehen sie ohne Swing,
-ohne mermaid-java und ohne Batik. Der Core (`DocxConverter`) hängt nur von diesem Modul ab.
+Links, Codeblöcken und Abbildungen. Diese Klassen hängen dort an der Swing-Anwendung; hier stehen sie ohne Swing.
+Mermaid zeichnet mermaid-java (GraalJS, offline), SVG rastert Batik, wie im Enterprise AI Client. Der Core
+(`DocxConverter`, `PdfConverter`, `MarkdownConverter`) hängt nur von diesem Modul ab.
 
 Anders als `enterprise-ai-sources` und `comic-controls` ist das **keine unveränderte Kopie**: die Klassen hängen
 upstream an `KnowledgeDocument`, am Mermaid- und SVG-Renderer der Oberfläche und an `PdfExportWriter`. Die
@@ -22,6 +23,8 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
 | `MarkdownDocxRenderer` | `proasteion/exedra/…/exedra/document/MarkdownDocxRenderer.java` |
 | `ExportGraphics` | `proasteion/exedra/…/exedra/document/ExportGraphics.java` |
 | `MermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/MermaidImageRenderer.java` |
+| `AresStackMermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/AresStackMermaidImageRenderer.java` (nur Paketzeile) |
+| `SvgImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/SvgImageRenderer.java` (nur Paketzeile) |
 | `ExportDocumentNode` | `astu/acropolis/…/acropolis/knowledge/ExportDocumentNode.java` |
 | `ExportImage` | `astu/acropolis/…/acropolis/knowledge/ExportImage.java` (nur Javadoc) |
 | `PdfExportWriter` | `proasteion/exedra/…/exedra/document/PdfExportWriter.java` |
@@ -31,7 +34,8 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
 
 - **ExportDocumentNode** ohne `KnowledgeDocument`: der Inhalt ist das Markdown selbst. Neu ist `anchor()`, die
   Sprungmarke des Kapitels.
-- **ExportGraphics**: Mermaid- und SVG-Renderer werden übergeben (`standard()` hat keine). Ohne Renderer bleibt Mermaid
+- **ExportGraphics**: Mermaid- und SVG-Renderer werden übergeben (`standard()` hat keine,
+  `rendering()` die beiden Renderer oben, so nutzt es der Core). Ohne Renderer bleibt Mermaid
   Code und SVG gilt als nicht darstellbar; beides steht in `problems()`. Neu sind `with(List<ExportImage>)` und
   `forget()`, damit ein langer Export nur die Bilder des aktuellen Kapitels im Speicher hält.
 - **DocxExportWriter**: Kapitel lassen sich einzeln in Baumreihenfolge übergeben (`open(…)`, `Chapters.chapter(…)`,
