@@ -29,6 +29,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SignInChallenge;
 import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -193,6 +194,23 @@ class ExportMediaSignInTest {
         assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
     }
 
+    @Test
+    void aRecollectionThatCannotReachTheSourceKeepsWhatWasStoredBefore() {
+        Source source = new Source(false);
+        Setup setup = setup(source, SignInRequests.none());
+        drain();
+        assertThat(setup.writer.assets(setup.export.id()).orElseThrow().complete()).isTrue();
+
+        source.listingDown = true;
+        assertThat(setup.conversions.collectImages(setup.export.id(), "client-a")).isPresent();
+        drain();
+
+        ExportAssetManifest manifest = setup.writer.assets(setup.export.id()).orElseThrow();
+        assertThat(manifest.complete()).isFalse();
+        assertThat(manifest.forPage("100")).filteredOn(ExportAssetManifest.Entry::stored)
+                .extracting(e -> e.reference().filename()).contains("ablauf.drawio", "foto.png");
+    }
+
     private SignInRequest awaitPending(SignInRequests signIns) throws InterruptedException {
         for (int i = 0; i < 400; i++) {
             if (!signIns.pending().isEmpty()) {
@@ -249,6 +267,7 @@ class ExportMediaSignInTest {
 
         volatile boolean locked;
         boolean brokenDrawio;
+        boolean listingDown;
         final List<String> loaded = new ArrayList<>();
         final List<String> codes = new ArrayList<>();
 
@@ -289,6 +308,9 @@ class ExportMediaSignInTest {
 
         @Override
         public PageAttachments attachments(String pageId) {
+            if (listingDown) {
+                throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Wartung", null);
+            }
             // Die Vorschau steht in der Liste vor dem Diagramm, wie Confluence sie oft liefert.
             List<PageAttachment> list = List.of(
                     new PageAttachment("att-preview", "confluence:wiki/attachment/att-preview", "ablauf.png",
@@ -316,8 +338,9 @@ class ExportMediaSignInTest {
         /** Die Ansicht zeigt die Vorschau des Diagramms über die Download-Adresse, ohne Anhangs-ID. */
         @Override
         public List<ViewImage> viewImages(String pageId) {
+            // Confluence setzt als Titel die Beschriftung des Diagramms, nicht den Dateinamen.
             return List.of(new ViewImage("https://wiki.example.org/download/attachments/100/ablauf.png?version=2",
-                    null, null, "image/png", null));
+                    "Ablauf (Übersicht)", null, "image/png", null));
         }
 
         @Override

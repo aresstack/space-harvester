@@ -219,13 +219,16 @@ public class ExportAssetCollection {
             Run run = new Run(context, dataset.sourceId());
             boolean[] complete = {true};
             boolean[] stopped = {false};
+            Set<String> checked = new HashSet<>();
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 if (stopped[0]) {
                     return;
                 }
                 try {
-                    if (!collectPage(run, exportId, dataset, page.snapshot(), entries)) {
+                    if (collectPage(run, exportId, dataset, page.snapshot(), entries)) {
+                        checked.add(page.snapshot().key().pageId());
+                    } else {
                         complete[0] = false;
                     }
                 } catch (SourceUnreachable e) {
@@ -237,13 +240,52 @@ public class ExportAssetCollection {
                             e.reason);
                 }
             });
-            boolean allStored = entries.stream().allMatch(ExportAssetManifest.Entry::present);
-            writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, entries));
+            List<ExportAssetManifest.Entry> result = merged(writer.assets(exportId), entries, checked);
+            boolean allStored = result.stream().allMatch(ExportAssetManifest.Entry::present);
+            writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, result));
             LOG.log(System.Logger.Level.INFO, "Bilder für Export {0}: {1} Referenzen, {2} fehlend", exportId,
-                    entries.size(), entries.stream().filter(entry -> !entry.stored()).count());
+                    result.size(), result.stream().filter(entry -> !entry.present()).count());
         } finally {
             running.remove(exportId);
         }
+    }
+
+    /**
+     * Ein erneuter Lauf ({@link ExportConversions#collectImages}) verliert nichts, was der vorige schon abgelegt hatte:
+     * fehlt ein Eintrag jetzt, war er vorher aber vorhanden, gilt der vorige; Einträge von Seiten, die dieser Lauf
+     * nicht vollständig prüfen konnte, bleiben.
+     */
+    static List<ExportAssetManifest.Entry> merged(Optional<ExportAssetManifest> previous,
+                                                  List<ExportAssetManifest.Entry> entries, Set<String> checked) {
+        if (previous.isEmpty()) {
+            return entries;
+        }
+        Map<String, ExportAssetManifest.Entry> before = new java.util.LinkedHashMap<>();
+        for (ExportAssetManifest.Entry entry : previous.get().assets()) {
+            if (entry.present()) {
+                before.putIfAbsent(key(entry), entry);
+            }
+        }
+        List<ExportAssetManifest.Entry> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ExportAssetManifest.Entry entry : entries) {
+            String key = key(entry);
+            seen.add(key);
+            ExportAssetManifest.Entry earlier = before.get(key);
+            merged.add(!entry.present() && earlier != null ? earlier : entry);
+        }
+        for (Map.Entry<String, ExportAssetManifest.Entry> earlier : before.entrySet()) {
+            if (!seen.contains(earlier.getKey()) && !checked.contains(earlier.getValue().pageId())) {
+                merged.add(earlier.getValue());
+            }
+        }
+        return merged;
+    }
+
+    private static String key(ExportAssetManifest.Entry entry) {
+        ExportAssetManifest.Reference reference = entry.reference();
+        return entry.pageId() + "\u0000" + reference.kind() + "\u0000" + reference.attachmentId() + "\u0000"
+                + reference.src() + "\u0000" + reference.index();
     }
 
     /** @return ob die Seite vollständig geprüft werden konnte */
@@ -498,12 +540,20 @@ public class ExportAssetCollection {
         return false;
     }
 
-    /** Der Dateiname eines Ansichtsbilds: sein Titel, sonst der letzte Pfadteil der Adresse. */
+    /**
+     * Der Dateiname eines Ansichtsbilds: der letzte Pfadteil der Adresse (Confluence setzt als Titel die Beschriftung
+     * des Diagramms, die Adresse endet auf {@code <Name>.png}), sonst sein Titel.
+     */
     private static String fileName(HarvestSource.ViewImage image) {
-        if (image.title() != null && !image.title().isBlank()) {
-            return image.title();
+        String fromSrc = srcName(image.src());
+        if (!fromSrc.isBlank()) {
+            return fromSrc;
         }
-        String src = image.src() == null ? "" : image.src();
+        return image.title() == null ? "" : image.title();
+    }
+
+    private static String srcName(String value) {
+        String src = value == null ? "" : value;
         int end = src.length();
         for (char c : new char[] {'?', '#'}) {
             int at = src.indexOf(c);
@@ -513,7 +563,11 @@ public class ExportAssetCollection {
         }
         String path = src.substring(0, end);
         String name = path.substring(path.lastIndexOf('/') + 1);
-        return java.net.URLDecoder.decode(name, StandardCharsets.UTF_8);
+        try {
+            return java.net.URLDecoder.decode(name.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return name;
+        }
     }
 
     /**

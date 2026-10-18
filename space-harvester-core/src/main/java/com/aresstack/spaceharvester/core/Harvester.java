@@ -685,7 +685,7 @@ public final class Harvester implements AutoCloseable {
 
     /**
      * Offene Anmeldungen (ADR 0018): verlangt eine Quelle beim Beschaffen von Bildern einen Einmalcode, wartet der
-     * Auftrag hier („Wartet auf Anmeldung“). Die Oberfläche zeigt {@link SignInRequests#pending()}, sendet den Code
+     * Auftrag hier („Wartet auf Anmeldung“), sofern {@link Builder#signInWait} eine Wartezeit setzt. Die Oberfläche zeigt {@link SignInRequests#pending()}, sendet den Code
      * mit {@link SignInRequests#submit} und kann ihn neu anfordern ({@link SignInRequests#resend}).
      */
     public SignInRequests signIns() {
@@ -1073,7 +1073,7 @@ public final class Harvester implements AutoCloseable {
         private Path exportDirectory;
         private Path assetDirectory;
         private long maxAssetBytes = 50L * 1024 * 1024;
-        private Duration signInWait = SignInRequests.DEFAULT_WAIT;
+        private Duration signInWait = Duration.ZERO;
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
@@ -1198,8 +1198,9 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
-         * Wie lange ein Auftrag auf einen Einmalcode wartet (ADR 0018); Standard
-         * {@link SignInRequests#DEFAULT_WAIT}, {@link Duration#ZERO}: nie (ohne Oberfläche).
+         * Wie lange ein Auftrag auf einen Einmalcode wartet (ADR 0018). Standard {@link Duration#ZERO}: nie, denn ohne
+         * Eingabemaske könnte niemand antworten; eine Oberfläche, die {@link #signIns()} bedient, setzt etwa
+         * {@link SignInRequests#DEFAULT_WAIT}.
          */
         public Builder signInWait(Duration signInWait) {
             this.signInWait = Objects.requireNonNull(signInWait, "signInWait");

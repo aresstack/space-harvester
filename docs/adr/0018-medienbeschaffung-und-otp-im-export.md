@@ -43,9 +43,10 @@ fehlendes Bild; er profitiert nur von einer vorher in der Leseansicht freigescha
    `OneTimeCodePrompt` im Enterprise AI Client), Phase „Wartet auf Anmeldung“. Bereits abgelegte Bilder bleiben.
    Nach der Annahme lädt er dieselbe Datei neu und macht weiter. Je Quelle gibt es eine Anforderung, weil die Sitzung
    für die ganze Quelle gilt; weitere Aufträge derselben Quelle warten auf dieselbe.
-4. **Ohne Anmeldung** (abgelehnt, Wartezeit abgelaufen, Standard 15 min, oder keine Oberfläche: Wartezeit null im
-   Server) fehlen die übrigen Dateien des Laufs mit `SIGN_IN_REQUIRED`, ohne erneut zu warten. Nachholen startet einen
-   neuen Lauf (`collectImages`); schon abgelegte Dateien kommen aus dem Speicher.
+4. **Ohne Anmeldung** (abgelehnt, Wartezeit abgelaufen, oder keine Oberfläche: Wartezeit null, der Standard im
+   Core und im Server, bis eine Eingabemaske sie setzt; empfohlen 15 min) fehlen die übrigen Dateien des Laufs mit
+   `SIGN_IN_REQUIRED`, ohne erneut zu warten. Nachholen startet einen neuen Lauf (`collectImages`); schon abgelegte
+   Dateien kommen aus dem Speicher, und was der neue Lauf nicht erreicht, behält den Stand des vorigen.
 5. **Der Code** wird nur an die Abfrage der Quelle gegeben und danach im `char[]` überschrieben. Er steht in keinem
    Feld, Log, Ereignis, Export und geht an kein Modell. Protokolliert wird nur „angenommen“ oder „nicht angenommen“.
 6. **JSON-Export mit Medienverzeichnis**, keine Base64-Einbettung: `pages.json`, `assets.json` mit Zuordnung zur
@@ -63,7 +64,8 @@ fehlendes Bild; er profitiert nur von einer vorher in der Leseansicht freigescha
   `decline(requestId)`. Alle Aufrufe mit Netz blockieren, nicht auf dem EDT.
 - `SignInRequest(id, sourceId, service, title, message, error, resendAvailable, jobIds, since)`: Texte der Quelle für
   die Maske („Zusätzliche Anmeldung erforderlich“, Hinweis, Fehler, „Code erneut senden“ nur bei `resendAvailable`).
-- `Harvester.Builder.signInWait(Duration)`, Standard 15 min; `Duration.ZERO` wartet nie.
+- `Harvester.Builder.signInWait(Duration)`: Standard `Duration.ZERO` (wartet nie); die App setzt
+  `SignInRequests.DEFAULT_WAIT` (15 min), sobald ihre Eingabemaske `signIns()` bedient.
 - Medienstand je Export wie bisher `ExportDatasetInfo.images()`; Gründe je Datei in `assets.json`.
 
 ## Folgen
