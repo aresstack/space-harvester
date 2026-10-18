@@ -264,6 +264,16 @@ public final class Workspace {
         return harvester.keywordSearch().search(caller, query, cursor, limit);
     }
 
+    /** Wie weit die Seiten eines Stapels der Schlagwortsuche geladen sind ({@code Results.progress()}). */
+    public java.util.Optional<KeywordSearch.Progress> keywordSearchProgress(String id) {
+        return harvester.keywordSearch().progress(id);
+    }
+
+    /** Bricht das Laden eines Stapels ab; Geladenes bleibt im Cache. */
+    public boolean cancelKeywordSearch(String id) {
+        return harvester.keywordSearch().cancel(id);
+    }
+
     /** Ob {@code sort=relevance} semantisch sucht (Embedding-Modell eingerichtet). */
     public boolean semanticSearch() {
         return harvester.relevance().semantic();
