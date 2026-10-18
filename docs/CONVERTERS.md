@@ -18,8 +18,10 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## Gemeinsame Regeln
 
-- **Nur aus dem Cache.** Ein Converter sieht über `ConversionInput` die exportierten Seiten einer Cache-Generation und
-  ihren ID-Baum. Er ruft nie Confluence auf und ändert weder Cache noch Rohdaten.
+- **Nur aus dem Datenbestand.** Ein Converter sieht über `ConversionInput` die exportierten Seiten einer
+  Cache-Generation, ihren ID-Baum und die beim Herunterladen abgelegten Bilder (`assets()`, aus `assets.json`). Er ruft
+  nie Confluence oder fremde Adressen auf und ändert weder Cache noch Rohdaten: einmal beschaffen, beliebig oft
+  konvertieren.
 - **Linear in Baumreihenfolge.** Konvertierte Dateien folgen dem Baum in Tiefensuche (Geschwister wie in `tree.json`).
   `pages.ndjson` bleibt nach Seiten-ID sortiert. Die Hierarchie wird nie in die Seitenliste eingebettet.
 - **Nachvollziehbar.** `manifest.json` nennt unter `conversions` je Datei Format, Medientyp, Converter-Version und den
@@ -43,11 +45,37 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 
-Markdown, Word und PDF folgen demselben Kapitelmodell (`ExportChapters`): Kapitel 1 ist der Space, betitelt mit seinem
-Namen aus der Quelle (ohne Namen „Space <Schlüssel> (<Quelle>)“), jede Seite ein
-Unterkapitel nach ihrer Tiefe im Baum (Markdown: `#` Space, `##` Wurzelseiten …, tiefer als sechs Ebenen eine fette
-Zeile; Abschnitte „Word“ und „PDF“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
-zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
+## Gemeinsamer Dokumentbaum
+
+Markdown, Word und PDF sind drei Ausgaben desselben Dokumentbaums: `ExportChapters` im Core baut ihn aus Seiten,
+Baum und Bildern des Datenbestands (`pages` + `tree` + `assets`), die Writer im Modul `:document-export` (Kopien der
+Exporter des Enterprise AI Client ohne Swing, [document-export/UPSTREAM.md](../document-export/UPSTREAM.md)) geben
+ihn nur aus. Keiner der drei interpretiert die Seiten selbst.
+
+- **Kapitel.** Kapitel 1 ist der Space, betitelt mit seinem Namen aus der Quelle (`ConversionInput.spaceName()`; ohne
+  Namen „Space <Schlüssel> (<Quelle>)“), jede Seite ein Unterkapitel nach ihrer Tiefe im Baum, linear in
+  Baumreihenfolge (Markdown: `#` Space, `##` Wurzelseiten …, tiefer als sechs Ebenen eine fette Zeile; Abschnitte
+  „Word“ und „PDF“). Jede Seite beginnt mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten
+  desselben Exports springen innerhalb der Datei zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`,
+  PDF: Sprungziel). Den Seitentitel wiederholt der Core nicht als Überschrift im Kapitelinhalt (gewollte Abweichung,
+  [PARITY.md](PARITY.md)).
+- **Inhalt.** Aus `body.storage.value` über dasselbe Markdown für alle drei Formate (Tabelle unten).
+- **Bilder.** Eingebettet wird nur, was der Auftrag „Bilder beschaffen“ nach dem Herunterladen abgelegt hat
+  (`ExportAssets`, Status `STORED`, SHA-geprüft): Anhänge und Bilder der Lese-Ansicht; in Markdown als `data:`-URI.
+  Alles andere (fehlend, keine Berechtigung, zu groß, nicht beschafft, fremde Adresse ohne abgelegte Kopie) gilt
+  nicht als eingebettet: an seiner Stelle steht kursiv „[Abbildung nicht verfügbar: …]“ mit Grund, auch in
+  Tabellenzellen, nie ein Platzhalter, der wie ein Bild aussieht. SVG rastert Batik.
+- **Diagramme.** Der Diagramm-Dienst des Core (`application.diagrams.Diagrams`, #190) zeichnet offline mit denselben
+  Renderern wie der Enterprise AI Client: Mermaid aus dem Diagrammtext der Seite (mermaid-java; Markdown behält
+  zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (JGraphX, auch `inc-drawio` von einer
+  anderen Seite). Was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte PNG-Vorschau des Plugins.
+  PlantUML bleibt Codeblock, Gliffy ein Hinweis. Die textuelle Quelle bleibt für Suche und KI maßgeblich.
+- **Hinweise.** Jede Abbildung, die das Dokument als nicht verfügbar zeigt, und jedes Diagramm, das sich nicht
+  zeichnen lässt, meldet der Converter einmal als `ConversionNotice` (Regel oben): `MISSING_IMAGE` mit Anhangname oder
+  Adresse ohne Query und Benutzerangaben, `MISSING_DIAGRAM` mit Diagrammname oder `mermaid`; Grund `missing`,
+  `forbidden`, `too-large`, `unavailable`, `not-collected` oder `render-failed`.
+- **Parität.** Maßstab ist der Enterprise AI Client ([PARITY.md](PARITY.md)); `:parity-tests` vergleicht die drei
+  Formate mit dessen Exporten, bekannte Lücken stehen in `parity-tests/src/test/resources/known-gaps.properties`.
 
 Word und PDF sind deterministisch: feste Zeitstempel im Archiv und kein Erstelldatum beziehungsweise feste
 Dateikennung, keine Datumsangaben.
@@ -58,8 +86,7 @@ ihre Zeichen darstellt (fett und kursiv dann ohne eigenen Schnitt).
 ## Word
 
 `pages.docx` schreibt der Word-Exporter des Enterprise AI Client (`DocxExportWriter`, `MarkdownDocxRenderer`,
-`ExportGraphics` auf Apache POI), als angepasste Kopie im Modul `:document-export` (Herkunft und Abweichungen in
-[document-export/UPSTREAM.md](../document-export/UPSTREAM.md)). Der Core hängt nur von diesem Modul ab, nie von der
+`ExportGraphics` auf Apache POI) im Modul `:document-export`. Der Core hängt nur von diesem Modul ab, nie von der
 Swing-Anwendung.
 
 - **Kapitelmodell.** Kapitel 1 ist der Space (Formatvorlage Überschrift 1), jede Seite ein Unterkapitel nach ihrer
@@ -74,17 +101,7 @@ Swing-Anwendung.
   Liste beginnt bei 1), Tabellen als Word-Tabellen mit wiederholter Kopfzeile, Links als Hyperlinks (nur
   `http(s)`/`mailto`), Code als schattierter Block in Consolas, Infokästen als Zitat. Jede Seite trägt eine Textmarke
   `page_<id>`; Verweise auf Seiten desselben Exports springen dorthin.
-- **Bilder und Diagramme.** Eingebettet wird nur, was der Datenbestand abgelegt hat (`ExportAssets`, beschafft vom
-  Auftrag „Bilder beschaffen“ nach dem Herunterladen): Anhänge und Bilder der Lese-Ansicht mit Status `STORED`. Alles
-  andere (fehlend, keine Berechtigung, zu groß, nicht beschafft, fremde Adresse ohne abgelegte Kopie) gilt nicht als
-  eingebettet: an seiner Stelle steht kursiv „[Abbildung nicht verfügbar: … – Grund]“, nie ein Platzhalter, der wie ein
-  Bild aussieht. Jede solche Stelle meldet der Konverter zusätzlich einmal als `ConversionNotice` (Seite, Art
-  `MISSING_IMAGE`/`MISSING_DIAGRAM`, Anhangname oder Adresse ohne Query, Status wie `forbidden` oder `not-collected`)
-  ins Ergebnis der Konvertierung. Kein Konverter ruft die Quelle oder fremde Adressen ab. Mermaid wird aus seiner Textquelle gezeichnet
-  (mermaid-java, offline), SVG-Anhänge über Batik gerastert; PlantUML bleibt Codeblock, Gliffy erscheint als Hinweis wie
-  unten. draw.io zeichnet der Diagramm-Dienst des Core (`Diagrams`, #190) aus den abgelegten Quelldaten, mit derselben
-  JGraphX-Anpassung wie der Enterprise AI Client; was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte
-  PNG-Vorschau des Plugins.
+- **Bilder und Diagramme** wie im Abschnitt „Gemeinsamer Dokumentbaum“.
 - **Speicher.** Apache POI hält ein Dokument als XML-Objekte im Speicher, gemessen etwa 170 KiB je Seite mit 3 KB
   Markdown (2000 Seiten: 327 MiB). Deshalb verlässt der Inhalt jedes Kapitels das POI-Dokument direkt nach dem
   Kapitel als XML in eine temporäre Datei; beim Schreiben setzt der Exporter ihn an seine Stelle zurück. Im Speicher
@@ -106,8 +123,7 @@ bekommen dieselben Kapitel aus demselben Markdown (`ExportChapters` im Core).
 - **Seitenzahlen.** Jede Seite trägt unten mittig „Seite / Gesamt“.
 - **Inhalt.** Überschriften, Listen, Tabellen mit Rahmen und Kopfzeile, Codeblöcke (Courier, grau hinterlegt, lange
   Zeilen umbrochen), Zitate und Hinweise, Hyperlinks (extern als Adresse, intern als Sprung zum Kapitel der Seite).
-  Bilder, die nur als Anhang oder Adresse vorliegen, gelten nicht als eingebettet: an ihrer Stelle steht
-  „[Abbildung nicht verfügbar: …]“, auch in Tabellenzellen.
+  Bilder und Diagramme wie im Abschnitt „Gemeinsamer Dokumentbaum“.
 - **Speicher.** Die Inhalte der Seiten gehen sofort in eine temporäre Datei (PDFBox-Scratch-Datei); im Speicher bleiben
   Seitenbaum, Gliederung und Verweise. Deshalb gilt weiter die Grenze von 20 000 PDF-Seiten je Datei; darüber scheitert
   nur diese Konvertierung (`CONVERSION_TOO_LARGE`). Bilder halten nur die des aktuellen Kapitels.
@@ -135,6 +151,5 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | `toc`, `children` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
 | andere Makros | Hinweis mit Makronamen; vorhandener Text- oder Rich-Text-Inhalt folgt |
 
-Diagramme sind nach Möglichkeit textuell. Eine Bildbeschreibung durch ein KI-Modell ist verlustbehaftet und gehört
-nicht zu den Convertern, sondern später zu den Enrichments (#29). Anhänge mit draw.io-XML oder SVG kommen mit der
-Anhangsliste (#9/#19).
+Diagramme bleiben in Suche und KI textuell; gezeichnet werden sie nur für die Ausgabe. Eine Bildbeschreibung durch ein
+KI-Modell ist verlustbehaftet und gehört nicht zu den Convertern, sondern zu den Enrichments (#29).

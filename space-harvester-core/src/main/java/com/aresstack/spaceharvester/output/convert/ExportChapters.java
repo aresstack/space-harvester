@@ -115,6 +115,12 @@ final class ExportChapters {
         return new Figures(content, images, notices(page.pageId(), content, images, codes));
     }
 
+    /** Hinweise für Mermaid-Diagramme einer Seite, die der Writer nicht zeichnen konnte (bleiben Quelltext). */
+    static List<ConversionNotice> mermaidNotices(ConvertiblePage page, List<String> failures) {
+        return failures.isEmpty() ? List.of() : List.of(new ConversionNotice(page.pageId(),
+                ConversionNotice.Kind.MISSING_DIAGRAM, "mermaid", "render-failed"));
+    }
+
     /** Markdown-Bildverweis {@code ![alt](ziel)}; Ziel mit oder ohne spitze Klammern. */
     private static final Pattern IMAGE = Pattern.compile("!\\[(?:[^\\]\\\\]|\\\\.)*\\]\\((<[^>]*>|[^)\\s]*)\\)");
 

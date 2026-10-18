@@ -73,6 +73,7 @@ public final class ExportGraphics {
     private final Map<String, ExportImage> known = new HashMap<String, ExportImage>();
     private final Map<String, Graphic> decoded = new HashMap<String, Graphic>();
     private final Set<String> problems = new LinkedHashSet<String>();
+    private final List<String> failedMermaid = new ArrayList<String>();
 
     /** @param mermaid draws Mermaid fences; {@code null}: fences stay code and are reported */
     public ExportGraphics(MermaidImageRenderer mermaid) {
@@ -180,6 +181,7 @@ public final class ExportGraphics {
         }
         if (image == null) {
             problems.add("Mermaid-Diagramm: nicht darstellbar, als Quelltext übernommen");
+            failedMermaid.add(code);
             return null;
         }
         Graphic graphic = graphic(image);
@@ -193,6 +195,16 @@ public final class ExportGraphics {
     public boolean knows(String src) {
         String address = src == null ? "" : src.trim();
         return address.regionMatches(true, 0, "data:", 0, 5) || known.containsKey(address);
+    }
+
+    /**
+     * The sources of the Mermaid diagrams that could not be drawn since the last call, in the order they were met; the
+     * caller reports them per chapter.
+     */
+    public List<String> takeMermaidFailures() {
+        List<String> taken = new ArrayList<String>(failedMermaid);
+        failedMermaid.clear();
+        return taken;
     }
 
     /** The figures that could not be embedded, one line each, in the order they were met. */
