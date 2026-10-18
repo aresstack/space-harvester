@@ -16,9 +16,10 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Regelmäßiger Abgleich je Space (ADR 0014, Punkt 1): startet in einem festen Abstand einen gewöhnlichen
- * {@link SpaceSyncJobs#start(String, String, String, boolean) Abgleich}, der die Metadaten inventarisiert, nur
- * geänderte Inhalte lädt und Fehlendes einzeln prüft. Kein Vollabruf der Inhalte und kein eigener Löschpfad.
+ * Optionaler Zeitplan je Space (ADR 0014): startet in einem festen Abstand das
+ * {@link SpaceSyncJobs#catchUp Nachholen der Änderungen} oder, wenn der Space vollständig gehalten werden soll, einen
+ * {@link SpaceSyncJobs#start(String, String, String, boolean) Abgleich mit Inventur}. Kein Vollabruf der Inhalte und
+ * kein eigener Löschpfad; Hauptweg für Änderungen sind Ereignisse der Quelle.
  *
  * <p>Standardmäßig ist kein Space eingeplant; ohne Plan behauptet der Core keine lückenlose Aktualität. Läuft für einen
  * Space noch ein Abgleich, wird der fällige übersprungen. Die Einplanung gilt, solange dieses Objekt lebt; den
@@ -49,15 +50,20 @@ public final class Reconciliation implements AutoCloseable {
      * @param sourceId     Quellen-ID
      * @param spaceKey     Space-Key
      * @param interval     Abstand zwischen zwei Starts
-     * @param loadUnknown  ob der Space vollständig gehalten wird, also auch unbekannte Seiten geladen werden
+     * @param mode         Betriebsart der Läufe; {@link SyncMode#FULL} hält den Space vollständig
      * @param nextAt       nächster fälliger Start
      * @param lastAt       letzter fälliger Start oder {@code null}
      * @param lastOutcome  sein Ergebnis oder {@code null}
      * @param lastJobId    der zuletzt gestartete Abgleich oder {@code null}; Zustand und Delta über
      *                     {@link SpaceSyncJobs#status}
      */
-    public record Schedule(String sourceId, String spaceKey, Duration interval, boolean loadUnknown, Instant nextAt,
+    public record Schedule(String sourceId, String spaceKey, Duration interval, SyncMode mode, Instant nextAt,
                            Instant lastAt, Outcome lastOutcome, String lastJobId) {
+
+        /** Ob die Läufe auch unbekannte Seiten laden ({@link SyncMode#FULL}). */
+        public boolean loadUnknown() {
+            return mode.loadsUnknown();
+        }
     }
 
     private final SpaceSyncJobs syncs;
@@ -86,6 +92,15 @@ public final class Reconciliation implements AutoCloseable {
      * @throws IllegalArgumentException bei einem Abstand unter {@link #MIN_INTERVAL}
      */
     public synchronized Schedule schedule(String sourceId, String spaceKey, Duration interval, boolean loadUnknown) {
+        return schedule(sourceId, spaceKey, interval, SyncMode.loadingUnknown(loadUnknown));
+    }
+
+    /**
+     * Wie {@link #schedule(String, String, Duration, boolean)}: {@link SyncMode#FULL} startet je Termin eine Inventur,
+     * die alles lädt; sonst holt jeder Termin die Änderungen in der Betriebsart nach.
+     */
+    public synchronized Schedule schedule(String sourceId, String spaceKey, Duration interval, SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");
         Objects.requireNonNull(interval, "interval");
@@ -93,7 +108,7 @@ public final class Reconciliation implements AutoCloseable {
             throw new IllegalArgumentException("Abstand des Abgleichs muss mindestens " + MIN_INTERVAL + " sein");
         }
         cancel(sourceId, spaceKey);
-        Entry entry = new Entry(sourceId, spaceKey, interval, loadUnknown, clock.instant().plus(interval));
+        Entry entry = new Entry(sourceId, spaceKey, interval, mode, clock.instant().plus(interval));
         long millis = interval.toMillis();
         entry.future = scheduler.scheduleWithFixedDelay(() -> due(entry), millis, millis, TimeUnit.MILLISECONDS);
         entries.put(key(sourceId, spaceKey), entry);
@@ -127,7 +142,10 @@ public final class Reconciliation implements AutoCloseable {
         Outcome outcome;
         String jobId = entry.lastJobId;
         try {
-            JobStatus started = syncs.start(entry.sourceId, entry.spaceKey, owner, entry.loadUnknown);
+            // Ohne Erstbefüllung genügt das Nachholen der Änderungen, wo die Quelle sie meldet (ADR 0014).
+            JobStatus started = entry.mode == SyncMode.FULL
+                    ? syncs.start(entry.sourceId, entry.spaceKey, owner, SyncMode.FULL)
+                    : syncs.catchUp(entry.sourceId, entry.spaceKey, owner, null, entry.mode);
             outcome = Outcome.STARTED;
             jobId = started.id();
         } catch (SyncAlreadyRunningException e) {
@@ -161,23 +179,23 @@ public final class Reconciliation implements AutoCloseable {
         private final String sourceId;
         private final String spaceKey;
         private final Duration interval;
-        private final boolean loadUnknown;
+        private final SyncMode mode;
         private ScheduledFuture<?> future;
         private Instant nextAt;
         private Instant lastAt;
         private Outcome lastOutcome;
         private String lastJobId;
 
-        private Entry(String sourceId, String spaceKey, Duration interval, boolean loadUnknown, Instant nextAt) {
+        private Entry(String sourceId, String spaceKey, Duration interval, SyncMode mode, Instant nextAt) {
             this.sourceId = sourceId;
             this.spaceKey = spaceKey;
             this.interval = interval;
-            this.loadUnknown = loadUnknown;
+            this.mode = mode;
             this.nextAt = nextAt;
         }
 
         private synchronized Schedule view() {
-            return new Schedule(sourceId, spaceKey, interval, loadUnknown, nextAt, lastAt, lastOutcome, lastJobId);
+            return new Schedule(sourceId, spaceKey, interval, mode, nextAt, lastAt, lastOutcome, lastJobId);
         }
     }
 }

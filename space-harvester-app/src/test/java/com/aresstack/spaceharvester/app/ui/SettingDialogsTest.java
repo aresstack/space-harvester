@@ -17,6 +17,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JPasswordField;
 import javax.swing.JRadioButton;
@@ -127,15 +128,28 @@ class SettingDialogsTest {
             assertThat(shell[0].title()).startsWith("Serverzertifikate prüfen");
             assertThat(texts(shell[0].body())).anyMatch(text -> text.contains("unabhängig vom Client-Zertifikat"));
             List<JRadioButton> options = find(shell[0].body(), JRadioButton.class);
-            assertThat(options.get(0).getText()).startsWith("Windows und Java");
-            // Die bisherige Einstellung (ohne trust-bundle: nur Java) bleibt gewählt, auch unter Windows.
-            assertThat(options.get(1).getText()).startsWith("Nur Java");
-            assertThat(options.get(1).isSelected()).isTrue();
-            options.get(0).setSelected(true);
+            // Ohne trust-bundle gilt das Vertrauen aller Quellen (network.tls); es bleibt gewählt.
+            assertThat(options.get(0).getText()).startsWith("Wie für alle Quellen").contains("JVM-Truststore");
+            assertThat(options.get(0).isSelected()).isTrue();
+        });
+        assertThat(Files.readString(config)).doesNotContain("trust-bundle");
+    }
+
+    @Test
+    void serverCertificatesForAllSourcesGoToNetworkTls() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.tls(null, context, done::countDown);
+            List<JCheckBox> boxes = find(shell[0].body(), JCheckBox.class);
+            assertThat(boxes).hasSize(3);
+            assertThat(boxes.get(0).isSelected()).as("JVM-Truststore").isTrue();
+            boxes.get(1).setSelected(true);
             shell[0].save();
         });
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(Files.readString(config)).contains("trust-bundle: \"windows\"");
+        assertThat(Files.readString(config)).contains("  tls:", "use-jvm-default: true", "use-windows-root: true",
+                "use-windows-ca-stores: false");
     }
 
     @Test
@@ -240,12 +254,15 @@ class SettingDialogsTest {
                 assertThat(panel[0].pickEmbedding.isEnabled()).isTrue();
                 panel[0].choose(panel[0].embeddingModel, "text-embedding-3-small");
                 panel[0].choose(panel[0].chatModel, "gpt-x");
-                panel[0].save.doClick();
+                panel[0].rerankModel.setText("bge-reranker");
+                // Gespeichert im Reiter „Modelle“; derselbe Block wie im Reiter „KI-Dienst“.
+                panel[0].saveModels.doClick();
             });
             awaitFeedback(panel[0], "übernommen");
 
             assertThat(Files.readString(config)).contains("embedding-model: \"text-embedding-3-small\"",
-                    "chat-model: \"gpt-x\"", "embedding-dimensions: 3").doesNotContain("sk-geheim");
+                    "chat-model: \"gpt-x\"", "embedding-dimensions: 3", "rerank-model: \"bge-reranker\"")
+                    .doesNotContain("sk-geheim");
             assertThat(context.settings().ai().embeddingDimensions()).isEqualTo(3);
             assertThat(authorizations).hasSize(2).containsOnly("Bearer sk-geheim");
             assertThat(context.runtime().workspace().semanticSearch()).as("Dienst, Modell und Dimension").isTrue();
@@ -259,7 +276,7 @@ class SettingDialogsTest {
         String[] text = {""};
         while (!text[0].contains(expected) && System.currentTimeMillis() < until) {
             Thread.sleep(50);
-            SwingUtilities.invokeAndWait(() -> text[0] = panel.feedback.text());
+            SwingUtilities.invokeAndWait(() -> text[0] = panel.feedback.text() + "\n" + panel.modelsFeedback.text());
         }
         assertThat(text[0]).contains(expected);
     }
@@ -318,5 +335,28 @@ class SettingDialogsTest {
             }
         }
         return found;
+    }
+
+    @Test
+    void cacheDurationsAreReadLikeTheConfigurationFile() {
+        assertThat(SettingDialogs.duration("0")).isEqualTo(java.time.Duration.ZERO);
+        assertThat(SettingDialogs.duration(" 30m ")).isEqualTo(java.time.Duration.ofMinutes(30));
+        assertThat(SettingDialogs.duration("6H")).isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(SettingDialogs.duration("1d")).isEqualTo(java.time.Duration.ofDays(1));
+        assertThat(SettingDialogs.duration("bald")).isNull();
+        assertThat(SettingDialogs.duration("-1h")).isNull();
+        assertThat(SettingDialogs.days("30")).isEqualTo(java.time.Duration.ofDays(30));
+        assertThat(SettingDialogs.days("12h")).as("kürzere Fristen bleiben").isEqualTo(java.time.Duration.ofHours(12));
+    }
+
+    @Test
+    void theThreeRefreshStrategiesMapToCacheFreshness() {
+        java.time.Duration month = java.time.Duration.ofDays(30);
+        assertThat(SettingDialogs.refreshStrategy(com.aresstack.spaceharvester.app.settings.AppSettings.Cache.DEFAULT))
+                .isEqualTo(SettingDialogs.ALWAYS_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), false, month))).isEqualTo(SettingDialogs.TIMED_WITHOUT_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), true, month))).isEqualTo(SettingDialogs.TIMED_WITH_CHECK);
     }
 }

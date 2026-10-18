@@ -57,6 +57,11 @@ class PageTextIndexingTest {
                     .extracting(PageTextIndex.Match::pageId).containsExactly("8");
             assertThat(texts.cachedVersion(snapshot.key(), key -> Optional.empty(), key -> Optional.of(snapshot)))
                     .isEmpty();
+            // Neuere Kopfdaten aus einem Katalogabgleich: die Payload ist noch Version 4 und muss geladen werden.
+            PageHeader newer = PageHeader.of("wiki", TestSnapshots.page("wiki", "8", "DEV", null, "5",
+                    TestSnapshots.json("{}")).metadata(), Instant.EPOCH);
+            assertThat(texts.cachedVersion(snapshot.key(), key -> Optional.of(newer), key -> Optional.of(snapshot)))
+                    .contains("4");
         }
     }
 }

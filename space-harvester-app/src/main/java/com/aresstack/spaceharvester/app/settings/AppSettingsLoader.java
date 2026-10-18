@@ -1,9 +1,12 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -193,7 +196,76 @@ public final class AppSettingsLoader {
         }
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
-                path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems));
+                path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
+                tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems),
+                flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems));
+    }
+
+    /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */
+    private AppSettings.Cache cache(Map<?, ?> cache, Map<?, ?> sync, List<String> problems) {
+        Duration maxAge = duration(get(cache, "max-age"), Duration.ZERO, "space-harvester.cache.max-age", problems);
+        if (maxAge.isNegative() || maxAge.compareTo(CacheFreshness.MAX_AGE) > 0) {
+            problems.add("space-harvester.cache.max-age liegt zwischen 0 und 365 Tagen");
+            maxAge = Duration.ZERO;
+        }
+        Duration retention = duration(get(sync, "withheld-retention"), AppSettings.Cache.DEFAULT_RETENTION,
+                "space-harvester.sync.withheld-retention", problems);
+        if (retention.isNegative()) {
+            problems.add("space-harvester.sync.withheld-retention darf nicht negativ sein");
+            retention = AppSettings.Cache.DEFAULT_RETENTION;
+        }
+        return new AppSettings.Cache(maxAge, flag(get(cache, "version-check"), true,
+                "space-harvester.cache.version-check", problems), retention);
+    }
+
+    /**
+     * Vertrauen ohne {@code trust-bundle} wie {@code space-harvester.network.tls} beim Dienst (#189). Ohne Angabe gilt
+     * unter Windows die Vorgabe des Enterprise AI Client (JVM-Truststore und Windows-Speicher), sonst der
+     * JVM-Truststore. Eine unbrauchbare Angabe wird gemeldet und durch die Vorgabe ersetzt.
+     */
+    private TrustSettings tls(Object raw, List<String> problems) {
+        TrustSettings standard = defaultTls();
+        if (raw == null) {
+            return standard;
+        }
+        Map<?, ?> tls = map(raw);
+        if (tls.isEmpty()) {
+            return TrustSettings.jvm();
+        }
+        Path file = path(get(tls, "ca-certificates-file"), problems);
+        TrustSettings settings = new TrustSettings(flag(get(tls, "use-jvm-default"), true, problems),
+                flag(get(tls, "use-windows-root"), false, problems),
+                flag(get(tls, "use-windows-ca-stores"), false, problems), file);
+        List<String> found = TrustPolicy.problems(settings);
+        if (found.isEmpty()) {
+            return settings;
+        }
+        found.forEach(problem -> problems.add("space-harvester.network." + problem));
+        return standard;
+    }
+
+    /** Vertrauen ohne Angabe in der Datei: unter Windows wie im Enterprise AI Client, sonst der JVM-Truststore. */
+    public TrustSettings defaultTls() {
+        return windows ? TrustSettings.system() : TrustSettings.jvm();
+    }
+
+    private boolean flag(Object raw, boolean standard, List<String> problems) {
+        return flag(raw, standard, "space-harvester.network.tls", problems);
+    }
+
+    private boolean flag(Object raw, boolean standard, String key, List<String> problems) {
+        if (raw == null) {
+            return standard;
+        }
+        if (raw instanceof Boolean value) {
+            return value;
+        }
+        String text = text(raw, problems);
+        if ("true".equalsIgnoreCase(text) || "false".equalsIgnoreCase(text)) {
+            return Boolean.parseBoolean(text);
+        }
+        problems.add(key + ": „" + text + "“ ist weder true noch false");
+        return standard;
     }
 
     /** Eine Liste von Kennungen, als YAML-Liste oder durch Kommas getrennt. */
@@ -206,6 +278,8 @@ public final class AppSettingsLoader {
                     ids.add(text.strip());
                 }
             });
+        } else if (raw instanceof Map<?, ?>) {
+            problems.add("space-harvester-app.disabled-sources ist eine Liste von Quellen-IDs, keine Zuordnung");
         } else if (raw != null) {
             String text = text(raw, problems);
             if (text != null) {
@@ -311,7 +385,29 @@ public final class AppSettingsLoader {
                 port == null ? null : integer(port, 0, "space-harvester.network.proxy.proxy-port", problems), nonProxy,
                 optionalDuration(get(proxy, "resolve-timeout"), "space-harvester.network.proxy.resolve-timeout", problems),
                 optionalDuration(get(proxy, "cache-ttl"), "space-harvester.network.proxy.cache-ttl", problems),
-                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems));
+                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems),
+                proxyAuthentication(map(get(proxy, "auth")), problems), script(get(proxy, "pac-discovery-script")));
+    }
+
+    /**
+     * Nur der Benutzer steht in der Datei; das Passwort liegt im Tresor der App ({@code ProxySettings.SECRET_REF}) und
+     * wird beim Start dazugegeben. Ein Passwort in der Datei bleibt unbenutzt.
+     */
+    private ProxySettings.Authentication proxyAuthentication(Map<?, ?> auth, List<String> problems) {
+        if (auth.isEmpty()) {
+            return null;
+        }
+        if (get(auth, "password") != null) {
+            problems.add("space-harvester.network.proxy.auth.password wird nicht gelesen: Das Proxy-Passwort gehört "
+                    + "in den Tresor (Einstellungen › Proxy)");
+        }
+        String username = text(get(auth, "username"), problems);
+        return username == null || username.isBlank() ? null : ProxySettings.Authentication.basic(username);
+    }
+
+    /** Ein Skript wörtlich, ohne Platzhalter aufzulösen: {@code ${…}} ist dort Teil der Skriptsprache. */
+    private static String script(Object raw) {
+        return raw == null || raw instanceof Map<?, ?> || raw instanceof List<?> ? null : String.valueOf(raw);
     }
 
     private Map<String, AppSettings.TrustStoreSettings> trustStores(Map<?, ?> spring, List<String> problems) {
@@ -371,14 +467,17 @@ public final class AppSettingsLoader {
         }
         AiDraft draft = new AiDraft(text(get(ai, "base-url"), problems), text(get(ai, "chat-model"), problems),
                 text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
-                optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released);
+                optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
+                text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
+                text(get(ai, "embedding-chunk-overlap-sentences"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
         draft.problems().forEach(problem -> problems.add("space-harvester.ai: " + problem));
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
-                draft.dimensions(), draft.timeout(), draft.externalProcessingSources());
+                draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
+                draft.tokens(), draft.overlap());
     }
 
     // ------------------------------------------------------------------ Werte

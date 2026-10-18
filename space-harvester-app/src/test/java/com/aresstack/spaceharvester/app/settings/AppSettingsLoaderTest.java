@@ -122,6 +122,23 @@ class AppSettingsLoaderTest {
     }
 
     @Test
+    void aProxyPasswordInTheFileIsNeverUsed() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  network:
+                    proxy:
+                      mode: pac-url-powershell
+                      auth:
+                        username: proxy-nutzer
+                        password: geheim
+                """, Map.of());
+        assertThat(settings.proxy().authentication().username()).isEqualTo("proxy-nutzer");
+        assertThat(settings.proxy().authentication().password()).isNull();
+        assertThat(settings.problems()).singleElement().asString().contains("auth.password", "Tresor")
+                .doesNotContain("geheim");
+    }
+
+    @Test
     void withoutAProxySectionWindowsUsesThePacAddressViaPowerShell() throws Exception {
         Path file = home.resolve("ohne-proxy.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
@@ -132,5 +149,13 @@ class AppSettingsLoaderTest {
         Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
         assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, true).load(file).proxy().mode())
                 .as("ausdrücklich gesetzt gilt").isEqualTo(ProxySettings.Mode.DISABLED);
+    }
+
+    @Test
+    void disabledSourcesAsAMappingIsReportedNotIgnored() throws Exception {
+        Path file = home.resolve("abgeschaltet.yml");
+        Files.writeString(file, "space-harvester-app:\n  disabled-sources:\n    wiki: true\n");
+        AppSettings settings = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
+        assertThat(settings.problems()).anyMatch(problem -> problem.contains("disabled-sources"));
     }
 }

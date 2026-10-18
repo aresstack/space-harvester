@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
+import com.aresstack.spaceharvester.application.query.PageBookmark;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -104,6 +105,8 @@ public final class PageDetailPanel extends JPanel {
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
+    private final ComposerButton bookmark = Comic.button("Lesezeichen kopieren",
+            "Stabile Adresse dieser Seite und Version (space-harvester://…); unter Suche wieder zu öffnen");
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
             "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
@@ -192,6 +195,7 @@ public final class PageDetailPanel extends JPanel {
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
         browse.addActionListener(e -> browse());
+        bookmark.addActionListener(e -> copyBookmark());
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
         recompute.addActionListener(e -> recompute());
@@ -207,7 +211,7 @@ public final class PageDetailPanel extends JPanel {
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
         titleRow.add(lines, BorderLayout.CENTER);
-        titleRow.add(Comic.row(browse), BorderLayout.EAST);
+        titleRow.add(Comic.row(bookmark, browse), BorderLayout.EAST);
         header.add(titleRow, BorderLayout.NORTH);
         header.add(feedback, BorderLayout.SOUTH);
         JPanel page = new JPanel(new BorderLayout(0, 8));
@@ -600,6 +604,17 @@ public final class PageDetailPanel extends JPanel {
                         + ", SHA-256 " + Texts.shortHash(payload.rawSha256()) + ")"), feedback::problem);
     }
 
+    /** Legt das Lesezeichen des Core ({@code PageBookmark}, #178) in die Zwischenablage. */
+    private void copyBookmark() {
+        if (page == null) {
+            return;
+        }
+        String value = PageBookmark.of(page.header()).value();
+        java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
+                .setContents(new java.awt.datatransfer.StringSelection(value), null);
+        feedback.success("Lesezeichen kopiert: " + value);
+    }
+
     private void browse() {
         if (page == null || page.header().metadata().url() == null) {
             return;
@@ -676,6 +691,7 @@ public final class PageDetailPanel extends JPanel {
         refresh.setEnabled(enabled || pageId != null);
         saveRaw.setEnabled(enabled);
         browse.setEnabled(enabled);
+        bookmark.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
         recompute.setEnabled(enabled);

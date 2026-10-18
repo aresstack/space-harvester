@@ -28,6 +28,12 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     public static final URI BASE = URI.create("https://confluence.example.org/wiki");
 
     private static final String ID_CQL = "type=page AND id in (";
+    private static final java.util.regex.Pattern CHANGED_CQL = java.util.regex.Pattern.compile(
+            "space=\"([^\"]+)\" AND type=page AND lastmodified >= now\\(\"-([0-9]+)m\"\\) ORDER BY lastmodified DESC");
+
+    private static java.time.Instant modified(FakePage page) {
+        return java.time.OffsetDateTime.parse(page.when).toInstant();
+    }
 
     final Map<String, FakePage> pages = new LinkedHashMap<String, FakePage>();
     final Map<String, String> spaceHomepages = new LinkedHashMap<String, String>();
@@ -59,6 +65,10 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     byte[] lastPageBody;
     /** Liefert statt des echten Folgelinks einen Link außerhalb der REST-API. */
     String nextLinkOverride;
+    /** Seiten im Papierkorb: nur mit {@code status=trashed} gelistet, sonst nicht gefunden. */
+    final Set<String> trashed = new LinkedHashSet<String>();
+    /** Uhr von Confluence für {@code now("-Nm")} in CQL. */
+    java.time.Instant now = java.time.Instant.parse("2026-10-18T12:00:00Z");
     /** Fehler für die nächsten Anfragen, in Reihenfolge: HTTP-Status ({@link Integer}) oder {@link IOException}. */
     final Deque<Object> scriptedFailures = new ArrayDeque<Object>();
 
@@ -104,6 +114,11 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
     /** Ein Space mit Namen (Startseite optional über {@link #homepage}). */
     public void space(String spaceKey, String name) {
         spaceNames.put(spaceKey, name);
+    }
+
+    /** Verschiebt eine Seite in den Papierkorb ihres Space. */
+    public void trash(String pageId) {
+        trashed.add(pageId);
     }
 
     /** Hide a page from the user (permission restriction). */
@@ -222,8 +237,10 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         }
         if (path.equals("/rest/api/content") && query.containsKey("spaceKey")) {
             List<FakePage> inSpace = new ArrayList<FakePage>();
+            boolean inTrash = "trashed".equals(query.get("status"));
             for (FakePage page : pages.values()) {
                 if (page.spaceKey.equals(query.get("spaceKey")) && !restricted.contains(page.id)
+                        && trashed.contains(page.id) == inTrash
                         && (!query.containsKey("title") || page.title.equals(query.get("title")))) {
                     inSpace.add(page);
                 }
@@ -256,7 +273,27 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
         if (path.equals("/rest/api/content/search")) {
             lastCql = query.get("cql");
             List<String> found = searchResults;
-            if (lastCql != null && lastCql.startsWith(ID_CQL) && lastCql.endsWith(")")) {
+            java.util.regex.Matcher changed = lastCql == null ? null : CHANGED_CQL.matcher(lastCql);
+            if (changed != null && changed.matches()) {
+                java.time.Instant since = now.minus(java.time.Duration.ofMinutes(Long.parseLong(changed.group(2))));
+                List<FakePage> recent = new ArrayList<FakePage>();
+                for (FakePage page : pages.values()) {
+                    if (page.spaceKey.equals(changed.group(1)) && !restricted.contains(page.id)
+                            && !trashed.contains(page.id) && !modified(page).isBefore(since)) {
+                        recent.add(page);
+                    }
+                }
+                Collections.sort(recent, new java.util.Comparator<FakePage>() {
+                    @Override
+                    public int compare(FakePage a, FakePage b) {
+                        return modified(b).compareTo(modified(a));
+                    }
+                });
+                found = new ArrayList<String>();
+                for (FakePage page : recent) {
+                    found.add(page.id);
+                }
+            } else if (lastCql != null && lastCql.startsWith(ID_CQL) && lastCql.endsWith(")")) {
                 found = new ArrayList<String>();
                 for (String id : lastCql.substring(ID_CQL.length(), lastCql.length() - 1).split(",")) {
                     if (pages.containsKey(id.trim()) && !restricted.contains(id.trim())) {
@@ -276,6 +313,9 @@ public final class FakeConfluence implements ConfluenceHttpTransport {
             String id = parts[4];
             if (restricted.contains(id)) {
                 return forbidden();
+            }
+            if (trashed.contains(id)) {
+                return notFound();
             }
             if (pages.containsKey(id)) {
                 FakePage page = pages.get(id);

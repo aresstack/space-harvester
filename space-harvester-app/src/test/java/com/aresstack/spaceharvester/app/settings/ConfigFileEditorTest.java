@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -328,6 +329,102 @@ class ConfigFileEditorTest {
         assertThat(settings.proxy()).isEqualTo(proxy.settings());
         assertThat(settings.proxy().resolveTimeout()).isEqualTo(Duration.ofSeconds(7));
         assertThat(settings.sources()).extracting(AppSettings.SourceEntry::id).containsExactly("handbuch", "notizen");
+    }
+
+    @Test
+    void proxyUserAndPacScriptRoundTripButNoPasswordEverReachesTheFile() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        String script = "$url = (Get-ItemProperty 'HKCU:\\Software\\X').AutoConfigURL\r\n\tWrite-Output \"${url}\"";
+        ProxyDraft proxy = new ProxyDraft(ProxySettings.Mode.PAC_URL_POWERSHELL, null, null, null, null, null, null,
+                null, " proxy-nutzer ", script);
+
+        ConfigFileEditor.Draft draft = editor.withProxy(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                proxy);
+        editor.save(file, draft);
+
+        String text = Files.readString(file);
+        assertThat(text).contains("auth:\n", "username: \"proxy-nutzer\"", "pac-discovery-script: \"")
+                .doesNotContain("password");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.proxy().authentication().username()).isEqualTo("proxy-nutzer");
+        assertThat(settings.proxy().authentication().password()).isNull();
+        assertThat(settings.proxy().pacDiscoveryScript()).as("wörtlich, ${…} bleibt Teil des Skripts")
+                .isEqualTo(script.replace("\r\n", "\n"));
+        assertThat(ProxyDraft.of(settings.proxy()).settings()).isEqualTo(proxy.settings());
+
+        ProxyDraft manual = new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.firma.de", "3128", null,
+                null, null, null, "", script);
+        assertThat(manual.settings().authentication()).as("ohne Benutzer keine Anmeldung").isNull();
+        assertThat(manual.settings().pacDiscoveryScript()).as("Skript nur für PowerShell/VBScript").isNull();
+    }
+
+    @Test
+    void tlsSwitchesAndCaFileGoUnderNetworkNextToTheProxy() throws Exception {
+        Path file = home.resolve("app.yml");
+        Path ca = home.resolve("proxy-ca.pem");
+        Files.writeString(ca, "-----BEGIN CERTIFICATE-----\nkein Zertifikat\n-----END CERTIFICATE-----\n");
+        Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
+        TrustSettings broken = new TrustSettings(false, true, false, ca);
+        assertThatThrownBy(() -> editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                broken)).as("eine unbrauchbare CA-Datei kommt nicht in die Datei")
+                .isInstanceOf(IllegalArgumentException.class);
+
+        TrustSettings tls = new TrustSettings(true, true, true, null);
+        editor.save(file, editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null), tls));
+
+        assertThat(Files.readString(file)).contains("    proxy:\n      mode: disabled\n", "    tls:\n",
+                "use-jvm-default: true", "use-windows-root: true", "use-windows-ca-stores: true");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.tls()).isEqualTo(tls);
+        assertThat(settings.proxy().mode()).isEqualTo(ProxySettings.Mode.DISABLED);
+    }
+
+    @Test
+    void cacheFreshnessAndWithheldRetentionUseTheServerKeys() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  cache:\n    search-timeout: 5s   # bleibt\n");
+        assertThat(loader.load(file).cache()).isEqualTo(AppSettings.Cache.DEFAULT);
+
+        AppSettings.Cache cache = new AppSettings.Cache(Duration.ofHours(6), false, Duration.ofDays(14));
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null), cache));
+
+        assertThat(Files.readString(file)).contains("    search-timeout: 5s   # bleibt", "    max-age: 6h",
+                "    version-check: false", "  sync:\n    withheld-retention: 14d");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.cache()).isEqualTo(cache);
+        assertThat(settings.storage().searchTimeout()).isEqualTo(Duration.ofSeconds(5));
+
+        editor.save(file, editor.withCache(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AppSettings.Cache.DEFAULT));
+        assertThat(Files.readString(file)).contains("max-age: 0s", "version-check: true", "withheld-retention: 30d")
+                .doesNotContain("6h", "14d");
+        Files.writeString(file, "space-harvester:\n  cache:\n    max-age: 400d\n    version-check: vielleicht\n");
+        assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("max-age"))
+                .anyMatch(p -> p.contains("version-check"));
+    }
+
+    @Test
+    void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", null, "text-embedding-3-small", "1536", null,
+                java.util.List.of(), "bge-reranker", "500", "2");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("rerank-model: \"bge-reranker\"", "embedding-chunk-tokens: 500",
+                "embedding-chunk-overlap-sentences: 2");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().rerankModel()).isEqualTo("bge-reranker");
+        assertThat(settings.ai().chunkTokens()).isEqualTo(500);
+        assertThat(settings.ai().chunkOverlapSentences()).isEqualTo(2);
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(new AiDraft("https://x", null, null, null, null, null, null, "4", "-1").problems())
+                .anyMatch(p -> p.contains("ab 8")).anyMatch(p -> p.contains("Überlappung"));
     }
 
     @Test

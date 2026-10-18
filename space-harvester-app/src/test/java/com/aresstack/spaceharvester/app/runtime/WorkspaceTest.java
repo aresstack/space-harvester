@@ -235,12 +235,40 @@ class WorkspaceTest {
                 TestCertificates.CLIENT_PASSWORD));
         runtime = AppRuntime.start(new AppSettings(settings.file(), settings.sources(), settings.proxy(),
                 settings.asyncTransport(), settings.trustStores(), settings.storage(), settings.jobLimits(),
-                settings.ai(), settings.outputDirectory(), settings.problems(), java.util.Set.of("handbuch")),
+                settings.ai(), settings.outputDirectory(), settings.problems(), java.util.Set.of("handbuch"),
+                settings.tls(), settings.cache(), settings.setupCompleted()),
                 new AppRuntime.SessionSecrets(), "test");
 
         assertThat(runtime.workspace().sources()).extracting(HarvestSource::id).containsExactly("wiki");
         assertThat(runtime.workspace().sourceEnabled("handbuch")).isFalse();
         assertThat(runtime.workspace().sourceEnabled("wiki")).isTrue();
+    }
+
+    @Test
+    void aBookmarkResolvesToItsPageThroughTheCore() throws Exception {
+        Workspace workspace = start().workspace();
+
+        var resolution = workspace.resolveAddress("space-harvester://wiki/page/102");
+
+        assertThat(resolution.matches()).singleElement().satisfies(match -> {
+            assertThat(match.sourceId()).isEqualTo("wiki");
+            assertThat(match.pageId()).isEqualTo("102");
+            assertThat(match.bookmark().value()).startsWith("space-harvester://wiki/page/102");
+        });
+    }
+
+    @Test
+    void theConnectionDiagnosisComesFromTheCoreStageByStage() throws Exception {
+        Workspace workspace = start().workspace();
+
+        var diagnosis = workspace.diagnose("wiki").orElseThrow();
+
+        assertThat(diagnosis.steps()).extracting(step -> step.stage())
+                .contains(com.aresstack.spaceharvester.application.sources.ConnectionStep.Stage.TLS,
+                        com.aresstack.spaceharvester.application.sources.ConnectionStep.Stage.API);
+        assertThat(diagnosis.successful()).as(diagnosis.summary()).isTrue();
+        assertThat(diagnosis.toString()).doesNotContain(TOKEN);
+        assertThat(workspace.diagnose("gibt-es-nicht")).isEmpty();
     }
 
     @Test

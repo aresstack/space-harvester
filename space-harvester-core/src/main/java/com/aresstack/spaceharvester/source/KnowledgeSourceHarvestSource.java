@@ -15,6 +15,7 @@ import com.aresstack.enterpriseai.source.api.NavigationNode;
 import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
+import com.aresstack.enterpriseai.source.api.ChangeListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
@@ -120,6 +121,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS);
         if (port instanceof PartitionListingSource) {
             capabilities.add(SourceCapability.PAGE_LISTING);
+        }
+        if (port instanceof ChangeListingSource) {
+            capabilities.add(SourceCapability.CHANGES);
         }
         if (port instanceof ResourceMetadataSource) {
             capabilities.add(SourceCapability.PAGE_METADATA);
@@ -270,6 +274,46 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageMetadataBatch(batch.resources().stream()
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    @Override
+    public boolean listsChanges() {
+        return port instanceof ChangeListingSource;
+    }
+
+    @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, java.time.Duration within, String cursor,
+                                                 int limit) {
+        ChangeListingSource changes = changes();
+        PartitionResources batch;
+        try {
+            batch = changes.changedResources(partitionKey, within, cursor == null ? "" : cursor, limit);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageMetadataBatch(batch.resources().stream()
+                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    @Override
+    public PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
+        ChangeListingSource changes = changes();
+        PartitionResources batch;
+        try {
+            batch = changes.removedResources(partitionKey, cursor == null ? "" : cursor, limit);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return new PageMetadataBatch(batch.resources().stream()
+                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    private ChangeListingSource changes() {
+        if (!(port instanceof ChangeListingSource changes)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle meldet keine Änderungen", null);
+        }
+        return changes;
     }
 
     @Override

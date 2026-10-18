@@ -37,6 +37,13 @@ public final class InMemorySyncStore implements SyncBaselineStore {
         return Optional.ofNullable(baselines.get(sourceId + "/" + spaceKey));
     }
 
+    @Override
+    public synchronized java.util.List<SpaceRef> confirmedSpaces() {
+        return baselines.values().stream().map(b -> new SpaceRef(b.sourceId(), b.spaceKey()))
+                .sorted(java.util.Comparator.comparing(SpaceRef::sourceId).thenComparing(SpaceRef::spaceKey))
+                .toList();
+    }
+
     /**
      * Nur mit {@link InMemorySnapshotRepository}: Seiten mit Snapshot, deren aktuelle Kopfdaten im Space liegen; wie im
      * Lucene-Cache mit aktuellen Kopfdaten und der Version des Snapshots.

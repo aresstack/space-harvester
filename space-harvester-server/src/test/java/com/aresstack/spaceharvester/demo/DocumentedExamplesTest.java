@@ -100,7 +100,7 @@ class DocumentedExamplesTest {
                 "/api/v1/sources/demo/spaces",
                 "/api/v1/sources/demo/spaces/DEMO/pages/metadata?limit=3",
                 "/api/v1/sources/demo/pages/1001/metadata",
-                "/api/v1/sources/demo/spaces/DEMO/syncs",
+                "/api/v1/sources/demo/spaces/DEMO/syncs?mode=full",
                 "/api/v1/sources/demo/spaces/DEMO/tree",
                 "/api/v1/sources/demo/pages/1001",
                 "/api/v1/sources/demo/spaces/DEMO/exports",

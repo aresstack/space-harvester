@@ -55,7 +55,8 @@ class SourcesViewTest {
                 "Entfernen …", "Öffnen", "Synchronisieren", "Herunterladen …").contains(b.getText()));
         List<IconButton> syncs = buttons(root, "Gewählten Space");
         List<IconButton> pencils = buttons(root, "Einstellungen der Quelle");
-        assertThat(syncs).hasSize(2);
+        // Der Kreispfeil sitzt am Space, nicht mehr auf der Quellenkarte.
+        assertThat(syncs).isEmpty();
         assertThat(pencils).hasSize(2);
 
         List<StatusMark> marks = find(root, StatusMark.class);
@@ -69,17 +70,22 @@ class SourcesViewTest {
         SwingUtilities.invokeAndWait(() -> pencils.get(1).doClick());
         assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SETTINGS);
 
-        // Ohne gewählten Space startet der Kreispfeil nichts, sondern bittet um eine Auswahl.
+        // „Strategie“ am Space führt zum Reiter Synchronisierung.
+        SwingUtilities.invokeAndWait(() -> view[0].strategy.doClick());
+        assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SYNC);
+        SwingUtilities.invokeAndWait(() -> view[0].showTab(SourcesView.SPACES));
+
+        // Ohne gewählten Space bleibt der Kreispfeil aus.
         JTable spaces = find(root, JTable.class).get(0);
         await(() -> spaces.getRowCount() == 1);
         assertThat(spaces.getSelectedRow()).isEqualTo(-1);
-        SwingUtilities.invokeAndWait(() -> syncs.get(1).doClick());
-        assertThat(view[0].selectedTab()).isEqualTo(SourcesView.SPACES);
+        assertThat(view[0].reconcile.isEnabled()).isFalse();
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
         // Mit gewähltem Space startet der Kreispfeil genau dessen Abgleich; die Auswahl übersteht den Klick.
         SwingUtilities.invokeAndWait(() -> spaces.setRowSelectionInterval(0, 0));
-        SwingUtilities.invokeAndWait(() -> syncs.get(1).doClick());
+        assertThat(view[0].spaceTargets()).hasSize(1);
+        SwingUtilities.invokeAndWait(() -> view[0].reconcile.doClick());
         await(() -> !context.runtime().workspace().jobs().isEmpty());
         assertThat(spaces.getSelectedRow()).isZero();
 

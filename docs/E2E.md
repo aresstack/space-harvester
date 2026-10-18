@@ -196,11 +196,11 @@ curl -s "http://localhost:8080/api/v1/sources"
 
 ## 5. Space ernten
 
-Die Ernte (Abgleich) lädt alle Seiten eines Space mit ihren nativen Rohdaten in den eingebetteten Lucene-Cache
-(`build/demo/cache`). Sie läuft als Auftrag: Der Start antwortet sofort mit 202, die `id` führt zum Status.
+Die Ernte (Abgleich mit `mode=full`) lädt alle Seiten eines Space mit ihren nativen Rohdaten in den eingebetteten
+Lucene-Cache (`build/demo/cache`); ohne `mode` erfasst der Abgleich nur den Seitenkatalog. Sie läuft als Auftrag: Der Start antwortet sofort mit 202, die `id` führt zum Status.
 
 ```bash
-SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/syncs" | jq -r .id)
+SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/syncs?mode=full" | jq -r .id)
 ```
 
 ```json
@@ -228,7 +228,7 @@ Ein zweiter Lauf vergleicht Revisionen und Hashes und lädt nur geänderte oder 
 Demo-Daten lädt er keinen Inhalt nach:
 
 ```bash
-SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/syncs" | jq -r .id)
+SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/spaces/DEMO/syncs?mode=full" | jq -r .id)
 ```
 
 ```json
@@ -659,7 +659,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 ```
 
 ```bash
-FILES_SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/handbuch/spaces/handbuch/syncs" | jq -r .id)
+FILES_SYNC_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/handbuch/spaces/handbuch/syncs?mode=full" | jq -r .id)
 ```
 
 ```json

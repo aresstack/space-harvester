@@ -61,19 +61,22 @@ public class ReconciliationController {
      * @param sourceId    Quellen-ID
      * @param spaceKey    Space-Key
      * @param interval    Abstand zwischen zwei Starts (ISO 8601)
-     * @param loadUnknown ob unbekannte Seiten geladen werden (Space wird vollständig gehalten)
+     * @param mode        Betriebsart der Läufe: {@code catalog-only}, {@code sync-cache} oder {@code full}
+     * @param loadUnknown ob unbekannte Seiten geladen werden ({@code mode=full})
      * @param nextAt      nächster fälliger Start
      * @param lastAt      letzter fälliger Start oder {@code null}
      * @param lastOutcome sein Ergebnis oder {@code null}
      */
-    public record ScheduleResponse(String sourceId, String spaceKey, String interval, boolean loadUnknown,
+    public record ScheduleResponse(String sourceId, String spaceKey, String interval,
+                                   @Schema(allowableValues = {"catalog-only", "sync-cache", "full"}) String mode,
+                                   boolean loadUnknown,
                                    Instant nextAt, @Schema(nullable = true) Instant lastAt,
                                    @Schema(nullable = true, allowableValues = {"started", "already-running",
                                            "no-capacity", "not-started"}) String lastOutcome) {
 
         static ScheduleResponse of(Reconciliation.Schedule schedule) {
             return new ScheduleResponse(schedule.sourceId(), schedule.spaceKey(), schedule.interval().toString(),
-                    schedule.loadUnknown(), schedule.nextAt(), schedule.lastAt(),
+                    schedule.mode().value(), schedule.loadUnknown(), schedule.nextAt(), schedule.lastAt(),
                     schedule.lastOutcome() == null ? null
                             : schedule.lastOutcome().name().toLowerCase(Locale.ROOT).replace('_', '-'));
         }

@@ -119,6 +119,8 @@ public final class PageCacheSchema {
     static final String MISSING_PAGE_ID = "missingPageId";
     /** Gesperrte Seite (ADR 0014) als {@code <Beginn der Sperre> <pageId>}; ein Instant enthält kein Leerzeichen. */
     static final String WITHHELD_PAGE = "withheldPage";
+    /** {@link SyncBaseline#changesSince()}; fehlt in älteren Generationen und gilt dann als {@code confirmedAt}. */
+    static final String CHANGES_SINCE = "changesSince";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
@@ -307,6 +309,7 @@ public final class PageCacheSchema {
         doc.add(new StoredField(SPACE_DOC + SPACE_KEY, baseline.spaceKey()));
         doc.add(new StoredField(GENERATION, baseline.generation()));
         doc.add(new StoredField(CONFIRMED_AT, baseline.confirmedAt().toString()));
+        doc.add(new StoredField(CHANGES_SINCE, baseline.changesSince().toString()));
         for (String pageId : baseline.stalePageIds()) {
             doc.add(new StoredField(STALE_PAGE_ID, pageId));
         }
@@ -467,7 +470,8 @@ public final class PageCacheSchema {
         }
         return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
                 instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))),
-                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))), withheld(space));
+                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))), withheld(space),
+                space.get(CHANGES_SINCE) == null ? null : instant(space.get(CHANGES_SINCE)));
     }
 
     private static SortedMap<String, Instant> withheld(Document space) {

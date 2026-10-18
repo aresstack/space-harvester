@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -60,9 +61,10 @@ import java.util.function.Consumer;
 import java.util.Arrays;
 
 /**
- * Wissensquellen: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen (Space synchronisieren,
- * Einstellungen, entfernen, mehr), rechts die gewählte Quelle mit Textreitern: Spaces als Hauptinhalt, Einstellungen
- * (Geheimnisse nur als „gesetzt“) und die technischen Fähigkeiten. „Verbunden“ erscheint nur nach einer erfolgreichen
+ * Wissensquellen, die Verwaltungszentrale: links je Quelle eine Karte mit Verbindungszeichen und Symbolknöpfen
+ * (Einstellungen, entfernen, mehr), rechts die gewählte Quelle mit Textreitern: Spaces als Hauptinhalt mit dem
+ * Kreispfeil für den vollständigen Abgleich am Space, Synchronisierung (Erkennung, Aktualisierung, Bereinigung),
+ * Einstellungen (Geheimnisse nur als „gesetzt“) und die technischen Fähigkeiten. „Verbunden“ erscheint nur nach einer erfolgreichen
  * Prüfung.
  */
 public final class SourcesView implements View {
@@ -90,6 +92,17 @@ public final class SourcesView implements View {
             "Herunterladen mit allen Spaces dieser Quelle vorbelegt öffnen");
     final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen …",
             "Herunterladen mit den angehakten Spaces vorbelegt öffnen");
+    /** Kreispfeil am Space: vollständiger Abgleich des gewählten bzw. der angehakten Spaces, sofort angewendet. */
+    final ComposerButton reconcile = Comic.button(Glyph.REFRESH, "Bestand abgleichen",
+            "Gewählten Space (oder alle angehakten) vollständig mit der Quelle abgleichen: neue Seiten aufnehmen, "
+                    + "geänderte aktualisieren, verschobene neu zuordnen, gelöschte entfernen; je Space ein Auftrag");
+    final ComposerButton strategy = Comic.button("Strategie …", "Regeln für Erkennung, Aktualisierung und Bereinigung "
+            + "unter „Synchronisierung“");
+    private final JLabel spaceLine = Comic.muted(" ");
+    /** Reiter „Synchronisierung“: was für die gewählte Quelle gilt. */
+    final Facts syncFacts = new Facts();
+    private final ComposerButton editRules = Comic.button("Aktualisierung und Bereinigung …",
+            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten (gilt für alle Quellen)");
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
@@ -100,6 +113,7 @@ public final class SourcesView implements View {
     static final String SPACES = "Spaces";
     static final String SETTINGS = "Einstellungen";
     static final String CAPABILITIES = "Fähigkeiten";
+    static final String SYNC = "Synchronisierung";
 
     public SourcesView(AppContext context) {
         this.context = context;
@@ -147,7 +161,10 @@ public final class SourcesView implements View {
                 }
             }
         });
-        spacesModel.onMarked(this::updateExportButtons);
+        spacesModel.onMarked(() -> {
+            updateExportButtons();
+            updateSpaceActions();
+        });
         exportAll.addActionListener(e -> exportSpaces(spacesModel.rows.stream().map(Partition::key).toList()));
         exportMarked.addActionListener(e -> exportSpaces(spacesModel.marked()));
         spaces.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -220,7 +237,26 @@ public final class SourcesView implements View {
         spacesBar.setOpaque(false);
         spacesBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
                 BorderFactory.createEmptyBorder(8, 0, 0, 0)));
-        spacesBar.add(Comic.row(exportMarked, exportAll), BorderLayout.WEST);
+        JPanel spaceActions = new JPanel(new BorderLayout(0, 6));
+        spaceActions.setOpaque(false);
+        spaceActions.add(spaceLine, BorderLayout.NORTH);
+        spaceActions.add(Comic.row(reconcile, strategy), BorderLayout.WEST);
+        spacesBar.add(spaceActions, BorderLayout.NORTH);
+        // „Herunterladen“ bleibt getrennt: Es beschafft den JSON-Datenbestand, gleicht aber nichts ab.
+        JPanel exportRow = new JPanel(new BorderLayout());
+        exportRow.setOpaque(false);
+        exportRow.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+        exportRow.add(Comic.row(exportMarked, exportAll), BorderLayout.WEST);
+        spacesBar.add(exportRow, BorderLayout.SOUTH);
+        reconcile.addActionListener(e -> reconcileSpaces());
+        strategy.addActionListener(e -> tabs.select(SYNC));
+        editRules.addActionListener(e -> SettingDialogs.cache(root, context,
+                () -> feedback.success("Regeln übernommen")).open());
+        spaces.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                updateSpaceActions();
+            }
+        });
         spacesPanel.add(spacesBar, BorderLayout.SOUTH);
         updateExportButtons();
 
@@ -239,7 +275,12 @@ public final class SourcesView implements View {
         capabilityPanel.setOpaque(false);
         capabilityPanel.add(capabilities, BorderLayout.NORTH);
         // Textreiter statt Trenner: je Reiter die ganze Höhe, die Einstellungen scrollen bei Bedarf.
+        JPanel syncPanel = new JPanel(new BorderLayout(0, 8));
+        syncPanel.setOpaque(false);
+        syncPanel.add(syncFacts, BorderLayout.CENTER);
+        syncPanel.add(Comic.row(editRules), BorderLayout.SOUTH);
         tabs.tab(SPACES, spacesPanel)
+                .tab(SYNC, flush(Comic.column(syncPanel)))
                 .tab(SETTINGS, flush(Comic.column(settings)))
                 .tab(CAPABILITIES, flush(Comic.column(capabilityPanel)));
         JPanel tabsFrame = new JPanel(new BorderLayout());
@@ -297,6 +338,33 @@ public final class SourcesView implements View {
         }
         cards.values().forEach(SourceCard::update);
         showSelected();
+        updateSpaceActions();
+    }
+
+    /** Reiter „Synchronisierung“: Erkennung, Aktualisierung, Bereinigung, wie sie für die gewählte Quelle gelten. */
+    private void renderSync() {
+        syncFacts.reset();
+        AppSettings settings = context.settings();
+        if (settings == null || selectedEntry() == null) {
+            return;
+        }
+        AppSettings.Cache cache = settings.cache();
+        syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
+                .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
+                .add("Automatische Änderungssuche", "aus (CQL, ohne Administratorrechte)")
+                .add("Regelmäßige Bestandsinventur", "aus (nur Seitenmetadaten)")
+                .add("Webhooks", "optional, nur im Server; braucht die Einrichtung in Confluence")
+                .add("Von Hand", "Kreispfeil „Bestand abgleichen“ am Space unter Spaces")
+                .add("Aktualisierung", "Wann prüft die App gespeicherte Seiten?", Comic.MUTED)
+                .add(SettingDialogs.REFRESH_TITLE, SettingDialogs.refreshStrategy(cache)
+                        + (cache.maxAge().isZero() ? "" : " · Frist " + ConfigFileEditor.duration(cache.maxAge())))
+                .add("Bereinigung", "Was geschieht mit Seiten, die nicht mehr gefunden werden?", Comic.MUTED)
+                .add("Löschung bestätigt", "sofort aus Cache und Suche entfernt")
+                .add("Nicht mehr sichtbar", "sofort aus der Suche; Rohdaten "
+                        + (cache.withheldRetention().isZero() ? "sofort entfernt"
+                        : "zurückgehalten, endgültig entfernt nach "
+                        + ConfigFileEditor.duration(cache.withheldRetention())))
+                .add("Abgleich fehlgeschlagen", "Bestand bleibt unverändert");
     }
 
     private AppSettings.SourceEntry selectedEntry() {
@@ -307,6 +375,7 @@ public final class SourcesView implements View {
     private void showSelected() {
         AppSettings.SourceEntry entry = selectedEntry();
         capabilities.reset();
+        renderSync();
         if (entry == null) {
             showProperties(null);
             title.setText(sources.isEmpty() ? "Noch keine Wissensquelle eingerichtet" : " ");
@@ -355,7 +424,7 @@ public final class SourcesView implements View {
         } else {
             switch (connection.state()) {
                 case NOT_CHECKED -> {
-                    spacesHint.setText("Nicht geprüft. „Verbindung prüfen“ unter ⋯ an der Karte lädt die Spaces live.");
+                    spacesHint.setText("Nicht geprüft. „Verbindung prüfen …“ unter ⋯ an der Karte lädt die Spaces live.");
                     feedback.clear();
                 }
                 case CHECKING -> {
@@ -441,7 +510,7 @@ public final class SourcesView implements View {
                         Comic.INK, "Client-Zertifikat wählen",
                         () -> setting(entry, SettingDialogs::certificate)));
                 row(EditableProperty.action(SettingDialogs.TRUST_TITLE,
-                        SettingDialogs.trustLabel(config.trustBundle()), Comic.INK,
+                        SettingDialogs.trustLabel(config.trustBundle(), context.settings()), Comic.INK,
                         "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
                         () -> setting(entry, SettingDialogs::trust)));
                 row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())
@@ -553,8 +622,25 @@ public final class SourcesView implements View {
         });
     }
 
+    /**
+     * Lädt die Spaces live und zeigt die Verbindungsdiagnose des Core als Stufenliste (#189), damit sichtbar wird, an
+     * welcher Stufe (Proxy, Namensauflösung, TCP, TLS, Anmeldung, API) es hängt.
+     */
     private void check(AppSettings.SourceEntry entry) {
         context.checkConnection(entry.id(), () -> { });
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        String title = "Verbindung prüfen · " + (entry.config().title() == null || entry.config().title().isBlank()
+                ? entry.id() : entry.config().title());
+        Background.run(() -> runtime.workspace().diagnose(entry.id()), found -> {
+            if (found.isPresent()) {
+                Dialogs.view(root, title, new DiagnosisPanel(found.get()));
+            } else {
+                feedback.warning("Nicht prüfbar", "Die Quelle ist abgeschaltet oder wartet auf ihre Zugangsdaten.");
+            }
+        }, feedback::problem);
     }
 
     private void askSecret(AppSettings.SourceEntry entry) {
@@ -667,7 +753,14 @@ public final class SourcesView implements View {
             String stored = vault.raw(id);
             vault.remove(id);
             try {
-                editor.save(context.configFile(), editor.remove(context.configFile(), id), !plaintext);
+                ConfigFileEditor.Draft removed = editor.remove(context.configFile(), id);
+                // Auch der Schalter gehört zur Quelle: Eine neue Quelle mit derselben ID startet sonst abgeschaltet.
+                if (removed.settings() != null && removed.settings().disabled(id)) {
+                    java.util.Set<String> disabled = new java.util.TreeSet<>(removed.settings().disabledSources());
+                    disabled.remove(id);
+                    removed = editor.withDisabledSources(context.configFile(), removed, disabled);
+                }
+                editor.save(context.configFile(), removed, !plaintext);
             } catch (IOException | RuntimeException e) {
                 if (stored != null) {
                     try {
@@ -689,29 +782,71 @@ public final class SourcesView implements View {
     }
 
     /**
-     * Gleicht den gewählten Space vollständig mit der Quelle ab. Ohne Auswahl startet nichts, auch nicht der erste
-     * Space der Liste: Die Ansicht zeigt die Spaces und bittet um eine Auswahl.
+     * Gleicht die angehakten Spaces, sonst den gewählten, vollständig mit der Quelle ab, je Space ein Auftrag. Ohne
+     * Auswahl startet nichts, auch nicht der erste Space der Liste.
      */
-    private void syncSelected() {
-        tabs.select(SPACES);
-        Optional<Partition> space = selectedSpace();
-        if (space.isEmpty()) {
+    private void reconcileSpaces() {
+        List<String> keys = spaceTargets();
+        String id = selectedId();
+        AppRuntime runtime = context.runtime();
+        if (keys.isEmpty()) {
             feedback.info("Bitte zuerst einen Space auswählen",
-                    "Der Kreispfeil gleicht den in der Liste gewählten Space vollständig mit der Quelle ab.");
+                    "Der Kreispfeil gleicht den gewählten Space oder alle angehakten vollständig mit der Quelle ab.");
             spaces.requestFocusInWindow();
             return;
         }
-        String spaceKey = space.get().key();
-        String id = selectedId();
-        AppRuntime runtime = context.runtime();
         if (id == null || runtime == null) {
             return;
         }
         feedback.working("Abgleich wird gestartet …");
-        Background.run(() -> runtime.workspace().startSync(id, spaceKey), status -> {
-            feedback.success("Abgleich von " + spaceKey + " gestartet");
-            context.navigator().showJob(status.id());
+        // Jeder Space für sich: Scheitert ein späterer Start (Auftragsgrenze, läuft schon), laufen die früheren weiter
+        // und die Meldung nennt beides.
+        Background.run(() -> {
+            List<JobStatus> started = new ArrayList<>();
+            Map<String, Exception> failed = new LinkedHashMap<>();
+            for (String key : keys) {
+                try {
+                    started.add(runtime.workspace().startSync(id, key));
+                } catch (RuntimeException e) {
+                    failed.put(key, e);
+                }
+            }
+            if (started.isEmpty() && !failed.isEmpty()) {
+                throw failed.values().iterator().next();
+            }
+            return new java.util.AbstractMap.SimpleEntry<>(started, failed);
+        }, result -> {
+            List<JobStatus> started = result.getKey();
+            Map<String, Exception> failed = result.getValue();
+            String done = started.size() == 1 && failed.isEmpty() ? "Abgleich von " + keys.get(0) + " gestartet"
+                    : Texts.count(started.size(), "Abgleich", "Abgleiche") + " gestartet";
+            if (failed.isEmpty()) {
+                feedback.success(done);
+            } else {
+                feedback.warning(done + ", " + Texts.count(failed.size(), "Space", "Spaces") + " nicht",
+                        failed.entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                .collect(java.util.stream.Collectors.joining("\n")));
+            }
+            if (started.size() == 1 && failed.isEmpty()) {
+                context.navigator().showJob(started.get(0).id());
+            } else {
+                context.navigator().show(AppContext.Section.ACTIVITIES);
+            }
         }, feedback::problem);
+    }
+
+    /** Die angehakten Spaces, ohne Häkchen der gewählte. */
+    List<String> spaceTargets() {
+        List<String> marked = spacesModel.marked();
+        return marked.isEmpty() ? selectedSpace().map(Partition::key).map(List::of).orElse(List.of()) : marked;
+    }
+
+    private void updateSpaceActions() {
+        List<String> keys = spaceTargets();
+        reconcile.setEnabled(!keys.isEmpty() && context.runtime() != null);
+        spaceLine.setText(keys.isEmpty() ? "Space wählen oder anhaken, um ihn abzugleichen"
+                : keys.size() == 1 ? "Space " + keys.get(0)
+                : Texts.count(keys.size(), "Space", "Spaces") + " angehakt: " + String.join(", ", keys));
     }
 
     private void reselect(String key) {
@@ -762,7 +897,12 @@ public final class SourcesView implements View {
         selectedSpace().ifPresent(space -> context.navigator().openSpace(selectedId(), space.key()));
     }
 
-    /** Für Tests: zeigt einen Reiter (Spaces, Einstellungen, Fähigkeiten). */
+    /** Für Tests: wechselt den Reiter. */
+    void showTab(String name) {
+        tabs.select(name);
+    }
+
+    /** Für Tests: der gezeigte Reiter (Spaces, Synchronisierung, Einstellungen, Fähigkeiten). */
     String selectedTab() {
         return tabs.selected();
     }
@@ -852,8 +992,6 @@ public final class SourcesView implements View {
         private final JTextArea name = Comic.note("");
         private final JTextArea where = Comic.note("");
         private final JTextArea state = Comic.note("");
-        private final IconButton sync = new IconButton(Glyph.REFRESH,
-                "Gewählten Space vollständig mit der Quelle abgleichen");
         private final IconButton edit = new IconButton(Glyph.PENCIL, "Einstellungen der Quelle öffnen");
         private final IconButton remove = new IconButton(Glyph.TRASH,
                 "Quelle entfernen (fragt nach; der lokale Bestand bleibt im Datenordner)");
@@ -879,16 +1017,11 @@ public final class SourcesView implements View {
             add(where);
             add(state);
             actions.setOpaque(false);
-            actions.add(sync);
             actions.add(edit);
             actions.add(remove);
             actions.add(more);
             add(actions);
 
-            sync.addActionListener(e -> {
-                select(entry.id());
-                syncSelected();
-            });
             edit.addActionListener(e -> {
                 select(entry.id());
                 tabs.select(SETTINGS);
@@ -921,8 +1054,8 @@ public final class SourcesView implements View {
             boolean off = disabled(entry);
             boolean running = context.runtime() != null && !off
                     && !context.runtime().waitingForSecret().contains(entry.id());
-            JMenuItem check = new JMenuItem("Verbindung prüfen");
-            check.setToolTipText("Meldet sich an und lädt die Spaces live");
+            JMenuItem check = new JMenuItem("Verbindung prüfen …");
+            check.setToolTipText("Prüft Proxy, Namensauflösung, TCP, TLS, Anmeldung und API und lädt die Spaces live");
             check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
             check.addActionListener(e -> SourcesView.this.check(entry));
             menu.add(check);
@@ -993,7 +1126,6 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
-            sync.setEnabled(!waiting && !disabled(entry) && context.runtime() != null);
             revalidate();
             repaint();
         }

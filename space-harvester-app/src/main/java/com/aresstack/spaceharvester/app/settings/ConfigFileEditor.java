@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
 
 import java.io.IOException;
@@ -229,6 +231,50 @@ public final class ConfigFileEditor {
 
     /** Ersetzt oder ergänzt {@code space-harvester.network.proxy}. */
     static String proxy(String text, ProxyDraft proxy) {
+        return network(text, "proxy", proxy::yaml);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Vertrauen für Quellen ohne eigenes {@code trust-bundle} unter
+     * {@code space-harvester.network.tls} (#189). Nur dieser Block ändert sich.
+     */
+    public Draft withTls(Path file, Draft base, TrustSettings tls) {
+        List<String> problems = TrustPolicy.problems(tls);
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = network(base.text(), "tls", indent -> tls(indent, tls));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.tls().equals(tls)) {
+            throw new IllegalArgumentException("Die Zertifikatseinstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.network.tls von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Der Block {@code tls:} mit allen Schaltern, damit die Vorgabe des Betriebssystems nicht mehr hineinspielt. */
+    static String tls(String indent, TrustSettings tls) {
+        String inner = indent + "  ";
+        StringBuilder yaml = new StringBuilder(indent).append("tls:\n")
+                .append(inner).append("use-jvm-default: ").append(tls.useJvmDefault()).append('\n')
+                .append(inner).append("use-windows-root: ").append(tls.useWindowsRoot()).append('\n')
+                .append(inner).append("use-windows-ca-stores: ").append(tls.useWindowsCaStores()).append('\n');
+        if (tls.caCertificatesFile() != null) {
+            yaml.append(inner).append("ca-certificates-file: \"").append(tls.caCertificatesFile().toString()
+                    .replace("\\", "\\\\").replace("\"", "\\\"")).append("\"\n");
+        }
+        return yaml.toString();
+    }
+
+    /** Ersetzt oder ergänzt den Block {@code key} unter {@code space-harvester.network}. */
+    private static String network(String text, String key, java.util.function.Function<String, String> yaml) {
+        return nested(text, "network", key, yaml);
+    }
+
+    /** Ersetzt oder ergänzt {@code key} (Block oder Wert) unter {@code space-harvester.<parent>}. */
+    private static String nested(String text, String parent, String key,
+                                 java.util.function.Function<String, String> yaml) {
         List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
         String newline = text.contains("\r\n") ? "\r\n" : "\n";
         if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
@@ -247,29 +293,75 @@ public final class ConfigFileEditor {
         if (root < 0) {
             lines.add("");
             lines.add("space-harvester:");
-            lines.add("  network:");
-            add(lines, lines.size(), proxy.yaml("    "));
+            lines.add("  " + parent + ":");
+            add(lines, lines.size(), yaml.apply("    "));
             return String.join(newline, lines) + newline;
         }
         int rootEnd = blockEnd(lines, root, 0);
         int childIndent = childIndent(lines, root, rootEnd, 2);
-        int network = child(lines, root, rootEnd, childIndent, "network");
+        int network = child(lines, root, rootEnd, childIndent, parent);
         if (network < 0) {
-            lines.add(root + 1, " ".repeat(childIndent) + "network:");
-            add(lines, root + 2, proxy.yaml(" ".repeat(childIndent * 2)));
+            lines.add(root + 1, " ".repeat(childIndent) + parent + ":");
+            add(lines, root + 2, yaml.apply(" ".repeat(childIndent * 2)));
             return String.join(newline, lines) + newline;
         }
         int networkEnd = blockEnd(lines, network, childIndent);
         int proxyIndent = childIndent(lines, network, networkEnd, childIndent * 2);
-        int block = child(lines, network, networkEnd, proxyIndent, "proxy");
+        String normalized = AppSettingsLoader.normalize(key);
+        for (int i = network + 1; i < networkEnd; i++) {
+            // Ein einzelner Wert wie „max-age: 6h“ wird in seiner Zeile ersetzt, ein Kommentar dahinter entfällt.
+            String line = lines.get(i);
+            if (!blankOrComment(line) && indent(line) == proxyIndent && isKey(SOURCES_INLINE, line, 1, normalized)) {
+                lines.remove(i);
+                add(lines, i, yaml.apply(" ".repeat(proxyIndent)));
+                return String.join(newline, lines) + newline;
+            }
+        }
+        int block = child(lines, network, networkEnd, proxyIndent, normalized);
         if (block < 0) {
-            add(lines, network + 1, proxy.yaml(" ".repeat(proxyIndent)));
+            add(lines, network + 1, yaml.apply(" ".repeat(proxyIndent)));
             return String.join(newline, lines) + newline;
         }
         int end = blockEnd(lines, block, proxyIndent);
         lines.subList(block, end).clear();
-        add(lines, block, proxy.yaml(" ".repeat(proxyIndent)));
+        add(lines, block, yaml.apply(" ".repeat(proxyIndent)));
         return String.join(newline, lines) + newline;
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuer Cache-Frische ({@code space-harvester.cache.max-age}, {@code version-check})
+     * und Sperrfrist ({@code space-harvester.sync.withheld-retention}, ADR 0014); dieselben Schlüssel wie im Server.
+     * Nur diese drei Werte ändern sich.
+     */
+    public Draft withCache(Path file, Draft base, AppSettings.Cache cache) {
+        String text = nested(base.text(), "cache", "max-age", indent -> indent + "max-age: " + duration(cache.maxAge())
+                + "\n");
+        text = nested(text, "cache", "version-check", indent -> indent + "version-check: " + cache.versionCheck()
+                + "\n");
+        text = nested(text, "sync", "withheld-retention", indent -> indent + "withheld-retention: "
+                + duration(cache.withheldRetention()) + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.cache().equals(cache)) {
+            throw new IllegalArgumentException("Die Cache-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.cache und space-harvester.sync von Hand "
+                    + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Eine Dauer so kurz wie möglich: 30d, 6h, 15m, 0s. */
+    public static String duration(java.time.Duration duration) {
+        long seconds = duration.toSeconds();
+        if (seconds != 0 && seconds % 86_400 == 0) {
+            return seconds / 86_400 + "d";
+        }
+        if (seconds != 0 && seconds % 3_600 == 0) {
+            return seconds / 3_600 + "h";
+        }
+        if (seconds != 0 && seconds % 60 == 0) {
+            return seconds / 60 + "m";
+        }
+        return seconds + "s";
     }
 
     /**
@@ -358,6 +450,22 @@ public final class ConfigFileEditor {
         if (!settings.disabledSources().equals(Set.copyOf(disabled))) {
             throw new IllegalArgumentException("Die abgeschalteten Quellen ließen sich nicht sicher in die "
                     + "Konfigurationsdatei schreiben; bitte space-harvester-app.disabled-sources von Hand bearbeiten.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt {@code space-harvester-app.setup-completed: true}: Der Einrichtungsassistent öffnet sich beim Start nicht
+     * mehr, bleibt aber unter Einstellungen erreichbar.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSetupCompleted(Path file, Draft base) {
+        String text = appValue(base.text(), "setupcompleted", "setup-completed: true");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.setupCompleted()) {
+            throw new IllegalArgumentException("Der Abschluss der Einrichtung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.setup-completed von Hand setzen.");
         }
         return new Draft(text, settings);
     }

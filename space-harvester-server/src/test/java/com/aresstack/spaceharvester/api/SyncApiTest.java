@@ -109,6 +109,30 @@ class SyncApiTest {
     }
 
     @Test
+    void catchingUpWithoutAConfirmedGenerationOnlySetsTheStartingPoint() throws Exception {
+        HttpResponse<String> started = post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs?listing=changes");
+
+        assertThat(started.statusCode()).isEqualTo(202);
+        JsonNode done = awaitFinished(json.readTree(started.body()).get("id").asString());
+        assertThat(done.get("state").asString()).isEqualTo("completed");
+        assertThat(done.get("summary").get("inventory").asString()).isEqualTo("changes");
+        assertThat(done.get("summary").get("generation").asLong()).isPositive();
+    }
+
+    @Test
+    void theListingModeAndSinceAreChecked() throws Exception {
+        assertThat(post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs?listing=full").statusCode())
+                .isEqualTo(400);
+        assertThat(post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs?mode=everything").statusCode())
+                .isEqualTo(400);
+        assertThat(post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs?mode=full&loadUnknown=true")
+                .statusCode()).isEqualTo(400);
+        HttpResponse<String> sinceWithoutChanges = post(SYNC_TOKEN,
+                "/api/v1/sources/wiki/spaces/DEV/syncs?since=2026-10-18T10:00:00Z");
+        assertThat(sinceWithoutChanges.statusCode()).isEqualTo(400);
+    }
+
+    @Test
     void startingNeedsTheSyncGrantForThatSpace() throws Exception {
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs").statusCode()).isEqualTo(403);
         assertThat(post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/OPS/syncs").statusCode()).isEqualTo(403);

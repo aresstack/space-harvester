@@ -6,10 +6,14 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
 
 import java.io.IOException;
 import java.net.URI;
@@ -80,7 +84,7 @@ public final class AppRuntime implements AutoCloseable {
             // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
             policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
             try {
-                harvester = builder(settings, settings.storage(), sources, policy, version, sessionSecrets).build();
+                harvester = builder(settings, settings.storage(), sources, policy, version, sessionSecrets, true).build();
             } catch (InvalidSourceConfigurationException e) {
                 Set<Integer> invalid = new TreeSet<>(Comparator.reverseOrder());
                 for (String problem : e.problems()) {
@@ -124,7 +128,8 @@ public final class AppRuntime implements AutoCloseable {
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null);
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
-        try (Harvester harvester = builder(settings, storage, List.of(), policy, version, null).build()) {
+        try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
+                .build()) {
             return harvester.sourceManagement().test(source, false);
         } finally {
             deleteQuietly(scratch);
@@ -169,7 +174,7 @@ public final class AppRuntime implements AutoCloseable {
 
     private static Harvester.Builder builder(AppSettings settings, AppSettings.Storage storage,
                                              List<SourceSettingsConfig> sources, AccessPolicy policy, String version,
-                                             SessionSecrets withAi) {
+                                             SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
                 .dataDirectory(storage.dataDirectory())
@@ -177,18 +182,45 @@ public final class AppRuntime implements AutoCloseable {
                 .assetDirectory(storage.assetDirectory())
                 .maxAssetBytes(storage.maxAssetBytes())
                 .userAgent("space-harvester-app/" + version)
-                .proxy(settings.proxy())
-                .trustBundles(TrustStores.of(settings.trustStores()))
+                .proxy(proxy(settings.proxy(), secrets))
+                // Vertrauen ohne Bundle regelt der Core (network.tls, #189); das frühere Bundle „windows“ meint dasselbe.
+                .trust(settings.tls())
+                .trustBundles(TrustStores.of(settings.trustStores(), TrustPolicy.deferred(settings.tls())))
                 .asyncTransport(settings.asyncTransport())
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
                 .maxTreeNodes(storage.maxTreeNodes())
-                .pdfFont(storage.pdfFont());
+                .pdfFont(storage.pdfFont())
+                .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
+                .withheldRetention(settings.cache().withheldRetention());
+        AppSettings.AiSettings ai = settings.ai();
+        if (ai.chunkTokens() != null || ai.chunkOverlapSentences() != null) {
+            builder.embeddingChunking(ai.chunkTokens() == null ? KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS
+                    : ai.chunkTokens(), ai.chunkOverlapSentences() == null
+                    ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
+        }
         builder.accessPolicy(policy);
-        if (withAi != null) {
-            builder.ai(aiService(settings.ai(), withAi.aiKey(), version));
+        if (withAi) {
+            builder.ai(aiService(settings.ai(), secrets.aiKey(), version));
         }
         return builder;
+    }
+
+    /**
+     * Der Proxy aus der Datei mit dem Proxy-Passwort aus Tresor oder Sitzung (#189); die Datei nennt nur den Benutzer.
+     * Fehlt das Passwort, meldet sich der Core nicht an und der Proxy antwortet mit 407.
+     */
+    static ProxySettings proxy(ProxySettings proxy, SessionSecrets secrets) {
+        ProxySettings.Authentication auth = proxy.authentication();
+        char[] password = secrets.proxyPassword();
+        if (auth == null || auth.password() != null || password == null) {
+            return proxy;
+        }
+        try {
+            return proxy.withAuthentication(new ProxySettings.Authentication(auth.username(), password));
+        } finally {
+            java.util.Arrays.fill(password, '\0');
+        }
     }
 
     /**
@@ -206,6 +238,10 @@ public final class AppRuntime implements AutoCloseable {
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;
+        }
+        if (ai.rerankModel() != null) {
+            // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
+            service = service.withRerankModel(ai.rerankModel());
         }
         if (service.embeddingModel() != null && service.embeddingDimensions() == null) {
             // Die Dimension steht in keinem Modellkatalog; der Reiter „KI“ misst sie mit Harvester#aiEmbeddingDimension.
@@ -249,6 +285,7 @@ public final class AppRuntime implements AutoCloseable {
 
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
         private volatile String aiKey;
+        private volatile char[] proxyPassword;
 
         /**
          * Wofür ein Wert gilt: Anmeldeart, (bei Basic) Benutzer und Platzhalter. Ändert sich eins davon in der Datei,
@@ -315,6 +352,24 @@ public final class AppRuntime implements AutoCloseable {
 
         String aiKey() {
             return aiKey;
+        }
+
+        /** Passwort für die Anmeldung am Proxy für diese Sitzung oder {@code null}; das übergebene Feld wird geleert. */
+        public void proxyPassword(char[] password) {
+            char[] old = proxyPassword;
+            proxyPassword = password == null || password.length == 0 ? null : password.clone();
+            if (old != null) {
+                java.util.Arrays.fill(old, '\0');
+            }
+            if (password != null) {
+                java.util.Arrays.fill(password, '\0');
+            }
+        }
+
+        /** Eine Kopie des Proxy-Passworts oder {@code null}; der Aufrufer leert sie nach Gebrauch. */
+        public char[] proxyPassword() {
+            char[] current = proxyPassword;
+            return current == null ? null : current.clone();
         }
 
         @Override

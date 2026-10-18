@@ -10,29 +10,51 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Die Proxy-Einstellungen, wie der Assistent sie bearbeitet: Modus, PAC-Adresse, fester Proxy und Ausnahmen. Sie
- * gelten für alle Quellen ({@code space-harvester.network.proxy}). Fristen, die der Assistent nicht zeigt, kommen aus
- * der bisherigen Datei und bleiben erhalten. Die Auflösung selbst macht der Core (win-proxy-java).
+ * Die Proxy-Einstellungen, wie der Assistent sie bearbeitet: Modus, PAC-Adresse, fester Proxy und Ausnahmen, dazu
+ * Benutzer für die Anmeldung am Proxy und ein eigenes Skript zur PAC-Ermittlung (#189). Sie gelten für alle Quellen
+ * ({@code space-harvester.network.proxy}). Fristen, die der Assistent nicht zeigt, kommen aus der bisherigen Datei und
+ * bleiben erhalten. Das Proxy-Passwort steht nie hier, sondern im Tresor. Die Auflösung selbst macht der Core
+ * (win-proxy-java).
+ *
+ * @param proxyUser          Benutzer für die Anmeldung am Proxy ({@code auth.username}) oder {@code null} ohne
+ * @param pacDiscoveryScript eigenes Skript ({@code pac-discovery-script}) für {@code pac-url-powershell} oder
+ *                           {@code pac-url-wscript}; {@code null} für das eingebaute
  */
 public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHost, String proxyPort,
                          List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl,
-                         Duration failureTtl) {
+                         Duration failureTtl, String proxyUser, String pacDiscoveryScript) {
 
     public ProxyDraft {
         mode = mode == null ? ProxySettings.Mode.DISABLED : mode;
         pacUrl = trim(pacUrl);
         proxyHost = trim(proxyHost);
         proxyPort = trim(proxyPort);
+        proxyUser = trim(proxyUser);
+        pacDiscoveryScript = pacDiscoveryScript == null || pacDiscoveryScript.isBlank() ? null
+                : pacDiscoveryScript.replace("\r\n", "\n").strip();
         // Die Ausnahmen bleiben eine Liste wie im Core; leere Zeilen der Tabelle fallen weg.
         nonProxyHosts = nonProxyHosts == null ? List.of() : nonProxyHosts.stream().map(ProxyDraft::trim)
                 .filter(host -> host != null).toList();
+    }
+
+    /** Ohne Anmeldung am Proxy und mit dem eingebauten Skript. */
+    public ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHost, String proxyPort,
+                      List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+        this(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl, null, null);
     }
 
     /** Der Entwurf zu bestehenden Einstellungen. */
     public static ProxyDraft of(ProxySettings settings) {
         return new ProxyDraft(settings.mode(), settings.pacUrl() == null ? null : settings.pacUrl().toString(),
                 settings.proxyHost(), settings.proxyPort() == null ? null : String.valueOf(settings.proxyPort()),
-                settings.nonProxyHosts(), settings.resolveTimeout(), settings.cacheTtl(), settings.failureTtl());
+                settings.nonProxyHosts(), settings.resolveTimeout(), settings.cacheTtl(), settings.failureTtl(),
+                settings.authentication() == null ? null : settings.authentication().username(),
+                settings.pacDiscoveryScript());
+    }
+
+    /** Ob der Modus ein eigenes Skript zur PAC-Ermittlung kennt: PowerShell oder VBScript. */
+    public static boolean scriptable(ProxySettings.Mode mode) {
+        return mode == ProxySettings.Mode.PAC_URL_POWERSHELL || mode == ProxySettings.Mode.PAC_URL_WSCRIPT;
     }
 
     /** Was fehlt oder nicht passt; leer, wenn die Einstellungen so in die Datei können. */
@@ -71,8 +93,11 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
     public ProxySettings settings() {
         boolean pac = mode == ProxySettings.Mode.PAC_URL_MANUAL;
         boolean manual = mode == ProxySettings.Mode.MANUAL_PROXY;
+        boolean proxied = mode != ProxySettings.Mode.DISABLED;
         return new ProxySettings(mode, pac && pacUrl != null ? URI.create(pacUrl) : null, manual ? proxyHost : null,
-                manual ? port() : null, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl);
+                manual ? port() : null, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl,
+                proxied && proxyUser != null ? ProxySettings.Authentication.basic(proxyUser) : null,
+                scriptable(mode) ? pacDiscoveryScript : null);
     }
 
     /** Der Block {@code proxy:} mit Einrückung {@code indent}; nur Schlüssel mit Wert. */
@@ -91,6 +116,14 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
         if (!settings.nonProxyHosts().isEmpty()) {
             yaml.append(inner).append("non-proxy-hosts:\n");
             settings.nonProxyHosts().forEach(host -> yaml.append(inner).append("  - ").append(quote(host)).append('\n'));
+        }
+        if (settings.authentication() != null) {
+            yaml.append(inner).append("auth:\n");
+            yaml.append(inner).append("  username: ").append(quote(settings.authentication().username())).append('\n');
+        }
+        if (settings.pacDiscoveryScript() != null) {
+            yaml.append(inner).append("pac-discovery-script: ").append(quote(settings.pacDiscoveryScript()))
+                    .append('\n');
         }
         duration(yaml, inner, "resolve-timeout", settings.resolveTimeout(), ProxySettings.DEFAULT_RESOLVE_TIMEOUT);
         duration(yaml, inner, "cache-ttl", settings.cacheTtl(), ProxySettings.DEFAULT_CACHE_TTL);
@@ -118,7 +151,9 @@ public record ProxyDraft(ProxySettings.Mode mode, String pacUrl, String proxyHos
     }
 
     private static String quote(String value) {
-        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        // Doppelte Anführungszeichen in YAML: Zeilenumbrüche und Tabs eines Skripts als Escape, nie roh.
+        return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+                .replace("\r", "\\r").replace("\t", "\\t") + "\"";
     }
 
     private static String trim(String value) {

@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.sync.SyncSummary;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -18,6 +19,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.net.URI;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -55,7 +57,9 @@ public class SyncController {
     @PostMapping("/sources/{sourceId}/spaces/{spaceKey}/syncs")
     @Operation(summary = "Abgleich eines Space starten",
             description = "Nimmt den Abgleich als Auftrag an und antwortet sofort; Location nennt den Status. "
-                    + "Neue und geänderte Seiten werden geladen, entfernte erst nach Einzelprüfung gelöscht. "
+                    + "Die Betriebsart mode entscheidet, welche Inhalte der Lauf lädt (Standard catalog-only: nur "
+                    + "Kopfdaten in den Katalog, keine Inhalte); entfernte Seiten erst nach "
+                    + "Einzelprüfung. "
                     + "Leser sehen die Änderungen erst, wenn der Lauf eine neue Generation bestätigt; ein "
                     + "unvollständiger oder abgebrochener Lauf hinterlässt nichts. Je Space läuft höchstens ein "
                     + "Abgleich.")
@@ -84,14 +88,45 @@ public class SyncController {
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
-            @Parameter(description = "Unbekannte Seiten laden (Standard). false: Abgleich ohne Erstbefüllung (ADR "
-                    + "0014), prüft und aktualisiert nur, was Cache und Generation kennen; unbekannte Seiten zählen "
-                    + "als notLoaded und missing")
-            @RequestParam(defaultValue = "true") boolean loadUnknown) {
+            @Parameter(description = "Betriebsart (ADR 0014): catalog-only nur Kopfdaten in den Katalog, keine "
+                    + "Inhalte (Standard; Initialisieren, Bestand abgleichen); sync-cache unbekannte Seiten nur in "
+                    + "den Katalog (notLoaded), gecachte bei neuer Version neu laden; full auch unbekannte Seiten "
+                    + "laden",
+                    schema = @Schema(allowableValues = {"catalog-only", "sync-cache", "full"}))
+            @RequestParam(required = false) String mode,
+            @Parameter(description = "Veraltet, durch mode ersetzt: true wie mode=full, false wie mode=sync-cache")
+            @RequestParam(required = false) Boolean loadUnknown,
+            @Parameter(description = "inventory (Standard): Inventur des Space. changes: nur verpasste Änderungen "
+                    + "nachholen (ADR 0014), eine Änderungssuche seit since und eine Papierkorbabfrage; bekannte "
+                    + "Seiten mit neuer Version werden je nach mode neu geladen, unbekannte nur mit mode=full, "
+                    + "gelöschte entfernt. Kann die Quelle das nicht, eine Inventur ohne Erstbefüllung",
+                    schema = @Schema(allowableValues = {"inventory", "changes"}))
+            @RequestParam(defaultValue = "inventory") String listing,
+            @Parameter(description = "Nur mit listing=changes: ab wann (ISO 8601); ohne Angabe ab dem letzten Lauf")
+            @RequestParam(required = false) Instant since) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        boolean changes = switch (listing) {
+            case "inventory" -> false;
+            case "changes" -> true;
+            default -> throw new InvalidQueryException("listing muss inventory oder changes sein");
+        };
+        if (since != null && !changes) {
+            throw new InvalidQueryException("since gilt nur mit listing=changes");
+        }
+        if (mode != null && loadUnknown != null) {
+            throw new InvalidQueryException("mode und loadUnknown schließen sich aus");
+        }
+        SyncMode syncMode;
+        try {
+            syncMode = mode != null ? SyncMode.of(mode)
+                    : loadUnknown != null ? SyncMode.loadingUnknown(loadUnknown) : SyncMode.CATALOG_ONLY;
+        } catch (IllegalArgumentException e) {
+            throw new InvalidQueryException(e.getMessage());
+        }
         // Erst nach der Freigabe: sonst verriete die Antwort Unberechtigten, welche Spaces es gibt.
         spaces.requireExisting(sourceId, spaceKey);
-        JobStatus status = syncs.start(sourceId, spaceKey, owner(caller), loadUnknown);
+        JobStatus status = changes ? syncs.catchUp(sourceId, spaceKey, owner(caller), since, syncMode)
+                : syncs.start(sourceId, spaceKey, owner(caller), syncMode);
         return ResponseEntity.accepted()
                 .location(URI.create(ApiPaths.V1 + "/syncs/" + status.id()))
                 .body(SyncResponse.of(new SpaceSyncJobs.SyncJob(status, null), false));
@@ -271,10 +306,13 @@ public class SyncController {
      * @param listed            gelesene Seiten
      * @param added             neu erkannte Seiten
      * @param contentChanged    Seiten mit neuer Revision
-     * @param notLoaded         gelistete, aber unbekannte Seiten, die ein Abgleich mit {@code loadUnknown=false} nicht
-     *                          lädt (Teil von {@code missing})
+     * @param notLoaded         gelistete, aber unbekannte Seiten, die ein Abgleich ohne {@code mode=full} nicht lädt
+     *                          (Teil von {@code missing})
+     * @param outdated          bekannte Seiten mit neuer Version, deren Inhalt {@code mode=catalog-only} nicht lädt;
+     *                          bleiben veraltet erhalten
      * @param metadataChanged   neue Metadaten bei gleicher Revision (umbenannt, verschoben)
      * @param attributesChanged nur neue Attribute (Labels)
+     * @param moved             unter eine andere Elternseite verschobene Seiten (über die Eltern-ID neu zugeordnet)
      * @param unchanged         unveränderte Seiten
      * @param removed           entfernte Seiten, deren Löschung die Quelle bestätigt hat
      * @param withheld          gesperrte Seiten: für das technische Konto „nicht gefunden“ ohne bestätigte Löschung,
@@ -293,8 +331,8 @@ public class SyncController {
      *                          {@code inventory-inconsistent} oder {@code removal-unconfirmed}), sonst {@code null}
      */
     public record SummaryResponse(
-            @Schema(allowableValues = {"complete", "incomplete", "inconsistent"}) String inventory, int listed,
-            int added, int notLoaded, int contentChanged, int metadataChanged, int attributesChanged, int unchanged,
+            @Schema(allowableValues = {"complete", "incomplete", "inconsistent", "changes"}) String inventory, int listed,
+            int added, int notLoaded, int outdated, int contentChanged, int metadataChanged, int attributesChanged, int moved, int unchanged,
             int removed,
             int withheld, int purged, int movedOut, int unverified, int failed,
             @Schema(nullable = true) List<String> failedPageIds,
@@ -305,7 +343,7 @@ public class SyncController {
 
         static SummaryResponse of(SyncSummary summary, boolean pageIds) {
             return new SummaryResponse(summary.inventory().name().toLowerCase(Locale.ROOT), summary.listed(),
-                    summary.added(), summary.notLoaded(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(),
+                    summary.added(), summary.notLoaded(), summary.outdated(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(), summary.moved(),
                     summary.unchanged(), summary.removed(), summary.withheld(), summary.purged(), summary.movedOut(),
                     summary.unverified(), summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
                     summary.missingPageIds().size(), summary.generation(), summary.complete(),
@@ -320,7 +358,7 @@ public class SyncController {
             return switch (summary.inventory()) {
                 case INCOMPLETE -> "inventory-incomplete";
                 case INCONSISTENT -> "inventory-inconsistent";
-                case COMPLETE -> "removal-unconfirmed";
+                case COMPLETE, CHANGES -> "removal-unconfirmed";
             };
         }
     }

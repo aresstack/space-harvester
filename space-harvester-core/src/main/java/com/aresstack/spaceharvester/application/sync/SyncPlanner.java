@@ -27,18 +27,26 @@ public final class SyncPlanner {
      * @throws IllegalArgumentException wenn die Generation zu einer anderen Quelle oder einem anderen Space gehört
      */
     public static SyncPlan plan(SyncBaseline baseline, Inventory inventory) {
-        return plan(baseline, inventory, Map.of(), true);
+        return plan(baseline, inventory, Map.of(), SyncMode.FULL);
+    }
+
+    /** Wie {@link #plan(SyncBaseline, Inventory, Map, SyncMode)} mit {@link SyncMode#loadingUnknown(boolean)}. */
+    public static SyncPlan plan(SyncBaseline baseline, Inventory inventory, Map<String, BaselineEntry> cached,
+                                boolean loadUnknown) {
+        return plan(baseline, inventory, cached, SyncMode.loadingUnknown(loadUnknown));
     }
 
     /**
      * Abgleich ohne Erstbefüllung (ADR 0014, Punkt 2): Bekannt ist, was die Generation führt, und darüber, was der Cache
-     * kennt ({@code cached}, frischer als die Generation). Ohne {@code loadUnknown} wird eine gelistete, aber unbekannte
-     * Seite {@link PageChange.Kind#NOT_LOADED} statt {@link PageChange.Kind#NEW}.
+     * kennt ({@code cached}, frischer als die Generation). Außer bei {@link SyncMode#FULL} wird eine gelistete, aber
+     * unbekannte Seite {@link PageChange.Kind#NOT_LOADED} statt {@link PageChange.Kind#NEW}; bei
+     * {@link SyncMode#CATALOG_ONLY} wird eine neue Version {@link PageChange.Kind#OUTDATED} statt
+     * {@link PageChange.Kind#CONTENT_CHANGED}.
      *
      * @param cached Stand des Cache je {@code pageId} ({@link SyncBaselineStore#knownPages})
      */
     public static SyncPlan plan(SyncBaseline baseline, Inventory inventory, Map<String, BaselineEntry> cached,
-                                boolean loadUnknown) {
+                                SyncMode mode) {
         if (baseline != null && !(baseline.sourceId().equals(inventory.sourceId())
                 && baseline.spaceKey().equals(inventory.spaceKey()))) {
             throw new IllegalArgumentException("Generation und Inventur gehören zu verschiedenen Spaces");
@@ -48,9 +56,7 @@ public final class SyncPlanner {
         Map<String, PageMetadataListing.Entry> current = inventory.byPageId();
         List<PageChange> changes = new ArrayList<>();
         current.forEach((pageId, entry) -> {
-            PageChange change = classify(previous.get(pageId), entry);
-            changes.add(change.kind() == PageChange.Kind.NEW && !loadUnknown
-                    ? new PageChange(pageId, PageChange.Kind.NOT_LOADED, null, entry) : change);
+            changes.add(within(mode, classify(previous.get(pageId), entry)));
         });
         PageChange.Kind absent = inventory.confirmed() ? PageChange.Kind.MISSING : PageChange.Kind.NOT_SEEN;
         previous.forEach((pageId, entry) -> {
@@ -68,6 +74,17 @@ public final class SyncPlanner {
         }
         changes.sort(Comparator.comparing(PageChange::pageId));
         return new SyncPlan(inventory, baseline, changes, Map.of());
+    }
+
+    /** Was von einer Einordnung in dieser Betriebsart übrig bleibt. */
+    static PageChange within(SyncMode mode, PageChange change) {
+        if (change.kind() == PageChange.Kind.NEW && !mode.loadsUnknown()) {
+            return new PageChange(change.pageId(), PageChange.Kind.NOT_LOADED, null, change.current());
+        }
+        if (change.kind() == PageChange.Kind.CONTENT_CHANGED && !mode.refreshesContent()) {
+            return new PageChange(change.pageId(), PageChange.Kind.OUTDATED, change.previous(), change.current());
+        }
+        return change;
     }
 
     /**

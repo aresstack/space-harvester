@@ -84,6 +84,11 @@ public class PlanApplier {
                     target.saveHeader(header(key, change.current(), observedAt));
                     written = false;
                 }
+                case OUTDATED -> {
+                    // Katalog ohne Inhaltsabruf: aktuelle Kopfdaten, die abgelegte Payload bleibt als veraltet stehen.
+                    target.saveHeader(header(key, change.current(), observedAt));
+                    written = false;
+                }
                 case UNCHANGED, NOT_SEEN -> written = false;
             }
             listener.pageDone(change, written, failed.contains(change.pageId()));
