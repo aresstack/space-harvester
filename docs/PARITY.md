@@ -138,7 +138,7 @@ Nicht angebunden sind:
 | Authentifizierter Abruf, dauerhafte, versionierte Ablage, Wiederverwendung | `doc/ExportGraphics`, `exedra/…/reader/ReaderImageStore` (flüchtig) | `Assets`, `core/persistence/files/FileSystemAssetStore` (SHA-256, versioniert) | SH+ |
 | Bilder beim Herunterladen mitbeschaffen, Asset-Manifest im Datenbestand | `know/KnowledgeExportUseCase#figures` | eigener Auftrag „Bilder beschaffen“ nach jedem Export (`ExportAssetCollection`, #200), SHA-256-adressiert, `assets.json` (`ExportAssetManifest`) mit Status je Datei, darunter `SIGN_IN_REQUIRED` und `REDUNDANT` (#303); Nachholen über `ExportConversions.collectImages` | gleich (#200, #303) |
 | Dateityp am Inhalt erkennen (Magic Bytes) | `deigma/document-tika/…/TikaContentDetector`, `ExportGraphics#decode` | nur Medientyp der Quelle und Endung (`AssetKind`, `SimpleContentDetector`) | teilweise → #183 |
-| Bildbeschreibung durch ein Vision-Modell | `astu/acropolis/…/image/SourceImageAnalysisUseCase`, `ImageAnalysisCache` | Port `ImageDescriber` und Ablage, aber keine Implementierung | teilweise → #184 |
+| Bildbeschreibung durch ein Vision-Modell | `astu/acropolis/…/image/SourceImageAnalysisUseCase`, `ImageAnalysisCache` | Port `ImageDescriber` und Ablage, aber keine Implementierung; Diagramme mit textueller Quelle (draw.io, SVG, Mermaid) werden statt einer Beschreibung textuell verwendet (`*.graph.json` im `json-package`, #306). Offen: Beschreibung durch ein Vision-Modell (nicht beauftragt) | teilweise → #184 |
 
 ## 7. Anhänge
 
@@ -158,7 +158,7 @@ Nicht angebunden sind:
 | draw.io-XML und SVG textuell erhalten | — | Asset-Ernte bevorzugt `DIAGRAM` > `VECTOR` > `IMAGE` | SH+ |
 | draw.io-Vorschau-PNG nicht doppelt laden | lädt Quelldaten und Vorschau | Ist das Diagramm aus den Quelldaten gezeichnet, wird die PNG-Vorschau des Plugins nicht geladen (`REDUNDANT`, Grund `drawio-preview` in `assets.json`, zählt nicht als fehlend); nur bei unlesbaren oder nicht darstellbaren Quelldaten ist sie der Ersatz (#303, ADR 0018) | SH+ |
 | Mermaid erkennen (Confluence-Makros) | nur Markdown-Fences | `StorageParser` (`mermaid`, `mermaid-cloud`, `mermaid-macro`) → Codeblock | SH+ |
-| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | `Diagrams`; in Word, PDF und Markdown als Grafik (#206) | gleich; Leseansicht der App mit Diagrammen in Arbeit (L) |
+| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | `Diagrams`; in Word, PDF und Markdown als Grafik (#206) | gleich; die Leseansicht der App zeigt Mermaid als Grafik des Core (`Assets.rendition`, #192) |
 | PlantUML, Gliffy | — | Codeblock bzw. Hinweis | SH+ |
 
 ## 9. Word-Export
@@ -268,13 +268,13 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013) | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
 | #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
-| #184 | `ImageDescriber` über den externen KI-Dienst | Q |
+| #184 | `ImageDescriber` über den externen KI-Dienst | offen, nicht beauftragt; Diagramme textuell erledigt (#306) |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | erledigt: Core (#303), Server-REST (#308), App (#312) |
 | #186 | Export einzelner Seiten und Teilbäume | Q; Teilbaum umgesetzt (#315), offen Einzelseite, Tiefe; Vergleichstest S |
 | #187 | Quellen ohne Partitionen und weitere Quelltypen des EAC | Q |
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
 | #189 | Netzwerk: Proxy-Anmeldung, PAC-Skript, Vertrauen, Kopfzeilen (#234), Verbindungsdiagnose (#238) | Q, erledigt |
-| #190 | draw.io- und Mermaid-Rendering im Core | R |
+| #190 | draw.io- und Mermaid-Rendering im Core | R; Export erledigt (#206, #210, #220), offen: Leseansicht zeigt draw.io als Vorschaubild der Quelle statt als Grafik des Core |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
 | #218 | Ausgeführte Makros aus der Leseansicht in den Konvertern (KI-Text bleibt auf `storage`) | Q, dann R |
@@ -283,10 +283,6 @@ Rückmeldungen an den Upstream (Enterprise AI Client):
 
 - `SourceQuery` (source-api) kennt keine Titeloption. Der Core sucht Titel deshalb über die Volltextsuche des Confluence-Adapters und prüft den Titel selbst; mit einer Titeloption (CQL `title ~`) im Upstream würde die Titelsuche auch Seiten finden, die die Volltextsuche nicht unter den ersten 1000 Funden liefert, und käme per Sync in den Core (#305).
 - `OpenAiCompatibleChatAdapter` (chat-openai) liest die Antwort ohne Größengrenze. Der Core begrenzt die Antwort für Suchvarianten über `max_tokens` 1024 und wertet höchstens 64 Ki Zeichen aus; eine Lesegrenze im Stream gehört in den Upstream-Adapter (#302).
-
-In Arbeit und deshalb ohne neues Issue:
-
-- Leseansicht der App mit Bildern und Diagrammen (L, #192).
 
 ## Vergleichstests
 
