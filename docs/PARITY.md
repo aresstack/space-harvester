@@ -86,7 +86,7 @@ Nicht angebunden sind:
 | Metadaten und Auszüge je Treffer | `SourceSearchHit`, `ConfluenceRestClient#excerpt` | `KeywordSearch.Hit` (Version, Änderung, URL, Space, Elternseite, Auszug) | gleich |
 | Rechte je Treffer | eigene Anmeldung | `AccessGuard` je Treffer, gesperrte fallen ohne Spur weg | SH+ |
 | Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | `KeywordSearch` sucht Quellen ohne eigene Suche im Volltextindex des Caches (`PageTextIndex`, Status `INDEXED`, REST `indexed`); Index-Treffer verlangen zusätzlich das Inhaltsrecht | gleich (Vergleichstest Suche, #180) |
-| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff | gleich (Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung) |
+| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff; lokale Dateien nur als Text (UTF-8, JSON, XML), PDF und Word werden nicht extrahiert (`LocalFilesTextProjector`), der EAC liest sie über `DocumentExtraction.registry()` | teilweise → #183 (Textdateien gleich laut Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung) |
 | Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | `SearchHitPrefetch` lädt je Stapel höchstens 10 sichtbare Live-Treffer über `PageRenewal` in den Cache, nicht für delegierte Benutzer; `Harvester.builder().prefetchSearchHits(boolean)`, Standard an | gleich (Vergleichstest Suche) |
 
 ## 3. Navigation
@@ -249,7 +249,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
 | #181 | Hybride Suche: Zerlegung, RRF, Rerank-Modell, verwandte Abschnitte | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
-| #183 | Textextraktion, Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
+| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
 | #184 | `ImageDescriber` über den externen KI-Dienst | Q |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | Q |
 | #186 | Export einzelner Seiten und Teilbäume | Q |
