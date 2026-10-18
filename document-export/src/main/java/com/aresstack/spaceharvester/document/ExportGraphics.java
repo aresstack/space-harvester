@@ -90,6 +90,14 @@ public final class ExportGraphics {
         return new ExportGraphics(null, null);
     }
 
+    /**
+     * The graphics with the offline renderers of the Enterprise AI Client: Mermaid through mermaid-java and SVG
+     * through Batik, both without browser or network.
+     */
+    public static ExportGraphics rendering() {
+        return new ExportGraphics(new AresStackMermaidImageRenderer(), new SvgImageRenderer());
+    }
+
     /** Know {@code images} (the figures of one chapter) as well. */
     public ExportGraphics with(List<ExportImage> images) {
         if (images != null) {
