@@ -221,15 +221,15 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | Proxy-Route je Ziel (PAC, Registry, fester Proxy, `nonProxyHosts`, fail-closed) | `app/net/HttpRoutes`, `app/config/NetworkConfig` | `core/source/network/ProxyRoutes`, `ProxySettings` | gleich |
-| Eigenes PAC-Ermittlungsskript | `NetworkConfig#pacDiscoveryScript` | keines | fehlt → #189 |
-| Proxy-Anmeldung (Basic, CONNECT-Tunnel) | `app/security/ProxyAuthenticator`, `ProxyAuthMode` | keine | fehlt → #189 |
-| Vertrauen: JVM, Windows-ROOT, Windows-CA, eigene CA-Datei | `app/net/TrustPolicy` | App `desk/settings/TrustStores`; Server und Core nur Spring-SSL-Bundles bzw. `trust-bundle` | teilweise → #189 |
+| Eigenes PAC-Ermittlungsskript | `NetworkConfig#pacDiscoveryScript` | `ProxySettings#pacDiscoveryScript` bei PAC-Ermittlung über PowerShell oder WScript (#234) | gleich |
+| Proxy-Anmeldung (Basic, CONNECT-Tunnel) | `app/security/ProxyAuthenticator`, `ProxyAuthMode` (`NONE`, `BASIC`) | `ProxySettings.Authentication` mit Geheimnis `network:proxy` (#234) | gleich |
+| Vertrauen: JVM, Windows-ROOT, Windows-CA, eigene CA-Datei | `app/net/TrustPolicy` | `TrustSettings` und `TrustPolicy` über `Harvester.builder().trust()` (#234); ohne eingeschalteten JVM-Truststore kein stiller Rückfall darauf | gleich |
 | Client-Zertifikat Windows-MY / PKCS12 | `ClientCertificates`, `app/security/ClientCertificateFactory` | `ConfiguredClientCertificates` | gleich |
 | Secrets: DPAPI, je Sitzung abgefragt | `app/security/DpapiSecretStore`, `AskedSecretProvider` | App `SecretVault`, `SessionSecrets` | gleich |
 | Secrets: KeePassRPC | `proasteion/platform/security-keepassrpc/…/KeePassRpcSecretProvider` | keine eigene; einhängbar über `Harvester.builder().secretProvider(SourceSecrets)` (#226) | gleich über den Port; der KeePassRPC-Adapter bleibt im EAC |
 | Secrets: Azure Key Vault | — | Server-Profil `azure-keyvault` | SH+ |
 | Verbindungsdiagnose mit Ursache (Zertifikat, Proxy, DNS) und Stufentest | `app/net/ConnectionDiagnosis`, `exedra/…/settings/ConnectionProbe` | Spaces laden als Test; Diagnose aus `JobEvent` (docs/DIAGNOSTICS.md) | teilweise → #189 |
-| Frei konfigurierbare HTTP-Kopfzeilen | `NetworkConfig` | nur `userAgent` | teilweise → #189 |
+| HTTP-Kopfzeilen | `NetworkConfig`: nur der User-Agent, keine frei konfigurierbaren Kopfzeilen | `userAgent`, global gesetzt | gleich |
 
 ## 14. Desktop-App
 
@@ -255,7 +255,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #186 | Export einzelner Seiten und Teilbäume | Q |
 | #187 | Quellen ohne Partitionen und weitere Quelltypen des EAC | Q |
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
-| #189 | Proxy-Anmeldung, PAC-Skript, Windows-Vertrauen, Diagnose, Kopfzeilen | Q |
+| #189 | Verbindungsdiagnose mit Stufen (Proxy-Anmeldung, PAC-Skript, Vertrauen und Kopfzeilen erledigt in #234) | Q |
 | #190 | draw.io- und Mermaid-Rendering im Core | R |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
