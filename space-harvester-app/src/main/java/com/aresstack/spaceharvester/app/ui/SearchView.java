@@ -241,7 +241,13 @@ public final class SearchView implements View {
             incomplete = false;
             model.set(hits(results));
             show(q, results);
-            if (results.hits().isEmpty()) {
+            if (results.hits().isEmpty() && results.nextCursor() != null) {
+                // Dieser Stapel war leer, weitere Kandidaten folgen noch: kein endgültiges „Keine Treffer“.
+                feedback.info("Noch keine Treffer", "Im ersten Stapel war nichts Passendes; „Weitere laden“ sucht weiter.");
+            } else if (results.hits().isEmpty() && !results.complete()) {
+                feedback.warning("Keine Treffer, Suche unvollständig",
+                        "Nicht jede Quelle konnte vollständig suchen; siehe Zeile unter der Liste.");
+            } else if (results.hits().isEmpty()) {
                 feedback.info("Keine Treffer", searched()
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
                         : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
@@ -279,7 +285,13 @@ public final class SearchView implements View {
             run.setEnabled(true);
             model.add(hits(results));
             show(q, results);
-            feedback.clear();
+            if (model.rows.isEmpty() && results.nextCursor() != null) {
+                feedback.info("Noch keine Treffer", "Auch dieser Stapel war leer; „Weitere laden“ sucht weiter.");
+            } else if (model.rows.isEmpty()) {
+                feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
+            } else {
+                feedback.clear();
+            }
         }, error -> {
             if (id != request) {
                 return;
