@@ -209,6 +209,17 @@ public final class SearchOrchestrator implements AutoCloseable {
                 CompletableFuture<KeywordSearch.Results> original = start(0);
                 publishVariants();
                 await(0, original, Math.min(deadline, started + profile.execution().variantTimeout().toNanos()));
+                // Genügt schon die ursprüngliche Anfrage, wartet die Suche nicht auf das Modell.
+                if (!cancelled() && successes > 0 && !budgetHit && System.nanoTime() < deadline
+                        && quality.satisfied(state())) {
+                    if (expanded.isDone()) {
+                        addVariants(awaitExpansion(expanded));
+                    } else {
+                        expanded.cancel(false);
+                    }
+                    finish(Completion.QUALITY_REACHED);
+                    return;
+                }
                 addVariants(awaitExpansion(expanded));
                 publishVariants();
                 int next = 1;

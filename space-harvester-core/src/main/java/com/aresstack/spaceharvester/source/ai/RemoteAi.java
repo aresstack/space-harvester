@@ -135,6 +135,9 @@ public final class RemoteAi {
         };
     }
 
+    /** Obergrenze der Antwort des Chat-Modells für Suchvarianten in Tokens. */
+    static final int MAX_VARIANT_TOKENS = 1024;
+
     /**
      * Das Chat-Modell als Formulierer von Suchvarianten ({@code POST /chat/completions}, ADR 0017) über den
      * unveränderten {@code OpenAiCompatibleChatAdapter}. An den Dienst geht
@@ -148,7 +151,8 @@ public final class RemoteAi {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
         }
         OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
-        ChatOptions options = ChatOptions.builder().temperature(0.0).build();
+        // Die Antwort ist eine kurze JSON-Liste; die Obergrenze hält auch einen fehlerhaften Dienst kurz.
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_VARIANT_TOKENS).build();
         return (instructions, question) -> {
             try {
                 return adapter.complete(new ChatRequest(

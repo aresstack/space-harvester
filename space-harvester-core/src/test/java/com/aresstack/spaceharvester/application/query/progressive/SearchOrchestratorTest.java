@@ -90,8 +90,10 @@ class SearchOrchestratorTest {
 
         assertThat(result.reason()).isEqualTo(Completion.QUALITY_REACHED);
         assertThat(search.calls()).containsExactly(ORIGINAL);
-        assertThat(result.variants()).extracting(Variant::status)
-                .containsExactly(Status.DONE, Status.SKIPPED, Status.SKIPPED);
+        // Die Varianten stehen als übersprungen da, wenn das Modell vor dem Ende geantwortet hat.
+        assertThat(result.variants().get(0).status()).isEqualTo(Status.DONE);
+        assertThat(result.variants().subList(1, result.variants().size())).extracting(Variant::status)
+                .allMatch(status -> status == Status.SKIPPED);
     }
 
     @Test
@@ -246,6 +248,29 @@ class SearchOrchestratorTest {
                 "modell");
         assertThat(byRules.variants()).extracting(variant -> variant.query().text()).containsExactly(ORIGINAL,
                 "regel");
+    }
+
+    @Test
+    void anOriginalQueryReachingTheGoalDoesNotWaitForTheModel() throws Exception {
+        CountDownLatch never = new CountDownLatch(1);
+        search.results(ORIGINAL, found("a", "b"));
+        QueryExpansionStrategy slow = (original, max) -> {
+            try {
+                never.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return List.of("v1");
+        };
+        HitScorer good = (original, hits) -> hits.stream().mapToDouble(hit -> 0.9).toArray();
+        orchestrator = new SearchOrchestrator(search, slow, good);
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults().withQuality(2, 0.5)).result().get(3, TimeUnit.SECONDS);
+        never.countDown();
+
+        assertThat(result.reason()).isEqualTo(Completion.QUALITY_REACHED);
+        assertThat(result.variants()).extracting(variant -> variant.query().text()).containsExactly(ORIGINAL);
     }
 
     @Test
