@@ -6,7 +6,9 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
@@ -30,6 +32,35 @@ final class Breadcrumbs extends JPanel {
     Breadcrumbs() {
         super(new FlowLayout(FlowLayout.LEFT, 0, 0));
         setOpaque(false);
+    }
+
+    /**
+     * Wie {@link FlowLayout} umbrochen, aber mit der Höhe aller Zeilen: ein langer Pfad bricht in der Breite des
+     * Elternteils um, statt abgeschnitten zu werden.
+     */
+    @Override
+    public Dimension getPreferredSize() {
+        int available = getParent() == null ? 0 : getParent().getWidth();
+        return available <= 0 ? super.getPreferredSize() : wrapped(available);
+    }
+
+    Dimension wrapped(int available) {
+        int x = 0;
+        int rowHeight = 0;
+        int height = 0;
+        int widest = 0;
+        for (Component part : getComponents()) {
+            Dimension size = part.getPreferredSize();
+            if (x > 0 && x + size.width > available) {
+                height += rowHeight;
+                widest = Math.max(widest, x);
+                x = 0;
+                rowHeight = 0;
+            }
+            x += size.width;
+            rowHeight = Math.max(rowHeight, size.height);
+        }
+        return new Dimension(Math.max(widest, x), height + rowHeight);
     }
 
     void onOpen(Consumer<String> listener) {

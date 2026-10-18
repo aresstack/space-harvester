@@ -27,10 +27,12 @@ class PageLinksTest {
             text.add(String.valueOf(crumbs.isVisible()));
             java.awt.event.MouseListener[] listeners = crumbs.getComponent(2).getMouseListeners();
             listeners[listeners.length - 1].mouseClicked(new java.awt.event.MouseEvent(crumbs, 0, 0, 0, 0, 0, 1, false));
+            int oneRow = crumbs.wrapped(10_000).height;
+            text.add(String.valueOf(crumbs.wrapped(40).height > oneRow));
             crumbs.clear();
             text.add(String.valueOf(crumbs.isVisible()));
         });
-        assertThat(text).containsExactly("Entwicklung (DEV) › Start › Bereich", "true", "false");
+        assertThat(text).containsExactly("Entwicklung (DEV) › Start › Bereich", "true", "true", "false");
         assertThat(opened).containsExactly("1");
     }
 
