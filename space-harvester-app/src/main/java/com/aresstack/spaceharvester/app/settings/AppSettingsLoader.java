@@ -278,6 +278,8 @@ public final class AppSettingsLoader {
                     ids.add(text.strip());
                 }
             });
+        } else if (raw instanceof Map<?, ?>) {
+            problems.add("space-harvester-app.disabled-sources ist eine Liste von Quellen-IDs, keine Zuordnung");
         } else if (raw != null) {
             String text = text(raw, problems);
             if (text != null) {

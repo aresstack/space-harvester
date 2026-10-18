@@ -684,7 +684,14 @@ public final class SourcesView implements View {
             String stored = vault.raw(id);
             vault.remove(id);
             try {
-                editor.save(context.configFile(), editor.remove(context.configFile(), id), !plaintext);
+                ConfigFileEditor.Draft removed = editor.remove(context.configFile(), id);
+                // Auch der Schalter gehört zur Quelle: Eine neue Quelle mit derselben ID startet sonst abgeschaltet.
+                if (removed.settings() != null && removed.settings().disabled(id)) {
+                    java.util.Set<String> disabled = new java.util.TreeSet<>(removed.settings().disabledSources());
+                    disabled.remove(id);
+                    removed = editor.withDisabledSources(context.configFile(), removed, disabled);
+                }
+                editor.save(context.configFile(), removed, !plaintext);
             } catch (IOException | RuntimeException e) {
                 if (stored != null) {
                     try {

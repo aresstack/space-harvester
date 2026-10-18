@@ -150,4 +150,12 @@ class AppSettingsLoaderTest {
         assertThat(new AppSettingsLoader(new Placeholders(name -> null), home, true).load(file).proxy().mode())
                 .as("ausdrücklich gesetzt gilt").isEqualTo(ProxySettings.Mode.DISABLED);
     }
+
+    @Test
+    void disabledSourcesAsAMappingIsReportedNotIgnored() throws Exception {
+        Path file = home.resolve("abgeschaltet.yml");
+        Files.writeString(file, "space-harvester-app:\n  disabled-sources:\n    wiki: true\n");
+        AppSettings settings = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
+        assertThat(settings.problems()).anyMatch(problem -> problem.contains("disabled-sources"));
+    }
 }
