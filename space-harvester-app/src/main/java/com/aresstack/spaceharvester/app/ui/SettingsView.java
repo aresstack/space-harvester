@@ -301,6 +301,11 @@ public final class SettingsView implements View {
     }
 
     private void open(Path path) {
+        open(path, feedback);
+    }
+
+    /** Öffnet einen Ordner oder den Ordner einer Datei im Dateimanager; legt einen fehlenden Ordner an. */
+    static void open(Path path, Feedback feedback) {
         if (path == null) {
             return;
         }

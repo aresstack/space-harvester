@@ -1,0 +1,112 @@
+package com.aresstack.spaceharvester.app.ui;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.aresstack.spaceharvester.app.runtime.Workspace;
+import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
+import com.aresstack.spaceharvester.app.settings.Placeholders;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.stream.Stream;
+import javax.swing.SwingUtilities;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+/**
+ * Die Karte „Exportieren als …“ unter Aufträge: Ein fertiger Download bietet seine Formate an, „Exportieren“ legt die
+ * Datei aus dem vorhandenen Datenbestand direkt im Ausgabeordner ab, ohne Dateidialog und ohne technische Dateien.
+ */
+class ExportCardTest {
+
+    @TempDir
+    Path home;
+
+    private AppContext context;
+
+    @AfterEach
+    void shutdown() {
+        if (context != null) {
+            context.shutdown();
+        }
+    }
+
+    @Test
+    void aFinishedDownloadIsExportedFromItsDatasetIntoTheOutputDirectory() throws Exception {
+        Path files = Files.createDirectories(home.resolve("handbuch"));
+        Files.writeString(files.resolve("seite.md"), "# Seite\n\nText.\n");
+        Path out = home.resolve("Ausgabe");
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                  output-directory: "%s"
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      title: Handbuch
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), out, files));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        Workspace workspace = context.runtime().workspace();
+        await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
+        String space = workspace.spaces("handbuch").get(0).key();
+        String job = workspace.startExport("handbuch", space, List.of(ExportsView.DEFAULT_FORMAT)).id();
+
+        ActivitiesView[] view = new ActivitiesView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new ActivitiesView(context);
+            view[0].show(job);
+        });
+        await(() -> view[0].card.isShowing() || view[0].format.getItemCount() > 0);
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(view[0].format.getItemAt(0).title()).isEqualTo("PDF-Dokument");
+            for (int i = 0; i < view[0].format.getItemCount(); i++) {
+                if (view[0].format.getItemAt(i).id().equals("markdown")) {
+                    view[0].format.setSelectedIndex(i);
+                }
+            }
+            view[0].exportAs.doClick();
+        });
+        await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".md")));
+        // Nur die gewünschte Datei, keine technischen Dateien wie pages.json oder tree.json.
+        assertThat(list(out)).singleElement().satisfies(p ->
+                assertThat(p.getFileName().toString()).startsWith(space).endsWith(".md"));
+    }
+
+    @Test
+    void formatsAppearInTheOrderOfTheSketchWithReadableNames() {
+        assertThat(ActivitiesView.Format.ordered(List.of("docx", "json", "markdown", "pdf", "epub")))
+                .extracting(ActivitiesView.Format::title)
+                .containsExactly("PDF-Dokument", "Word-Dokument", "Markdown", "JSON", "EPUB");
+    }
+
+    private static List<Path> list(Path directory) {
+        try (Stream<Path> files = Files.list(directory)) {
+            return files.toList();
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static void await(BooleanSupplier condition) throws Exception {
+        for (int i = 0; i < 600; i++) {
+            boolean[] done = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> done[0] = condition.getAsBoolean());
+            if (done[0]) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Bedingung nicht erreicht");
+    }
+}

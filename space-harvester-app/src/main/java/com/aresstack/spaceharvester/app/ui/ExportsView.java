@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 
 import javax.swing.BorderFactory;
-import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.JTable;
@@ -16,27 +15,19 @@ import java.awt.FlowLayout;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
 
 /**
- * Herunterladen: Quelle und einen oder mehrere Spaces wählen (oft vorbelegt aus Wissensquellen), Formate wählen, starten;
- * je Space entsteht ein Auftrag. JSON ist vorgewählt, die übrigen Formate sind optional. Das Raw-First-Artefakt
- * (Originaldaten und Manifest) entsteht immer. Ein vorheriger Abgleich ist nicht nötig: Fehlende Seiten liest der
- * Export selbst aus der Quelle. Fortschritt, Ergebnis und das Speichern der Dateien zeigt „Aufträge“.
+ * Herunterladen: Quelle und einen oder mehrere Spaces wählen (oft vorbelegt aus Wissensquellen), starten; je Space
+ * entsteht ein Auftrag, der die Seiten einmal beschafft und den JSON-Datenbestand anlegt. Ein vorheriger Abgleich ist
+ * nicht nötig: Fehlende Seiten liest der Export selbst aus der Quelle. PDF, Word, Markdown oder JSON erzeugt danach
+ * „Exportieren“ auf der Karte unter „Aufträge“ aus diesem Datenbestand, ohne die Quelle erneut zu lesen.
  */
 public final class ExportsView implements View {
-
-    private static final Map<String, String> FORMAT_TITLES = Map.of(
-            "json", "JSON (strukturiert)", "markdown", "Markdown", "docx", "Word (DOCX)", "pdf", "PDF");
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final SourcePicker picker;
-    private final JPanel formatsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-    private final Map<String, JCheckBox> formats = new LinkedHashMap<>();
     /** Ab so vielen Spaces fragt „Herunterladen“ nach. */
     static final int CONFIRM_FROM = 10;
     static final String DEFAULT_FORMAT = "json";
@@ -57,7 +48,6 @@ public final class ExportsView implements View {
         this.picker = new SourcePicker(context, false, false);
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-        formatsPanel.setOpaque(false);
         chosenPanel.setOpaque(false);
         start.addActionListener(e -> start());
         addSpace.addActionListener(e -> {
@@ -92,10 +82,8 @@ public final class ExportsView implements View {
         form.add(javax.swing.Box.createVerticalStrut(4));
         form.add(left(chosenPanel));
         form.add(javax.swing.Box.createVerticalStrut(8));
-        form.add(left(Comic.row(Comic.caption("3 · Formate"), formatsPanel)));
-        form.add(javax.swing.Box.createVerticalStrut(8));
-        form.add(left(Comic.muted("Immer dabei: Originaldaten und Manifest mit Prüfsummen. Fehlende Seiten liest der "
-                + "Export selbst aus der Quelle, ein Abgleich vorher ist nicht nötig.")));
+        form.add(left(Comic.muted("Herunterladen beschafft die Seiten einmal als JSON-Datenbestand; ein Abgleich vorher "
+                + "ist nicht nötig. PDF, Word oder Markdown erzeugst du danach unter Aufträge mit „Exportieren“.")));
         form.add(javax.swing.Box.createVerticalStrut(8));
         form.add(left(Comic.row(start)));
         form.add(left(feedback));
@@ -103,13 +91,13 @@ public final class ExportsView implements View {
         JPanel list = new JPanel(new BorderLayout(0, 6));
         list.setOpaque(false);
         list.add(Comic.scroll(table), BorderLayout.CENTER);
-        list.add(Comic.muted("Doppelklick zeigt den Download unter Aufträge, dort lassen sich die Dateien speichern."),
+        list.add(Comic.muted("Doppelklick zeigt den Download unter Aufträge, dort exportierst du ihn als PDF, Word, "
+                + "Markdown oder JSON."),
                 BorderLayout.SOUTH);
 
         root.add(Comic.plate("Neuer Download", Comic.ORANGE, form), BorderLayout.NORTH);
         root.add(Comic.plate("Letzte Downloads", Comic.PETROL, list), BorderLayout.CENTER);
-        context.onChange(ignored -> refreshFormats());
-        refreshFormats();
+        context.onChange(ignored -> refreshList());
         renderChosen();
     }
 
@@ -135,9 +123,9 @@ public final class ExportsView implements View {
         return List.copyOf(chosen);
     }
 
-    /** Für Tests: die vorgewählten Formate. */
+    /** Herunterladen legt immer den JSON-Datenbestand an; andere Formate entstehen daraus unter „Aufträge“. */
     List<String> chosenFormats() {
-        return formats.entrySet().stream().filter(e -> e.getValue().isSelected()).map(Map.Entry::getKey).toList();
+        return List.of(DEFAULT_FORMAT);
     }
 
     private void choose(String sourceId, String key) {
@@ -187,28 +175,6 @@ public final class ExportsView implements View {
                 : "Herunterladen");
         chosenPanel.revalidate();
         chosenPanel.repaint();
-    }
-
-    private void refreshFormats() {
-        AppRuntime runtime = context.runtime();
-        List<String> available = runtime == null ? List.of() : runtime.workspace().exportFormats();
-        if (available.equals(new ArrayList<>(formats.keySet()))) {
-            return;
-        }
-        formats.clear();
-        formatsPanel.removeAll();
-        for (String format : available) {
-            JCheckBox box = new JCheckBox(FORMAT_TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT)));
-            box.setOpaque(false);
-            box.setFont(Comic.regular(13f));
-            box.setForeground(Comic.INK);
-            // JSON ist die Vorgabe; alle anderen Formate wählt man bei Bedarf dazu.
-            box.setSelected(DEFAULT_FORMAT.equals(format));
-            formats.put(format, box);
-            formatsPanel.add(box);
-        }
-        formatsPanel.revalidate();
-        refreshList();
     }
 
     private void refreshList() {
