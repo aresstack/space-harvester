@@ -194,6 +194,29 @@ public final class AppContext {
         }, failed);
     }
 
+    /**
+     * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
+     * ({@code space-harvester-app.disabled-sources}) und startet die Quellen neu; beim Start setzt die Laufzeit ihn im
+     * Core ({@code SourceManagement.setEnabled}). Der Bestand der Quelle bleibt.
+     */
+    public void sourceEnabled(String sourceId, boolean enabled, Runnable done, Consumer<Throwable> failed) {
+        Background.run(() -> {
+            ConfigFileEditor editor = new ConfigFileEditor(loader);
+            String text = Files.isRegularFile(configFile)
+                    ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft base = new ConfigFileEditor.Draft(text, loader.read(configFile, text));
+            java.util.Set<String> disabled = new java.util.TreeSet<>(base.settings().disabledSources());
+            if (enabled) {
+                disabled.remove(sourceId);
+            } else {
+                disabled.add(sourceId);
+            }
+            editor.save(configFile, editor.withDisabledSources(configFile, base, disabled),
+                    !editor.fileHasPlaintextSecret(configFile));
+            return disabled;
+        }, saved -> reload(done), failed);
+    }
+
     /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */
     public boolean aiKeyAvailable() {
         return sessionAiKey != null || aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);

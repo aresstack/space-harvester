@@ -94,6 +94,13 @@ public final class AppRuntime implements AutoCloseable {
                 invalid.forEach(index -> sources.remove((int) index));
             }
         }
+        // Abgeschaltete Quellen bleiben samt Bestand eingerichtet; der Core kennt sie nicht (#188, wie im Enterprise AI
+        // Client). Den Schalter legt die App in ihrer Datei ab.
+        for (SourceSettingsConfig source : sources) {
+            if (settings.disabled(source.id())) {
+                harvester.sourceManagement().setEnabled(source.id(), false);
+            }
+        }
         ActivityLog activities = new ActivityLog(settings.storage().dataDirectory().resolve("app")
                 .resolve("activities.txt"));
         return new AppRuntime(settings, harvester, new Workspace(harvester, new AccessGuard(policy), activities),

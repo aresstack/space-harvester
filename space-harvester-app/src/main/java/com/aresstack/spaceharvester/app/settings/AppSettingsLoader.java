@@ -23,9 +23,11 @@ import java.time.Duration;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -191,7 +193,30 @@ public final class AppSettingsLoader {
         }
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
-                path(get(app, "output-directory"), problems), problems);
+                path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems));
+    }
+
+    /** Eine Liste von Kennungen, als YAML-Liste oder durch Kommas getrennt. */
+    private Set<String> ids(Object raw, List<String> problems) {
+        Set<String> ids = new LinkedHashSet<>();
+        if (raw instanceof List<?> list) {
+            list.forEach(id -> {
+                String text = text(id, problems);
+                if (text != null && !text.isBlank()) {
+                    ids.add(text.strip());
+                }
+            });
+        } else if (raw != null) {
+            String text = text(raw, problems);
+            if (text != null) {
+                for (String id : text.split(",")) {
+                    if (!id.isBlank()) {
+                        ids.add(id.strip());
+                    }
+                }
+            }
+        }
+        return ids;
     }
 
     private AppSettings.SourceEntry source(Map<?, ?> source, int index, List<String> problems) {

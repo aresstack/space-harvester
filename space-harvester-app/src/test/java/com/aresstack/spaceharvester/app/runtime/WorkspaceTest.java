@@ -230,6 +230,20 @@ class WorkspaceTest {
     }
 
     @Test
+    void aDisabledSourceStaysConfiguredButTheCoreDoesNotKnowIt() throws Exception {
+        AppSettings settings = settings(Map.of("WIKI_TOKEN", TOKEN, "CLIENT_PASSWORD",
+                TestCertificates.CLIENT_PASSWORD));
+        runtime = AppRuntime.start(new AppSettings(settings.file(), settings.sources(), settings.proxy(),
+                settings.asyncTransport(), settings.trustStores(), settings.storage(), settings.jobLimits(),
+                settings.ai(), settings.outputDirectory(), settings.problems(), java.util.Set.of("handbuch")),
+                new AppRuntime.SessionSecrets(), "test");
+
+        assertThat(runtime.workspace().sources()).extracting(HarvestSource::id).containsExactly("wiki");
+        assertThat(runtime.workspace().sourceEnabled("handbuch")).isFalse();
+        assertThat(runtime.workspace().sourceEnabled("wiki")).isTrue();
+    }
+
+    @Test
     void attachmentsAreListedStoredAndDeliveredByteForByte() throws Exception {
         Workspace workspace = start().workspace();
 

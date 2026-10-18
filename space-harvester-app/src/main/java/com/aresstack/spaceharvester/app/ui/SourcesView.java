@@ -611,6 +611,29 @@ public final class SourcesView implements View {
         SourceWizard.open(root, context, editable, step, this::select);
     }
 
+    private boolean disabled(AppSettings.SourceEntry entry) {
+        return context.settings() != null && context.settings().disabled(entry.id());
+    }
+
+    /**
+     * Schaltet die Quelle ab oder wieder ein ({@code SourceManagement.setEnabled}, #188); abgeschaltet bleibt sie
+     * eingerichtet, ihr Bestand bleibt, laufende Aufträge brechen ab.
+     */
+    private void enable(AppSettings.SourceEntry entry, boolean enabled) {
+        String id = entry.id();
+        if (!enabled && !Dialogs.confirm(root, "Quelle abschalten", "Die Quelle " + id + " ruht danach: Sie wird "
+                + "nicht mehr durchsucht, gelesen oder abgeglichen, ihre laufenden Aufträge brechen ab. Einstellungen, "
+                + "Zugangsdaten und lokaler Bestand bleiben; „Einschalten“ holt sie zurück.", "Abschalten")) {
+            return;
+        }
+        if (!Dialogs.restartAllowed(root, context)) {
+            return;
+        }
+        feedback.working(enabled ? "Quelle wird eingeschaltet …" : "Quelle wird abgeschaltet …");
+        context.sourceEnabled(id, enabled, () -> feedback.success(enabled ? "Quelle " + id + " eingeschaltet"
+                : "Quelle " + id + " abgeschaltet; Bestand bleibt"), feedback::problem);
+    }
+
     private void remove(AppSettings.SourceEntry entry) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
@@ -895,7 +918,8 @@ public final class SourcesView implements View {
             JMenuItem wizard = new JMenuItem("Assistent erneut öffnen …");
             wizard.addActionListener(e -> SourcesView.this.edit(entry));
             menu.add(wizard);
-            boolean running = context.runtime() != null
+            boolean off = disabled(entry);
+            boolean running = context.runtime() != null && !off
                     && !context.runtime().waitingForSecret().contains(entry.id());
             JMenuItem check = new JMenuItem("Verbindung prüfen");
             check.setToolTipText("Meldet sich an und lädt die Spaces live");
@@ -908,6 +932,11 @@ public final class SourcesView implements View {
             export.addActionListener(e -> context.navigator().prepareExport(entry.id(),
                     selectedSpace().map(Partition::key).orElse(null)));
             menu.add(export);
+            JMenuItem toggle = new JMenuItem(off ? "Einschalten" : "Abschalten …");
+            toggle.setToolTipText(off ? "Die Quelle wieder suchen, lesen und abgleichen"
+                    : "Die Quelle ruhen lassen; Einstellungen und lokaler Bestand bleiben");
+            toggle.addActionListener(e -> SourcesView.this.enable(entry, off));
+            menu.add(toggle);
             if (entry.config().auth().type() != SourceSettingsConfig.AuthType.NONE) {
                 JMenuItem secret = new JMenuItem("Zugangsdaten für diese Sitzung eingeben …");
                 secret.setToolTipText("Passwort oder Token nur für diese Sitzung; es wird nicht gespeichert");
@@ -929,7 +958,11 @@ public final class SourcesView implements View {
             String text;
             Color color;
             StatusMark.State mode;
-            if (waiting) {
+            if (disabled(entry)) {
+                text = "Abgeschaltet · Einstellungen und Bestand bleiben";
+                color = Comic.MUTED;
+                mode = StatusMark.State.UNCHECKED;
+            } else if (waiting) {
                 text = "Zugangsdaten fehlen";
                 color = Comic.RED;
                 mode = StatusMark.State.FAILED;
@@ -960,7 +993,7 @@ public final class SourcesView implements View {
             state.setText(text);
             state.setForeground(color);
             mark.state(mode, text);
-            sync.setEnabled(!waiting && context.runtime() != null);
+            sync.setEnabled(!waiting && !disabled(entry) && context.runtime() != null);
             revalidate();
             repaint();
         }
