@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -116,8 +117,25 @@ public final class SearchTerms {
         return String.join(" ", kept);
     }
 
+    /**
+     * Die Suchbegriffe der Frage in ihrer Reihenfolge, ohne Füll-, Frage- und Bittwörter und ohne Dubletten (ohne
+     * Rücksicht auf Groß- und Kleinschreibung); Grundlage der Varianten der progressiven Suche (ADR 0017).
+     */
+    public static List<String> terms(String text) {
+        List<String> words = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String word : WORD_SPLIT.split(text == null ? "" : text)) {
+            String lower = word.toLowerCase(Locale.ROOT);
+            if (word.length() >= 2 && !STOP_WORDS.contains(lower) && !REQUEST_WORDS.contains(lower)
+                    && seen.add(lower)) {
+                words.add(word);
+            }
+        }
+        return List.copyOf(words);
+    }
+
     /** 2: kennungsartig, 1: großgeschriebener Name, 0: gewöhnliches Wort. */
-    static int strength(String word) {
+    public static int strength(String word) {
         boolean digit = false;
         int upper = 0;
         for (int i = 0; i < word.length(); i++) {
