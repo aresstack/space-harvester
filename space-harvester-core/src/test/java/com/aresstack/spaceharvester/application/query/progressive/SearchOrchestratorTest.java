@@ -90,8 +90,10 @@ class SearchOrchestratorTest {
 
         assertThat(result.reason()).isEqualTo(Completion.QUALITY_REACHED);
         assertThat(search.calls()).containsExactly(ORIGINAL);
-        assertThat(result.variants()).extracting(Variant::status)
-                .containsExactly(Status.DONE, Status.SKIPPED, Status.SKIPPED);
+        // Die Varianten stehen als übersprungen da, wenn das Modell vor dem Ende geantwortet hat.
+        assertThat(result.variants().get(0).status()).isEqualTo(Status.DONE);
+        assertThat(result.variants().subList(1, result.variants().size())).extracting(Variant::status)
+                .allMatch(status -> status == Status.SKIPPED);
     }
 
     @Test
@@ -221,6 +223,54 @@ class SearchOrchestratorTest {
                 .containsExactly(org.assertj.core.groups.Tuple.tuple(ORIGINAL, 0),
                         org.assertj.core.groups.Tuple.tuple("v1", 1), org.assertj.core.groups.Tuple.tuple("v2", 2));
         assertThat(seen).isNotEmpty();
+    }
+
+    @Test
+    void theProfileChoosesBetweenModelAndRulesAndTheOriginalStaysFirst() throws Exception {
+        search.results(ORIGINAL, found("o"));
+        search.results("modell", found("m"));
+        search.results("regel", found("r"));
+        QueryExpansionStrategy rules = (original, max) -> List.of("regel");
+        // Das Modell wiederholt die ursprüngliche Anfrage: Sie bleibt trotzdem einmal und zuerst.
+        AiQueryExpansion model = new AiQueryExpansion(() -> java.util.Optional.of((instructions, question) ->
+                "{\"queries\":[{\"text\":\"" + question + "\",\"priority\":1},{\"text\":\"modell\",\"priority\":2}]}"),
+                rules, Duration.ofSeconds(5));
+        orchestrator = new SearchOrchestrator(search, model, rules, HitScorer.none());
+        SearchProfile all = profile(SearchProfile.Mode.ALL_VARIANTS, 2);
+
+        ProgressiveResult byModel = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL), all).result()
+                .get(10, TimeUnit.SECONDS);
+        ProgressiveResult byRules = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                all.withExpansion(SearchProfile.Expansion.RULES)).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(SearchProfile.defaults().expansion()).isEqualTo(SearchProfile.Expansion.AI);
+        assertThat(byModel.variants()).extracting(variant -> variant.query().text()).containsExactly(ORIGINAL,
+                "modell");
+        assertThat(byRules.variants()).extracting(variant -> variant.query().text()).containsExactly(ORIGINAL,
+                "regel");
+    }
+
+    @Test
+    void anOriginalQueryReachingTheGoalDoesNotWaitForTheModel() throws Exception {
+        CountDownLatch never = new CountDownLatch(1);
+        search.results(ORIGINAL, found("a", "b"));
+        QueryExpansionStrategy slow = (original, max) -> {
+            try {
+                never.await(10, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return List.of("v1");
+        };
+        HitScorer good = (original, hits) -> hits.stream().mapToDouble(hit -> 0.9).toArray();
+        orchestrator = new SearchOrchestrator(search, slow, good);
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults().withQuality(2, 0.5)).result().get(3, TimeUnit.SECONDS);
+        never.countDown();
+
+        assertThat(result.reason()).isEqualTo(Completion.QUALITY_REACHED);
+        assertThat(result.variants()).extracting(variant -> variant.query().text()).containsExactly(ORIGINAL);
     }
 
     @Test

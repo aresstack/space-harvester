@@ -15,13 +15,22 @@ import java.util.Objects;
  * @param searchBudget     höchstens so viele Suchanfragen, die ursprüngliche eingeschlossen
  * @param limitPerSearch   Treffer je Suchanfrage (1 bis 100)
  * @param execution        Wellen, Parallelität, Fristen, Wiederholung
+ * @param expansion        {@link Expansion#AI} (Standard) lässt das Chat-Modell des KI-Dienstes Varianten
+ *                         formulieren, mit den Regeln als Rückfall; {@link Expansion#RULES} nutzt nur die Regeln
  */
 public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
-                            int searchBudget, int limitPerSearch, SearchExecutionPolicy execution) {
+                            int searchBudget, int limitPerSearch, SearchExecutionPolicy execution,
+                            Expansion expansion) {
 
     public enum Mode {
         QUALITY,
         ALL_VARIANTS
+    }
+
+    /** Woher die Varianten kommen. Ohne Chat-Modell wirkt {@link #AI} wie {@link #RULES}. */
+    public enum Expansion {
+        AI,
+        RULES
     }
 
     public static final int DEFAULT_MAX_VARIANTS = 8;
@@ -34,6 +43,7 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
     public SearchProfile {
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(execution, "execution");
+        Objects.requireNonNull(expansion, "expansion");
         Objects.requireNonNull(timeBudget, "timeBudget");
         if (maxVariants < 0 || maxVariants > 32) {
             throw new IllegalArgumentException("maxVariants muss zwischen 0 und 32 liegen");
@@ -59,27 +69,32 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
     public static SearchProfile defaults() {
         return new SearchProfile(Mode.QUALITY, DEFAULT_MAX_VARIANTS, DEFAULT_MIN_RELEVANT_HITS, DEFAULT_MIN_SCORE,
                 DEFAULT_TIME_BUDGET, DEFAULT_SEARCH_BUDGET, DEFAULT_LIMIT_PER_SEARCH,
-                SearchExecutionPolicy.defaults());
+                SearchExecutionPolicy.defaults(), Expansion.AI);
     }
 
     public SearchProfile withMode(Mode next) {
         return new SearchProfile(next, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution);
+                limitPerSearch, execution, expansion);
     }
 
     public SearchProfile withExecution(SearchExecutionPolicy next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, next);
+                limitPerSearch, next, expansion);
     }
 
     public SearchProfile withBudget(Duration time, int searches) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, time, searches, limitPerSearch,
-                execution);
+                execution, expansion);
     }
 
     public SearchProfile withQuality(int hits, double score) {
         return new SearchProfile(mode, maxVariants, hits, score, timeBudget, searchBudget, limitPerSearch,
-                execution);
+                execution, expansion);
+    }
+
+    public SearchProfile withExpansion(Expansion next) {
+        return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
+                limitPerSearch, execution, next);
     }
 
     /** Die Qualitätsregel dieses Profils. */

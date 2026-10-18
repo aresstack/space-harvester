@@ -55,6 +55,8 @@ import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
+import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
@@ -120,6 +122,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Space Harvester als Bibliothek: Quellen, Abgleich in den eingebetteten Lucene-Cache, Seiten, Baum, Suche und Export
@@ -174,6 +177,7 @@ public final class Harvester implements AutoCloseable {
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
     private final SearchOrchestrator progressiveSearch;
+    private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -332,9 +336,15 @@ public final class Harvester implements AutoCloseable {
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
                     excerpts, builder.searchLoads);
-            // ADR 0017: Varianten zuerst regelbasiert, bewertet gegen die ursprüngliche Anfrage.
+            // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
+            // bewertet wird immer gegen die ursprüngliche Anfrage.
+            AiServiceSettings fixedAi = builder.ai;
+            this.variantModels = new VariantModels(() -> liveAi ? this.settings.ai() : fixedAi, catalog,
+                    trustBundles, builder.userAgent);
+            RuleBasedExpansion rules = new RuleBasedExpansion();
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
-                    new RuleBasedExpansion(), HitScorer.of(excerpts));
+                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
+                    HitScorer.of(excerpts));
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
@@ -665,6 +675,15 @@ public final class Harvester implements AutoCloseable {
      */
     public SearchOrchestrator progressiveSearch() {
         return progressiveSearch;
+    }
+
+    /**
+     * Das Standardprofil der progressiven Suche: Varianten vom Chat-Modell ({@link SearchProfile.Expansion#AI}), wenn
+     * die wirksame Konfiguration eines hat, sonst nach Regeln.
+     */
+    public SearchProfile searchProfile() {
+        return SearchProfile.defaults().withExpansion(variantModels.get().isPresent() ? SearchProfile.Expansion.AI
+                : SearchProfile.Expansion.RULES);
     }
 
     /**
@@ -1436,6 +1455,50 @@ public final class Harvester implements AutoCloseable {
         @Override
         public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
             return AccessDecision.ALLOW;
+        }
+    }
+
+    /**
+     * Das Chat-Modell der wirksamen Konfiguration für die Suchvarianten (ADR 0017), je Einstellungsstand einmal gebaut;
+     * leer ohne Dienst oder Chat-Modell.
+     */
+    private static final class VariantModels implements Supplier<Optional<QueryVariantModel>> {
+
+        private record Built(AiServiceSettings settings, Optional<QueryVariantModel> model) {
+        }
+
+        private final Supplier<AiServiceSettings> settings;
+        private final ConfiguredSourceCatalog catalog;
+        private final TrustBundles trustBundles;
+        private final String userAgent;
+        private volatile Built built;
+
+        VariantModels(Supplier<AiServiceSettings> settings, ConfiguredSourceCatalog catalog, TrustBundles trustBundles,
+                      String userAgent) {
+            this.settings = settings;
+            this.catalog = catalog;
+            this.trustBundles = trustBundles;
+            this.userAgent = userAgent;
+        }
+
+        @Override
+        public Optional<QueryVariantModel> get() {
+            AiServiceSettings current = settings.get();
+            Built last = built;
+            if (last != null && last.settings() == current) {
+                return last.model();
+            }
+            Optional<QueryVariantModel> model;
+            try {
+                model = current != null && current.chat()
+                        ? Optional.of(RemoteAi.of(current, catalog, trustBundles, userAgent).queryVariants())
+                        : Optional.empty();
+            } catch (RuntimeException e) {
+                // Etwa ein nicht eingerichtetes trust-bundle: dann Regeln, wie ohne Modell.
+                model = Optional.empty();
+            }
+            built = new Built(current, model);
+            return model;
         }
     }
 }
