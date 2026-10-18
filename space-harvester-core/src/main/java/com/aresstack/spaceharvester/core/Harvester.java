@@ -128,6 +128,8 @@ public final class Harvester implements AutoCloseable {
     public static final String OWNER = "space-harvester-core";
 
     private static final Duration POLL = Duration.ofMillis(50);
+    /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
+    private static final int SEARCH_FILL_PARALLEL = 4;
 
     private final List<AutoCloseable> resources;
     private final AccessContext caller;
@@ -238,11 +240,10 @@ public final class Harvester implements AutoCloseable {
             this.search = new PageSearch(catalog, index, access);
             SearchHitPrefetch prefetch = null;
             if (builder.prefetchSearchHits) {
-                // #180: sichtbare Live-Treffer begrenzt im Hintergrund in den Cache laden.
-                ExecutorService prefetches = Enrichments.background(100);
-                prefetch = new SearchHitPrefetch(key -> cache.findHeader(key)
-                        .map(header -> header.metadata().version()), new PageRenewal(pages, prefetches)::renew,
-                        SearchHitPrefetch.stopping(prefetches));
+                // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
+                prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
+                        (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
+                        SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200));
                 opened.add(prefetch);
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch);

@@ -470,22 +470,24 @@ und kommen nur von einem externen, OpenAI-kompatiblen KI-Dienst (`space-harveste
 diese Einstellungen ändert sich nichts ([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md),
 [ADR 0011](docs/adr/0011-embeddings-ueber-externen-ki-dienst.md)).
 
-**Schlagwortsuche ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 9):** Mit `text` sucht
-der Harvester in jeder Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über `/rest/api/search` wie die
-Websuche, also Titel und Inhalt), und führt die Treffer reihum zusammen (`origin: source`). Die Suche selbst lädt
-keine Seiten; sichtbare Treffer, deren Version nicht im Cache liegt (höchstens 10 je Stapel), lädt danach ein begrenzter
-Hintergrund mit den Rechten des Aufrufers in den Cache (#180, nicht für delegierte Benutzer; im Core abschaltbar mit
-`Harvester.builder().prefetchSearchHits(false)`). Quellen ohne eigene Suche (lokale Dateien) sucht der Volltextindex
-über ihre Seiten im Cache (BM25 über Titel und Lesetext, Auszug als Textfenster, Verzeichnis `text/` neben dem
-Cache); sie stehen dann als `indexed` in `sources`, ohne Cache als `not-supported`. Solche Treffer verlangen zusätzlich
-`content` für die Seite, weil Fundstelle und Auszug aus dem Inhalt stammen. Jeder Treffer trägt Titel, Textauszug (`snippet`),
-`url`, Version, Quelle und Space; vorher liest der Harvester die Kopfdaten der Seite live und prüft an ihnen
-`metadata` für genau diese Seite. `nextCursor` lädt weitere Treffer (höchstens 1000 je Quelle). `sources` nennt je
-Quelle `searched`, `indexed`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
-`complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `space in (…)` und
-`excludeSpaceKey` (ohne diese, wiederholbar) wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), ohne
-Obergrenze der Spaces, damit Treffer anderer Spaces die gesuchten nicht verdrängen; die Nachprüfung an den Kopfdaten
-prüft jeden Treffer zusätzlich.
+**Schlagwortsuche über den Cache ([ADR 0013](docs/adr/0013-suche-ueber-den-cache.md)):** Mit `text` sucht der
+Harvester in drei Schritten. Erst findet jede Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über
+`/rest/api/search` wie die Websuche, also Titel und Inhalt), Kandidaten; der Harvester liest ihre Kopfdaten live und
+prüft an ihnen `metadata` für genau diese Seite. Dann lädt er die sichtbaren Kandidaten, deren Version nicht im Cache
+liegt, mit den Rechten des Aufrufers in den Cache (alle des Stapels, gleiche Versionen nicht erneut; ohne vorherigen
+Abgleich). Zuletzt sucht der Volltextindex über den Cache (BM25 über Titel und Lesetext, Auszug als Textfenster,
+Verzeichnis `text/` neben dem Cache), auch für Quellen ohne eigene Suche wie lokale Dateien (`indexed` in `sources`,
+ohne Cache `not-supported`). Nur von dort kommen Treffer (`origin: cache`); Ergebnislisten werden nicht
+zusammengeführt. Jeder Treffer verlangt `metadata` und `content`, weil Fundstelle und Auszug aus dem Inhalt stammen.
+Die Suche wartet höchstens 5 s auf das Laden; was dann noch lädt, zählt `loading` und erscheint über `nextCursor`.
+Delegierte Benutzer laden nur während ihrer Anfrage. Jeder Treffer trägt Titel, Textauszug (`snippet`), `url`,
+Version, Quelle und Space. `nextCursor` findet weiter (höchstens 1000 je Quelle) und sucht erneut im Cache, ohne
+ausgelieferte Seiten zu wiederholen. `sources` nennt je Quelle `searched`, `indexed`, `not-supported` oder
+`unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und `complete` ist dann `false`. Nie
+Embeddings, keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `space in (…)` und `excludeSpaceKey`
+(ohne diese, wiederholbar) wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), ohne Obergrenze der
+Spaces, und gilt ebenso im Volltextindex. Im Core lädt `Harvester.builder().prefetchSearchHits(false)` nichts; dann
+findet die Suche nur, was schon im Cache liegt.
 
 **Suche im Index (#28):** Ohne `text` sucht `GET /api/v1/search?sourceId=…`
 in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel

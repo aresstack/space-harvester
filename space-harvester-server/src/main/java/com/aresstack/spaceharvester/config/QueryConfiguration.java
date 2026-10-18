@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -75,8 +76,8 @@ class QueryConfiguration {
     }
 
     /**
-     * Die Schlagwortsuche über die Suche der Quellen (ADR 0010); mit Cache sucht der Volltextindex für Quellen ohne
-     * eigene Suche, und sichtbare Live-Treffer werden im Hintergrund vorgeladen (#180).
+     * Die Schlagwortsuche über den Cache (ADR 0013): die Quellen finden, gefundene Seiten werden geladen, der
+     * Volltextindex sucht; ohne Cache die Treffer der Quellen selbst.
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
@@ -85,19 +86,21 @@ class QueryConfiguration {
     }
 
     /**
-     * Lädt sichtbare Live-Treffer der Schlagwortsuche begrenzt in den Cache (#180): ein Abruf zugleich, höchstens 100
-     * wartende; ohne Cache nichts. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
+     * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013): vier Abrufe zugleich, höchstens 200 wartende;
+     * ohne Cache nichts. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
      * verdrängt.
      */
     @Bean(destroyMethod = "close")
-    SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache, PageQueries pages) {
+    SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache,
+                                        ObjectProvider<PageTextIndexing> texts, PageQueries pages) {
         LucenePageCache available = cache.getIfAvailable();
-        if (available == null) {
+        PageTextIndexing indexing = texts.getIfAvailable();
+        if (available == null || indexing == null) {
             return SearchHitPrefetch.disabled();
         }
-        ExecutorService background = Enrichments.background(100);
-        return new SearchHitPrefetch(key -> available.findHeader(key).map(header -> header.metadata().version()),
-                new PageRenewal(pages, background)::renew, SearchHitPrefetch.stopping(background));
+        return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
+                (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
+                SearchHitPrefetch.background(4, 200));
     }
 
     /**

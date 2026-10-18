@@ -502,10 +502,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 
 ## 10. Suche
 
-Mit `text` sucht der Harvester per Schlagwort in der Suche jeder Quelle (Confluence: CQL `siteSearch` über Titel und
-Inhalt, wie die Websuche). Er lädt dabei keine Seiten und speichert nichts; jeder Treffer trägt Titel, Textauszug,
-Adresse, Version, Quelle und Space (`origin: source`). Ohne `sourceId` sucht er in allen freigegebenen Quellen und
-führt die Treffer zusammen; `sources` sagt je Quelle, ob sie gesucht hat:
+Mit `text` sucht der Harvester per Schlagwort über den Cache (ADR 0013): Die Suche jeder Quelle (Confluence: CQL
+`siteSearch` über Titel und Inhalt, wie die Websuche) findet die Seiten, der Harvester lädt sie mit den Rechten des
+Aufrufers in den Cache und sucht dann im Volltextindex des Caches (`origin: cache`). Jeder Treffer trägt Titel,
+Textauszug, Adresse, Version, Quelle und Space; `loading` zählt Seiten, die beim Antworten noch luden. Ohne `sourceId`
+sucht er in allen freigegebenen Quellen; `sources` sagt je Quelle, ob sie gesucht hat:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sourceId=demo&text=architektur"
@@ -515,13 +516,14 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 {
   "scope": "source",
   "sourceId": "demo",
-  "origin": "source",
+  "origin": "cache",
   "hits": [
     { "sourceId": "demo", "pageId": "1001", "spaceKey": "DEMO", "title": "Architektur", "snippet": "Überblick über die Architektur des Demo-Handbuchs", "version": "7", "parentPageId": "1000" }
   ],
   "sources": [ { "sourceId": "demo", "status": "searched" } ],
   "nextCursor": null,
-  "complete": true
+  "complete": true,
+  "loading": 0
 }
 ```
 
