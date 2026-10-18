@@ -318,9 +318,15 @@ public final class SearchView implements View {
             incomplete = false;
             model.set(results.hits().stream().map(Hit::of).toList());
             reset();
+            // Unvollständig: ein Treffer war bei seiner Quelle nicht prüfbar und fehlt deshalb (Recht und Version live).
             status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
-                    + " · semantisch, nach Ähnlichkeit geordnet");
-            if (results.hits().isEmpty()) {
+                    + " · semantisch, nach Ähnlichkeit geordnet" + (results.complete() ? ""
+                    : " · unvollständig: nicht jeder Treffer ließ sich bei seiner Quelle prüfen"));
+            status.setForeground(results.complete() ? Comic.MUTED : Comic.ORANGE);
+            if (results.hits().isEmpty() && !results.complete()) {
+                feedback.warning("Keine Treffer, Suche unvollständig",
+                        "Nicht jeder Treffer ließ sich bei seiner Quelle prüfen; siehe Zeile unter der Liste.");
+            } else if (results.hits().isEmpty()) {
                 feedback.info("Keine Treffer", "Keine eingebettete Seite im Cache passt; die Schlagwortsuche ohne "
                         + "Häkchen sucht direkt in den Quellen.");
             } else {
