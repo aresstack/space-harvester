@@ -55,6 +55,10 @@ public final class Screenshots {
             SwingUtilities.invokeAndWait(() -> write(surface[0], directory.resolve(String.format(Locale.ROOT,
                     "%d-%s.png", section.ordinal() + 1, section.name().toLowerCase(Locale.ROOT)))));
         }
+        SwingUtilities.invokeAndWait(window[0]::showAiSettings);
+        Thread.sleep(500);
+        SwingUtilities.invokeAndWait(() -> write(surface[0], directory.resolve(String.format(Locale.ROOT,
+                "%d-settings-ki.png", AppContext.Section.values().length + 1))));
         SwingUtilities.invokeAndWait(() -> SettingDialogs.screenshots(context, directory));
     }
 

@@ -17,12 +17,14 @@ import java.nio.file.Path;
 import java.util.Locale;
 
 /**
- * Einstellungen und Diagnose: welche Datei gilt, was daran nicht stimmt, wo die Daten liegen, Netz, Zertifikate,
- * Embedding-Modell und Versionen. Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“; die Datei wird außerhalb
+ * Einstellungen und Diagnose in zwei Reitern: „Allgemein“ (welche Datei gilt, was daran nicht stimmt, wo die Daten
+ * liegen, Netz, Zertifikate und Versionen) und „KI“ (KI-Dienst für die semantische Suche, {@link AiSettingsPanel}). Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“; die Datei wird außerhalb
  * der App bearbeitet und mit „Neu laden“ übernommen.
  */
 public final class SettingsView implements View {
 
+    static final String GENERAL = "Allgemein";
+    static final String AI = "KI";
     static final String EXAMPLE = "/com/aresstack/spaceharvester/app/space-harvester-app.example.yml";
 
     private final AppContext context;
@@ -31,7 +33,8 @@ public final class SettingsView implements View {
     private final JTextArea problems = Comic.note("");
     private final Facts storage = new Facts();
     private final Facts network = new Facts();
-    private final Facts embedding = new Facts();
+    private final PillTabs tabs = new PillTabs();
+    private final AiSettingsPanel ai;
     private final Facts runtime = new Facts();
     private final Feedback feedback = new Feedback();
     private final ComposerButton reload = Comic.primary("Neu laden", "Konfiguration neu lesen und Laufzeit neu starten");
@@ -44,6 +47,7 @@ public final class SettingsView implements View {
 
     public SettingsView(AppContext context) {
         this.context = context;
+        this.ai = new AiSettingsPanel(context);
         root.setBackground(Comic.SURFACE);
         problems.setForeground(Comic.RED);
         reload.addActionListener(e -> reload());
@@ -75,12 +79,14 @@ public final class SettingsView implements View {
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
-        root.add(Comic.column(
+        tabs.tab(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy)),
-                Comic.plate("Embedding-Modell", Comic.YELLOW, embedding),
-                Comic.plate("Diagnose", Comic.DARK, diagnosis)), BorderLayout.CENTER);
+                Comic.plate("Diagnose", Comic.DARK, diagnosis)));
+        tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.component())));
+        tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
+        root.add(tabs, BorderLayout.CENTER);
         context.onChange(ignored -> render());
         render();
     }
@@ -93,6 +99,17 @@ public final class SettingsView implements View {
     @Override
     public void shown() {
         render();
+        ai.render();
+    }
+
+    /** Öffnet den Reiter „KI“, z. B. vom Hinweis an der semantischen Suche. */
+    public void showAi() {
+        tabs.select(AI);
+    }
+
+    /** Für Tests. */
+    AiSettingsPanel aiPanel() {
+        return ai;
     }
 
     private void render() {
@@ -121,7 +138,6 @@ public final class SettingsView implements View {
 
         storage.reset();
         network.reset();
-        embedding.reset();
         if (settings != null) {
             AppSettings.Storage s = settings.storage();
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
@@ -160,18 +176,6 @@ public final class SettingsView implements View {
                                     + (certificate.thumbprint() == null ? "" : " · Fingerabdruck "
                                     + Texts.shortHash(certificate.thumbprint())));
                 }
-            }
-            AppSettings.EmbeddingSettings e = settings.embedding();
-            if (!e.enabled()) {
-                embedding.add("Zustand", "aus – Relevanzsuche sortiert nach Titeltreffern");
-            } else {
-                embedding.add("Zustand", "eingerichtet", Comic.GREEN)
-                        .add("Modell", e.modelId())
-                        .add("Modelldatei", e.modelFile().toString())
-                        .add("Tokenizer", e.tokenizerFile().toString())
-                        .add("SHA-256 Modell", Texts.shortHash(e.modelSha256()))
-                        .add("Dimensionen", String.valueOf(e.dimensions()))
-                        .add("Threads", String.valueOf(e.threads()));
             }
         }
         runtime.reset();

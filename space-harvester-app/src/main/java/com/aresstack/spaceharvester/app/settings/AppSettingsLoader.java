@@ -188,7 +188,7 @@ public final class AppSettingsLoader {
 
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), embedding(map(get(root, "embedding")), problems),
-                problems);
+                ai(map(get(root, "ai")), problems), problems);
     }
 
     private AppSettings.SourceEntry source(Map<?, ?> source, int index, List<String> problems) {
@@ -328,6 +328,29 @@ public final class AppSettingsLoader {
             problems.add("space-harvester.jobs: " + e.getMessage() + "; es gelten die Standards");
             return new JobLimits(2, 20, Duration.ofHours(6));
         }
+    }
+
+    private AppSettings.AiSettings ai(Map<?, ?> ai, List<String> problems) {
+        List<String> released = new ArrayList<>();
+        Object raw = get(ai, "external-processing-sources");
+        if (raw instanceof List<?> ids) {
+            ids.forEach(id -> released.add(text(id, problems)));
+        } else if (raw != null) {
+            String text = text(raw, problems);
+            if (text != null) {
+                released.addAll(List.of(text.split(",")));
+            }
+        }
+        AiDraft draft = new AiDraft(text(get(ai, "base-url"), problems), text(get(ai, "chat-model"), problems),
+                text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
+                optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released);
+        if (draft.empty()) {
+            return AppSettings.AiSettings.NONE;
+        }
+        draft.problems().forEach(problem -> problems.add("space-harvester.ai: " + problem));
+        boolean valid = draft.problems().isEmpty();
+        return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
+                draft.dimensions(), draft.timeout(), draft.externalProcessingSources());
     }
 
     private AppSettings.EmbeddingSettings embedding(Map<?, ?> embedding, List<String> problems) {

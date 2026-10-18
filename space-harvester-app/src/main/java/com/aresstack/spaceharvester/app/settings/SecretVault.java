@@ -72,6 +72,17 @@ public final class SecretVault {
         return new SecretVault(directory, windows ? SecretVault::powershell : null);
     }
 
+    /**
+     * Ein eigener Tresor im Unterordner {@code name}, z. B. für den API-Key des KI-Dienstes; seine Einträge können
+     * nie mit denen einer Quelle gleichen Namens zusammenfallen.
+     */
+    public SecretVault scope(String name) {
+        if (!ID.matcher(name).matches()) {
+            throw new IllegalArgumentException("Ungültiger Tresorname: " + name);
+        }
+        return new SecretVault(directory == null ? null : directory.resolve(name), shell);
+    }
+
     /** Ob Werte über das Schließen der App hinaus gespeichert werden können. */
     public boolean available() {
         return shell != null && directory != null;

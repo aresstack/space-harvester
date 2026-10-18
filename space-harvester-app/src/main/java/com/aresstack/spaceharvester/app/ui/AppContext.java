@@ -81,6 +81,7 @@ public final class AppContext {
     private final Path configFile;
     private final String version;
     private final AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+    private char[] sessionAiKey;
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
@@ -133,6 +134,28 @@ public final class AppContext {
 
     public AppRuntime.SessionSecrets secrets() {
         return secrets;
+    }
+
+    /** Tresor nur für den API-Key des KI-Dienstes, getrennt von den Quellen. */
+    public SecretVault aiVault() {
+        return vault.scope(AiSettingsPanel.VAULT);
+    }
+
+    /** API-Key des KI-Dienstes für diese Sitzung, wenn es keinen Tresor gibt; sonst {@code null}. */
+    char[] sessionAiKey() {
+        return sessionAiKey == null ? null : sessionAiKey.clone();
+    }
+
+    void sessionAiKey(char[] key) {
+        if (sessionAiKey != null) {
+            java.util.Arrays.fill(sessionAiKey, '\0');
+        }
+        sessionAiKey = key == null || key.length == 0 ? null : key.clone();
+    }
+
+    /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */
+    public boolean aiKeyAvailable() {
+        return sessionAiKey != null || aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
     }
 
     public Navigator navigator() {

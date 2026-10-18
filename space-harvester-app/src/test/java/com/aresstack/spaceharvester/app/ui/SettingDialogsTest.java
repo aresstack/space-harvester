@@ -166,6 +166,42 @@ class SettingDialogsTest {
                 "proxy-port: 8080", "id: wiki");
     }
 
+    @Test
+    void aiSettingsKeepTheApiKeyInItsOwnVaultAndNeverInTheFile() throws Exception {
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].released).containsOnlyKeys("wiki");
+            assertThat(panel[0].released.get("wiki").isSelected()).as("Vorgabe: keine Quelle freigegeben").isFalse();
+            panel[0].baseUrl.setText("kein-link");
+            panel[0].save.doClick();
+            assertThat(panel[0].feedback.text()).contains("http://");
+            panel[0].baseUrl.setText("https://ki.example.invalid/v1");
+            panel[0].embeddingModel.setText("text-embedding-3-small");
+            panel[0].released.get("wiki").setSelected(true);
+            panel[0].apiKey.setText("sk-geheim");
+            panel[0].save.doClick();
+        });
+        long until = System.currentTimeMillis() + 30_000;
+        String[] text = {""};
+        while (!text[0].contains("übernommen") && System.currentTimeMillis() < until) {
+            Thread.sleep(50);
+            SwingUtilities.invokeAndWait(() -> text[0] = panel[0].feedback.text());
+        }
+        assertThat(text[0]).contains("KI-Einstellungen übernommen");
+
+        String file = Files.readString(config);
+        assertThat(file).contains("base-url: \"https://ki.example.invalid/v1\"", "- \"wiki\"", "# Kommentar bleibt")
+                .doesNotContain("sk-geheim", "api-key");
+        assertThat(context.settings().ai().configured()).isTrue();
+        assertThat(context.settings().ai().externalProcessingSources()).containsExactly("wiki");
+        assertThat(vault.has("api-key")).as("nicht im Tresor der Quellen").isFalse();
+        assertThat(new String(context.aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)))
+                .isEqualTo("sk-geheim");
+        assertThat(context.aiKeyAvailable()).isTrue();
+        SwingUtilities.invokeAndWait(() -> assertThat(panel[0].apiKey.getPassword()).isEmpty());
+    }
+
     private SourceDraft.Editable editable() {
         try {
             return new ConfigFileEditor(context.loader()).editable(config, "wiki");

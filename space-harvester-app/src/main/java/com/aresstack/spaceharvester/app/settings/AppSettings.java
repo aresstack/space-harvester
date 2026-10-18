@@ -25,7 +25,7 @@ import java.util.Objects;
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
-                          EmbeddingSettings embedding, List<String> problems) {
+                          EmbeddingSettings embedding, AiSettings ai, List<String> problems) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -35,6 +35,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(jobLimits, "jobLimits");
         embedding = embedding == null ? EmbeddingSettings.DISABLED : embedding;
+        ai = ai == null ? AiSettings.NONE : ai;
         problems = List.copyOf(problems);
     }
 
@@ -110,5 +111,26 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
 
         public static final EmbeddingSettings DISABLED = new EmbeddingSettings(false, null, null, null, null, null, 0,
                 0, 0, 0, 0, null, null, 0);
+    }
+
+    /**
+     * KI-Dienst ({@code space-harvester.ai}, ADR 0011): OpenAI-kompatible Basisadresse, gewählte Modelle und die für
+     * externe Verarbeitung freigegebenen Quellen. Der API-Key steht nie in der Datei, sondern im Tresor der App.
+     *
+     * @param timeout {@code null} für den Standard des Core
+     */
+    public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                             Duration timeout, List<String> externalProcessingSources) {
+
+        public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
+
+        public AiSettings {
+            externalProcessingSources = List.copyOf(externalProcessingSources);
+        }
+
+        /** Ob die semantische Suche damit möglich wäre: Adresse und Embedding-Modell sind gesetzt. */
+        public boolean configured() {
+            return baseUrl != null && embeddingModel != null;
+        }
     }
 }

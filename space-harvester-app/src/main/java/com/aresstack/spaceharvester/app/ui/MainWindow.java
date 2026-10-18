@@ -187,6 +187,12 @@ public final class MainWindow implements AppContext.Navigator {
         return surface;
     }
 
+    /** Einstellungen mit dem Reiter „KI“. */
+    public void showAiSettings() {
+        show(AppContext.Section.SETTINGS);
+        settings.showAi();
+    }
+
     @Override
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());

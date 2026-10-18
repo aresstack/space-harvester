@@ -366,6 +366,49 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void writesTheAiBlockWithoutAKeyAndRemovesItWhenEmpty() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                # Kopf bleibt
+                space-harvester:
+                  ai:
+                    base-url: http://alt   # alter Wert
+                    timeout: 45s
+                  sources:
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: /daten
+                """);
+        AiDraft ai = new AiDraft(" https://ki.firma.de/v1 ", "gpt-4o-mini", "text-embedding-3-small", "1536",
+                Duration.ofSeconds(45), java.util.List.of("handbuch", "", "handbuch"));
+
+        ConfigFileEditor.Draft draft = editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                ai);
+        editor.save(file, draft);
+
+        String text = Files.readString(file);
+        assertThat(text).startsWith("# Kopf bleibt").contains("  ai:\n    base-url: \"https://ki.firma.de/v1\"",
+                "chat-model: \"gpt-4o-mini\"", "embedding-model: \"text-embedding-3-small\"",
+                "embedding-dimensions: 1536", "timeout: 45000ms", "external-processing-sources:\n      - \"handbuch\"",
+                "  sources:\n    - id: handbuch").doesNotContain("alter Wert", "api-key");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.ai().configured()).isTrue();
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(settings.ai().externalProcessingSources()).containsExactly("handbuch");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                AiDraft.EMPTY));
+        assertThat(Files.readString(file)).doesNotContain("ai:", "base-url").contains("- id: handbuch");
+        assertThat(loader.load(file).ai()).isEqualTo(AppSettings.AiSettings.NONE);
+        assertThat(ConfigFileEditor.ai("", ai)).startsWith("\nspace-harvester:\n  ai:\n");
+        assertThatThrownBy(() -> editor.withAi(file, new ConfigFileEditor.Draft("", null),
+                new AiDraft("ftp://x", null, null, "abc", null, null)))
+                .hasMessageContaining("http://", "positive ganze Zahl");
+    }
+
+    @Test
     void anIncompleteProxyIsRejectedBeforeAnythingIsWritten() throws Exception {
         Path file = home.resolve("app.yml");
         ConfigFileEditor.Draft base = editor.draft(file, files("notizen", "/notizen"));
