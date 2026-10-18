@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -233,7 +234,7 @@ public final class Harvester implements AutoCloseable {
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
-                    builder.maxTreeNodes);
+                    builder.maxTreeNodes, builder.cacheFreshness, clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
@@ -629,6 +630,7 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
+        private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
@@ -836,10 +838,21 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
-         * Ob die Schlagwortsuche sichtbare Live-Treffer im Hintergrund in den Cache lädt (#180); Standard {@code true}.
+         * Ob die Schlagwortsuche gefundene Seiten in den Cache lädt, bevor sie dort sucht (ADR 0013); Standard
+         * {@code true}. Ohne findet sie nur, was schon im Cache liegt.
          */
         public Builder prefetchSearchHits(boolean prefetchSearchHits) {
             this.prefetchSearchHits = prefetchSearchHits;
+            return this;
+        }
+
+        /**
+         * Wann eine Seite aus dem Cache ohne Rückfrage bei der Quelle gilt (ADR 0013): Zeitfenster ab dem Abruf und ob
+         * danach die Version geprüft oder die Seite neu abgerufen wird. Standard {@link CacheFreshness#DEFAULT}: jeder
+         * Abruf prüft die Version.
+         */
+        public Builder cacheFreshness(CacheFreshness cacheFreshness) {
+            this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
             return this;
         }
 

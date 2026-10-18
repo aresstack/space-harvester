@@ -5,6 +5,9 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -29,6 +32,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -298,6 +302,10 @@ class PageQueriesTest {
     }
 
     private PageQueries refreshing(AccessPolicy policy, PageCacheFill fill) {
+        return refreshing(policy, fill, CacheFreshness.DEFAULT);
+    }
+
+    private PageQueries refreshing(AccessPolicy policy, PageCacheFill fill, CacheFreshness window) {
         when(live.id()).thenReturn("wiki");
         SourceCatalog catalog = new SourceCatalog() {
             @Override
@@ -317,13 +325,86 @@ class PageQueriesTest {
             }
             return fetchAnswer;
         }, CLOCK);
-        return new PageQueries(catalog, cache, new AccessGuard(policy), freshness, fill, 1000);
+        return new PageQueries(catalog, cache, new AccessGuard(policy), freshness, fill, 1000, window, CLOCK);
     }
 
     private static PageMetadata version(PageSnapshot page, String space, String version) {
         PageMetadata metadata = page.metadata();
         return new PageMetadata(metadata.pageId(), metadata.resourceId(), metadata.title(), space,
                 metadata.parentPageId(), version, metadata.modifiedAt(), metadata.url(), metadata.attributes());
+    }
+
+    @Test
+    void withinTheTimeWindowTheCacheAnswersWithoutAskingTheSourceEvenAfterARestart() {
+        // Abgerufen um 20:00, jetzt 22:00, Fenster 6 h. Ein neues PageQueries ist wie ein Neustart: Der Abrufzeitpunkt
+        // liegt mit der Seite im Cache.
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+
+        DeliveredPage page = refreshing(ALLOW_ALL, PageCacheFill.NONE,
+                new CacheFreshness(Duration.ofHours(6), true)).page(CALLER, "wiki", "p03", false);
+
+        assertThat(page.live()).isFalse();
+        assertThat(page.generation().id()).isEqualTo("g1");
+        verify(live, never()).pageMetadata("p03");
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void withinTheTimeWindowRightsStillDecide() {
+        cache.publish("wiki", "OPS", confirmed("g1"), List.of(page("wiki", "OPS", "p90", null)));
+        AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY;
+
+        assertThatThrownBy(() -> refreshing(devOnly, PageCacheFill.NONE, new CacheFreshness(Duration.ofHours(6),
+                true)).page(CALLER, "wiki", "p90", false)).isInstanceOf(CacheMissException.class);
+    }
+
+    @Test
+    void afterTheTimeWindowTheVersionIsCheckedAndTheCheckOpensANewWindow() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        when(live.pageMetadata("p03")).thenReturn(page("wiki", "DEV", "p03", "p01").metadata());
+        PageQueries queries = refreshing(ALLOW_ALL, PageCacheFill.NONE, new CacheFreshness(Duration.ofHours(1),
+                true));
+
+        assertThat(queries.page(CALLER, "wiki", "p03", false).refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
+        queries.page(CALLER, "wiki", "p03", false);
+
+        // Abgerufen um 20:00, Fenster 1 h: um 22:00 einmal geprüft, dann bis 23:00 frisch.
+        verify(live, times(1)).pageMetadata("p03");
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void withoutVersionCheckAnExpiredPageIsFetchedAgainEvenWithTheSameVersion() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot same = page("wiki", "DEV", "p03", "p01");
+        when(live.pageMetadata("p03")).thenReturn(same.metadata());
+        fetchAnswer = same;
+
+        refreshing(ALLOW_ALL, PageCacheFill.NONE, new CacheFreshness(Duration.ofHours(1), false))
+                .page(CALLER, "wiki", "p03", false);
+
+        assertThat(fetched).containsExactly("p03");
+    }
+
+    @Test
+    void refreshAlwaysAsksTheSourceEvenWithinTheTimeWindow() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        when(live.pageMetadata("p03")).thenReturn(page("wiki", "DEV", "p03", "p01").metadata());
+
+        refreshing(ALLOW_ALL, PageCacheFill.NONE, new CacheFreshness(Duration.ofHours(6), true))
+                .page(CALLER, "wiki", "p03", true);
+
+        verify(live, times(1)).pageMetadata("p03");
+    }
+
+    @Test
+    void theTimeWindowHasLimits() {
+        assertThatThrownBy(() -> new CacheFreshness(Duration.ofSeconds(-1), true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new CacheFreshness(Duration.ofDays(366), true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(CacheFreshness.DEFAULT.fresh(CLOCK.instant(), null, CLOCK.instant())).isFalse();
     }
 
     @Test
