@@ -67,6 +67,16 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                 problems, disabledSources, tls, cache, setupCompleted, syncRules, sync);
     }
 
+    /**
+     * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
+     * und Regeln je Quelle. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     */
+    public AppSettings withLive(AppSettings other) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
+                outputDirectory, other.problems, disabledSources, tls, other.cache, setupCompleted, other.syncRules,
+                other.sync);
+    }
+
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
