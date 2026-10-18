@@ -1,0 +1,23 @@
+# Architektur
+
+Satz Charlie zur Architektur. Siehe Dokumentation und Team.
+
+| Name | Rolle | Ort |
+| --- | --- | --- |
+| Leser | liest | Berlin |
+| Schreiber | schreibt | Bonn |
+
+- Punkt eins
+
+- Unterpunkt
+
+- Punkt zwei
+
+1. Schritt eins
+2. Schritt zwei
+
+veraltet fett kursiv
+
+```java
+System.out.println("Delta");
+```

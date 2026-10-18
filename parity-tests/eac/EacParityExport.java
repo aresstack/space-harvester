@@ -26,8 +26,8 @@ import java.util.function.BooleanSupplier;
  * {@link KnowledgeExportUseCase#subtree} ab dem Space und die Writer aus {@link ExportFormat}.
  *
  * <p>Nur für {@code generate.sh}; Java 8, übersetzt gegen den Klassenpfad des Enterprise AI Client. Schreibt
- * {@code parity.docx}, {@code parity.pdf}, {@code parity.md} und je Format die Liste der nicht eingebetteten Bilder
- * ({@code problems-<format>.txt}).</p>
+ * {@code parity.docx}, {@code parity.pdf}, {@code parity.md}, je Format die Liste der nicht eingebetteten Bilder
+ * ({@code problems-<format>.txt}) und die Leseansicht je Seite ({@code reading/}).</p>
  */
 public final class EacParityExport {
 
@@ -62,6 +62,33 @@ public final class EacParityExport {
         write(tree, ExportFormat.DOCX, new File(out, "parity.docx"), new File(out, "problems-docx.txt"));
         write(tree, ExportFormat.PDF, new File(out, "parity.pdf"), new File(out, "problems-pdf.txt"));
         write(tree, ExportFormat.MARKDOWN, new File(out, "parity.md"), new File(out, "problems-md.txt"));
+        readingViews(source, new File(out, "reading"));
+    }
+
+    /**
+     * Leseansicht je Seite, wie der Lesebereich und die KI sie bekommen: Lesetext aus {@code load} nach
+     * {@code reading/<seite>.txt}, Zahl der Bilder aus {@code pageView} nach {@code reading/images.properties}.
+     */
+    private static void readingViews(ConfluenceKnowledgeSource source, File out) throws Exception {
+        if (!out.isDirectory() && !out.mkdirs()) {
+            throw new IllegalStateException("Ordner fehlt: " + out);
+        }
+        PrintWriter images = new PrintWriter(new File(out, "images.properties"), "UTF-8");
+        try {
+            for (String page : ParitySpace.PAGES) {
+                KnowledgeResourceId id = KnowledgeResourceId.of("confluence",
+                        FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
+                PrintWriter text = new PrintWriter(new File(out, page + ".txt"), "UTF-8");
+                try {
+                    text.print(source.load(id).text());
+                } finally {
+                    text.close();
+                }
+                images.println(page + "=" + source.pageView(id).images().size());
+            }
+        } finally {
+            images.close();
+        }
     }
 
     private static void write(ExportDocumentNode tree, ExportFormat format, File target, File problems)

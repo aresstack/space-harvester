@@ -1,0 +1,8 @@
+# Komponenten
+
+Satz Echo zu den Komponenten. Weiter bei Betrieb.
+
+```mermaid
+graph TD
+  A[Quelle] --> B[Export]
+```

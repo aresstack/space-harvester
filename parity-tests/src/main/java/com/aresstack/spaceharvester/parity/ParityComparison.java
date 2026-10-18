@@ -88,6 +88,33 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Vergleicht die Leseansicht aller Seiten (#176): Seiten mit Ansicht, Lesetext (wie {@code text}) und Bilder.
+     *
+     * @param eac  Lesetext je Seite beim Enterprise AI Client
+     * @param core Lesetext je Seite im Core; fehlt eine Seite, hat der Core keine Ansicht geliefert
+     */
+    public static List<Finding> readingViews(Map<String, String> eac, Map<String, String> core,
+                                             Map<String, Integer> eacImages, Map<String, Integer> coreImages) {
+        String format = "leseansicht";
+        List<Finding> findings = new ArrayList<>();
+        List<String> without = eac.keySet().stream().filter(page -> !core.containsKey(page)).toList();
+        findings.add(new Finding(format, "seiten", "Seiten mit Leseansicht", Integer.toString(eac.size()),
+                Integer.toString(eac.size() - without.size()),
+                without.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER,
+                without.isEmpty() ? "" : "ohne Ansicht im Core: " + listed(without)));
+        findings.add(text(format, readingOutline(eac.values()), readingOutline(core.values())));
+        findings.add(compareNumbers(format, "bilder", "Bilder der Ansicht",
+                eacImages.values().stream().mapToInt(Integer::intValue).sum(),
+                coreImages.values().stream().mapToInt(Integer::intValue).sum()));
+        return findings;
+    }
+
+    private static DocumentOutline readingOutline(java.util.Collection<String> texts) {
+        return new DocumentOutline("leseansicht", List.of(), false, false, false, 0, 0, 0, List.of(), Set.of(), 0, 0,
+                String.join("\n", texts));
+    }
+
     private static Finding chapters(String format, DocumentOutline eac, DocumentOutline core) {
         Map<String, Integer> remaining = counts(chapterTitles(core));
         List<String> missing = new ArrayList<>();

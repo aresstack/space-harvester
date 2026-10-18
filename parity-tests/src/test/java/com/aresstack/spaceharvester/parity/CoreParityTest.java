@@ -2,9 +2,11 @@ package com.aresstack.spaceharvester.parity;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
@@ -47,6 +49,8 @@ class CoreParityTest {
     @TempDir
     static Path data;
     private static final Map<String, Path> CORE = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_READING = new LinkedHashMap<>();
+    private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
 
     @BeforeAll
     static void exportThroughTheCore() throws Exception {
@@ -74,6 +78,15 @@ class CoreParityTest {
                     harvester.conversions().convert(export.id(), Harvester.OWNER, format, out);
                 }
                 CORE.put(extension, target);
+            }
+            // Leseansicht je Seite (#176), aus derselben Quelle wie der Export
+            AccessContext caller = AccessContext.technicalClient(Harvester.OWNER);
+            for (String page : ParitySpace.PAGES) {
+                ReadingView view = harvester.readingViews().view(caller, "wiki", page, false);
+                if (view.status() == ReadingView.Status.AVAILABLE) {
+                    CORE_READING.put(page, view.text());
+                    CORE_READING_IMAGES.put(page, view.images().size());
+                }
             }
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
@@ -104,6 +117,15 @@ class CoreParityTest {
                 }
             }
         }
+        List<Finding> reading = ParityComparison.readingViews(eacReading(), CORE_READING, eacReadingImages(),
+                CORE_READING_IMAGES);
+        report.append('\n').append(ParityReport.section("Leseansicht", reading, gaps));
+        for (Finding finding : reading) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
         Path file = reportFile();
         Files.createDirectories(file.getParent());
         Files.writeString(file, report, StandardCharsets.UTF_8);
@@ -118,6 +140,26 @@ class CoreParityTest {
                 assertThat(text).as(file.getFileName().toString()).contains(sentence);
             }
         }
+    }
+
+    private static Map<String, String> eacReading() throws IOException {
+        Map<String, String> texts = new LinkedHashMap<>();
+        for (String page : ParitySpace.PAGES) {
+            texts.put(page, Files.readString(reference("reading/" + page + ".txt")));
+        }
+        return texts;
+    }
+
+    private static Map<String, Integer> eacReadingImages() throws IOException {
+        Properties properties = new Properties();
+        try (InputStream in = Files.newInputStream(reference("reading/images.properties"))) {
+            properties.load(in);
+        }
+        Map<String, Integer> images = new LinkedHashMap<>();
+        for (String page : ParitySpace.PAGES) {
+            images.put(page, Integer.parseInt(properties.getProperty(page, "0").strip()));
+        }
+        return images;
     }
 
     /** Bericht unter {@code build/reports/parity/} (Gradle setzt {@code parity.report}), sonst im Arbeitsordner. */
