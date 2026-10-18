@@ -246,8 +246,9 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 
 | Fähigkeit | EAC | App | Bewertung |
 |---|---|---|---|
-| Leseansicht mit Bildern, Diagrammen, Bildergalerie | `exedra/…/reader/ReaderHtmlView`, `ImageSlideshowPanel` | `desk/…/content/ReadingPane` (Reiter „Leseansicht“): HTML aus `ReadingViews`, Bilder über `Assets.viewImage`, Mermaid über `Diagrams`, fehlende Bilder markiert, Klick öffnet Galerie mit ◀/▶ | gleich (#192) |
-| Auftragskarte mit „Exportieren als …“, Ausgabeordner | — | in Arbeit (Strang L, Runde 7) | in Arbeit |
+| Leseansicht mit Bildern, Diagrammen, Bildergalerie | `exedra/…/reader/ReaderHtmlView`, `ImageSlideshowPanel` | `app/…/ui/content/ReadingPane` (Reiter „Leseansicht“ im Bereich Inhalte, der seit #300 eine reine Leseansicht ist: Seite über den Explorer oder „Seiten-ID oder Adresse“): HTML aus `ReadingViews`, Bilder über `Assets.viewImage`, Mermaid über `Diagrams`, fehlende Bilder markiert, Klick öffnet Galerie mit ◀/▶ | gleich (#192) |
+| Aufträge mit Export in Formate, Ausgabeordner | — | `app/…/ui/ActivitiesView`: Liste über die volle Breite mit Symbol-Aktionen je Zeile (`RowActions`: PDF, Word, Markdown, JSON, Diagnose, Inhalte, Löschen; ein Formatklick exportiert sofort aus dem Datenbestand, nicht verfügbare Aktionen deaktiviert mit Grund), darunter Auftrag, Ergebnis und Exportieren (Ausgabeordner, Exportstand, erzeugte Dateien); Fortschrittsbalken mit „Abbrechen“ (#300) | SH+ |
+| Explorer Wissensquelle → Space → Seite, Herunterladen von dort | — | `app/…/ui/Explorer` dauerhaft links: Wissensquelle → Space → Seite → Unterseite, bedarfsgesteuert über `navigation().children`, mit Titelfilter; der gewählte Knoten ist der Bereich der Suche („Überall suchen“ hebt ihn auf); Download-Symbol und Kontextmenü „Herunterladen“ an Quellen und Spaces starten den Export-Auftrag sofort (`Downloads`), der eigene Bereich Herunterladen entfällt (#300) | SH+ |
 | Einrichtungsassistent beim ersten Start, später über die Einstellungen | `exedra/…/ui/setup/SetupWizardPanel`, `ModelPreselection`, `PreferredModels` | `app/…/ui/SetupWizard` mit Schrittleiste Wissensquellen, Netzwerk, KI-Dienst, Modelle, Abschluss (KI-Dienst vor Modelle wie im EAC, weil die Modellliste vom Dienst kommt); Modelle werden wie im EAC vorgewählt (`PreferredModels` aus `setup-models.properties`), gelten global für alle Quellen; beim ersten Start und unter Einstellungen → Einrichtungsassistent | gleich (#274, #285) |
 | Wissensquelle anlegen und bearbeiten | Quellendialog des EAC | `app/…/ui/SourceForm` auf einer Seite, gleich in der Quellenverwaltung und im Assistenten (ersetzt den Quellenassistenten): Art und Adresse zuerst, Anzeigename und Kennung vorgeschlagen, Anmeldung, Client-Zertifikat, Serverzertifikate der Quelle und Freigabe für den KI-Dienst je Quelle (`AiServiceSettings.externalProcessingSources`); Proxy gilt für alle Quellen unter Einstellungen → Netzwerk | gleich (#285) |
 | Einstellungsmenüs (Dienst, Modelle, Sicherheit, System, Index) | `exedra/…/ui/settings/ServiceTab`, `ModelsTab`, `SecurityTab`, `SystemTab`, `IndexEditor` | `app/…/ui/SettingsView` mit den Reitern Allgemein, KI-Dienst, Modelle (Rerank-Modell; Abschnittsgröße und Überlappung unter „Erweitert“), Netzwerk (Proxy, Serverzertifikate), Cache (Aktualisierungsstrategie, Frist für gesperrte Seiten) und Sicherheit (Tresor); die Werte des `IndexEditor` für den Chat (Kontextgröße, Nachrecherchen) bleiben im Client | teilweise (#274, #285, #289, #293): Änderungen wirken ohne Neustart außer bei Quellen, Proxy, Zertifikaten, Ablage, neuen Zugangsdaten sowie Abschnittsgröße und Überlappung; lehnt der Core eine Änderung ab, bleibt die bisherige Einstellung aktiv und der Grund steht unter Einstellungen › Konfiguration; Index-Editor-Werte für den Chat bleiben im Client |
@@ -283,8 +284,7 @@ Rückmeldungen an den Upstream (Enterprise AI Client):
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- Leseansicht der App mit Bildern und Diagrammen (L, #192),
-- Auftragskarte und Ausgabeordner (L).
+- Leseansicht der App mit Bildern und Diagrammen (L, #192).
 
 ## Vergleichstests
 
