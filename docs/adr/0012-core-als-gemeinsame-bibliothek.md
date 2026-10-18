@@ -139,8 +139,7 @@ Angelos Festlegungen vom 18.10. (#181):
    Anmeldung verlangt; ADR 0014 wird im Strang Q angepasst.
 3. **Modelle und Einstellungen.** Embedding- und Reranker-Modell gelten global für alle Quellen. Einrichtungsassistent
    und Einstellungsmenüs kommen aus dem Client in die Desktop-App und werden auf die Properties abgebildet; Änderungen
-   wirken zur Laufzeit über eine Konfigurationsverwaltung im Core (geplant als ADR 0015 im Strang
-   „Konfigurationsverwaltung zur Laufzeit“).
+   wirken zur Laufzeit über die Konfigurationsverwaltung im Core (ADR 0015, `ConfigurationManager`).
 4. **Suchgesteuerte Beschaffung.** Schlagworte aus der Frage (`ResearchQueries`, `LexicalDiscoveryStrategy`) und die
    Ladereihenfolge nach Titel und Auszug (`ExcerptRanking`) sind Pflichtparität: Sie steuern die Beschaffung und
    gehören nach Punkt 4 in die Bibliothek; die Rechercheplanung des Agenten bleibt im Client.
