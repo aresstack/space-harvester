@@ -492,8 +492,9 @@ public final class SearchView implements View {
         // Das Laden des vorigen Stapels läuft im Core weiter; die Ansicht folgt ab jetzt dem neuen.
         poll.stop();
         progressId = null;
+        // Bis zur Antwort gibt es keinen weiteren Stapel; ein zweiter Klick verwürfe sonst den laufenden.
+        nextCursor = null;
         int id = ++request;
-        more.setVisible(false);
         run.setEnabled(false);
         feedback.clear();
         starting("Weitere Treffer werden geladen …");
@@ -731,6 +732,7 @@ public final class SearchView implements View {
         progressText.setText(text);
         cancel.setVisible(false);
         more.setVisible(false);
+        more.setEnabled(false);
     }
 
     /** „Weitere laden“ nur nach Abschluss des Ladens und nur, wenn der Core weitere Treffer kennt. */
