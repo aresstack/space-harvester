@@ -482,10 +482,10 @@ Cache); sie stehen dann als `indexed` in `sources`, ohne Cache als `not-supporte
 `url`, Version, Quelle und Space; vorher liest der Harvester die Kopfdaten der Seite live und prüft an ihnen
 `metadata` für genau diese Seite. `nextCursor` lädt weitere Treffer (höchstens 1000 je Quelle). `sources` nennt je
 Quelle `searched`, `indexed`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
-`complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) und `excludeSpaceKey` (ohne diese,
-wiederholbar) gehen wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), damit Treffer anderer Spaces
-die gesuchten nicht verdrängen. Eine Auswahl wird als Ausschluss aller übrigen Spaces gesetzt (Spaceliste 60 s gemerkt),
-solange das höchstens 200 sind; darüber filtert nur die Nachprüfung an den Kopfdaten, die ohnehin jeden Treffer prüft.
+`complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `space in (…)` und
+`excludeSpaceKey` (ohne diese, wiederholbar) wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), ohne
+Obergrenze der Spaces, damit Treffer anderer Spaces die gesuchten nicht verdrängen; die Nachprüfung an den Kopfdaten
+prüft jeden Treffer zusätzlich.
 
 **Suche im Index (#28):** Ohne `text` sucht `GET /api/v1/search?sourceId=…`
 in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
