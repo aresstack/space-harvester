@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -29,6 +30,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -61,6 +63,8 @@ public final class ActivitiesView implements View {
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
+    /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
+    private String phase;
 
     public ActivitiesView(AppContext context) {
         this.context = context;
@@ -151,14 +155,19 @@ public final class ActivitiesView implements View {
         Background.run(() -> {
             List<JobStatus> jobs = runtime.workspace().jobs();
             Object current = null;
+            String currentPhase = null;
             if (id != null) {
                 JobStatus status = runtime.workspace().job(id);
+                if (!status.state().terminal()) {
+                    currentPhase = runtime.workspace().events(id).stream().map(JobEvent::phase)
+                            .filter(Objects::nonNull).reduce((first, second) -> second).orElse(null);
+                }
                 current = status.type() == JobType.SYNC ? runtime.workspace().syncStatus(id) : status;
                 if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
                     current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null));
                 }
             }
-            return new Object[] {jobs, current};
+            return new Object[] {jobs, current, currentPhase};
         }, data -> {
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
@@ -166,6 +175,7 @@ public final class ActivitiesView implements View {
             deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
             reselect();
             detail = data[1];
+            phase = (String) data[2];
             render();
             boolean active = jobs.stream().anyMatch(j -> !j.state().terminal());
             if (!active && !root.isShowing()) {
@@ -221,18 +231,21 @@ public final class ActivitiesView implements View {
         title.setText(Texts.type(status.type()) + " " + status.sourceId() + " / " + status.partitionKey());
         JobProgress p = status.progress();
         progressBar.setVisible(true);
-        if (status.state() == JobState.RUNNING && p.discovered() > 0) {
+        Step step = Step.of(status.type(), phase, p);
+        if (status.state() == JobState.RUNNING && step.total() > 0) {
             progress.setIndeterminate(false);
-            progress.setMaximum((int) Math.min(Integer.MAX_VALUE, p.discovered()));
-            progress.setValue((int) Math.min(Integer.MAX_VALUE, p.processed()));
-            progress.setString(p.processed() + " von " + p.discovered() + " Seiten");
+            progress.setMaximum((int) Math.min(Integer.MAX_VALUE, step.total()));
+            progress.setValue((int) Math.min(Integer.MAX_VALUE, step.done()));
+            progress.setString(step.text() + (status.cancelRequested() ? " · Abbruch angefordert" : ""));
         } else {
             progress.setIndeterminate(!status.state().terminal());
             progress.setMaximum(1);
             progress.setValue(status.state().terminal() ? 1 : 0);
-            progress.setString(Texts.state(status.state()) + (status.cancelRequested() && !status.state().terminal()
+            String running = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
+            progress.setString(running + (status.cancelRequested() && !status.state().terminal()
                     ? " · Abbruch angefordert" : ""));
         }
+        Counters counters = Counters.of(status.type());
         facts.add("Zustand", Texts.state(status.state()), Comic.tone(Texts.tone(status.state())))
                 .add("Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
@@ -240,10 +253,11 @@ public final class ActivitiesView implements View {
                 .add("Gestartet", Texts.time(status.startedAt()))
                 .add("Beendet", Texts.time(status.finishedAt()))
                 .add("Dauer", Texts.duration(status.startedAt(), status.finishedAt()))
-                .add("Gefunden", String.valueOf(p.discovered()))
-                .add("Verarbeitet", String.valueOf(p.processed()))
-                .add("Geschrieben", String.valueOf(p.written()))
-                .add("Fehlgeschlagen", String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK)
+                .add("Phase", status.state() == JobState.RUNNING && phase != null ? phase : "–")
+                .add(counters.discovered(), String.valueOf(p.discovered()))
+                .add(counters.processed(), String.valueOf(p.processed()))
+                .add(counters.written(), String.valueOf(p.written()))
+                .add(counters.failed(), String.valueOf(p.failed()), p.failed() > 0 ? Comic.RED : Comic.INK)
                 .add("Auftrags-ID", status.id());
         if (status.error() != null) {
             facts.add("Fehler", status.error().code() + ": " + status.error().message(), Comic.RED);
@@ -364,6 +378,42 @@ public final class ActivitiesView implements View {
             case EXPORT -> runtime.workspace().cancelExport(status.id());
             default -> runtime.workspace().cancelJob(status.id());
         }, s -> poll(), feedback::problem);
+    }
+
+    /**
+     * Fortschritt eines laufenden Auftrags in seiner Phase: beim Abrufen zählen abgerufene oder geprüfte Seiten, beim
+     * Exportieren die exportierten; eine Anreicherung zählt Schritte (Seiten × Prozessoren). Kein Zähler zählt doppelt,
+     * das regelt der Kern (docs/DIAGNOSTICS.md).
+     */
+    record Step(String text, long done, long total) {
+
+        static Step of(JobType type, String phase, JobProgress p) {
+            long total = p.discovered();
+            if (type == JobType.ENRICHMENT) {
+                return new Step((phase == null ? "Anreichern" : phase) + " · " + p.processed() + " von " + total
+                        + " Schritten", p.processed(), total);
+            }
+            if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
+                return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
+                        p.written(), total);
+            }
+            String prefix = phase == null ? "" : phase + " · ";
+            return new Step(prefix + p.processed() + " von " + total + " Seiten geladen oder geprüft",
+                    p.processed(), total);
+        }
+    }
+
+    /** Was die vier Zähler je Auftragsart bedeuten. */
+    record Counters(String discovered, String processed, String written, String failed) {
+
+        static Counters of(JobType type) {
+            return switch (type) {
+                case EXPORT -> new Counters("Seiten (Inventur)", "Geladen oder geprüft", "Exportiert", "Fehlend");
+                case ENRICHMENT -> new Counters("Schritte (Seiten × Prozessoren)", "Erledigt", "Neu berechnet",
+                        "Fehlgeschlagen");
+                default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
+            };
+        }
     }
 
     static final String KEPT = "Exportdateien, die unter „Dateien speichern …“ abgelegt wurden, und der Seitenbestand "
@@ -500,7 +550,8 @@ public final class ActivitiesView implements View {
                 case 0 -> Texts.type(status.type());
                 case 1 -> status.sourceId() + " / " + status.partitionKey();
                 case 2 -> status.state();
-                case 3 -> status.progress().processed() + "/" + status.progress().discovered()
+                case 3 -> (status.type() == JobType.EXPORT ? status.progress().written() : status.progress().processed())
+                        + "/" + status.progress().discovered()
                         + (status.progress().failed() > 0 ? " · " + status.progress().failed() + " Fehler" : "");
                 default -> Texts.time(status.createdAt());
             };
