@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sync.BaselineEntry;
 import com.aresstack.spaceharvester.application.sync.SyncBaseline;
+import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -357,6 +358,27 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     public Optional<ConfirmedGeneration> confirmedGeneration(String sourceId, String spaceKey) {
         return first(new TermQuery(PageCacheSchema.spaceTerm(sourceId, spaceKey)), null,
                 doc -> PageCacheSchema.confirmedGeneration(doc));
+    }
+
+    /** Alle Spaces mit bestätigter Generation, nach Quelle und Space. */
+    public List<SyncBaselineStore.SpaceRef> confirmedSpaces() {
+        return read(searcher -> {
+            Query spaces = new TermQuery(new Term(PageCacheSchema.TYPE, PageCacheSchema.SPACE));
+            int count = searcher.count(spaces);
+            List<SyncBaselineStore.SpaceRef> refs = new ArrayList<>(count);
+            if (count > 0) {
+                StoredFields stored = searcher.storedFields();
+                for (ScoreDoc hit : searcher.search(spaces, count).scoreDocs) {
+                    Document space = stored.document(hit.doc);
+                    refs.add(new SyncBaselineStore.SpaceRef(
+                            space.get(PageCacheSchema.SPACE_DOC + PageCacheSchema.SOURCE_ID),
+                            space.get(PageCacheSchema.SPACE_DOC + PageCacheSchema.SPACE_KEY)));
+                }
+            }
+            refs.sort(java.util.Comparator.comparing(SyncBaselineStore.SpaceRef::sourceId)
+                    .thenComparing(SyncBaselineStore.SpaceRef::spaceKey));
+            return refs;
+        });
     }
 
     /** Die bestätigte Generation eines Space samt Stand je Seite; leer, solange keine bestätigt ist. */

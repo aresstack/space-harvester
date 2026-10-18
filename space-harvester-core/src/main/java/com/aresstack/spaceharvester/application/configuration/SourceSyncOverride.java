@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.configuration;
 
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import java.time.Duration;
 
 /**

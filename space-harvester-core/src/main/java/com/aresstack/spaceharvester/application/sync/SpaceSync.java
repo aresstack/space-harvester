@@ -71,14 +71,19 @@ public class SpaceSync {
      * Plant einen Lauf. Bekannt ist, was die Generation führt und was der Cache kennt (ADR 0014, Punkt 2): Seiten, die
      * Suche oder Abruf schon mit derselben Version abgelegt haben, werden nicht erneut geladen.
      *
-     * @param loadUnknown ob gelistete, aber unbekannte Seiten geladen werden ({@code true}: der Space wird vollständig
+     * @param loadUnknown ob gelistete, aber unbekannte Seiten geladen werden ({@link SyncMode#loadingUnknown})
      *                    gehalten); sonst {@link PageChange.Kind#NOT_LOADED}
      */
     public SyncPlan plan(String sourceId, String spaceKey, boolean loadUnknown) {
+        return plan(sourceId, spaceKey, SyncMode.loadingUnknown(loadUnknown));
+    }
+
+    /** Wie {@link #plan(String, String, boolean)}, in der Betriebsart {@code mode}. */
+    public SyncPlan plan(String sourceId, String spaceKey, SyncMode mode) {
         SyncBaseline baseline = store.confirmed(sourceId, spaceKey).orElse(null);
         Inventory inventory = collector.collect(sourceId, spaceKey);
         SyncPlan plan = SyncPlanner.plan(baseline, inventory,
-                inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), loadUnknown);
+                inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), mode);
         if (!plan.inventory().confirmed()) {
             return plan;
         }
@@ -129,7 +134,12 @@ public class SpaceSync {
      */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener,
                        boolean loadUnknown) {
-        SyncPlan plan = plan(sourceId, spaceKey, loadUnknown);
+        return run(sourceId, spaceKey, applier, listener, SyncMode.loadingUnknown(loadUnknown));
+    }
+
+    /** Wie {@link #run(String, String, PlanApplier, SyncListener, boolean)}, in der Betriebsart {@code mode}. */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener, SyncMode mode) {
+        SyncPlan plan = plan(sourceId, spaceKey, mode);
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {

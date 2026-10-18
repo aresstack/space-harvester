@@ -19,6 +19,8 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -56,6 +58,8 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private final Jobs jobs;
     private final SourceQueries queries;
     private final SpaceSync sync;
+    private final ChangeSync changeSync;
+    private final SyncBaselineStore store;
     private final PlanApplier applier;
     private final List<SyncCommitted> afterCommit;
     private final Map<String, String> activeBySpace = new ConcurrentHashMap<>();
@@ -87,6 +91,8 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         this.queries = Objects.requireNonNull(queries, "queries");
         this.sync = store == null || fetcher == null ? null : new SpaceSync(queries, store, clock,
                 withheldRetention);
+        this.store = store;
+        this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 
@@ -158,6 +164,26 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      * die Generation führt sie aber als fehlend.
      */
     public synchronized JobStatus start(String sourceId, String spaceKey, String owner, boolean loadUnknown) {
+        return start(sourceId, spaceKey, owner, SyncMode.loadingUnknown(loadUnknown));
+    }
+
+    /**
+     * Wie {@link #start(String, String, String)}: eine Inventur in der Betriebsart {@code mode}, etwa
+     * {@link SyncMode#CATALOG_ONLY} zum Initialisieren des Katalogs ohne Inhalte (ADR 0014).
+     */
+    public synchronized JobStatus start(String sourceId, String spaceKey, String owner, SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        return submit(sourceId, spaceKey, owner, context -> {
+            context.phase(COMPONENT, "Inventur");
+            return sync.run(sourceId, spaceKey, applier, listener(context), mode);
+        });
+    }
+
+    private interface Run {
+        SpaceSync.SyncRun run(JobContext context);
+    }
+
+    private JobStatus submit(String sourceId, String spaceKey, String owner, Run work) {
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -170,9 +196,81 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             throw new SyncAlreadyRunningException(running);
         }
         JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, owner,
-                JobTask.blocking(context -> run(context, sourceId, spaceKey, loadUnknown)));
+                JobTask.blocking(context -> run(context, sourceId, spaceKey, work)));
         activeBySpace.put(space, status.id());
         return status;
+    }
+
+    /**
+     * Startet das Nachholen verpasster Änderungen (ADR 0014), ohne auf es zu warten: Meldet die Quelle Änderungen
+     * ({@link ChangeSync#supported}), eine Änderungssuche seit {@code since} und eine Papierkorbabfrage; sonst ein
+     * Abgleich ohne Erstbefüllung. Ein gewöhnlicher {@link JobType#SYNC}; kein Vollabruf der Inhalte.
+     *
+     * @param since ab wann, oder {@code null} für den Stand der letzten bestätigten Generation
+     * @throws UnknownSourceException      wie {@link #start(String, String, String)}
+     * @throws SyncUnavailableException    wie {@link #start(String, String, String)}
+     * @throws SyncAlreadyRunningException wie {@link #start(String, String, String)}
+     */
+    public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since) {
+        return catchUp(sourceId, spaceKey, owner, since, SyncMode.SYNC_CACHE);
+    }
+
+    /**
+     * Wie {@link #catchUp(String, String, String, Instant)}, in der Betriebsart {@code mode}; ohne Änderungssuche der
+     * Quelle eine Inventur in derselben Betriebsart, mit {@link SyncMode#FULL} höchstens {@link SyncMode#SYNC_CACHE}, weil
+     * Nachholen nie den ganzen Space lädt.
+     */
+    public synchronized JobStatus catchUp(String sourceId, String spaceKey, String owner, Instant since,
+                                          SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        return submit(sourceId, spaceKey, owner, context -> {
+            if (changeSync.supported(sourceId)) {
+                context.phase(COMPONENT, "Änderungssuche");
+                return changeSync.run(sourceId, spaceKey, since, applier, listener(context), mode);
+            }
+            context.phase(COMPONENT, "Inventur");
+            return sync.run(sourceId, spaceKey, applier, listener(context),
+                    mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
+        });
+    }
+
+    /** Alle Spaces mit bestätigter Generation ({@link SyncBaselineStore#confirmedSpaces()}). */
+    public List<SyncBaselineStore.SpaceRef> confirmedSpaces() {
+        return store == null ? List.of() : store.confirmedSpaces();
+    }
+
+    /**
+     * Holt für jeden Space mit bestätigter Generation die verpassten Änderungen nach ({@link #catchUp}), etwa beim
+     * Start (ADR 0014). Spaces, deren Quelle fehlt oder für die schon ein Abgleich läuft, werden übersprungen; ohne
+     * Kapazität endet die Runde.
+     *
+     * @return die gestarteten Aufträge
+     */
+    public List<JobStatus> catchUpAll(String owner) {
+        return catchUpAll(owner, SyncMode.SYNC_CACHE);
+    }
+
+    /** Wie {@link #catchUpAll(String)}, in der Betriebsart {@code mode}. */
+    public List<JobStatus> catchUpAll(String owner, SyncMode mode) {
+        if (!available()) {
+            return List.of();
+        }
+        Set<String> sources = new HashSet<>();
+        queries.sources().forEach(source -> sources.add(source.id()));
+        List<JobStatus> started = new ArrayList<>();
+        for (SyncBaselineStore.SpaceRef space : store.confirmedSpaces()) {
+            if (!sources.contains(space.sourceId())) {
+                continue;
+            }
+            try {
+                started.add(catchUp(space.sourceId(), space.spaceKey(), owner, null, mode));
+            } catch (SyncAlreadyRunningException e) {
+                // läuft schon
+            } catch (com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException e) {
+                break;
+            }
+        }
+        return started;
     }
 
     /**
@@ -266,11 +364,10 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         return new SyncJob(status, summaries.get(status.id()));
     }
 
-    private void run(JobContext context, String sourceId, String spaceKey, boolean loadUnknown) {
+    private void run(JobContext context, String sourceId, String spaceKey, Run work) {
         SpaceSync.SyncRun run;
         try {
-            context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, listener(context), loadUnknown);
+            run = work.run(context);
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
         }

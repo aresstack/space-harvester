@@ -34,6 +34,11 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
     }
 
     @Override
+    public java.util.List<SpaceRef> confirmedSpaces() {
+        return cache.confirmedSpaces();
+    }
+
+    @Override
     public Map<String, BaselineEntry> knownPages(String sourceId, String spaceKey) {
         return cache.knownPages(sourceId, spaceKey);
     }

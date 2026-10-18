@@ -28,10 +28,22 @@ import java.util.TreeSet;
  * @param withheldPageIds gesperrte Seiten ({@link RemovalCheck.Verdict#INACCESSIBLE}, ADR 0014) mit dem Beginn der
  *                        Sperre; nicht in {@code pages}. Nach Ablauf der Frist entfernt ein Lauf ihre Rohdaten, taucht
  *                        eine wieder in der Inventur auf, ist sie neu
+ * @param changesSince    ab wann Änderungen in der Quelle noch nicht im Stand stehen können: Beginn der Inventur oder
+ *                        der Änderungssuche, die diese Generation bestätigt hat (ADR 0014). Die nächste Änderungssuche
+ *                        fragt ab hier; nie nach {@code confirmedAt}
  */
 public record SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
                            SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
-                           SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds) {
+                           SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds,
+                           Instant changesSince) {
+
+    /** Eine Generation, deren Änderungen bis {@code confirmedAt} im Stand stehen. */
+    public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
+                        SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
+                        SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds) {
+        this(sourceId, spaceKey, generation, confirmedAt, pages, stalePageIds, missingPageIds, withheldPageIds,
+                confirmedAt);
+    }
 
     /** Eine Generation ohne fehlende und gesperrte Seiten. */
     public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
@@ -53,6 +65,10 @@ public record SyncBaseline(String sourceId, String spaceKey, long generation, In
             throw new IllegalArgumentException("generation beginnt bei 1");
         }
         Objects.requireNonNull(confirmedAt, "confirmedAt");
+        changesSince = changesSince == null ? confirmedAt : changesSince;
+        if (changesSince.isAfter(confirmedAt)) {
+            throw new IllegalArgumentException("changesSince darf nicht nach confirmedAt liegen");
+        }
         pages = natural(pages);
         pages.forEach((pageId, entry) -> {
             if (!pageId.equals(entry.pageId())) {

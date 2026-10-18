@@ -127,6 +127,12 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
                 missing.add(change.pageId());
                 continue;
             }
+            if (change.kind() == PageChange.Kind.OUTDATED) {
+                failed.remove(change.pageId());
+                pages.put(change.pageId(), change.previous());
+                stale.add(change.pageId());
+                continue;
+            }
             boolean keepPrevious;
             if (change.current() != null) {
                 keepPrevious = failed.remove(change.pageId());
@@ -160,7 +166,8 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
                 .filter(removal -> removal.verdict() == RemovalCheck.Verdict.INACCESSIBLE)
                 .forEach(removal -> withheld.put(removal.pageId(), confirmedAt));
         long generation = baseline == null ? 1 : baseline.generation() + 1;
+        Instant changesSince = inventory.startedAt().isAfter(confirmedAt) ? confirmedAt : inventory.startedAt();
         return new SyncBaseline(inventory.sourceId(), inventory.spaceKey(), generation, confirmedAt, pages, stale,
-                missing, withheld);
+                missing, withheld, changesSince);
     }
 }

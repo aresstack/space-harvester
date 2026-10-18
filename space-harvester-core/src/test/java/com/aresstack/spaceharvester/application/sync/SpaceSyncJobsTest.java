@@ -77,6 +77,46 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void catchingUpUsesTheChangeSearchWhereTheSourceListsChanges() {
+        source.listingChanges();
+        runQueued();
+        JobStatus first = syncs.catchUp("wiki", "DOC", "client:a", null);
+        runQueued();
+        source.change("1", "4", 1);
+
+        JobStatus next = syncs.catchUp("wiki", "DOC", "client:a", null);
+        runQueued();
+
+        assertThat(syncs.status(first.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+        SpaceSyncJobs.SyncJob done = syncs.status(next.id(), "client:a");
+        assertThat(done.status().state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.summary().inventory()).isEqualTo(Inventory.Status.CHANGES);
+        assertThat(done.summary().notLoaded()).isEqualTo(1);
+        assertThat(source.lastWithin).isEqualTo(ChangeSync.OVERLAP);
+    }
+
+    @Test
+    void catchingUpWithoutChangeSearchFallsBackToAReconcileWithoutFirstLoad() {
+        JobStatus accepted = syncs.catchUp("wiki", "DOC", "client:a", null);
+        runQueued();
+
+        SpaceSyncJobs.SyncJob done = syncs.status(accepted.id(), "client:a");
+        assertThat(done.summary().inventory()).isEqualTo(Inventory.Status.COMPLETE);
+        assertThat(done.summary().notLoaded()).isEqualTo(3);
+    }
+
+    @Test
+    void catchingUpAllCoversEverySpaceWithAConfirmedGeneration() {
+        assertThat(syncs.catchUpAll(null)).isEmpty();
+        syncs.start("wiki", "DOC", "client:a", false);
+        runQueued();
+
+        assertThat(syncs.confirmedSpaces()).containsExactly(new SyncBaselineStore.SpaceRef("wiki", "DOC"));
+        assertThat(syncs.catchUpAll(null)).hasSize(1);
+        runQueued();
+    }
+
+    @Test
     void aReconcileWithoutFirstLoadCompletesWithoutLoadingUnknownPages() {
         JobStatus accepted = syncs.start("wiki", "DOC", "client:a", false);
         runQueued();

@@ -170,6 +170,9 @@ public abstract class SyncBaselineStoreContract {
         commit(fixture, baseline("wiki", "OPS", 1, Set.of()));
         commit(fixture, baseline("other", "DOC", 1, Set.of()));
         assertThat(fixture.store().confirmed("wiki", "DOC").orElseThrow().generation()).isEqualTo(2);
+        assertThat(fixture.store().confirmedSpaces()).containsExactly(
+                new SyncBaselineStore.SpaceRef("other", "DOC"), new SyncBaselineStore.SpaceRef("wiki", "DOC"),
+                new SyncBaselineStore.SpaceRef("wiki", "OPS"));
     }
 
     @Test
@@ -180,7 +183,8 @@ public abstract class SyncBaselineStoreContract {
         SyncBaseline listed = baseline("wiki", "DOC", 1, Set.of("2"), entry(root), child);
         SyncBaseline first = new SyncBaseline(listed.sourceId(), listed.spaceKey(), listed.generation(),
                 listed.confirmedAt(), listed.pages(), listed.stalePageIds(), new TreeSet<>(Set.of("3")),
-                new TreeMap<>(Map.of("4", Instant.parse("2026-10-01T08:00:00Z"))));
+                new TreeMap<>(Map.of("4", Instant.parse("2026-10-01T08:00:00Z"))),
+                listed.confirmedAt().minusSeconds(90));
         commit(fixture, first, root);
 
         Fixture reopened = reopen(fixture);
@@ -191,6 +195,7 @@ public abstract class SyncBaselineStoreContract {
         assertThat(read.missingPageIds()).containsExactly("3");
         assertThat(read.withheldPageIds()).containsEntry("4", Instant.parse("2026-10-01T08:00:00Z"));
         assertThat(read.complete()).isFalse();
+        assertThat(read.changesSince()).isEqualTo(listed.confirmedAt().minusSeconds(90));
         assertThat(reopened.snapshots().find(root.key())).contains(root);
     }
 

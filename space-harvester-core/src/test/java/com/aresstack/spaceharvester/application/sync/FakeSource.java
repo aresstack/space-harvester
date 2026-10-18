@@ -31,6 +31,10 @@ class FakeSource implements HarvestSource {
     UnaryOperator<PageMetadataBatch> tamper = UnaryOperator.identity();
     private int listingCalls;
     private boolean confirmsDeletion;
+    private final java.util.Set<String> trash = new java.util.LinkedHashSet<>();
+    private boolean listsChanges;
+    /** Fenster der letzten Änderungssuche. */
+    java.time.Duration lastWithin;
 
     @Override
     public String id() {
@@ -78,6 +82,62 @@ class FakeSource implements HarvestSource {
                     null);
         }
         return page;
+    }
+
+    @Override
+    public boolean listsChanges() {
+        return listsChanges;
+    }
+
+    @Override
+    public PageMetadataBatch changedPageMetadata(String partitionKey, java.time.Duration within, String cursor,
+                                                 int limit) {
+        requireChanges();
+        lastWithin = within;
+        Instant from = CLOCK.instant().minus(within);
+        return new PageMetadataBatch(pages.values().stream()
+                .filter(page -> page.partitionKey().equals(partitionKey) && !page.modifiedAt().isBefore(from))
+                .sorted(java.util.Comparator.comparing(PageMetadata::modifiedAt))
+                .toList(), null);
+    }
+
+    @Override
+    public PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
+        requireChanges();
+        return new PageMetadataBatch(trash.stream()
+                .map(pageId -> page(pageId, partitionKey, null, "1", null)).toList(), null);
+    }
+
+    private void requireChanges() {
+        if (!listsChanges) {
+            throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED, "keine Änderungen", null);
+        }
+        if (listingCalls++ == failListingAtCall) {
+            throw new SourceAccessException(id(), SourceAccessException.Reason.UNAVAILABLE, "Zeitüberschreitung",
+                    null);
+        }
+    }
+
+    /** Meldet ab jetzt Änderungen und Papierkorb. */
+    FakeSource listingChanges() {
+        listsChanges = true;
+        return this;
+    }
+
+    /** Neue Version, geändert {@code minutesAgo} Minuten vor {@link #CLOCK}. */
+    FakeSource change(String pageId, String version, long minutesAgo) {
+        PageMetadata old = pages.get(pageId);
+        pages.put(pageId, new PageMetadata(pageId, old.resourceId(), old.title(), old.partitionKey(),
+                old.parentPageId(), version, CLOCK.instant().minusSeconds(60 * minutesAgo), old.url(),
+                old.attributes()));
+        return this;
+    }
+
+    /** In den Papierkorb: aus dem Space verschwunden, Einzelabfrage „nicht gefunden“. */
+    FakeSource trash(String pageId) {
+        pages.remove(pageId);
+        trash.add(pageId);
+        return this;
     }
 
     FakeSource put(String pageId, String space, String parent, String version, String labels) {

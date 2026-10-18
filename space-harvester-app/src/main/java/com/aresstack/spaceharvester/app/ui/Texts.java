@@ -112,6 +112,7 @@ public final class Texts {
             case LIVE_SEARCH -> "Volltextsuche in der Quelle";
             case NAVIGATION -> "Seitenbaum und Querverweise";
             case ADDRESSES -> "Adressen und Titel auflösen";
+            case CHANGES -> "Änderungen und Papierkorb abfragen";
         };
     }
 

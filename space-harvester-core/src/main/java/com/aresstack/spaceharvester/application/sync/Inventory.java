@@ -31,14 +31,19 @@ public record Inventory(String sourceId, String spaceKey, Status status, String 
         /** Abgebrochen (Quelle nicht erreichbar, Zugriff verweigert, …): Gelesenes ist gültig, Fehlendes unbekannt. */
         INCOMPLETE,
         /** Gelesen, aber widersprüchlich (Seite aus fremdem Space, während der Listung geändert, Cursorschleife). */
-        INCONSISTENT
+        INCONSISTENT,
+        /**
+         * Keine Inventur, sondern die Änderungssuche ({@link ChangeSync}): nur die seit einem Zeitpunkt geänderten
+         * Seiten. Vollständig gelesen, aber Fehlen heißt hier nichts.
+         */
+        CHANGES
     }
 
     public Inventory {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");
         Objects.requireNonNull(status, "status");
-        if ((status == Status.COMPLETE) != (problem == null)) {
+        if ((status == Status.COMPLETE || status == Status.CHANGES) != (problem == null)) {
             throw new IllegalArgumentException("problem genau dann, wenn die Inventur nicht vollständig ist");
         }
         pages = List.copyOf(pages);
