@@ -106,7 +106,7 @@ Nicht angebunden sind:
 | Rechteprüfung | `chalco/tamias/…/ClientResourceAccessPolicy` (Einbenutzer) | `AccessGuard`, `CorpusReleasePolicy`, `DelegatedAccessPolicy` je Seite | SH+ |
 | Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1` | SH+ |
 | Quelle nicht erreichbar → Cache-Stand | Prefetch | `PageQueries#page` liefert Cache bei `UNAVAILABLE`/`RATE_LIMITED` | gleich |
-| Text der Seite zum Lesen und für KI | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`; ausgeführte Makros wie `include`, `children`, Jira fehlen); der Lesetext aus `body.view` liegt mit #176 in `ReadingViews` vor, Konverter und KI-Text nutzen ihn noch nicht | teilweise (Strang R bzw. Folge-Issue) |
+| Text der Seite zum Lesen und für KI | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`; ausgeführte Makros wie `include`, `children`, Jira fehlen); der Lesetext aus `body.view` liegt mit #176 in `ReadingViews` vor, Konverter und KI-Text nutzen ihn noch nicht | teilweise → #218 |
 
 ## 5. Cache
 
@@ -140,29 +140,30 @@ Nicht angebunden sind:
 
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
-| draw.io erkennen (Makro, Revision, `inc-drawio`) | `ConfluencePageView#drawioPreviews`, `#storageDrawioPreviews` | `StorageParser` (Name), `AssetKind.DIAGRAM`; ohne Revision und ohne `inc-drawio` von anderer Seite | teilweise → #190 |
-| draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | Kopie vorhanden, ungenutzt | fehlt → #190 |
+| draw.io erkennen (Makro, Revision, `inc-drawio`) | `ConfluencePageView#drawioPreviews`, `#storageDrawioPreviews` | `StorageParser`, `AssetKind.DIAGRAM`, auch `inc-drawio` (#210) | gleich |
+| draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | `core/application/diagrams/Diagrams`; in Word, PDF und Markdown gezeichnet (#210) | gleich; gerenderte Diagramme als Asset im Datenbestand fehlen noch (Q) |
 | draw.io-XML und SVG textuell erhalten | — | Asset-Ernte bevorzugt `DIAGRAM` > `VECTOR` > `IMAGE` | SH+ |
 | Mermaid erkennen (Confluence-Makros) | nur Markdown-Fences | `StorageParser` (`mermaid`, `mermaid-cloud`, `mermaid-macro`) → Codeblock | SH+ |
-| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | keine | Word, PDF und Markdown: in Arbeit (Strang R); Renderer als Core-Dienst für Leseansicht und gemeinsame Nutzung: fehlt → #190 |
+| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | `Diagrams`; in Word, PDF und Markdown als Grafik (#206) | gleich; Leseansicht der App mit Diagrammen in Arbeit (L) |
 | PlantUML, Gliffy | — | Codeblock bzw. Hinweis | SH+ |
 
 ## 9. Word-Export
 
 Maßstab: `doc/DocxExportWriter`, `doc/MarkdownDocxRenderer`, `doc/ExportGraphics` über `know/KnowledgeExportUseCase`.
-Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R ersetzt ihn durch das Modul
-`:document-export` mit dem Exporter des EAC (Word #175, PDF #202), Strang Q liefert das Asset-Manifest.
+Im Core: Modul `:document-export` mit dem Exporter des EAC (Word #175, PDF #202), konvertiert aus dem Datenbestand;
+Bilder kommen aus dem Asset-Manifest (#200), Diagramme aus `Diagrams`. Der Vergleichstest zeigt für Word keine
+Lücke mehr.
 
 | Fähigkeit | EAC | Core (main) | Bewertung |
 |---|---|---|---|
-| Inhaltsverzeichnis als Feld, Felder beim Öffnen aktualisieren | `fldSimple TOC`, `enforceUpdateFields` | keine | in Arbeit (R, #175) |
-| Kapitelstruktur aus der Hierarchie, Überschriften 1–9 | `Heading1`–`Heading9` | `Heading1`–`Heading6` | in Arbeit (R, #175) |
-| Tabellen mit wiederholter Kopfzeile | ja, mit Zellausrichtung | ja, ohne Ausrichtung | in Arbeit (R, #175) |
-| Bilder eingebettet, skaliert, Bildunterschrift, Meldung fehlender Bilder | `run.addPicture`, `ExportGraphics#problems` | Platzhalter `[Bild: …]` | in Arbeit (R mit Manifest von Q) |
-| Mermaid und draw.io als Grafik | ja (draw.io über Renderer) | Code bzw. Hinweis | in Arbeit (R); Renderer im Core → #190 |
+| Inhaltsverzeichnis als Feld, Felder beim Öffnen aktualisieren | `fldSimple TOC`, `enforceUpdateFields` | dieselben (`DocxExportWriter`) | gleich |
+| Kapitelstruktur aus der Hierarchie, Überschriften 1–9, Space-Name als Wurzelkapitel | `Heading1`–`Heading9` | `Heading1`–`Heading9`, Wurzelkapitel (#213) | gleich |
+| Tabellen mit wiederholter Kopfzeile | ja, mit Zellausrichtung | ja, mit Zellausrichtung | gleich |
+| Bilder eingebettet, skaliert, Bildunterschrift, Meldung fehlender Bilder | `run.addPicture`, `ExportGraphics#problems` | `run.addPicture` aus dem Asset-Manifest, Meldungen fehlender Bilder | gleich |
+| Mermaid und draw.io als Grafik | ja (draw.io über Renderer) | ja (`Diagrams`) | gleich |
 | Hyperlinks, Codeblöcke, Listen | ja | ja | gleich |
 | Interne Seitenlinks innerhalb des Dokuments | — | Lesezeichen `page_<id>` | SH+ (in `:document-export` erhalten) |
-| Durchgestrichen, Dokumenteigenschaften (Titel, Autor) | ja | nein | in Arbeit (R, #175) |
+| Durchgestrichen, Dokumenteigenschaften (Titel, Autor) | ja | ja | gleich |
 
 ## 10. Weitere Formate und Datenbestand
 
@@ -255,11 +256,12 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #190 | draw.io- und Mermaid-Rendering im Core | R |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
+| #218 | Lesetext aus `body.view` für Konverter und KI-Text | Q, dann R |
 
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:document-export`, #175),
+- gerenderte Diagramme als Asset im Datenbestand (Q) und Leseansicht der App mit Bildern und Diagrammen (L, #192),
 - Auftragskarte und Ausgabeordner (L).
 
 ## Vergleichstests
