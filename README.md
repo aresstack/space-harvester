@@ -477,7 +477,10 @@ legt nichts ab; den Inhalt beschafft erst das Öffnen einer Seite. Jeder Treffer
 `url`, Version, Quelle und Space; vorher liest der Harvester die Kopfdaten der Seite live und prüft an ihnen
 `metadata` für genau diese Seite. `nextCursor` lädt weitere Treffer (höchstens 1000 je Quelle). `sources` nennt je
 Quelle `searched`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
-`complete` ist dann `false`. Keine semantische Suche.
+`complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) und `excludeSpaceKey` (ohne diese,
+wiederholbar) gehen wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), damit Treffer anderer Spaces
+die gesuchten nicht verdrängen. Eine Auswahl wird als Ausschluss aller übrigen Spaces gesetzt (Spaceliste 60 s gemerkt),
+solange das höchstens 200 sind; darüber filtert nur die Nachprüfung an den Kopfdaten, die ohnehin jeden Treffer prüft.
 
 **Suche im Index (#28):** Ohne `text` sucht `GET /api/v1/search?sourceId=…`
 in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel

@@ -129,6 +129,9 @@ class SearchApiTest {
         assertProblem(get("/api/v1/search?text=Nachtlauf&title=seite"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?text=Nachtlauf&sort=title"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?text=+"), 400, "invalid-request");
+        // Ausschlussliste (#179) nur für die Schlagwortsuche.
+        assertThat(get("/api/v1/search?text=Nachtlauf&excludeSpaceKey=OPS").statusCode()).isEqualTo(200);
+        assertProblem(get("/api/v1/search?sourceId=wiki&title=seite&excludeSpaceKey=OPS"), 400, "invalid-request");
     }
 
     @Test
