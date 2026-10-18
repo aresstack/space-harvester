@@ -413,7 +413,7 @@ class ConfigFileEditorTest {
         Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");
         var wiki = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(Duration.ofHours(1),
                 Duration.ofDays(1), null, true, null,
-                com.aresstack.spaceharvester.application.configuration.SyncMode.SYNC_CACHE,
+                com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE,
                 com.aresstack.spaceharvester.application.configuration.RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK,
                 Duration.ofHours(6), null);
         var docs = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(null, null, false,

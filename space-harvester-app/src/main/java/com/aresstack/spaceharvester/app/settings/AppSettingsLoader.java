@@ -2,7 +2,7 @@ package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
-import com.aresstack.spaceharvester.application.configuration.SyncMode;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
