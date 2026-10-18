@@ -245,6 +245,45 @@ class ExportsApiTest {
     }
 
     @Test
+    void aStartPageInTheBodyExportsOnlyItsSubtreeAndIsNamedInTheStatus() throws Exception {
+        HttpRequest request = TestClient.authenticated(HttpRequest.newBuilder(
+                        uri("/api/v1/sources/wiki/spaces/DEV/exports"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"rootPageId\":\"100\"}"))).build();
+        HttpResponse<byte[]> started = http.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+        assertThat(started.statusCode()).isEqualTo(202);
+        assertThat(body(started).path("rootPageId").asString()).isEqualTo("100");
+        JsonNode done = awaitFinished(body(started).path("id").asString());
+        assertThat(done.path("state").asString()).isEqualTo("completed");
+        assertThat(done.path("rootPageId").asString()).isEqualTo("100");
+        assertThat(done.path("rootTitle").asString()).isEqualTo("Seite 100");
+        assertThat(done.path("progress").path("written").asLong()).isEqualTo(2);
+        assertThat(done.path("artifact").path("complete").asBoolean()).isTrue();
+
+        // Ohne Rumpf bleibt es der ganze Space, ohne Startseite im Zustand.
+        JsonNode whole = awaitFinished(body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null))
+                .path("id").asString());
+        assertThat(whole.path("progress").path("written").asLong()).isEqualTo(3);
+        assertThat(whole.path("rootPageId").isNull()).isTrue();
+    }
+
+    @Test
+    void anUnknownStartPageFailsTheExport() throws Exception {
+        HttpRequest request = TestClient.authenticated(HttpRequest.newBuilder(
+                        uri("/api/v1/sources/wiki/spaces/DEV/exports"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"rootPageId\":\"999\"}"))).build();
+
+        JsonNode done = awaitFinished(body(http.send(request, HttpResponse.BodyHandlers.ofByteArray()))
+                .path("id").asString());
+
+        assertThat(done.path("state").asString()).isEqualTo("failed");
+        assertThat(done.path("error").path("code").asString()).isEqualTo("ROOT_NOT_FOUND");
+        assertThat(done.path("error").path("message").asString()).doesNotContain("999");
+    }
+
+    @Test
     void unknownFormatIsRejected() throws Exception {
         HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
 

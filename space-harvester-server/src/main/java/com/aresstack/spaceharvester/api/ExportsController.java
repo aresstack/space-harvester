@@ -47,6 +47,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -87,7 +88,10 @@ public class ExportsController {
                     + "Quelle ein. Das Artefakt ist nur vollständig (complete=true), wenn die Generation bestätigt "
                     + "ist, keine Seite fehlt und der Aufrufer jede Seite lesen darf. "
                     + "Mit format entstehen zusätzlich abgeleitete Dateien aus denselben Seiten (json: pages.json); "
-                    + "ihre Herkunft steht im Manifest unter conversions.")
+                    + "ihre Herkunft steht im Manifest unter conversions. Optional nennt der Rumpf eine Startseite "
+                    + "({\"rootPageId\": \"…\"}): dann enthält der Export nur sie und ihre Unterseiten; gibt es sie im "
+                    + "Space nicht oder ist sie nicht lesbar, scheitert der Auftrag (ROOT_NOT_FOUND). Ohne Rumpf der "
+                    + "ganze Space.")
     @ApiResponse(responseCode = "202", description = "Export angenommen")
     @ApiResponse(responseCode = "400", description = "Unbekanntes Format (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -111,14 +115,20 @@ public class ExportsController {
             @RequestParam(name = "format", required = false) List<String> formats,
             @Parameter(description = "true: vor dem Export gegen die Quelle abgleichen; sonst eine bestätigte "
                     + "Generation wiederverwenden und nur einlesen, wenn keine vorliegt")
-            @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
+            @RequestParam(name = "refresh", defaultValue = "false") boolean refresh,
+            @io.swagger.v3.oas.annotations.parameters.RequestBody(description = "Optional: Startseite eines "
+                    + "Teilbaum-Exports; ohne Rumpf oder ohne rootPageId der ganze Space", required = false)
+            @RequestBody(required = false) ExportStartRequest body) {
         requireExport(caller, sourceId, spaceKey);
+        String rootPageId = body == null || body.rootPageId() == null || body.rootPageId().isBlank()
+                ? null : body.rootPageId();
         List<String> requested = formats == null || formats.isEmpty() ? List.of(Exports.DEFAULT_FORMAT) : formats;
         JobStatus job = exports.start(ExportRequest.of(sourceId, spaceKey, owner(caller), requested)
                 .withRefresh(refresh)
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))
-                .withAuthorized(() -> permitsExport(caller, sourceId, spaceKey)));
+                .withAuthorized(() -> permitsExport(caller, sourceId, spaceKey))
+                .withRoot(rootPageId));
         return ResponseEntity.accepted().location(URI.create(EXPORTS + "/" + job.id()))
                 .body(ExportResponse.of(job, null));
     }
@@ -418,6 +428,14 @@ public class ExportsController {
     }
 
     /**
+     * Optionaler Rumpf beim Start eines Exports.
+     *
+     * @param rootPageId Startseite: nur sie und ihre Unterseiten; {@code null} oder fehlend für den ganzen Space
+     */
+    public record ExportStartRequest(String rootPageId) {
+    }
+
+    /**
      * Zustand eines Exports.
      *
      * @param id              Export-ID
@@ -427,16 +445,18 @@ public class ExportsController {
      * @param cancelRequested Abbruch angefordert, aber noch nicht wirksam
      * @param error           nur bei {@code failed}
      * @param artifact        nur bei {@code completed}
+     * @param rootPageId      Startseite eines Teilbaum-Exports, {@code null} für den ganzen Space
+     * @param rootTitle       Titel der Startseite, sobald der Export sie gelesen hat, sonst {@code null}
      */
     public record ExportResponse(String id, String sourceId, String spaceKey, String state, JobProgress progress,
                                  boolean cancelRequested, ErrorResponse error, Instant createdAt, Instant startedAt,
-                                 Instant finishedAt, ArtifactResponse artifact) {
+                                 Instant finishedAt, ArtifactResponse artifact, String rootPageId, String rootTitle) {
 
         static ExportResponse of(JobStatus job, ExportArtifact artifact) {
             return new ExportResponse(job.id(), job.sourceId(), job.partitionKey(),
                     job.state().name().toLowerCase(Locale.ROOT), job.progress(), job.cancelRequested(),
                     ErrorResponse.of(job.error()), job.createdAt(), job.startedAt(), job.finishedAt(),
-                    ArtifactResponse.of(job.id(), artifact));
+                    ArtifactResponse.of(job.id(), artifact), job.rootPageId(), job.rootTitle());
         }
     }
 

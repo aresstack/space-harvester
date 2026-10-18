@@ -328,6 +328,12 @@ EXPORT_ID=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:
 { "sourceId": "demo", "spaceKey": "DEMO" }
 ```
 
+Nur eine Seite mit ihren Unterseiten exportiert derselbe Aufruf mit dem optionalen Rumpf
+`{"rootPageId": "<Seiten-ID>"}` (`Content-Type: application/json`); ohne Rumpf bleibt es der ganze Space. Der Zustand
+nennt dann `rootPageId` und, sobald der Export die Startseite gelesen hat, `rootTitle`. Gibt es die Startseite im Space
+nicht oder ist sie nicht lesbar, scheitert der Auftrag mit `ROOT_NOT_FOUND`. Im Core entspricht das
+`ExportRequest.withRoot(rootPageId)` bzw. `Exports.start(sourceId, spaceKey, rootPageId, owner, formats)`.
+
 `artifact.complete` ist nur `true`, wenn die Generation bestätigt ist und keine Seite fehlt:
 
 ```bash
