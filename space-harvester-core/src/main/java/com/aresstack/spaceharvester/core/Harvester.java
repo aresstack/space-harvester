@@ -200,9 +200,9 @@ public final class Harvester implements AutoCloseable {
                 AiServiceSettings ai = builder.ai;
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
-                                KnowledgeTextSegmentation.defaults(), builder.embeddingSources)
+                                KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences), builder.embeddingSources)
                         : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
-                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.defaults(),
+                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
@@ -638,6 +638,8 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
+        private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
+        private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
@@ -740,6 +742,19 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder ai(AiServiceSettings ai) {
             this.ai = Objects.requireNonNull(ai, "ai");
+            return this;
+        }
+
+        /**
+         * Zerlegung für die semantische Suche (#181, wie {@code knowledge.chunk.maxTokens} und
+         * {@code knowledge.chunk.overlapSentences} im Enterprise AI Client): Budget je Stück in Tokens (Standard 350,
+         * mindestens 8) und wie viele Schlusssätze das nächste Stück wiederholt (Standard 1, 0 ohne Überlappung). Eine
+         * Änderung ändert die Prozessorversion; die Seiten werden neu eingebettet.
+         */
+        public Builder embeddingChunking(int maxTokens, int overlapSentences) {
+            KnowledgeTextSegmentation.of(maxTokens, overlapSentences);
+            this.chunkTokens = maxTokens;
+            this.chunkOverlapSentences = overlapSentences;
             return this;
         }
 

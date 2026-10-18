@@ -42,11 +42,12 @@ class AiConfiguration {
                     + "embedding-dimensions");
         }
         return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent(build)).embeddings(),
-                properties.embeddingChunkChars(), KnowledgeTextSegmentation.defaults(), settings::mayProcessExternally);
+                properties.embeddingChunkChars(), KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
+                        properties.embeddingChunkOverlapSentences()), settings::mayProcessExternally);
     }
 
     /**
-     * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Fusion um, mit Texten
+     * Cross-Encoder des Dienstes für {@code sort=relevance} (#181): ordnet das Fenster nach der Kosinusrangfolge um, mit Texten
      * nur aus Quellen in {@code external-processing-sources}. Ohne {@code rerank-model} bleibt die Reihenfolge.
      */
     @Bean
