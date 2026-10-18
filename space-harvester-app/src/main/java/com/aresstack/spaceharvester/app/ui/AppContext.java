@@ -420,8 +420,15 @@ public final class AppContext {
             unlock(loaded);
             // Nur Laufzeitwerte geändert (KI-Dienst, Modelle, Freigaben, Synchronisierung): der Core übernimmt sie
             // ohne Neustart, laufende Aufträge laufen weiter (ADR 0015).
-            if (previous != null && previous.reconfigure(loaded, secrets, version)) {
+            AppRuntime.Reconfiguration live = previous == null ? AppRuntime.Reconfiguration.RESTART
+                    : previous.reconfigure(loaded, secrets, version);
+            if (live == AppRuntime.Reconfiguration.APPLIED) {
                 return new Started(loaded, previous, null);
+            }
+            if (live == AppRuntime.Reconfiguration.REJECTED) {
+                // Der Core behält die bisherige Version (ADR 0015); ein Neustart mit derselben Datei hülfe nicht und
+                // beendete laufende Aufträge. Was er bemängelt, steht unter Einstellungen › Konfiguration.
+                return new Started(previous.settings(), previous, null);
             }
             if (previous != null) {
                 previous.close();
