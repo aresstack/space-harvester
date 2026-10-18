@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
@@ -84,6 +85,19 @@ public final class Workspace {
     }
 
     // ------------------------------------------------------------------ Inhalte, live
+
+    /**
+     * Kindseiten eines Knotens live in der Reihenfolge der Quelle ({@code PageNavigation.children}, #177); ohne
+     * {@code parentPageId} die Wurzelseiten des Space. Quellen ohne Seitenbaum werfen {@code UNSUPPORTED}.
+     */
+    public PageNavigation.Children children(String sourceId, String spaceKey, String parentPageId, String cursor) {
+        return harvester.navigation().children(caller, sourceId, spaceKey, parentPageId, cursor);
+    }
+
+    /** Wo eine Seite steht: Space und Vorfahren von oben nach unten ({@code PageNavigation.position}). */
+    public PageNavigation.Position position(String sourceId, String pageId) {
+        return harvester.navigation().position(caller, sourceId, pageId);
+    }
 
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
     public PageMetadataListing liveMetadata(String sourceId, String spaceKey, String cursor, int limit) {

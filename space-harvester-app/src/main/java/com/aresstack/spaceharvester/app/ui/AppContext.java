@@ -38,9 +38,15 @@ public final class AppContext {
 
     /** Die Bereiche der Hauptnavigation. */
     public enum Section {
-        // Reihenfolge der Seitenleiste; die Suche ist die Startansicht.
-        SEARCH("Suche"), SOURCES("Wissensquellen"), CONTENT("Inhalte"), EXPORTS("Herunterladen"),
-        ACTIVITIES("Aufträge"), STATUS("Status"), SETTINGS("Einstellungen");
+        // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
+        // Startansicht.
+        SEARCH("Suche"), CONTENT("Inhalte"), EXPORTS("Herunterladen"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
+
+        /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
+        public boolean administration() {
+            return this == SOURCES || this == SETTINGS;
+        }
 
         private final String title;
 
