@@ -44,6 +44,11 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
     }
 
     @Override
+    public int catalogedPages(String sourceId, String spaceKey) {
+        return cache.countSpacePages(sourceId, spaceKey);
+    }
+
+    @Override
     public StagedGeneration begin(String sourceId, String spaceKey) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(spaceKey, "spaceKey");

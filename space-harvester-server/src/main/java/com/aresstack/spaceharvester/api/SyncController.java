@@ -132,6 +132,106 @@ public class SyncController {
                 .body(SyncResponse.of(new SpaceSyncJobs.SyncJob(status, null), false));
     }
 
+    @GetMapping("/sources/{sourceId}/spaces/{spaceKey}/sync-preview")
+    @Operation(summary = "Vorschau eines Abgleichs (Bestand prüfen)",
+            description = "Inventur des Space und Einzelprüfung fehlender Seiten wie im Abgleich, aber ohne Laden "
+                    + "und ohne Schreiben (ADR 0014): neue, geänderte, verschobene, gelöschte und gesperrte Seiten. "
+                    + "Wartet auf die Inventur. Seiten-IDs nur mit metadata-Freigabe.")
+    @ApiResponse(responseCode = "200", description = "PreviewResponse")
+    @ApiResponse(responseCode = "403", description = "Keine sync-Freigabe für diesen Space (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "Cache-Speicher oder Inhaltsabruf nicht angebunden "
+            + "(sync-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+            schema = @Schema(implementation = ProblemDetail.class)))
+    public PreviewResponse preview(@Parameter(hidden = true) AccessContext caller,
+                                   @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+                                   @PathVariable String sourceId,
+                                   @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
+                                   @Parameter(description = "Betriebsart wie beim Abgleich (Standard sync-cache)",
+                                           schema = @Schema(allowableValues = {"catalog-only", "sync-cache", "full"}))
+                                   @RequestParam(defaultValue = "sync-cache") String mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        SyncMode syncMode;
+        try {
+            syncMode = SyncMode.of(mode);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidQueryException(e.getMessage());
+        }
+        spaces.requireExisting(sourceId, spaceKey);
+        boolean pageIds = access.permits(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        return PreviewResponse.of(syncs.preview(sourceId, spaceKey, syncMode), pageIds);
+    }
+
+    /**
+     * @param summary           Zähler wie nach einem Abgleich, ohne Generation
+     * @param newPageIds        neue Seiten; ohne metadata-Freigabe {@code null}, ebenso die folgenden Listen
+     * @param changedPageIds    bekannte Seiten mit neuer Version
+     * @param movedPageIds      verschobene Seiten
+     * @param removedPageIds    bestätigt gelöschte Seiten
+     * @param withheldPageIds   Seiten, die gesperrt würden
+     * @param unverifiedPageIds fehlende Seiten ohne bestätigtes Fehlen
+     */
+    public record PreviewResponse(SummaryResponse summary, @Schema(nullable = true) List<String> newPageIds,
+                                  @Schema(nullable = true) List<String> changedPageIds,
+                                  @Schema(nullable = true) List<String> movedPageIds,
+                                  @Schema(nullable = true) List<String> removedPageIds,
+                                  @Schema(nullable = true) List<String> withheldPageIds,
+                                  @Schema(nullable = true) List<String> unverifiedPageIds) {
+
+        static PreviewResponse of(com.aresstack.spaceharvester.application.sync.SyncPreview preview,
+                                  boolean pageIds) {
+            return new PreviewResponse(SummaryResponse.of(preview.summary(), pageIds),
+                    pageIds ? preview.newPageIds() : null, pageIds ? preview.changedPageIds() : null,
+                    pageIds ? preview.movedPageIds() : null, pageIds ? preview.removedPageIds() : null,
+                    pageIds ? preview.withheldPageIds() : null, pageIds ? preview.unverifiedPageIds() : null);
+        }
+    }
+
+    @GetMapping("/sources/{sourceId}/spaces/{spaceKey}/catalog")
+    @Operation(summary = "Bestand eines Space im Cache",
+            description = "Katalogstand (unknown, partial, cataloged), bekannte Seiten und Seiten mit Inhalt, ohne "
+                    + "Anfrage an die Quelle (ADR 0014). Viele bekannte Seiten ohne Inhalt sind kein Fehler: Inhalte "
+                    + "beschafft die Suche.")
+    @ApiResponse(responseCode = "200", description = "CatalogResponse")
+    @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe für diesen Space (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public CatalogResponse catalog(@Parameter(hidden = true) AccessContext caller,
+                                   @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+                                   @PathVariable String sourceId,
+                                   @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        return CatalogResponse.of(syncs.catalog(sourceId, spaceKey));
+    }
+
+    /**
+     * @param sourceId      Quellen-ID
+     * @param spaceKey      Space-Key
+     * @param state         {@code unknown}: keine Seite bekannt; {@code partial}: einzelne Seiten bekannt, ohne
+     *                      Inventur; {@code cataloged}: von einer bestätigten Inventur erfasst
+     * @param knownPages    Seiten mit Kopfdaten im Katalog
+     * @param cachedPages   davon Seiten mit Inhalt
+     * @param stalePages    Seiten mit veraltetem Stand
+     * @param withheldPages gesperrte Seiten
+     * @param generation    bestätigte Generation oder {@code null}
+     * @param confirmedAt   ihre Bestätigung oder {@code null}
+     * @param changesSince  ab wann die nächste Änderungssuche fragt, oder {@code null}
+     */
+    public record CatalogResponse(String sourceId, String spaceKey,
+                                  @Schema(allowableValues = {"unknown", "partial", "cataloged"}) String state,
+                                  int knownPages, int cachedPages, int stalePages, int withheldPages,
+                                  @Schema(nullable = true) Long generation, @Schema(nullable = true) Instant confirmedAt,
+                                  @Schema(nullable = true) Instant changesSince) {
+
+        static CatalogResponse of(com.aresstack.spaceharvester.application.sync.SpaceCatalog catalog) {
+            return new CatalogResponse(catalog.sourceId(), catalog.spaceKey(),
+                    catalog.state().name().toLowerCase(Locale.ROOT), catalog.knownPages(), catalog.cachedPages(),
+                    catalog.stalePages(), catalog.withheldPages(), catalog.generation(), catalog.confirmedAt(),
+                    catalog.changesSince());
+        }
+    }
+
     @GetMapping("/syncs/{syncId}")
     @Operation(summary = "Status eines Abgleichs",
             description = "Zustand, Zähler und, sobald der Lauf fertig ist, sein Delta. completed nur mit neu "
