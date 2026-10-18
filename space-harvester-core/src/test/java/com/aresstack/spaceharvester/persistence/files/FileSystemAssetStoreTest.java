@@ -133,6 +133,37 @@ class FileSystemAssetStoreTest {
         assertThat(store.read(asset)).isEqualTo(content);
     }
 
+    @Test
+    void removingASourceDropsItsEntriesAndContentNoLongerNeeded() {
+        FileSystemAssetStore store = new FileSystemAssetStore(root);
+        byte[] own = bytes("nur wiki");
+        byte[] shared = bytes("in beiden");
+        byte[] exported = bytes("im Export");
+        byte[] cached = bytes("ohne Eintrag");
+        store.put(asset("att1", "1", own), own);
+        store.put(asset("att2", "1", shared), shared);
+        store.put(asset("att3", "1", exported), exported);
+        store.put(asset("att4", null, cached), cached);
+        Asset other = new Asset("andere", "201", "att9", "1", "datei", "text/plain", AssetKind.OTHER, shared.length,
+                sha256(shared), Instant.parse("2026-10-17T00:00:00Z"));
+        store.put(other, shared);
+        Instant later = Instant.now().plusSeconds(60);
+
+        int removed = store.removeSource("wiki", sha256(exported)::equals, later);
+
+        // Eigenes und Zwischengespeichertes ohne Eintrag gehen; was eine andere Quelle oder ein Export braucht, bleibt.
+        assertThat(removed).isEqualTo(2);
+        assertThat(store.find("wiki", "att2", "1")).isEmpty();
+        assertThat(store.find("andere", "att9", "1")).isPresent();
+        assertThat(store.read(other)).isEqualTo(shared);
+        assertThat(store.read(asset("att3", "1", exported))).isEqualTo(exported);
+        assertThatThrownBy(() -> store.read(asset("att1", "1", own))).isInstanceOf(AssetStoreException.class);
+        // Was nach Beginn des Entfernens geschrieben wurde, bleibt.
+        store.put(asset("att5", "1", own), own);
+        assertThat(store.removeSource("wiki", sha -> false, Instant.parse("2026-01-01T00:00:00Z"))).isZero();
+        assertThat(store.read(asset("att5", "1", own))).isEqualTo(own);
+    }
+
     private static Asset asset(String id, String version, byte[] content) {
         return new Asset("wiki", "101", id, version, "datei", "text/plain", AssetKind.OTHER, content.length,
                 sha256(content), Instant.parse("2026-10-17T00:00:00Z"));
