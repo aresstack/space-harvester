@@ -65,7 +65,40 @@ class AssetDocumentTextTest {
         assertThat(restarted.text(list, "att1").createdAt()).isEqualTo(NOW);
     }
 
+    @Test
+    void aPdfNamedLikeADiagramIsStoredAsADocument() {
+        files.put("att1", DocumentFixtures.pdf("Netzplan Rechenzentrum"));
+        Assets assets = assets();
+        PageAttachmentList list = list(attachment("att1", "report.drawio", "application/vnd.jgraph.mxfile"));
+
+        AssetHarvest harvest = assets.harvest(list);
+
+        assertThat(harvest.entries().getFirst().asset().mediaType()).isEqualTo(DocumentFixtures.PDF);
+        assertThat(harvest.entries().getFirst().asset().kind()).isEqualTo(AssetKind.OTHER);
+        assertThat(assets.text(list, "att1").text()).contains("Netzplan Rechenzentrum");
+    }
+
+    @Test
+    void harvestingAgainFillsInTheTextOfDocumentsStoredWithoutExtraction() {
+        files.put("att1", DocumentFixtures.docx("Altbestand Schleuse"));
+        PageAttachmentList list = list(attachment("att1", "alt.docx", DocumentFixtures.DOCX));
+        AssetHarvest first = assets(null).harvest(list);
+        files.remove("att1");
+        TikaDocumentText extraction = new TikaDocumentText();
+
+        AssetHarvest again = assets(extraction).harvest(list);
+
+        assertThat(again.entries().getFirst().status()).isEqualTo(AssetHarvest.Status.REUSED);
+        assertThat(new FileSystemAssetStore(directory)
+                .text(first.entries().getFirst().asset().sha256(), extraction.id(), extraction.version()))
+                .hasValueSatisfying(text -> assertThat(text.text()).contains("Altbestand Schleuse"));
+    }
+
     private Assets assets() {
+        return assets(new TikaDocumentText());
+    }
+
+    private Assets assets(TikaDocumentText extraction) {
         HarvestSource source = new FakeSource();
         SourceCatalog catalog = new SourceCatalog() {
             @Override
@@ -79,7 +112,7 @@ class AssetDocumentTextTest {
             }
         };
         return new Assets(catalog, new FileSystemAssetStore(directory), 1_000_000, Clock.fixed(NOW, ZoneOffset.UTC),
-                null, new TikaDocumentText());
+                null, extraction);
     }
 
     private static PageAttachment attachment(String id, String title, String mediaType) {

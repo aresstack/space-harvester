@@ -77,8 +77,12 @@ public class Assets {
 
     /** Gleichzeitige Downloads von Anhängen, und wie lange ein weiterer auf einen freien Platz wartet. */
     static final int MAX_CONCURRENT_DOWNLOADS = 4;
+    /** Obergrenze der gemerkten Nachhol-Versuche, danach beginnt die Liste neu. */
+    static final int MAX_BACKFILLED = 10_000;
     private static final java.time.Duration DOWNLOAD_WAIT = java.time.Duration.ofSeconds(30);
     private final Semaphore downloads = new Semaphore(MAX_CONCURRENT_DOWNLOADS);
+    /** Abgelegte Dokumente, deren Text beim Ernten schon einmal nachgeholt wurde (je Laufzeit, nach SHA-256). */
+    private final java.util.Set<String> backfilled = ConcurrentHashMap.newKeySet();
 
     /**
      * Gleichzeitige Läufe des Bildbeschreibers; ein weiterer scheitert sofort mit {@code BUSY}. Dasselbe Bild für
@@ -119,6 +123,7 @@ public class Assets {
             }
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
             if (stored.isPresent()) {
+                backfillText(stored.get());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.REUSED,
                         stored.get(), null));
                 continue;
@@ -419,6 +424,33 @@ public class Assets {
         }
     }
 
+    /**
+     * Holt den Text eines schon abgelegten Dokuments aus der Ablage nach, etwa für Ablagen von vor #183, ohne den
+     * Anhang neu zu laden. Je Laufzeit nur ein Versuch je Inhalt, damit ein nicht lesbares Dokument nicht bei jeder
+     * Ernte erneut extrahiert wird.
+     */
+    private void backfillText(Asset asset) {
+        if (documents == null || asset.kind() != AssetKind.OTHER
+                || store.text(asset.sha256(), documents.id(), documents.version()).isPresent()) {
+            return;
+        }
+        if (backfilled.size() > MAX_BACKFILLED) {
+            backfilled.clear();
+        }
+        if (!backfilled.add(asset.sha256())) {
+            return;
+        }
+        byte[] content;
+        try {
+            content = store.read(asset);
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Dokument nicht lesbar: source={0} ({1})", asset.sourceId(),
+                    e.getClass().getName());
+            return;
+        }
+        harvestText(new AssetContent(asset, content));
+    }
+
     private DocumentText documents() {
         if (documents == null) {
             throw new DocumentTextException(DocumentTextException.Reason.NOT_CONFIGURED,
@@ -672,11 +704,16 @@ public class Assets {
         }
         PageAttachment described = file.attachment();
         String version = described.version() != null ? described.version() : attachment.version();
-        String mediaType = mediaType(source.id(), described.mediaType() != null && !described.mediaType().isBlank()
-                ? described.mediaType() : attachment.mediaType(), content);
+        String declaredType = described.mediaType() != null && !described.mediaType().isBlank()
+                ? described.mediaType() : attachment.mediaType();
+        String mediaType = mediaType(source.id(), declaredType, content);
         String title = described.title().isEmpty() ? attachment.title() : described.title();
-        Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType,
-                AssetKind.of(mediaType, title), content.length, sha256(content), file.retrievedAt());
+        // Hat eine Binärsignatur die Angabe der Quelle ersetzt, zählt die Dateiendung (.drawio, .svg) nicht mehr: Ein PDF
+        // namens report.drawio ist ein Dokument, kein Diagramm.
+        boolean corrected = !base(mediaType).equals(base(declaredType)) && !textual(base(mediaType));
+        AssetKind kind = corrected ? AssetKind.of(mediaType, null) : AssetKind.of(mediaType, title);
+        Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType, kind,
+                content.length, sha256(content), file.retrievedAt());
         if (keep) {
             store.put(asset, content);
         }
