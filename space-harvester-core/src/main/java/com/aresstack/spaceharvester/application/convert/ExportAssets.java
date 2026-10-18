@@ -38,4 +38,14 @@ public interface ExportAssets {
      * @return leer, wenn er nicht abgelegt ist oder die Ablage ihn nicht (mehr) hat
      */
     Optional<byte[]> content(ExportAssetManifest.Entry entry);
+
+    /**
+     * Die beim Beschaffen gezeichnete Grafik eines Diagramms ({@link ExportAssetManifest.Entry#rendition()}), gegen
+     * ihre {@code sha256} geprüft; ein Converter zeichnet dann nicht selbst.
+     *
+     * @return leer ohne gezeichnete Grafik oder wenn die Ablage sie nicht (mehr) hat
+     */
+    default Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
+        return Optional.empty();
+    }
 }

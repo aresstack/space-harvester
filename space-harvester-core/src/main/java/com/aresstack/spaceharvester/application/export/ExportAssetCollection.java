@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
+import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -164,6 +165,21 @@ public class ExportAssetCollection {
                     return Optional.empty();
                 }
             }
+
+            @Override
+            public Optional<byte[]> rendition(ExportAssetManifest.Entry entry) {
+                if (entry.rendition() == null || !entry.rendition().drawn() || entry.sha256() == null) {
+                    return Optional.empty();
+                }
+                String renderer = entry.reference().kind() == ExportAssetManifest.Kind.MERMAID
+                        ? Assets.MERMAID_RENDITION : Assets.DRAWIO_RENDITION;
+                try {
+                    return assets.stored(sourceId, Assets.renditionId(entry.sha256()), renderer,
+                            entry.rendition().sha256());
+                } catch (AssetStoreException e) {
+                    return Optional.empty();
+                }
+            }
         };
     }
 
@@ -230,9 +246,15 @@ public class ExportAssetCollection {
                 context.discovered(1);
                 ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.attachment(
                         attachment.attachmentId(), attachment.title());
-                entries.add(store(context, pageId, reference, attachment.attachmentId(), attachment.version(),
-                        attachment.title(), attachment.mediaType(), () -> assets.content(list,
-                                attachment.attachmentId(), true).asset()));
+                ExportAssetManifest.Entry entry = store(context, pageId, reference, attachment.attachmentId(),
+                        attachment.version(), attachment.title(), attachment.mediaType(), () -> assets.content(list,
+                                attachment.attachmentId(), true).asset());
+                if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
+                    entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
+                            .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
+                            .map(entry::withRendition).orElse(entry);
+                }
+                entries.add(entry);
             }
         } catch (SourceAccessException e) {
             unreachable(e);
@@ -274,9 +296,24 @@ public class ExportAssetCollection {
             byte[] text = diagrams.get(i).getBytes(StandardCharsets.UTF_8);
             entries.add(new ExportAssetManifest.Entry(pageId, ExportAssetManifest.Reference.mermaid(i,
                     diagrams.get(i)), null, null, "Mermaid " + (i + 1), "text/vnd.mermaid", text.length,
-                    Assets.sha256(text), ExportAssetManifest.Status.STORED, null));
+                    Assets.sha256(text), ExportAssetManifest.Status.STORED, null,
+                    rendered(sourceId, pageId, Assets.MERMAID_RENDITION, text)));
         }
         return checked;
+    }
+
+    /** Zeichnet ein Diagramm einmal und legt die Grafik ab (#190); ein Fehler kostet nur die Grafik. */
+    private ExportAssetManifest.Rendition rendered(String sourceId, String pageId, String renderer, byte[] source) {
+        Assets.Rendered rendered;
+        try {
+            rendered = assets.rendition(sourceId, pageId, renderer, source);
+        } catch (RuntimeException e) {
+            return ExportAssetManifest.Rendition.notDrawn("Grafik nicht erzeugt (" + e.getClass().getSimpleName()
+                    + ")");
+        }
+        return rendered.asset() == null ? ExportAssetManifest.Rendition.notDrawn(rendered.problem())
+                : ExportAssetManifest.Rendition.drawn(rendered.asset().mediaType(), rendered.asset().size(),
+                        rendered.asset().sha256());
     }
 
     private static void unreachable(SourceAccessException e) {
