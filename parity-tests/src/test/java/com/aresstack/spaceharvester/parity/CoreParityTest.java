@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.parity;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -23,13 +25,13 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
-import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -59,6 +61,8 @@ class CoreParityTest {
     private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_NAVIGATION = new LinkedHashMap<>();
     private static final Map<String, String> CORE_MANAGEMENT = new LinkedHashMap<>();
+    /** Nicht ausgeführte Makros je Format ({@code OMITTED_CONTENT} der Konvertierung). */
+    private static final Map<String, List<String>> CORE_OMITTED = new LinkedHashMap<>();
     @TempDir
     static Path managed;
 
@@ -84,10 +88,14 @@ class CoreParityTest {
             for (String format : FORMATS) {
                 String extension = format.equals("markdown") ? "md" : format;
                 Path target = exports.resolve("core." + extension);
-                try (OutputStream out = Files.newOutputStream(target)) {
-                    harvester.conversions().convert(export.id(), Harvester.OWNER, format, out);
-                }
+                ExportConversions.ConvertedFile converted = harvester.conversions().convert(export.id(),
+                        Harvester.OWNER, format, Files.createTempDirectory("parity-" + format));
+                Files.move(converted.path(), target, StandardCopyOption.REPLACE_EXISTING);
                 CORE.put(extension, target);
+                CORE_OMITTED.put(extension, converted.notices().stream()
+                        .filter(notice -> notice.kind() == ConversionNotice.Kind.OMITTED_CONTENT)
+                        .map(notice -> notice.pageId() + " " + notice.reference() + " (" + notice.reason() + ")")
+                        .toList());
             }
             // Leseansicht je Seite (#176), aus derselben Quelle wie der Export
             AccessContext caller = AccessContext.technicalClient(Harvester.OWNER);
@@ -193,7 +201,9 @@ class CoreParityTest {
         for (String extension : List.of("docx", "pdf", "md")) {
             DocumentOutline eac = ParityReport.read(reference("parity." + extension));
             DocumentOutline core = ParityReport.read(CORE.get(extension));
-            List<Finding> findings = ParityComparison.compare(eac, core);
+            List<Finding> findings = new ArrayList<>(ParityComparison.compare(eac, core));
+            findings.add(ParityComparison.macros(extension, eac, core, List.of(ParitySpace.MACRO_SENTENCES),
+                    CORE_OMITTED.get(extension)));
             report.append('\n').append(ParityReport.section(extension.toUpperCase(), findings, gaps));
             for (Finding finding : findings) {
                 if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {

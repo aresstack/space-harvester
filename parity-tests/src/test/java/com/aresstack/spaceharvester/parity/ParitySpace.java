@@ -14,7 +14,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
  * maßgeblich für echte Makros bleibt der Live-Lauf mit {@code ParityReport}.</p>
  *
  * <p>Inhalt: Hierarchie bis Ebene 7, Tabelle mit Kopfzeile, Listen, Durchgestrichenes, Codeblock, externe Links und
- * {@code mailto:}, interner Seitenlink, Bild als Anhang (SVG), externes Bild, fehlendes Bild, Mermaid und draw.io.
+ * {@code mailto:}, interner Seitenlink, Bild als Anhang (SVG), externes Bild, fehlendes Bild, Mermaid, draw.io und
+ * ausgeführte Makros ({@code include}, {@code excerpt-include}, {@code children}).
  * Binäre Bilder (PNG) gehen nicht, weil der Fake Anhänge als UTF-8-Text speichert.</p>
  */
 public final class ParitySpace {
@@ -23,7 +24,8 @@ public final class ParitySpace {
     public static final String SPACE_NAME = "Paritätsprüfung";
     public static final String HOME = "1001";
     /** Alle Seiten des Space, für den Vergleich der Leseansicht. */
-    public static final String[] PAGES = {"1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008"};
+    public static final String[] PAGES = {"1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
+            "1010"};
 
     /** Sätze, die in jedem Export vorkommen müssen; je Seite einer. */
     public static final String[] SENTENCES = {
@@ -34,6 +36,17 @@ public final class ParitySpace {
             "Satz Foxtrot zum Betrieb.",
             "Satz Ebene vier.",
             "Satz Ebene sieben.",
+            "Satz Golf vor den Makros.",
+            "Satz Juliett.",
+    };
+
+    /**
+     * Sätze, die nur ein ausgeführtes Makro ({@code include}, {@code excerpt-include}) in die Seite „Makros“ bringt:
+     * Sie stehen auf einer Seite eines anderen Space und nur in der Leseansicht von „Makros“ (#218).
+     */
+    public static final String[] MACRO_SENTENCES = {
+            "Satz Hotel aus dem Baustein.",
+            "Satz India aus dem Auszug.",
     };
 
     static final String SYSTEM_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"60\">"
@@ -121,11 +134,41 @@ public final class ParitySpace {
                         + " data-revision=\"1\"></div>");
         confluence.child(HOME, "1004");
         confluence.attachment("att2002", "1004", "ablauf", "application/vnd.jgraph.mxfile", DRAWIO);
+
+        // Makros, deren Inhalt erst Confluence beim Rendern einsetzt (#218): include und excerpt-include einer Seite
+        // aus einem anderen Space, children mit der Kindseite „Juliett“
+        page(confluence, "1009", "Makros",
+                "<p>Satz Golf vor den Makros.</p>"
+                        + macro("include", "<ac:parameter ac:name=\"\"><ac:link><ri:page ri:space-key=\"LIB\""
+                        + " ri:content-title=\"Baustein\"/></ac:link></ac:parameter>")
+                        + macro("excerpt-include", "<ac:parameter ac:name=\"\"><ac:link><ri:page"
+                        + " ri:space-key=\"LIB\" ri:content-title=\"Baustein\"/></ac:link></ac:parameter>")
+                        + macro("children", ""),
+                "<p>Satz Golf vor den Makros.</p>"
+                        + rendered("include", "<p>" + MACRO_SENTENCES[0] + "</p>")
+                        + rendered("excerpt-include", "<p>" + MACRO_SENTENCES[1] + "</p>")
+                        + rendered("children", "<ul class=\"childpages-macro\"><li>"
+                        + "<a href=\"/wiki/spaces/PARITY/pages/1010/Juliett\" data-linked-resource-id=\"1010\""
+                        + " data-linked-resource-type=\"page\">Juliett</a></li></ul>"));
+        confluence.child(HOME, "1009");
+        page(confluence, "1010", "Juliett", "<p>Satz Juliett.</p>", "<p>Satz Juliett.</p>");
+        confluence.child("1009", "1010");
         return confluence;
     }
 
     private static void page(FakeConfluence confluence, String id, String title, String storage, String view) {
         confluence.page(id, title, SPACE, view).storage(storage).exportView(view).version(1, "2026-10-18T00:00:00.000Z");
+    }
+
+    private static String macro(String name, String parameters) {
+        return "<ac:structured-macro ac:name=\"" + name + "\" ac:schema-version=\"1\">" + parameters
+                + "</ac:structured-macro>";
+    }
+
+    /** Ein von Confluence gerendertes Makro in der Leseansicht. */
+    private static String rendered(String name, String content) {
+        return "<div class=\"conf-macro output-block\" data-hasbody=\"false\" data-macro-name=\"" + name + "\">"
+                + content + "</div>";
     }
 
     private static String table() {
