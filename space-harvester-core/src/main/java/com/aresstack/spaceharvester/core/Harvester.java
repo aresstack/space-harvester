@@ -478,12 +478,16 @@ public final class Harvester implements AutoCloseable {
 
     /** Nimmt den Space aus dem regelmäßigen Abgleich; {@code false}, wenn er nicht eingeplant war. */
     public boolean stopReconciling(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         return reconciliation.cancel(sourceId, spaceKey);
     }
 
-    /** Alle eingeplanten regelmäßigen Abgleiche mit letztem und nächstem Start. */
+    /** Die eingeplanten regelmäßigen Abgleiche mit letztem und nächstem Start, soweit {@code SYNC} sie freigibt. */
     public List<Reconciliation.Schedule> reconciliations() {
-        return reconciliation.schedules();
+        return reconciliation.schedules().stream()
+                .filter(schedule -> access.permits(caller,
+                        ResourceScope.space(schedule.sourceId(), schedule.spaceKey()), AccessKind.SYNC))
+                .toList();
     }
 
     /** Abgeschaltete oder unbekannte Quellen nehmen an keinem Auftrag teil, auch nicht über den Cache (#188). */

@@ -140,7 +140,7 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
             if (keepPrevious && change.previous() != null) {
                 pages.put(change.pageId(), change.previous());
                 stale.add(change.pageId());
-            } else if (keepPrevious && change.current() != null) {
+            } else if (keepPrevious) {
                 missing.add(change.pageId());
             }
         }

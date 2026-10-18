@@ -58,6 +58,14 @@ public final class SyncPlanner {
                 changes.add(new PageChange(pageId, absent, entry, null));
             }
         });
+        if (baseline != null && inventory.confirmed()) {
+            // Nur im Katalog geführte Seiten (NOT_LOADED) haben keinen Stand, verschwinden aber genauso.
+            for (String pageId : baseline.missingPageIds()) {
+                if (!current.containsKey(pageId) && !previous.containsKey(pageId)) {
+                    changes.add(new PageChange(pageId, PageChange.Kind.MISSING, null, null));
+                }
+            }
+        }
         changes.sort(Comparator.comparing(PageChange::pageId));
         return new SyncPlan(inventory, baseline, changes, Map.of());
     }

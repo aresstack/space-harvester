@@ -100,4 +100,32 @@ class ReconcileWithoutFirstLoadTest {
         assertThat(next.confirmed().pages()).containsOnlyKeys("2");
         assertThat(next.confirmed().missingPageIds()).containsExactly("1", "3");
     }
+
+    @Test
+    void aCatalogOnlyPageThatDisappearsIsCheckedLikeAnyOtherPage() {
+        cached("1", "DOC", null, "3");
+        sync.run("wiki", "DOC", applier, SyncListener.NONE, false);
+        source.remove("2");
+
+        SpaceSync.SyncRun next = sync.run("wiki", "DOC", applier, SyncListener.NONE, false);
+
+        assertThat(next.plan().removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.INACCESSIBLE);
+        assertThat(next.confirmed().missingPageIds()).doesNotContain("2");
+        assertThat(next.confirmed().withheldPageIds()).containsOnlyKeys("2");
+        assertThat(repository.findHeader(new PageKey("wiki", "2"))).isEmpty();
+    }
+
+    @Test
+    void aCatalogOnlyPageStaysInTheCatalogWhenItsCheckFails() {
+        cached("1", "DOC", null, "3");
+        sync.run("wiki", "DOC", applier, SyncListener.NONE, false);
+        source.remove("2").failSinglePage("2", com.aresstack.spaceharvester.application.sources
+                .SourceAccessException.Reason.UNAVAILABLE);
+
+        SpaceSync.SyncRun next = sync.run("wiki", "DOC", applier, SyncListener.NONE, false);
+
+        assertThat(next.plan().removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.UNVERIFIED);
+        assertThat(next.confirmed().missingPageIds()).contains("2");
+        assertThat(repository.findHeader(new PageKey("wiki", "2"))).isPresent();
+    }
 }
