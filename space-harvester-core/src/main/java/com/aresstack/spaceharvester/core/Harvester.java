@@ -36,6 +36,8 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -119,6 +121,7 @@ public final class Harvester implements AutoCloseable {
     private final SpaceKeyCheck spaceKeys;
     private final PageFreshness freshness;
     private final PageQueries pages;
+    private final ReadingViews readingViews;
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
     private final RelevanceSearch relevance;
@@ -197,6 +200,7 @@ public final class Harvester implements AutoCloseable {
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
                     builder.maxTreeNodes);
+            this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.search = new PageSearch(catalog, index, access);
             this.keywordSearch = new KeywordSearch(catalog, access);
             PageRenewal renewal = null;
@@ -266,6 +270,14 @@ public final class Harvester implements AutoCloseable {
     /** Seiten, Baum und Einzelseiten aus dem Cache, mit {@code refresh} gegen die Quelle geprüft. */
     public PageQueries pages() {
         return pages;
+    }
+
+    /**
+     * Die Lese-Ansicht einer Seite, wie die Quelle sie rendert (#176): mit ausgeführten Makros, Lesetext und Bildern
+     * der Ansicht; Rechte und Version wie {@link #pages()}.
+     */
+    public ReadingViews readingViews() {
+        return readingViews;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
