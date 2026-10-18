@@ -51,6 +51,10 @@ space-harvester:
 - **`spaces`:** Space-Keys genau so, wie die Quelle sie liefert, oder allein `"*"`.
 - Der Start bricht ab bei: Klartext statt Hash, doppeltem Token oder doppelter Client-ID, Freigabe für eine nicht
   konfigurierte Quelle, leerer `spaces`- oder `access`-Liste, `"*"` neben Space-Keys.
+- **`manage-configuration: true`** (Standard `false`): Der Client darf die Laufzeitkonfiguration unter
+  `/api/v1/configuration` lesen und ändern (ADR 0015, [CONFIGURATION.md](CONFIGURATION.md#konfiguration-zur-laufzeit)).
+  Das ist unabhängig von den Freigaben; ein Endnutzer, den der Client durchreicht, erbt das Recht nicht. Alle anderen
+  angemeldeten Clients bekommen dort 403, ohne Token 401.
 
 ## Antworten
 

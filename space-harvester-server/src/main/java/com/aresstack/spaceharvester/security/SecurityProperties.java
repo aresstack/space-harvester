@@ -40,8 +40,12 @@ public record SecurityProperties(Mode mode, List<Client> clients, Delegation del
      * @param grants      Freigaben; ohne Freigabe darf der Client nichts lesen
      * @param delegation  Quellen-IDs, für die der Client die Anmeldung eines Endnutzers durchreichen darf (#24, Teil
      *                    C); leer: keine Durchreichung
+     * @param manageConfiguration darf die Laufzeitkonfiguration unter {@code /api/v1/configuration} lesen und ändern
+     *                    (ADR 0015); Standard {@code false}. Gilt nur für den Client selbst, nie für Endnutzer, deren
+     *                    Anmeldung er durchreicht
      */
-    public record Client(String id, String tokenSha256, List<Grant> grants, List<String> delegation) {
+    public record Client(String id, String tokenSha256, List<Grant> grants, List<String> delegation,
+                         boolean manageConfiguration) {
 
         public Client {
             grants = grants == null ? List.of() : List.copyOf(grants);
