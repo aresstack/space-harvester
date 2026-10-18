@@ -429,7 +429,14 @@ Jeder Abruf einer Einzelseite prüft zuerst live bei der Quelle Recht und Versio
 Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
 geladene Payload (`content-changed`), die dabei im Cache abgelegt wird. Konnte sie nicht abgelegt werden (ein Abgleich
 schreibt gerade), tragen Abweichungen vom Cache `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand
-`stale`. Ist die Quelle für die Prüfung nicht erreichbar, kommt ohne `refresh` der Cache-Stand ungeprüft (ohne
+`stale`. Mit Zeitfenster ([ADR 0013](docs/adr/0013-suche-ueber-den-cache.md), Punkt 4) entfällt die Rückfrage:
+`space-harvester.cache.max-age` (Standard `0s`, im Core `Harvester.builder().cacheFreshness(…)`, höchstens 365 Tage)
+lässt eine Seite ab ihrem Abruf (`retrievedAt`, mit dem Cache gespeichert, übersteht also einen Neustart) ohne
+Rückfrage gelten; Beispiel: abgerufen um 10:00, `max-age: 6h`, bis 16:00 kommt die Seite ohne Frage an die Quelle aus
+dem Cache. Danach prüft der Abruf die Version (`space-harvester.cache.version-check: true`, Standard), und eine
+bestätigte Version öffnet ein neues Fenster; mit `false` wird die Seite stattdessen neu abgerufen. Die Rechte gelten
+auch im Fenster, bei delegierter Anmeldung mit der Identität des Benutzers; `refresh=true` fragt immer. Ist die Quelle
+für die Prüfung nicht erreichbar, kommt ohne `refresh` der Cache-Stand ungeprüft (ohne
 `X-Page-Refresh`), aber nur, wenn die Zugriffspolicy die Seite freigibt; `refresh=true` liefert nie ungeprüft. Die
 Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt

@@ -45,6 +45,25 @@ class EmbeddingProcessorTest {
     }
 
     @Test
+    void budgetAndOverlapAreConfigurableAndPartOfTheVersion() {
+        String text = "Erster Satz hier. Zweiter Satz hier. Dritter Satz hier. Vierter Satz hier.";
+        EmbeddingProcessor small = new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 1500,
+                KnowledgeTextSegmentation.of(8, 0));
+
+        List<EmbeddingProcessor.Chunk> chunks = small.chunks(new PageText("t/v1", text, List.of()));
+
+        // Ohne Überlappung beginnt jedes Stück hinter dem vorigen.
+        assertThat(chunks).hasSizeGreaterThan(1);
+        for (int i = 1; i < chunks.size(); i++) {
+            assertThat(chunks.get(i).start()).isGreaterThanOrEqualTo(chunks.get(i - 1).end());
+        }
+        assertThat(small.version()).isNotEqualTo(new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 1500,
+                SEGMENTS).version());
+        assertThatThrownBy(() -> KnowledgeTextSegmentation.of(7, 1)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> KnowledgeTextSegmentation.of(350, -1)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void longSectionsAreSplitAtLineOrWordBoundaries() {
         String text = ("wort ".repeat(30) + "\n").repeat(3);
         EmbeddingProcessor processor = new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 200, SEGMENTS);

@@ -27,10 +27,13 @@ space-harvester:
     trust-bundle: ki                    # optional, ein spring.ssl.bundle; sonst Vertrauen der JVM
     external-processing-sources: confluence,wiki2   # Standard: keine
     embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
+    embedding-chunk-tokens: 350         # nur Server: Budget je Stück (wie knowledge.chunk.maxTokens), mindestens 8
+    embedding-chunk-overlap-sentences: 1  # nur Server: wiederholte Schlusssätze (wie knowledge.chunk.overlapSentences)
     rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
 ```
 
-Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf `embedding-chunk-chars`
+Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf die `embedding-chunk-…`-Werte
+(im Core `Harvester.builder().embeddingChunkChars(…)` und `.embeddingChunking(maxTokens, overlapSentences)`)
 und vorerst `rerank-model` (der Reiter „KI“ bekommt das Feld noch); den API-Key legt der Reiter „KI“ im Tresor ab und
 gibt ihn nur zur Laufzeit an den Core. Als Bibliothek: `Harvester.builder().ai(AiServiceSettings)`,
 etwa `AiServiceSettings.fromProperties(properties)`.
