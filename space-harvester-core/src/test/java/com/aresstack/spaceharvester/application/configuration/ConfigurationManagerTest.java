@@ -71,6 +71,38 @@ class ConfigurationManagerTest {
     }
 
     @Test
+    void sourcesOverrideTheGlobalSyncRules() {
+        Properties properties = new Properties();
+        properties.setProperty("space-harvester.sync.interval", "P1D");
+        properties.setProperty("space-harvester.cache.max-age", "PT6H");
+        properties.setProperty("space-harvester.sync.sources.wiki.interval", "PT30M");
+        properties.setProperty("space-harvester.sync.sources.wiki.refresh-strategy", "time-based");
+        properties.setProperty("space-harvester.sync.sources[team].inventory-interval", "P7D");
+        properties.setProperty("space-harvester.sync.sources[team].mode", "sync-cache");
+
+        HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
+
+        assertThat(read.syncFor("wiki").interval()).isEqualTo(Duration.ofMinutes(30));
+        assertThat(read.freshnessFor("wiki").versionCheck()).isFalse();
+        assertThat(read.freshnessFor("wiki").maxAge()).isEqualTo(Duration.ofHours(6));
+        assertThat(read.syncFor("team").interval()).isEqualTo(Duration.ofDays(1));
+        assertThat(read.syncFor("team").inventoryInterval()).isEqualTo(Duration.ofDays(7));
+        assertThat(read.syncFor("team").mode()).isEqualTo(SyncMode.SYNC_CACHE);
+        assertThat(read.syncFor("andere")).isEqualTo(read.sync().forSource("andere"));
+        assertThat(read.freshnessFor("andere")).isEqualTo(read.search().cacheFreshness());
+
+        Properties broken = new Properties();
+        broken.setProperty("sync.sources.wiki.interval", "10s");
+        broken.setProperty("sync.sources.wiki.refresh-strategy", "time-based");
+        broken.setProperty("sync.sources.wiki.farbe", "blau");
+        broken.setProperty("sync.sources.team.max-age", "P400D");
+
+        assertThat(HarvesterConfiguration.fromProperties(broken).problems()).extracting(ConfigurationProblem::key)
+                .containsExactlyInAnyOrder("sync.sources.wiki.interval", "sync.sources.wiki.max-age",
+                        "sync.sources.wiki.farbe", "sync.sources.team.max-age");
+    }
+
+    @Test
     void sameConfigurationChangesNothing() {
         var activation = manager.apply(manager.current().configuration());
 

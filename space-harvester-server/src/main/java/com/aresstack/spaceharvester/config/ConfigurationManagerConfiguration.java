@@ -1,23 +1,31 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.api.ConfigurationOverlay;
 import com.aresstack.spaceharvester.api.ConfigurationResponse;
 import com.aresstack.spaceharvester.api.NetworkDescription;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.time.Duration;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Properties;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.env.Environment;
 
 /**
@@ -40,8 +48,9 @@ class ConfigurationManagerConfiguration {
                                               CacheProperties cache, SpaceHarvesterProperties harvester,
                                               @Value("${space-harvester.cache.max-age:0s}") Duration maxAge,
                                               @Value("${space-harvester.cache.version-check:true}")
-                                              boolean versionCheck) {
-        return new ConfigurationManager(initial(ai, search, sync, cache, harvester.network(), maxAge, versionCheck));
+                                              boolean versionCheck, Environment environment) {
+        return new ConfigurationManager(initial(ai, search, sync, cache, harvester.network(), maxAge, versionCheck,
+                Binder.get(environment)));
     }
 
     /** Proxy und TLS für {@code GET /api/v1/configuration}, ohne Proxy-Passwort. */
@@ -61,14 +70,47 @@ class ConfigurationManagerConfiguration {
      */
     static HarvesterConfiguration initial(AiProperties ai, SearchProperties search, SyncProperties sync,
                                           CacheProperties cache, SpaceHarvesterProperties.Network network,
-                                          Duration maxAge, boolean versionCheck) {
+                                          Duration maxAge, boolean versionCheck, Binder binder) {
         CacheFreshness freshness = new CacheFreshness(maxAge == null ? Duration.ZERO : maxAge, versionCheck);
-        return new HarvesterConfiguration(ai.toSettings(),
+        HarvesterConfiguration base = new HarvesterConfiguration(ai.toSettings(),
                 new SearchSettings(search.semantic(), search.rerank(), search.prefetchHits(), freshness),
                 new SyncSettings(false, sync.interval(), sync.spaces(), false, sync.withheldRetention()),
                 new NetworkSettings(network.proxy().toSettings(), network.tls().toSettings()),
                 new StorageSettings(cache.directory()));
+        return withSyncRules(base, binder);
     }
+
+    /** Schlüssel, die {@link SyncProperties} nicht kennt und der Core selbst liest. */
+    private static final List<String> SYNC_KEYS = List.of(SyncSettings.EVENTS, SyncSettings.BEFORE_SEARCH,
+            SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE, SyncSettings.INVENTORY_INTERVAL,
+            SearchSettings.CACHE_REFRESH_STRATEGY);
+
+    /**
+     * Ergänzt Änderungsquellen, Betriebsart, Bestandsinventur, Aktualisierungsstrategie und die Regeln je Quelle
+     * ({@code space-harvester.sync.sources.<Quelle>.*}) aus dem Environment, gelesen wie in
+     * {@link HarvesterConfiguration#fromProperties}.
+     *
+     * @throws com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException bei ungültigen
+     *         Werten
+     */
+    static HarvesterConfiguration withSyncRules(HarvesterConfiguration base, Binder binder) {
+        Properties properties = new Properties();
+        // Grundlage, damit Regeln je Quelle und Strategie gegen dieselben globalen Werte geprüft werden.
+        properties.putAll(ConfigurationOverlay.toProperties(base));
+        for (String key : SYNC_KEYS) {
+            binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
+                    .ifBound(value -> properties.setProperty(key, value));
+        }
+        binder.bind(HarvesterConfiguration.PREFIX + SyncSettings.SOURCES, SOURCE_RULES).ifBound(rules ->
+                rules.forEach((id, fields) -> fields.forEach((field, value) ->
+                        properties.setProperty(SourceSyncOverride.key(id, field), value))));
+        HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
+        return base.withSync(read.sync()).withSearch(read.search());
+    }
+
+    private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(
+            ResolvableType.forClassWithGenerics(Map.class, ResolvableType.forClass(String.class),
+                    ResolvableType.forClassWithGenerics(Map.class, String.class, String.class)));
 
     static ConfigurationResponse.Network describe(NetworkSettings network) {
         ProxySettings p = network.proxy();

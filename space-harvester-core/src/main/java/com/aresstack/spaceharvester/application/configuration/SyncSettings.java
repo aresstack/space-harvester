@@ -1,7 +1,9 @@
 package com.aresstack.spaceharvester.application.configuration;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Änderungsquellen der Synchronisierung (ADR 0014), unter {@code space-harvester.sync.*}: alle optional und
@@ -19,9 +21,12 @@ import java.util.List;
  * @param catchUpOnStart    beim Start verpasste Änderungen nachholen; Standard aus
  * @param mode              was ein Lauf aus Zeitplan oder Nachholen beim Start tut; Standard
  *                          {@link SyncMode#CATALOG_ONLY}
+ * @param inventoryInterval Abstand der regelmäßigen Bestandsinventur (nur Metadaten) oder {@code null} ohne
+ * @param sources           abweichende Regeln je Quellen-ID; ohne Eintrag gilt alles hier global
  */
 public record SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
-                           Duration withheldRetention, boolean catchUpOnStart, SyncMode mode) {
+                           Duration withheldRetention, boolean catchUpOnStart, SyncMode mode,
+                           Duration inventoryInterval, Map<String, SourceSyncOverride> sources) {
 
     public static final String EVENTS = "sync.events";
     public static final String INTERVAL = "sync.interval";
@@ -30,6 +35,9 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     public static final String WITHHELD_RETENTION = "sync.withheld-retention";
     public static final String CATCH_UP_ON_START = "sync.catch-up-on-start";
     public static final String MODE = "sync.mode";
+    public static final String INVENTORY_INTERVAL = "sync.inventory-interval";
+    /** Präfix der Regeln je Quelle: {@code sync.sources.<Quelle>.<Feld>}. */
+    public static final String SOURCES = "sync.sources";
 
     /** Kleinster Abstand des Zeitplans, wie {@code Harvester.reconcile}. */
     public static final Duration MIN_INTERVAL = Duration.ofMinutes(1);
@@ -39,12 +47,19 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
 
     /** Keine Änderungsquelle: keine Ereignisse, kein Nachholen beim Start, kein Zeitplan, nicht vor jeder Suche. */
     public static final SyncSettings DEFAULT = new SyncSettings(false, null, List.of(), false,
-            DEFAULT_WITHHELD_RETENTION, false, SyncMode.CATALOG_ONLY);
+            DEFAULT_WITHHELD_RETENTION, false, SyncMode.CATALOG_ONLY, null, Map.of());
 
     public SyncSettings {
         spaces = spaces == null ? List.of() : List.copyOf(spaces);
         withheldRetention = withheldRetention == null ? DEFAULT_WITHHELD_RETENTION : withheldRetention;
         mode = mode == null ? SyncMode.CATALOG_ONLY : mode;
+        sources = sources == null ? Map.of() : Map.copyOf(sources);
+    }
+
+    /** Ohne Bestandsinventur und ohne Regeln je Quelle. */
+    public SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
+                        Duration withheldRetention, boolean catchUpOnStart, SyncMode mode) {
+        this(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode, null, Map.of());
     }
 
     /** Ohne Nachholen beim Start, Läufe nur katalogisieren. */
@@ -53,7 +68,39 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
         this(events, interval, spaces, beforeSearch, withheldRetention, false, SyncMode.CATALOG_ONLY);
     }
 
+    /** Die abweichenden Regeln einer Quelle oder {@link SourceSyncOverride#NONE}. */
+    public SourceSyncOverride override(String sourceId) {
+        return sources.getOrDefault(sourceId, SourceSyncOverride.NONE);
+    }
+
+    /**
+     * Die wirksamen Regeln einer Quelle: globale Werte, überschrieben von ihren Abweichungen; ohne Regeln je Quelle im
+     * Ergebnis. {@link #spaces} bleibt die globale Liste.
+     */
+    public SyncSettings forSource(String sourceId) {
+        SourceSyncOverride o = override(sourceId);
+        return new SyncSettings(o.events() != null ? o.events() : events,
+                o.changeSearchInterval() != null ? o.changeSearchInterval() : interval, spaces,
+                o.beforeSearch() != null ? o.beforeSearch() : beforeSearch,
+                o.withheldRetention() != null ? o.withheldRetention() : withheldRetention,
+                o.catchUpOnStart() != null ? o.catchUpOnStart() : catchUpOnStart,
+                o.mode() != null ? o.mode() : mode,
+                o.inventoryInterval() != null ? o.inventoryInterval() : inventoryInterval, Map.of());
+    }
+
     public SyncSettings withInterval(Duration value) {
-        return new SyncSettings(events, value, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode);
+        return new SyncSettings(events, value, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
+                inventoryInterval, sources);
+    }
+
+    public SyncSettings withSource(String sourceId, SourceSyncOverride override) {
+        Map<String, SourceSyncOverride> next = new LinkedHashMap<>(sources);
+        if (override == null || override.equals(SourceSyncOverride.NONE)) {
+            next.remove(sourceId);
+        } else {
+            next.put(sourceId, override);
+        }
+        return new SyncSettings(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
+                inventoryInterval, next);
     }
 }
