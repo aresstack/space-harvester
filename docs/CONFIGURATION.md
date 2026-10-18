@@ -78,7 +78,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Zeitplan des Nachholabgleichs | `sync.interval` (z. B. `P1D`, mindestens `PT1M`, ohne: kein Zeitplan), `sync.spaces` | ja, Scheduler neu gesetzt |
 | Nachholen vor jeder Suche | `sync.before-search` (Standard `false`) | ja |
 | Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
-| Unbekannte Seiten mit Inhalt laden | `sync.load-unknown` (Standard `false`; sonst aktualisiert ein Abgleich nur bekannte Seiten) | ja |
+| Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |

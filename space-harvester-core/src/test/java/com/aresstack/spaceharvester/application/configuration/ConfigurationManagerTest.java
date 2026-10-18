@@ -66,7 +66,7 @@ class ConfigurationManagerTest {
         assertThat(RefreshStrategy.parse("time-based-with-version-check"))
                 .isEqualTo(RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK);
         assertThat(SyncSettings.DEFAULT.events() || SyncSettings.DEFAULT.catchUpOnStart()
-                || SyncSettings.DEFAULT.beforeSearch() || SyncSettings.DEFAULT.loadUnknown()
+                || SyncSettings.DEFAULT.beforeSearch() || SyncSettings.DEFAULT.mode() != SyncMode.CATALOG_ONLY
                 || SyncSettings.DEFAULT.interval() != null).isFalse();
     }
 
@@ -200,6 +200,7 @@ class ConfigurationManagerTest {
         properties.setProperty("space-harvester.sync.spaces[0]", "wiki/DOC");
         properties.setProperty("cache.max-age", "PT6H");
         properties.setProperty("ai.timeout", "45000ms");
+        properties.setProperty("sync.mode", "sync-cache");
 
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
 
@@ -208,7 +209,7 @@ class ConfigurationManagerTest {
         assertThat(read.ai().timeout()).isEqualTo(Duration.ofSeconds(45));
         assertThat(read.sync().spaces()).containsExactly("wiki/DOC");
         assertThat(read.sync().catchUpOnStart()).isFalse();
-        assertThat(read.sync().loadUnknown()).isFalse();
+        assertThat(read.sync().mode()).isEqualTo(SyncMode.SYNC_CACHE);
         assertThat(read.search().refreshStrategy()).isEqualTo(RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK);
         assertThat(read.search().cacheFreshness().maxAge()).isEqualTo(Duration.ofHours(6));
 
@@ -218,12 +219,13 @@ class ConfigurationManagerTest {
         broken.setProperty("sync.spaces", "ohne-schraegstrich");
         broken.setProperty("sync.interval", "30s");
         broken.setProperty("cache.refresh-strategy", "time-based");
+        broken.setProperty("sync.mode", "alles");
 
         var parsed = HarvesterConfiguration.fromProperties(broken);
 
         assertThat(parsed.valid()).isFalse();
         assertThat(parsed.problems()).extracting(ConfigurationProblem::key)
                 .containsExactlyInAnyOrder("ai.timeout", "search.semantic", "sync.spaces", "sync.interval",
-                        "cache.max-age");
+                        "cache.max-age", "sync.mode");
     }
 }
