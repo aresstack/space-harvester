@@ -78,7 +78,7 @@ und 6, soweit sie widersprechen, drei voneinander unabhängige Ebenen:
      angelegte oder geänderte Seite wird sofort mit Inhalt übernommen, eine entfernte bestätigt und als `DELETED`
      entfernt, eine Rechteänderung lässt das technische Konto die Seite neu prüfen.
    - **Nachholen** per Änderungssuche (CQL `lastmodified` seit dem letzten Stand, mit Überlappung) plus
-     Papierkorbabfrage je Space: manuell mit optionalem Zeitpunkt (`POST …/syncs?mode=changes&since=…`), beim Start
+     Papierkorbabfrage je Space: manuell mit optionalem Zeitpunkt (`POST …/syncs?listing=changes&since=…`), beim Start
      (`space-harvester.sync.catch-up-on-start`), nach Zeitplan oder vor jeder Suche, alles Standard aus. Geänderte
      bekannte Seiten werden neu geladen, unbekannte nur in den Katalog übernommen.
    Ohne eine aktivierte Änderungsquelle behauptet der Dienst nicht, den ganzen Bestand aktuell zu halten; für die

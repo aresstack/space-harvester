@@ -146,6 +146,7 @@ class ReconcileWithoutFirstLoadTest {
         assertThat(run.confirmed().missingPageIds()).containsExactly("2");
         assertThat(run.summary().outdated()).isEqualTo(1);
         assertThat(repository.find(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("6");
+        assertThat(repository.findHeader(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("7");
     }
 
     @Test

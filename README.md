@@ -570,7 +570,7 @@ Bekanntes und lädt keine unbekannten Seiten (`summary.notLoaded`, Teil von `mis
 `<sourceId>/<spaceKey>`), mit `space-harvester.sync.load-unknown` (Standard `false`: unbekannte Seiten nur in den Katalog; `true` hält den Space vollständig); ein noch
 laufender Abgleich wird nicht doppelt gestartet. `GET /api/v1/reconciliations` zeigt je eingeplantem Space (nur mit
 `sync`-Freigabe) Abstand, letzten Start samt Ergebnis und nächsten Start; ohne Einplanung behauptet der Dienst keine
-lückenlose Aktualität. Verpasste Änderungen holt `?mode=changes` nach: eine Änderungssuche seit dem letzten
+lückenlose Aktualität. Verpasste Änderungen holt `?listing=changes` nach: eine Änderungssuche seit dem letzten
 Lauf (oder seit `since`, ISO 8601) und eine Papierkorbabfrage je Space statt einer Inventur. Bekannte Seiten mit neuer
 Version werden neu geladen, unbekannte nur in den Katalog übernommen, Seiten im Papierkorb entfernt
 (`summary.inventory: changes`). Kann die Quelle das nicht, läuft ein Abgleich ohne Erstbefüllung. Auf Wunsch holt der
