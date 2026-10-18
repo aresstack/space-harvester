@@ -8,7 +8,8 @@ import java.util.Objects;
  * dem abgelegten Stand im Asset-Speicher (Version, Größe, {@code sha256}) oder dem Grund, warum es fehlt. Die Bytes
  * liegen nur im Asset-Speicher, SHA-256-adressiert; das unveränderte Raw-JSON der Seiten bleibt unberührt.
  *
- * @param complete ob jede gefundene Referenz abgelegt ist und jede Seite geprüft werden konnte
+ * @param complete ob jede gefundene Referenz abgelegt (oder als {@link Status#REDUNDANT} überflüssig) ist und jede
+ *                 Seite geprüft werden konnte
  */
 public record ExportAssetManifest(boolean complete, List<Entry> assets) {
 
@@ -57,6 +58,11 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
 
         public boolean stored() {
             return status == Status.STORED && sha256 != null;
+        }
+
+        /** Abgelegt oder bewusst nicht geladen ({@link Status#REDUNDANT}): fehlt nicht. */
+        public boolean present() {
+            return stored() || status == Status.REDUNDANT;
         }
     }
 
@@ -149,6 +155,13 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
         /** Größer als die Grenze des Asset-Speichers. */
         TOO_LARGE,
         /** Quelle nicht erreichbar, gedrosselt, fremde Adresse oder Ablage voll. */
-        UNAVAILABLE
+        UNAVAILABLE,
+        /** Die Quelle verlangt eine zusätzliche Anmeldung (Einmalcode), die nicht erfolgt ist (ADR 0018). */
+        SIGN_IN_REQUIRED,
+        /**
+         * Bewusst nicht geladen: die Vorschau ({@code <Name>.png}) eines draw.io-Diagramms, dessen Quelldaten abgelegt
+         * und gezeichnet sind (ADR 0018). Fehlt nicht.
+         */
+        REDUNDANT
     }
 }

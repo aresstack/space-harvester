@@ -12,6 +12,8 @@ import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
 import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.OneTimeCodeChallenge;
+import com.aresstack.enterpriseai.source.api.OneTimeCodeRequiredException;
 import com.aresstack.enterpriseai.source.api.PageNavigationSource;
 import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
@@ -38,6 +40,8 @@ import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachments;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
+import com.aresstack.spaceharvester.application.sources.SignInChallenge;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -681,6 +685,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     private SourceAccessException accessFailure(KnowledgeSourceException e) {
+        if (e instanceof OneTimeCodeRequiredException required) {
+            // ADR 0018: die Einmalcode-Abfrage des Adapters geht an den Auftrag, nicht als bloße Verweigerung.
+            return new SignInRequiredException(id, e.getMessage(), new Challenge(required.challenge()), e);
+        }
         if (e instanceof RateLimitedException) {
             return new SourceAccessException(id, SourceAccessException.Reason.RATE_LIMITED, e.getMessage(), e);
         }
@@ -696,5 +704,62 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             return new SourceAccessException(id, reason, "Dateiquelle: " + reason, null);
         }
         return new SourceAccessException(id, reason, e.getMessage(), e);
+    }
+
+    /** Die Einmalcode-Abfrage des Adapters als Abfrage des Core; Sitzung und Formular bleiben im Adapter. */
+    private final class Challenge implements SignInChallenge {
+
+        private final OneTimeCodeChallenge challenge;
+
+        Challenge(OneTimeCodeChallenge challenge) {
+            this.challenge = challenge;
+        }
+
+        @Override
+        public String service() {
+            return challenge.service();
+        }
+
+        @Override
+        public String title() {
+            return challenge.title();
+        }
+
+        @Override
+        public String message() {
+            return challenge.message();
+        }
+
+        @Override
+        public String error() {
+            return challenge.error();
+        }
+
+        @Override
+        public boolean resendAvailable() {
+            return challenge.resendAvailable();
+        }
+
+        @Override
+        public SignInChallenge submit(char[] code) {
+            try {
+                return next(challenge.submit(code));
+            } catch (KnowledgeSourceException e) {
+                throw accessFailure(e);
+            }
+        }
+
+        @Override
+        public SignInChallenge resend() {
+            try {
+                return next(challenge.resend());
+            } catch (KnowledgeSourceException e) {
+                throw accessFailure(e);
+            }
+        }
+
+        private SignInChallenge next(OneTimeCodeChallenge again) {
+            return again == null ? null : new Challenge(again);
+        }
     }
 }

@@ -18,15 +18,20 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.reading.ForeignContent;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import java.net.URI;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -58,12 +63,25 @@ import tools.jackson.databind.json.JsonMapper;
  * sehen ({@code sourceWide}); sonst stehen sie mit {@link ExportAssetManifest.Status#FORBIDDEN} und Grund
  * {@code foreign-content} im Manifest. Zähler: {@code discovered} gefundene Bilder,
  * {@code processed} geprüfte, {@code written} abgelegte (auch bereits vorhandene), {@code failed} fehlende.
+ *
+ * <p>Medien werden vor dem Download eingeordnet (ADR 0018): draw.io-Quelldaten zuerst; ist ein Diagramm gezeichnet,
+ * wird seine Vorschau ({@code <Name>.png}, das Backup des Plugins) nicht geladen und steht als
+ * {@link ExportAssetManifest.Status#REDUNDANT} im Manifest. Sind die Quelldaten nicht lesbar, ist die Vorschau der
+ * Ersatz und wird geladen. Ein Bild ohne Quelldaten wird immer geladen.
+ *
+ * <p>Verlangt die Quelle für Dateien einen Einmalcode ({@link SignInRequiredException}), wartet der Auftrag an
+ * derselben Stelle auf die Anmeldung ({@link SignInRequests}, Phase „Wartet auf Anmeldung“); schon abgelegte Bilder
+ * bleiben. Danach lädt er dieselbe Datei neu und macht weiter. Ohne Anmeldung fehlen die übrigen Dateien des Laufs
+ * mit {@link ExportAssetManifest.Status#SIGN_IN_REQUIRED}, ohne erneut zu warten; {@link #start} holt sie später nach,
+ * schon abgelegte kommen dann aus dem Speicher.
  */
 public class ExportAssetCollection {
 
     private static final System.Logger LOG = System.getLogger(ExportAssetCollection.class.getName());
     private static final String COMPONENT = "Assets";
     static final String PHASE = "Bilder beschaffen";
+    /** Phase, solange der Auftrag auf den Einmalcode wartet; die Oberfläche zeigt „Wartet auf Anmeldung“. */
+    public static final String SIGN_IN_PHASE = "Wartet auf Anmeldung";
     /** Mermaid-Makros: {@code mermaid}, {@code mermaid-cloud}, {@code mermaid-macro} usw. */
     private static final Pattern MERMAID = Pattern.compile(
             "<ac:structured-macro\\b[^>]*\\bac:name=\"[^\"]*mermaid[^\"]*\"[^>]*>(.*?)</ac:structured-macro>",
@@ -77,6 +95,7 @@ public class ExportAssetCollection {
     private final SourceQueries sources;
     private final Assets assets;
     private final BiPredicate<String, String> sourceWide;
+    private final SignInRequests signIns;
     /** Laufende Aufträge je Export; nach einem Neustart entscheidet allein das Manifest. */
     private final Map<String, String> running = new ConcurrentHashMap<>();
 
@@ -86,6 +105,13 @@ public class ExportAssetCollection {
      */
     public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets,
                                  BiPredicate<String, String> sourceWide) {
+        this(jobs, writer, sources, assets, sourceWide, SignInRequests.none());
+    }
+
+    /** @param signIns wo Aufträge auf einen Einmalcode warten (ADR 0018) */
+    public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets,
+                                 BiPredicate<String, String> sourceWide, SignInRequests signIns) {
+        this.signIns = Objects.requireNonNull(signIns, "signIns");
         this.sourceWide = Objects.requireNonNull(sourceWide, "sourceWide");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.writer = Objects.requireNonNull(writer, "writer");
@@ -121,11 +147,6 @@ public class ExportAssetCollection {
 
     /** Stand der Bilder eines Exports. */
     public ExportDatasetInfo.Images images(String exportId) {
-        Optional<ExportAssetManifest> manifest = writer.assets(exportId);
-        if (manifest.isPresent()) {
-            return manifest.get().complete() ? ExportDatasetInfo.Images.COMPLETE
-                    : ExportDatasetInfo.Images.INCOMPLETE;
-        }
         String jobId = running.get(exportId);
         if (jobId != null) {
             try {
@@ -135,6 +156,11 @@ public class ExportAssetCollection {
             } catch (UnknownJobException e) {
                 running.remove(exportId, jobId);
             }
+        }
+        Optional<ExportAssetManifest> manifest = writer.assets(exportId);
+        if (manifest.isPresent()) {
+            return manifest.get().complete() ? ExportDatasetInfo.Images.COMPLETE
+                    : ExportDatasetInfo.Images.INCOMPLETE;
         }
         return ExportDatasetInfo.Images.NOT_COLLECTED;
     }
@@ -190,15 +216,19 @@ public class ExportAssetCollection {
                     new ExportNotConvertibleException(exportId, "kein Datenbestand vorhanden"));
             context.phase(COMPONENT, PHASE);
             List<ExportAssetManifest.Entry> entries = new ArrayList<>();
+            Run run = new Run(context, dataset.sourceId());
             boolean[] complete = {true};
             boolean[] stopped = {false};
+            Set<String> checked = new HashSet<>();
             dataset.forEachPage(page -> {
                 context.checkpoint();
                 if (stopped[0]) {
                     return;
                 }
                 try {
-                    if (!collectPage(context, exportId, dataset, page.snapshot(), entries)) {
+                    if (collectPage(run, exportId, dataset, page.snapshot(), entries)) {
+                        checked.add(page.snapshot().key().pageId());
+                    } else {
                         complete[0] = false;
                     }
                 } catch (SourceUnreachable e) {
@@ -210,23 +240,64 @@ public class ExportAssetCollection {
                             e.reason);
                 }
             });
-            boolean allStored = entries.stream().allMatch(ExportAssetManifest.Entry::stored);
-            writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, entries));
+            List<ExportAssetManifest.Entry> result = merged(writer.assets(exportId), entries, checked);
+            boolean allStored = result.stream().allMatch(ExportAssetManifest.Entry::present);
+            writer.putAssets(exportId, new ExportAssetManifest(complete[0] && allStored, result));
             LOG.log(System.Logger.Level.INFO, "Bilder für Export {0}: {1} Referenzen, {2} fehlend", exportId,
-                    entries.size(), entries.stream().filter(entry -> !entry.stored()).count());
+                    result.size(), result.stream().filter(entry -> !entry.present()).count());
         } finally {
             running.remove(exportId);
         }
     }
 
+    /**
+     * Ein erneuter Lauf ({@link ExportConversions#collectImages}) verliert nichts, was der vorige schon abgelegt hatte:
+     * fehlt ein Eintrag jetzt, war er vorher aber vorhanden, gilt der vorige; Einträge von Seiten, die dieser Lauf
+     * nicht vollständig prüfen konnte, bleiben.
+     */
+    static List<ExportAssetManifest.Entry> merged(Optional<ExportAssetManifest> previous,
+                                                  List<ExportAssetManifest.Entry> entries, Set<String> checked) {
+        if (previous.isEmpty()) {
+            return entries;
+        }
+        Map<String, ExportAssetManifest.Entry> before = new java.util.LinkedHashMap<>();
+        for (ExportAssetManifest.Entry entry : previous.get().assets()) {
+            if (entry.present()) {
+                before.putIfAbsent(key(entry), entry);
+            }
+        }
+        List<ExportAssetManifest.Entry> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (ExportAssetManifest.Entry entry : entries) {
+            String key = key(entry);
+            seen.add(key);
+            ExportAssetManifest.Entry earlier = before.get(key);
+            merged.add(!entry.present() && earlier != null ? earlier : entry);
+        }
+        for (Map.Entry<String, ExportAssetManifest.Entry> earlier : before.entrySet()) {
+            if (!seen.contains(earlier.getKey()) && !checked.contains(earlier.getValue().pageId())) {
+                merged.add(earlier.getValue());
+            }
+        }
+        return merged;
+    }
+
+    private static String key(ExportAssetManifest.Entry entry) {
+        ExportAssetManifest.Reference reference = entry.reference();
+        return entry.pageId() + "\u0000" + reference.kind() + "\u0000" + reference.attachmentId() + "\u0000"
+                + reference.src() + "\u0000" + reference.index();
+    }
+
     /** @return ob die Seite vollständig geprüft werden konnte */
-    private boolean collectPage(JobContext context, String exportId, ConversionInput dataset, PageSnapshot snapshot,
+    private boolean collectPage(Run run, String exportId, ConversionInput dataset, PageSnapshot snapshot,
                                 List<ExportAssetManifest.Entry> entries) {
+        JobContext context = run.context;
         String sourceId = dataset.sourceId();
         String pageId = snapshot.key().pageId();
         boolean checked = true;
         Set<String> attachmentIds = new HashSet<>();
         Set<String> ownAttachments = new HashSet<>();
+        Set<String> drawn = new HashSet<>();
         try {
             PageAttachmentList list = sources.attachments(sourceId, pageId);
             if (!dataset.spaceKey().equals(list.spaceKey())) {
@@ -237,25 +308,51 @@ public class ExportAssetCollection {
                 // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.
                 checked = false;
             }
-            for (PageAttachment attachment : list.attachments().attachments()) {
-                ownAttachments.add(attachment.attachmentId());
-                AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
-                if (kind == AssetKind.OTHER) {
-                    continue;
+            // Quelldaten vor Bildern: ob eine Vorschau gebraucht wird, steht erst nach dem Diagramm fest. Im Manifest
+            // bleibt die Reihenfolge der Quelle.
+            List<PageAttachment> ordered = list.attachments().attachments().stream()
+                    .sorted(Comparator.comparing(a -> !Diagrams.isDrawio(a.mediaType(), a.title()))).toList();
+            Map<String, ExportAssetManifest.Entry> byId = new HashMap<>();
+            try {
+                for (PageAttachment attachment : ordered) {
+                    ownAttachments.add(attachment.attachmentId());
+                    AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
+                    if (kind == AssetKind.OTHER) {
+                        continue;
+                    }
+                    attachmentIds.add(attachment.attachmentId());
+                    context.discovered(1);
+                    ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.attachment(
+                            attachment.attachmentId(), attachment.title());
+                    if (preview(attachment.title(), drawn)) {
+                        // Das Backup-PNG eines gezeichneten Diagramms: nicht laden, die Quelldaten tragen den Inhalt.
+                        context.processed(1);
+                        byId.put(attachment.attachmentId(), new ExportAssetManifest.Entry(pageId, reference,
+                                attachment.attachmentId(), attachment.version(), attachment.title(),
+                                attachment.mediaType(), 0, null, ExportAssetManifest.Status.REDUNDANT,
+                                "drawio-preview"));
+                        continue;
+                    }
+                    ExportAssetManifest.Entry entry = store(run, pageId, reference, attachment.attachmentId(),
+                            attachment.version(), attachment.title(), attachment.mediaType(),
+                            () -> assets.content(list, attachment.attachmentId(), true).asset());
+                    if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
+                        entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
+                                .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
+                                .map(entry::withRendition).orElse(entry);
+                        if (entry.rendition() != null && entry.rendition().drawn()) {
+                            drawn.add(Diagrams.drawioName(attachment.title()));
+                        }
+                    }
+                    byId.put(attachment.attachmentId(), entry);
                 }
-                attachmentIds.add(attachment.attachmentId());
-                context.discovered(1);
-                ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.attachment(
-                        attachment.attachmentId(), attachment.title());
-                ExportAssetManifest.Entry entry = store(context, pageId, reference, attachment.attachmentId(),
-                        attachment.version(), attachment.title(), attachment.mediaType(), () -> assets.content(list,
-                                attachment.attachmentId(), true).asset());
-                if (entry.stored() && Diagrams.isDrawio(entry.mediaType(), attachment.title())) {
-                    entry = assets.stored(sourceId, entry.attachmentId(), entry.version(), entry.sha256())
-                            .map(mxfile -> rendered(sourceId, pageId, Assets.DRAWIO_RENDITION, mxfile))
-                            .map(entry::withRendition).orElse(entry);
+            } finally {
+                for (PageAttachment attachment : list.attachments().attachments()) {
+                    ExportAssetManifest.Entry entry = byId.get(attachment.attachmentId());
+                    if (entry != null) {
+                        entries.add(entry);
+                    }
                 }
-                entries.add(entry);
             }
         } catch (SourceAccessException e) {
             unreachable(e);
@@ -272,6 +369,10 @@ public class ExportAssetCollection {
                 if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
                     continue;
                 }
+                if (image.attachmentId() == null && preview(fileName(image), drawn)) {
+                    // Die Vorschau eines gezeichneten Diagramms, wie die Ansicht sie zeigt: ebenso überflüssig.
+                    continue;
+                }
                 context.discovered(1);
                 ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.viewImage(withoutUserInfo(
                         image.src()));
@@ -284,7 +385,7 @@ public class ExportAssetCollection {
                             image.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content"));
                     continue;
                 }
-                entries.add(store(context, pageId, reference, null, null, image.title(), image.mediaType(),
+                entries.add(store(run, pageId, reference, null, null, image.title(), image.mediaType(),
                         () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image).asset()));
             }
         } catch (SourceAccessException e) {
@@ -386,13 +487,14 @@ public class ExportAssetCollection {
         com.aresstack.spaceharvester.application.assets.Asset run();
     }
 
-    private ExportAssetManifest.Entry store(JobContext context, String pageId, ExportAssetManifest.Reference reference,
+    private ExportAssetManifest.Entry store(Run run, String pageId, ExportAssetManifest.Reference reference,
                                             String attachmentId, String version, String title, String mediaType,
                                             Download download) {
+        JobContext context = run.context;
         ExportAssetManifest.Status status;
         String reason;
         try {
-            com.aresstack.spaceharvester.application.assets.Asset asset = download.run();
+            com.aresstack.spaceharvester.application.assets.Asset asset = run.signedIn(download);
             context.processed(1);
             context.written(1);
             return new ExportAssetManifest.Entry(pageId, reference, asset.attachmentId(), asset.version(),
@@ -404,6 +506,9 @@ public class ExportAssetCollection {
         } catch (AssetStoreFullException e) {
             status = ExportAssetManifest.Status.UNAVAILABLE;
             reason = "asset-store-full";
+        } catch (SignInRequiredException e) {
+            status = ExportAssetManifest.Status.SIGN_IN_REQUIRED;
+            reason = "sign-in-required";
         } catch (SourceAccessException e) {
             unreachable(e);
             status = switch (e.reason()) {
@@ -420,6 +525,90 @@ public class ExportAssetCollection {
         context.failed(1);
         return new ExportAssetManifest.Entry(pageId, reference, attachmentId, version, title, mediaType, 0, null,
                 status, reason);
+    }
+
+    /** Ob {@code filename} die Vorschau eines der gezeichneten Diagramme ist. */
+    private static boolean preview(String filename, Set<String> drawn) {
+        if (filename == null || filename.isBlank()) {
+            return false;
+        }
+        for (String name : drawn) {
+            if (Diagrams.isDrawioPreview(filename, name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Der Dateiname eines Ansichtsbilds: der letzte Pfadteil der Adresse (Confluence setzt als Titel die Beschriftung
+     * des Diagramms, die Adresse endet auf {@code <Name>.png}), sonst sein Titel.
+     */
+    private static String fileName(HarvestSource.ViewImage image) {
+        String fromSrc = srcName(image.src());
+        if (!fromSrc.isBlank()) {
+            return fromSrc;
+        }
+        return image.title() == null ? "" : image.title();
+    }
+
+    private static String srcName(String value) {
+        String src = value == null ? "" : value;
+        int end = src.length();
+        for (char c : new char[] {'?', '#'}) {
+            int at = src.indexOf(c);
+            if (at >= 0) {
+                end = Math.min(end, at);
+            }
+        }
+        String path = src.substring(0, end);
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        try {
+            return java.net.URLDecoder.decode(name.replace("+", "%2B"), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return name;
+        }
+    }
+
+    /**
+     * Ein Lauf des Auftrags mit seiner Anmeldung (ADR 0018): verlangt die Quelle einen Einmalcode, wartet er einmal
+     * auf {@link SignInRequests}; ohne Anmeldung wartet der Lauf nicht noch einmal.
+     */
+    private final class Run {
+
+        final JobContext context;
+        final String sourceId;
+        boolean declined;
+
+        Run(JobContext context, String sourceId) {
+            this.context = context;
+            this.sourceId = sourceId;
+        }
+
+        com.aresstack.spaceharvester.application.assets.Asset signedIn(Download download) {
+            Instant started = Instant.now();
+            try {
+                return download.run();
+            } catch (SignInRequiredException e) {
+                if (declined) {
+                    throw e;
+                }
+                context.phase(COMPONENT, SIGN_IN_PHASE);
+                SignInRequests.Outcome outcome;
+                try {
+                    outcome = signIns.await(sourceId, context.jobId(), e.challenge(), started, context::checkpoint);
+                } finally {
+                    context.phase(COMPONENT, PHASE);
+                }
+                if (outcome != SignInRequests.Outcome.UNLOCKED) {
+                    declined = true;
+                    LOG.log(System.Logger.Level.INFO, "Bilder der Quelle {0} ohne Anmeldung weiter", sourceId);
+                    throw e;
+                }
+                // Dieselbe Datei noch einmal, jetzt mit der freigeschalteten Sitzung.
+                return download.run();
+            }
+        }
     }
 
     /** Mermaid-Diagrammtexte aus dem Storage-Format der Seite, in ihrer Reihenfolge. */
