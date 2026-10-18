@@ -16,8 +16,8 @@ winProxy = "0.2.0"
 winTrust = "0.1.0"
 # Eingebetteter Seiten-Cache und Index (#26)
 lucene = "10.5.2"
-# PDF-Ausgabe (#30)
-pdfbox = "3.0.5"
+# PDF-Ausgabe (#30); dieselbe Fassung wie Tika (tika-parent 3.3.2: pdfbox.version 3.0.8), damit nur eine im Klassenpfad liegt
+pdfbox = "3.0.8"
 # space-harvester-core (#100): ohne die Spring-Boot-BOM, deshalb hier fest; abgestimmt auf Spring Boot 4.1.1,
 # der Server erzwingt über die BOM dieselben Versionen
 jackson = "3.1.5"
@@ -37,10 +37,13 @@ junit = "5.13.4"
 gson = "2.10.1"
 javaWebsocket = "1.5.2"
 jsoup = "1.17.2"
+# Dokument-Extraktion (deigma/document-tika, #183). Der Upstream nutzt Tika 2.9.1 (Java 8, PDFBox 2.0); hier Tika 3.3,
+# weil der Space Harvester PDFBox 3 und POI 5.5 nutzt und Tika 2.9 gegen PDFBox 3 nicht läuft. Java 21 genügt Tika 3.
+tika = "3.3.2"
 jgraphx = "4.2.2"
 junit4 = "4.13.2"
 # Word-Ausgabe (:docx-export, Kopie aus enterprise-ai-client): Markdown-Parser in derselben Fassung wie dort,
-# Apache POI in der aktuellen 5.x (dort 5.2.3 wegen Tika; hier gibt es keine Tika-Bindung)
+# Apache POI in der aktuellen 5.x (dort 5.2.3 wegen Tika 2.9; hier dieselbe 5.5.1 wie Tika 3.3.2)
 flexmark = "0.62.2"
 # Mermaid und SVG offline als Bild (GraalJS 21.2 wie win-proxy-java, Batik), wie im Enterprise AI Client
 mermaidJava = "0.2.0-beta.2"
@@ -61,6 +64,8 @@ java-websocket = { module = "org.java-websocket:Java-WebSocket", version.ref = "
 jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
+tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
+tika-parsers-standard = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }
 win-proxy-java = { module = "com.aresstack:win-proxy-java", version.ref = "winProxy" }
 win-trust-java = { module = "com.aresstack:win-trust-java", version.ref = "winTrust" }
 lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }

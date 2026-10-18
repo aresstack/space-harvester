@@ -50,6 +50,10 @@ class AssetsTest {
     }
 
     private Assets assets(long maxBytes, ImageDescriber imageDescriber) {
+        return assets(maxBytes, imageDescriber, null);
+    }
+
+    private Assets assets(long maxBytes, ImageDescriber imageDescriber, DocumentText documents) {
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -62,7 +66,140 @@ class AssetsTest {
             }
         };
         return new Assets(catalog, new FileSystemAssetStore(directory), maxBytes, Clock.fixed(NOW, ZoneOffset.UTC),
-                imageDescriber);
+                imageDescriber, documents);
+    }
+
+    @Test
+    void aSignatureInTheContentOverridesAWrongMediaTypeOfTheSource() {
+        FakeDocuments documents = new FakeDocuments().type("%PDF", "application/pdf");
+        Assets assets = assets(1000, null, documents);
+        source.file("att1", "1", "%PDF-Bericht");
+
+        Asset stored = assets.harvest(list(attachment("att1", "scan.png", "image/png", "1"))).entries().get(0)
+                .asset();
+
+        assertThat(stored.mediaType()).isEqualTo("application/pdf");
+        assertThat(stored.kind()).isEqualTo(AssetKind.OTHER);
+        assertThat(assets.content(list(attachment("att1", "scan.png", "image/png", "1")), "att1").asset())
+                .isEqualTo(stored);
+    }
+
+    @Test
+    void textualFormatsKeepTheMediaTypeOfTheSource() {
+        // draw.io-Daten sind am Inhalt nur XML; die Angabe der Quelle sagt mehr.
+        FakeDocuments documents = new FakeDocuments().type("<mxfile", "application/xml");
+        Assets assets = assets(1000, null, documents);
+        source.file("att1", "1", "<mxfile/>");
+
+        Asset stored = assets.harvest(list(attachment("att1", "Ablauf", AssetKind.DRAWIO_MEDIA_TYPE, "1")))
+                .entries().get(0).asset();
+
+        assertThat(stored.mediaType()).isEqualTo(AssetKind.DRAWIO_MEDIA_TYPE);
+        assertThat(stored.kind()).isEqualTo(AssetKind.DIAGRAM);
+    }
+
+    @Test
+    void theMediaTypeChoiceFollowsTheContentOnlyWhereItIsUnambiguous() {
+        assertThat(Assets.chooseMediaType("image/png", "application/pdf")).isEqualTo("application/pdf");
+        assertThat(Assets.chooseMediaType(null, "application/pdf")).isEqualTo("application/pdf");
+        assertThat(Assets.chooseMediaType("application/octet-stream", "text/plain")).isEqualTo("text/plain");
+        assertThat(Assets.chooseMediaType("text/csv; charset=UTF-8", "text/plain"))
+                .isEqualTo("text/csv; charset=UTF-8");
+        assertThat(Assets.chooseMediaType("application/pdf", "application/pdf")).isEqualTo("application/pdf");
+        assertThat(Assets.chooseMediaType("application/vnd.ms-excel", "application/x-tika-msoffice"))
+                .isEqualTo("application/vnd.ms-excel");
+        assertThat(Assets.chooseMediaType("application/octet-stream", "application/zip"))
+                .isEqualTo("application/octet-stream");
+        assertThat(Assets.chooseMediaType("image/png", null)).isEqualTo("image/png");
+        assertThat(Assets.chooseMediaType("image/svg+xml", "application/xml")).isEqualTo("image/svg+xml");
+    }
+
+    @Test
+    void documentsGetTheirTextWhenStoredAndKeepItForTheSameBytes() {
+        FakeDocuments documents = new FakeDocuments();
+        Assets assets = assets(1000, null, documents);
+        source.file("att1", "1", "Inhalt des Berichts");
+        PageAttachmentList list = list(attachment("att1", "bericht.pdf", "application/pdf", "1"));
+
+        assets.harvest(list);
+        AssetText text = assets.text(list, "att1");
+
+        assertThat(text.text()).isEqualTo("Text: Inhalt des Berichts");
+        assertThat(text.extractor()).isEqualTo("fake");
+        assertThat(text.sha256()).isEqualTo(Assets.sha256("Inhalt des Berichts".getBytes(StandardCharsets.UTF_8)));
+        assertThat(documents.extractions).as("einmal beim Ablegen, danach aus der Ablage").hasValue(1);
+        assertThat(assets.text(list, "att1")).isEqualTo(text);
+        assertThat(documents.extractions).hasValue(1);
+    }
+
+    @Test
+    void aFailingExtractionDoesNotStopStoringAndIsReportedByReason() {
+        FakeDocuments documents = new FakeDocuments().failing(DocumentTextException.Reason.TIMEOUT);
+        Assets assets = assets(1000, null, documents);
+        source.file("att1", "1", "x");
+        PageAttachmentList list = list(attachment("att1", "bericht.pdf", "application/pdf", "1"));
+
+        assertThat(assets.harvest(list).entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
+        assertThatThrownBy(() -> assets.text(list, "att1")).isInstanceOf(DocumentTextException.class)
+                .extracting(e -> ((DocumentTextException) e).reason())
+                .isEqualTo(DocumentTextException.Reason.TIMEOUT);
+    }
+
+    @Test
+    void imagesHaveNoTextAndWithoutExtractionThereIsNone() {
+        source.file("att1", "1", "png");
+        PageAttachmentList list = list(attachment("att1", "a.png", "image/png", "1"));
+
+        assertThatThrownBy(() -> assets(1000, null, new FakeDocuments()).text(list, "att1"))
+                .extracting(e -> ((DocumentTextException) e).reason())
+                .isEqualTo(DocumentTextException.Reason.UNSUPPORTED);
+        assertThatThrownBy(() -> assets(1000).text(list, "att1"))
+                .extracting(e -> ((DocumentTextException) e).reason())
+                .isEqualTo(DocumentTextException.Reason.NOT_CONFIGURED);
+    }
+
+    /** Erkennt Typen an einem Präfix und liest „Text: “ plus Inhalt. */
+    private static final class FakeDocuments implements DocumentText {
+
+        private final Map<String, String> types = new HashMap<>();
+        private DocumentTextException.Reason failure;
+        final AtomicInteger extractions = new AtomicInteger();
+
+        FakeDocuments type(String prefix, String mediaType) {
+            types.put(prefix, mediaType);
+            return this;
+        }
+
+        FakeDocuments failing(DocumentTextException.Reason reason) {
+            failure = reason;
+            return this;
+        }
+
+        @Override
+        public String id() {
+            return "fake";
+        }
+
+        @Override
+        public String version() {
+            return "1";
+        }
+
+        @Override
+        public Optional<String> detect(byte[] content) {
+            String text = new String(content, StandardCharsets.UTF_8);
+            return types.entrySet().stream().filter(type -> text.startsWith(type.getKey())).map(Map.Entry::getValue)
+                    .findFirst();
+        }
+
+        @Override
+        public Extracted extract(String title, String mediaType, byte[] content) {
+            extractions.incrementAndGet();
+            if (failure != null) {
+                throw new DocumentTextException(failure, "Fehler", null);
+            }
+            return new Extracted("Text: " + new String(content, StandardCharsets.UTF_8), false);
+        }
     }
 
     @Test

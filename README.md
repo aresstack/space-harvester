@@ -192,7 +192,9 @@ Das Verzeichnis ist eine Partition mit der Quellen-ID als Schlüssel (`/spaces/h
 relative Pfad als Base64url ohne Auffüllung (`start.md` → `c3RhcnQubWQ`), das Original die Datei Byte für Byte
 (`nativeFormat` `file`). Versteckte Dateien und Ordner (`.git`, `.ssh`) bleiben außen vor; Metadaten nennen nur den
 relativen Pfad, nie den Serverpfad. Eine Datei, die sich während des Lesens ändert, gilt als nicht verfügbar, eine zu große als
-fehlgeschlagen; gekürzt wird nie.
+fehlgeschlagen; gekürzt wird nie. Lesetext für Volltextindex und Anreicherungen haben Textdateien und Dokumente: PDF,
+Word, Excel, PowerPoint, OpenDocument und RTF liest Apache Tika wie im Enterprise AI Client (#183, Grenzen in
+[docs/SOURCE_ADAPTERS.md](docs/SOURCE_ADAPTERS.md#dokumente-typerkennung-und-text-183)).
 
 ## Proxy und PAC/WPAD
 

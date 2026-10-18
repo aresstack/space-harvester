@@ -32,6 +32,12 @@ public interface AssetStore {
     /** Legt eine Beschreibung ab; eine vorhandene für dasselbe Bild und Modell wird ersetzt. */
     void putDescription(ImageDescription description);
 
+    /** Der Text genau dieser Bytes aus genau dieser Extraktion (#183). */
+    Optional<AssetText> text(String sha256, String extractor, String version);
+
+    /** Legt einen Text ab; ein vorhandener für dieselben Bytes und dieselbe Extraktion wird ersetzt. */
+    void putText(AssetText text);
+
     /** Ablage für einen Dienst ohne Asset-Verzeichnis: findet nichts, jedes Schreiben scheitert. */
     static AssetStore unavailable() {
         return new AssetStore() {
@@ -58,6 +64,16 @@ public interface AssetStore {
 
             @Override
             public void putDescription(ImageDescription description) {
+                throw new AssetStoreException("Keine Asset-Ablage konfiguriert", null);
+            }
+
+            @Override
+            public Optional<AssetText> text(String sha256, String extractor, String version) {
+                return Optional.empty();
+            }
+
+            @Override
+            public void putText(AssetText text) {
                 throw new AssetStoreException("Keine Asset-Ablage konfiguriert", null);
             }
         };

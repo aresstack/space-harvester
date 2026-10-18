@@ -41,6 +41,7 @@ public class Assets {
     private final long maxBytes;
     private final Clock clock;
     private final ImageDescriber describer;
+    private final DocumentText documents;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
@@ -52,7 +53,19 @@ public class Assets {
      * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
      */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer) {
+        this(catalog, store, maxBytes, clock, describer, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}: dann gilt der Medientyp der
+     *                  Quelle, und Anhänge haben keinen Text
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents) {
         this.describer = describer;
+        this.documents = documents;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -111,9 +124,10 @@ public class Assets {
                 continue;
             }
             try {
-                Asset asset = download(source, pageId, attachment).asset();
-                entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED, asset,
-                        null));
+                AssetContent content = download(source, pageId, attachment);
+                harvestText(content);
+                entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
+                        content.asset(), null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
             } catch (AssetStoreFullException e) {
@@ -194,8 +208,8 @@ public class Assets {
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
-        String mediaType = image.mediaType() != null && !image.mediaType().isBlank() ? image.mediaType()
-                : sniff(content);
+        String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
+                ? image.mediaType() : sniff(content), content);
         Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
                 AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
         store.put(asset, content);
@@ -284,6 +298,131 @@ public class Assets {
 
     /** Ergebnis von {@link #rendition}: die abgelegte Grafik oder das Problem. */
     public record Rendered(Asset asset, String problem) {
+    }
+
+    /**
+     * Der Text eines Dokument-Anhangs in seiner aktuellen Version (#183): aus der Ablage oder, falls es für diese Bytes
+     * und diese Extraktion noch keinen gibt, gelesen und abgelegt; lädt den Anhang dafür bei Bedarf über die Quelle
+     * und legt ihn ab, wie {@link #describe}. Bilder, Grafiken und Diagrammdaten haben hier keinen Text.
+     *
+     * @throws DocumentTextException {@code NOT_CONFIGURED}, {@code UNSUPPORTED}, {@code TOO_LARGE},
+     *                               {@code TIMEOUT}, {@code BUSY} oder {@code FAILED}
+     */
+    public AssetText text(PageAttachmentList list, String attachmentId) {
+        DocumentText extraction = documents();
+        return text(extraction, content(list, attachmentId));
+    }
+
+    private AssetText text(DocumentText extraction, AssetContent content) {
+        Asset asset = content.asset();
+        if (asset.kind() != AssetKind.OTHER) {
+            throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
+        }
+        Optional<AssetText> existing = store.text(asset.sha256(), extraction.id(), extraction.version());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        DocumentText.Extracted extracted = extraction.extract(asset.title(), asset.mediaType(), content.content());
+        AssetText text = new AssetText(asset.sha256(), extraction.id(), extraction.version(), extracted.text(),
+                extracted.truncated(), clock.instant());
+        store.putText(text);
+        return text;
+    }
+
+    /**
+     * Liest beim Ablegen gleich den Text eines Dokuments (#183), damit er als Anreicherung bereitliegt. Ein Fehler hält
+     * das Ablegen nicht auf und wird mit festem Code protokolliert; ein nicht lesbares Format wird erst auf Abruf
+     * ({@link #text}) erneut versucht, nicht bei jeder Ernte.
+     */
+    private void harvestText(AssetContent content) {
+        if (documents == null || content.asset().kind() != AssetKind.OTHER) {
+            return;
+        }
+        try {
+            text(documents, content);
+        } catch (DocumentTextException e) {
+            if (e.reason() != DocumentTextException.Reason.UNSUPPORTED) {
+                LOG.log(System.Logger.Level.INFO, "Kein Dokumenttext beim Ablegen: source={0}, code={1}",
+                        content.asset().sourceId(), e.reason().code());
+            }
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Dokumenttext nicht ablegbar: source={0} ({1})",
+                    content.asset().sourceId(), e.getClass().getName());
+        }
+    }
+
+    private DocumentText documents() {
+        if (documents == null) {
+            throw new DocumentTextException(DocumentTextException.Reason.NOT_CONFIGURED,
+                    "Keine Textextraktion konfiguriert", null);
+        }
+        return documents;
+    }
+
+    /** Medientypen ohne Aussage: Die Quelle wusste den Typ nicht. */
+    private static final java.util.Set<String> UNSPECIFIC = java.util.Set.of("application/octet-stream",
+            "binary/octet-stream", "application/x-octet-stream", "application/unknown", "application/download",
+            "application/x-download", "application/force-download");
+    /** Erkannte Behälter ohne Aussage über das Dokument darin (ZIP, OLE2, Tika-Oberbegriffe). */
+    private static final java.util.Set<String> CONTAINERS = java.util.Set.of("application/zip",
+            "application/x-zip-compressed", "application/x-ole-storage", "application/x-tika-ooxml",
+            "application/x-tika-msoffice", "application/x-tika-ooxml-protected", "application/x-tika-msoffice-embedded");
+
+    /**
+     * Der Medientyp beim Ablegen (#183): die Angabe der Quelle, es sei denn, der Inhalt zeigt eindeutig etwas anderes.
+     * Ohne {@link DocumentText} bleibt die Angabe der Quelle.
+     */
+    private String mediaType(String sourceId, String declared, byte[] content) {
+        if (documents == null) {
+            return declared;
+        }
+        String detected;
+        try {
+            detected = documents.detect(content).orElse(null);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Typerkennung am Inhalt gescheitert: source={0} ({1})", sourceId,
+                    e.getClass().getName());
+            return declared;
+        }
+        String chosen = chooseMediaType(declared, detected);
+        if (chosen != null && !chosen.equals(declared)) {
+            LOG.log(System.Logger.Level.DEBUG, "Medientyp am Inhalt erkannt: source={0}, Quelle={1}, Inhalt={2}",
+                    sourceId, declared, chosen);
+        }
+        return chosen;
+    }
+
+    /**
+     * Wählt zwischen der Angabe der Quelle und dem am Inhalt erkannten Typ: Ohne oder mit nichtssagender Angabe gilt der
+     * erkannte, sofern er mehr als ein Behälter ist. Sonst ersetzt er die Angabe nur, wenn er ein Binärformat mit
+     * Signatur ist (PDF, Office, Bild …): Textformate (XML, JSON, Klartext) sind am Inhalt nicht sicher zu
+     * unterscheiden, etwa draw.io-Daten von beliebigem XML, und bleiben so, wie die Quelle sie nennt.
+     *
+     * @param detected am Inhalt erkannter Typ oder {@code null}
+     */
+    static String chooseMediaType(String declared, String detected) {
+        String found = base(detected);
+        if (found.isEmpty() || UNSPECIFIC.contains(found) || CONTAINERS.contains(found)) {
+            return declared;
+        }
+        String named = base(declared);
+        if (named.isEmpty() || UNSPECIFIC.contains(named)) {
+            return found;
+        }
+        if (named.equals(found) || textual(found)) {
+            return declared;
+        }
+        return found;
+    }
+
+    private static String base(String mediaType) {
+        return mediaType == null ? "" : mediaType.toLowerCase(Locale.ROOT).split(";", 2)[0].trim();
+    }
+
+    private static boolean textual(String mediaType) {
+        return mediaType.startsWith("text/") || mediaType.equals("application/xml")
+                || mediaType.equals("application/json") || mediaType.endsWith("+xml")
+                || mediaType.endsWith("+json");
     }
 
     /** Medientyp aus den ersten Bytes, für Bilder ohne Angabe der Quelle. */
@@ -465,8 +604,8 @@ public class Assets {
         }
         PageAttachment described = file.attachment();
         String version = described.version() != null ? described.version() : attachment.version();
-        String mediaType = described.mediaType() != null && !described.mediaType().isBlank()
-                ? described.mediaType() : attachment.mediaType();
+        String mediaType = mediaType(source.id(), described.mediaType() != null && !described.mediaType().isBlank()
+                ? described.mediaType() : attachment.mediaType(), content);
         String title = described.title().isEmpty() ? attachment.title() : described.title();
         Asset asset = new Asset(source.id(), pageId, attachment.attachmentId(), version, title, mediaType,
                 AssetKind.of(mediaType, title), content.length, sha256(content), file.retrievedAt());

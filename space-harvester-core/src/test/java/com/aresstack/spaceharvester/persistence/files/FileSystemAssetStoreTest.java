@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -162,6 +163,23 @@ class FileSystemAssetStoreTest {
         store.put(asset("att5", "1", own), own);
         assertThat(store.removeSource("wiki", sha -> false, Instant.parse("2026-01-01T00:00:00Z"))).isZero();
         assertThat(store.read(asset("att5", "1", own))).isEqualTo(own);
+    }
+
+    @Test
+    void documentTextsAreKeptPerContentAndExtractionAndGoWithTheirContent() {
+        FileSystemAssetStore store = new FileSystemAssetStore(root);
+        byte[] content = bytes("%PDF-Bericht");
+        store.put(asset("att1", "1", content), content);
+        AssetText text = new AssetText(sha256(content), "tika", "3.3-1", "Zeile eins\nÄnderung = zwei", true,
+                Instant.parse("2026-10-18T00:00:00Z"));
+
+        store.putText(text);
+
+        assertThat(store.text(sha256(content), "tika", "3.3-1")).contains(text);
+        assertThat(store.text(sha256(content), "tika", "3.3-2")).isEmpty();
+        assertThat(store.text(sha256(bytes("anders")), "tika", "3.3-1")).isEmpty();
+        assertThat(store.removeSource("wiki", sha -> false, Instant.now().plusSeconds(60))).isEqualTo(1);
+        assertThat(store.text(sha256(content), "tika", "3.3-1")).isEmpty();
     }
 
     private static Asset asset(String id, String version, byte[] content) {
