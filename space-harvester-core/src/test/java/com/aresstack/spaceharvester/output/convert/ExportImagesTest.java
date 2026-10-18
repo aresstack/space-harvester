@@ -325,7 +325,10 @@ class ExportImagesTest {
         Drawn drawn = new Drawn(ExportAssetManifest.Rendition.drawn("image/png", PNG.length, "sha256:ff"));
         try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(
                 convert(new DocxConverter(), input(DIAGRAMS, drawn))))) {
-            assertThat(document.getAllPictures()).hasSize(2);
+            // beide Diagramme zeigen dasselbe Bild; Word legt es einmal ab und verweist zweimal darauf
+            assertThat(document.getAllPictures()).hasSize(1);
+            assertThat(document.getParagraphs().stream().flatMap(p -> p.getRuns().stream())
+                    .mapToInt(r -> r.getEmbeddedPictures().size()).sum()).isEqualTo(2);
         }
     }
 
