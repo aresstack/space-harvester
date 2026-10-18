@@ -65,6 +65,9 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
     private static final String CREATED_AT = "createdAt";
     private static final String STARTED_AT = "startedAt";
     private static final String FINISHED_AT = "finishedAt";
+    /** Optional; Aufträge aus der Zeit vor Teilbaum-Exporten haben das Feld nicht und lesen sich mit {@code null}. */
+    private static final String ROOT_PAGE_ID = "rootPageId";
+    private static final String ROOT_TITLE = "rootTitle";
 
     private final Path path;
     private final Directory directory;
@@ -225,6 +228,8 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
         doc.add(new StoredField(CREATED_AT, status.createdAt().toString()));
         storeIfPresent(doc, STARTED_AT, status.startedAt() == null ? null : status.startedAt().toString());
         storeIfPresent(doc, FINISHED_AT, status.finishedAt() == null ? null : status.finishedAt().toString());
+        storeIfPresent(doc, ROOT_PAGE_ID, status.rootPageId());
+        storeIfPresent(doc, ROOT_TITLE, status.rootTitle());
         return doc;
     }
 
@@ -235,7 +240,8 @@ public final class LuceneJobStore implements JobStore, AutoCloseable {
                 number(doc, WRITTEN), number(doc, FAILED));
         return new JobStatus(doc.get(ID), JobType.valueOf(doc.get(TYPE)), doc.get(SOURCE_ID), doc.get(PARTITION_KEY),
                 doc.get(OWNER), JobState.valueOf(doc.get(STATE)), progress, error, number(doc, CANCEL_REQUESTED) == 1,
-                Instant.parse(doc.get(CREATED_AT)), instant(doc.get(STARTED_AT)), instant(doc.get(FINISHED_AT)));
+                Instant.parse(doc.get(CREATED_AT)), instant(doc.get(STARTED_AT)), instant(doc.get(FINISHED_AT)),
+                doc.get(ROOT_PAGE_ID), doc.get(ROOT_PAGE_ID) == null ? null : doc.get(ROOT_TITLE));
     }
 
     private static void storeIfPresent(Document doc, String field, String value) {

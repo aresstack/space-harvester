@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
@@ -72,6 +73,8 @@ public final class ActivitiesView implements View {
     /** Kachel „Exportieren“ eines fertigen Downloads: Datenbestand, erzeugte Dateien, Ausgabeordner, Hinweise. */
     final JPanel card = new JPanel(new BorderLayout(0, 6));
     private final JComponent cardPlate;
+    /** Die Einmalcode-Abfrage des gewählten Auftrags, ohne Auswahl die älteste offene (ADR 0018). */
+    final SignInSlot signIn;
     private final JComponent details;
     private final JLabel cardTitle = new JLabel();
     private final JLabel cardLine = new JLabel();
@@ -110,6 +113,8 @@ public final class ActivitiesView implements View {
 
     public ActivitiesView(AppContext context) {
         this.context = context;
+        this.signIn = new SignInSlot(context, requests -> selectedId == null
+                ? requests.pending().stream().findFirst() : requests.waiting(selectedId));
         root.setBackground(Comic.SURFACE);
         table.getColumnModel().getColumn(2).setCellRenderer(new StateRenderer());
         table.getSelectionModel().addListSelectionListener(e -> {
@@ -179,6 +184,7 @@ public final class ActivitiesView implements View {
         titleRow.add(title, BorderLayout.CENTER);
         titleRow.add(Comic.row(again), BorderLayout.EAST);
         head.add(titleRow, BorderLayout.NORTH);
+        head.add(signIn, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
 
         cardPlate = Comic.plate("Exportieren", Comic.GREEN, card);
@@ -452,6 +458,7 @@ public final class ActivitiesView implements View {
     }
 
     private void render() {
+        signIn.refresh();
         Optional<JobStatus> current = currentStatus();
         facts.reset();
         result.reset();
@@ -468,7 +475,9 @@ public final class ActivitiesView implements View {
         JobProgress p = status.progress();
         renderBar(status);
         Counters counters = Counters.of(status.type());
-        facts.add("Zustand", Texts.state(status.state()), Comic.tone(Texts.tone(status.state())))
+        boolean waiting = waitingForSignIn(status.id());
+        facts.add("Zustand", waiting ? SIGN_IN : Texts.state(status.state()),
+                        waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status.state())))
                 .add("Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
                 .add("Angelegt", Texts.time(status.createdAt()))
@@ -769,9 +778,9 @@ public final class ActivitiesView implements View {
     /** Zielformat mit Anzeigenamen in der Reihenfolge aus Angelos Skizze; unbekannte folgen mit ihrem Kürzel. */
     record Format(String id, String title) {
 
-        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "json");
+        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "json-package", "json");
         private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
-                "markdown", "Markdown", "json", "JSON");
+                "markdown", "Markdown", "json-package", "JSON mit Medien", "json", "JSON");
 
         static String title(String format) {
             return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
@@ -797,11 +806,12 @@ public final class ActivitiesView implements View {
     }
 
     /** Formate der Symbole in der Liste, in der Reihenfolge aus Angelos Skizze. */
-    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json");
+    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json-package");
     private static final Map<String, String> EXPORT_TIPS = Map.of("pdf", "Als PDF exportieren", "docx",
-            "Als Word-Dokument exportieren", "markdown", "Als Markdown exportieren", "json", "Als JSON exportieren");
+            "Als Word-Dokument exportieren", "markdown", "Als Markdown exportieren", "json-package",
+            "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)");
     private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
-            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json", FormatIcon.of("json"));
+            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"));
     private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
@@ -928,6 +938,8 @@ public final class ActivitiesView implements View {
         }
     }
 
+    /** Zustand eines Auftrags, der auf einen Einmalcode wartet ({@code ExportAssetCollection.SIGN_IN_PHASE}). */
+    static final String SIGN_IN = ExportAssetCollection.SIGN_IN_PHASE;
     static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
             + "des Downloads verschwindet mit dem Auftrag.";
 
@@ -1037,14 +1049,23 @@ public final class ActivitiesView implements View {
         }
     }
 
-    private static final class StateRenderer extends DefaultTableCellRenderer {
+    /** Zustand je Zeile; ein Auftrag, der auf einen Einmalcode wartet, sagt es statt „Läuft“. */
+    private final class StateRenderer extends DefaultTableCellRenderer {
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean selected, boolean focus,
                                                        int row, int column) {
             JobState state = (JobState) value;
-            super.getTableCellRendererComponent(table, Texts.state(state), selected, focus, row, column);
-            setForeground(selected ? Comic.INK : Comic.tone(Texts.tone(state)));
+            boolean waiting = waitingForSignIn(model.rows.get(table.convertRowIndexToModel(row)).id());
+            super.getTableCellRendererComponent(table, waiting ? SIGN_IN : Texts.state(state), selected, focus, row,
+                    column);
+            setForeground(selected ? Comic.INK : waiting ? Comic.ORANGE : Comic.tone(Texts.tone(state)));
             return this;
         }
+    }
+
+    /** Ob der Auftrag auf eine Anmeldung wartet (ADR 0018). */
+    boolean waitingForSignIn(String jobId) {
+        AppRuntime runtime = context.runtime();
+        return runtime != null && runtime.workspace().signIns().waiting(jobId).isPresent();
     }
 }

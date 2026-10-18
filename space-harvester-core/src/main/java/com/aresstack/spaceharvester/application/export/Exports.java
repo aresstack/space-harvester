@@ -66,6 +66,13 @@ import java.util.function.Consumer;
  * oder Zählern. Ein Artefakt ist nur {@code complete}, wenn es aus einer bestätigten Generation stammt und keine
  * lesbare Seite fehlt oder beim Einlesen scheiterte. Ein abgebrochener oder gescheiterter Export veröffentlicht nichts.
  *
+ * <p>Mit Startseite ({@link ExportRequest#rootPageId()}) exportiert derselbe Auftrag nur diese Seite und ihre
+ * Unterseiten, nach den Elternbeziehungen der Generation im Cache; Daten, Formate, Rechteprüfung und Ergebnis sind
+ * dieselben wie beim ganzen Space, die Startseite ist die Wurzel des Baums. Gibt es die Startseite im Space nicht oder
+ * darf der Auftraggeber sie nicht lesen, scheitert der Auftrag ({@code ROOT_NOT_FOUND}), ohne zu sagen, welcher Fall
+ * vorliegt. Eingelesen wird bei Bedarf trotzdem der ganze Space; die Zähler „gefunden“ und „beschafft“ des Einlesens
+ * gelten dann für ihn.
+ *
  * <p>Angefragte Formate (#30) entstehen ganz am Ende aus denselben Seiten: nach dem Raw-First-Artefakt liest jeder
  * {@link ExportConverter} die exportierten Seiten noch einmal einzeln aus dem Cache, in Baumreihenfolge, und prüft
  * dabei, dass jede unverändert ist. Quelldaten und Cache bleiben unberührt.
@@ -145,6 +152,17 @@ public class Exports {
     }
 
     /**
+     * Wie {@link #start(String, String, String, List)}, aber nur für eine Seite und ihre Unterseiten.
+     *
+     * @param rootPageId Startseite im Space oder {@code null} für den ganzen Space
+     * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format,
+     *                                                                                 bevor ein Auftrag entsteht
+     */
+    public JobStatus start(String sourceId, String spaceKey, String rootPageId, String owner, List<String> formats) {
+        return start(ExportRequest.of(sourceId, spaceKey, owner, formats).withRoot(rootPageId));
+    }
+
+    /**
      * Nimmt einen Export an, ohne auf ihn zu warten; die Job-ID ist zugleich die Export-ID.
      *
      * @throws com.aresstack.spaceharvester.application.sources.InvalidQueryException bei einem unbekannten Format,
@@ -157,8 +175,8 @@ public class Exports {
         List<ExportConverter> selected = converters.select(request.formats());
         purgeQuietly();
         writer.requireCapacity();
-        return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.owner(),
-                JobTask.blocking(context -> export(context, request, selected)));
+        return jobs.submit(JobType.EXPORT, request.sourceId(), request.spaceKey(), request.rootPageId(),
+                request.owner(), JobTask.blocking(context -> export(context, request, selected)));
     }
 
     /**
@@ -354,13 +372,17 @@ public class Exports {
         Instant startedAt = prepared.startedAt();
         CacheGeneration generation = prepared.generation();
         ExportScope scope = new ExportScope(sourceId, spaceKey, generation);
+        // Nur bei einer Startseite: sie und ihre Unterseiten, lesbar oder nicht; was nicht lesbar ist, fällt unten weg.
+        Set<String> subtree = request.rootPageId() == null ? null : subtree(context, request, prepared);
         List<TreeEntry> entries = new ArrayList<>();
         List<PageFailure> failures = new ArrayList<>();
         Map<String, ListedPage> exported = new HashMap<>();
         Set<String> hidden = new HashSet<>();
         // Nur lesbare gescheiterte Seiten zählen, auch solche, die nie in den Cache kamen und deshalb in keiner
         // Seitenliste stehen.
-        List<PageHeader> failedVisible = prepared.unrefreshed().stream().filter(request.visible()).toList();
+        List<PageHeader> failedVisible = prepared.unrefreshed().stream()
+                .filter(header -> subtree == null || subtree.contains(header.key().pageId()))
+                .filter(request.visible()).toList();
         Set<String> failedIds = new HashSet<>();
         failedVisible.forEach(header -> failedIds.add(header.key().pageId()));
         int unrefreshed = failedVisible.size();
@@ -378,6 +400,10 @@ public class Exports {
                                 + "aufsteigend sortiert (Seite " + listed.pageId() + ")");
                     }
                     after = listed.pageId();
+                    if (subtree != null && !subtree.contains(listed.pageId())) {
+                        // Außerhalb des Teilbaums: gehört nicht zu diesem Export.
+                        continue;
+                    }
                     if (!request.visible().test(listed.header())) {
                         // Nicht lesbar: gehört nicht zur Sicht des Auftraggebers. Weder Artefakt, Manifest, Warnung
                         // noch Zähler verraten, dass es die Seite gibt.
@@ -393,7 +419,9 @@ public class Exports {
                         context.processed(1);
                     }
                     if (failure == null) {
-                        entries.add(new TreeEntry(listed.pageId(), listed.parentPageId()));
+                        // Die Startseite ist die Wurzel des Teilbaums; ihre Elternseite gehört nicht zum Export.
+                        entries.add(new TreeEntry(listed.pageId(), listed.pageId().equals(request.rootPageId())
+                                ? null : listed.parentPageId()));
                         exported.put(listed.pageId(), listed);
                         context.written(1);
                     } else {
@@ -453,6 +481,56 @@ public class Exports {
                     entries.size(), failures, warnings, complete));
             afterPublish(context);
         }
+    }
+
+    /**
+     * Die Startseite und alle ihre Unterseiten in der Generation, nach den Elternbeziehungen des Cache und denselben
+     * Regeln wie der Baum des Exports ({@link PageTreeBuilder}). Liest dafür die Seitenliste einmal vorab; im Speicher
+     * bleiben nur IDs. Seiten, die beim Einlesen scheiterten und nie in den Cache kamen, hängen über ihre Kopfdaten
+     * im Baum, damit sie richtig zählen.
+     *
+     * @throws JobFailedException {@code ROOT_NOT_FOUND}, wenn die Startseite im Space fehlt oder nicht lesbar ist;
+     *                            beides mit derselben Meldung, die keine Seiten-ID nennt
+     */
+    private Set<String> subtree(JobContext context, ExportRequest request, Prepared prepared) {
+        context.phase(COMPONENT, "Teilbaum bestimmen");
+        String rootPageId = request.rootPageId();
+        Map<String, String> parents = new HashMap<>();
+        ListedPage root = null;
+        String after = null;
+        List<ListedPage> batch;
+        do {
+            context.checkpoint();
+            batch = cache.pages(request.sourceId(), request.spaceKey(), prepared.generation().id(), after, BATCH_SIZE);
+            for (ListedPage listed : batch) {
+                parents.put(listed.pageId(), listed.parentPageId());
+                if (listed.pageId().equals(rootPageId)) {
+                    root = listed;
+                }
+                after = listed.pageId();
+            }
+        } while (batch.size() == BATCH_SIZE);
+        if (root == null || !request.visible().test(root.header())) {
+            throw new JobFailedException("ROOT_NOT_FOUND", "Die Startseite des Exports gibt es in Space "
+                    + request.spaceKey() + " der Quelle " + request.sourceId() + " nicht, oder sie ist nicht "
+                    + "lesbar; es entstand kein Export");
+        }
+        context.rootTitle(root.header().metadata().title());
+        for (PageHeader failed : prepared.unrefreshed()) {
+            parents.putIfAbsent(failed.key().pageId(), failed.metadata().parentPageId());
+        }
+        List<TreeEntry> entries = new ArrayList<>(parents.size());
+        // Die Startseite wird Wurzel, damit ein Zyklus über ihr den Teilbaum nicht zerschneidet.
+        parents.forEach((pageId, parent) -> entries.add(new TreeEntry(pageId,
+                pageId.equals(rootPageId) ? null : parent)));
+        PageTree tree = PageTreeBuilder.build(entries);
+        Set<String> subtree = new HashSet<>();
+        for (PageTree.Node node : tree.roots()) {
+            if (node.pageId().equals(rootPageId)) {
+                walk(new PageTree(List.of(node), List.of(), 0, 0), (pageId, depth) -> subtree.add(pageId));
+            }
+        }
+        return subtree;
     }
 
     /**

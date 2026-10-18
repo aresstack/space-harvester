@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
+import com.aresstack.spaceharvester.app.ui.SignInSlot;
 import com.aresstack.spaceharvester.app.ui.View;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
@@ -27,6 +28,8 @@ public final class ContentView implements View {
     private final JLabel crumbs = new JLabel(" ");
     private final PlaceholderField openId = new PlaceholderField(20, "Seiten-ID oder Adresse …");
     private final PageDetailPanel detail;
+    /** Die Einmalcode-Abfrage der gezeigten Wissensquelle (ADR 0018), etwa für Anhänge und Bilder. */
+    private final SignInSlot signIn;
 
     private String sourceId;
     private String spaceKey;
@@ -35,6 +38,8 @@ public final class ContentView implements View {
         this.context = context;
         this.detail = new PageDetailPanel(context);
         detail.onShown(this::pageShown);
+        this.signIn = new SignInSlot(context, requests -> sourceId == null ? java.util.Optional.empty()
+                : requests.pendingFor(sourceId));
         root.setBackground(Comic.SURFACE);
 
         crumbs.setFont(Comic.regular(13f));
@@ -50,7 +55,12 @@ public final class ContentView implements View {
         top.add(crumbs, BorderLayout.CENTER);
         top.add(openId, BorderLayout.EAST);
 
-        root.add(top, BorderLayout.NORTH);
+        JPanel north = new JPanel(new BorderLayout());
+        north.setOpaque(false);
+        north.add(top, BorderLayout.NORTH);
+        signIn.setBorder(BorderFactory.createEmptyBorder(8, 12, 0, 12));
+        north.add(signIn, BorderLayout.CENTER);
+        root.add(north, BorderLayout.NORTH);
         root.add(detail, BorderLayout.CENTER);
         context.onChange(ignored -> renderCrumbs());
         renderCrumbs();
@@ -109,6 +119,7 @@ public final class ContentView implements View {
     }
 
     private void renderCrumbs() {
+        signIn.refresh();
         String source = currentSource();
         if (source == null) {
             crumbs.setText(sources().isEmpty() ? "Keine Wissensquelle" : "Seite im Explorer wählen");

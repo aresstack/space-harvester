@@ -21,6 +21,10 @@ import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -286,6 +290,24 @@ public final class Workspace {
     /** Bricht das Laden eines Stapels ab; Geladenes bleibt im Cache. */
     public boolean cancelKeywordSearch(String id) {
         return harvester.keywordSearch().cancel(id);
+    }
+
+    /**
+     * Progressive Suche (ADR 0017) mit dem Standardprofil des Core: die ursprüngliche Anfrage sofort, dann Varianten
+     * in Wellen bis zum Qualitätsziel. Die Ereignisse kommen aus dem Suchvorgang, nie vom EDT.
+     */
+    public ProgressiveSearch progressiveSearch(KeywordSearch.Query query, ProgressiveSearchListener listener) {
+        return harvester.progressiveSearch().searchAsync(caller, query, harvester.searchProfile(), listener);
+    }
+
+    /** Ob die Varianten der progressiven Suche vom Chat-Modell kommen; sonst nach Regeln. */
+    public boolean aiVariants() {
+        return harvester.searchProfile().expansion() == SearchProfile.Expansion.AI;
+    }
+
+    /** Offene Einmalcode-Anforderungen der Quellen (ADR 0018); Senden und Neu-Senden blockieren, nie auf dem EDT. */
+    public SignInRequests signIns() {
+        return harvester.signIns();
     }
 
     /** Ob {@code sort=relevance} semantisch sucht (Embedding-Modell eingerichtet). */

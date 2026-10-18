@@ -53,6 +53,22 @@ public abstract class JobStoreContract {
     }
 
     @Test
+    void startPageOfASubtreeExportComesBack() {
+        JobStore store = newStore();
+        JobStatus status = new JobStatus("a", JobType.EXPORT, "confluence", "DEV", "TECHNICAL_CLIENT:etl",
+                JobState.COMPLETED, new JobProgress(2, 2, 2, 0), null, false, T0, T0.plusSeconds(1),
+                T0.plusSeconds(2), "100", "Seite 100");
+
+        store.save(status);
+
+        assertThat(store.find("a")).contains(status);
+        // Ohne Startseite (auch Einträge aus der Zeit vor Teilbaum-Exporten) bleiben beide Felder leer.
+        store.save(queued("b"));
+        assertThat(store.find("b")).get().extracting(JobStatus::rootPageId, JobStatus::rootTitle)
+                .containsExactly(null, null);
+    }
+
+    @Test
     void saveReplacesThePreviousStatusOfTheSameJob() {
         JobStore store = newStore();
         store.save(queued("a"));

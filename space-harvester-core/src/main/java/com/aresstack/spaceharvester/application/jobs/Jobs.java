@@ -100,11 +100,23 @@ public class Jobs implements AutoCloseable {
      * @throws IllegalStateException         nach {@link #close()}
      */
     public JobStatus submit(JobType type, String sourceId, String partitionKey, String owner, JobTask task) {
+        return submit(type, sourceId, partitionKey, null, owner, task);
+    }
+
+    /**
+     * Wie {@link #submit(JobType, String, String, String, JobTask)}, für einen Auftrag, der nur eine Seite mit ihren
+     * Unterseiten betrifft; der Zustand nennt sie ({@link JobStatus#rootPageId()}).
+     *
+     * @param rootPageId Startseite oder {@code null} für die ganze Partition
+     */
+    public JobStatus submit(JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
+                            JobTask task) {
         Objects.requireNonNull(type, "type");
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(task, "task");
         purgeExpired();
-        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, owner, task, clock.instant());
+        Job job = new Job(UUID.randomUUID().toString(), type, sourceId, partitionKey, rootPageId, owner, task,
+                clock.instant());
         JobStatus status;
         synchronized (lock) {
             int capacity = limits.maxConcurrent() + limits.maxQueued();
@@ -444,7 +456,8 @@ public class Jobs implements AutoCloseable {
                         status.owner(), JobState.FAILED, status.progress(),
                         new JobError(INTERRUPTED, "Der Dienst wurde während des Auftrags beendet; der Auftrag wird "
                                 + "nicht fortgesetzt und muss neu gestartet werden"),
-                        status.cancelRequested(), status.createdAt(), status.startedAt(), now));
+                        status.cancelRequested(), status.createdAt(), status.startedAt(), now, status.rootPageId(),
+                        status.rootTitle()));
                 // Nach der höchsten Nummer, nicht nach der Anzahl: gelöschte Ereignisse hinterlassen Lücken.
                 long next = events.events(status.id()).stream().mapToLong(JobEvent::sequence).max().orElse(0) + 1;
                 appendQuietly(new JobEvent(status.id(), next, now, status.type(),
@@ -624,6 +637,7 @@ public class Jobs implements AutoCloseable {
         final JobType type;
         final String sourceId;
         final String partitionKey;
+        final String rootPageId;
         final String owner;
         final JobTask task;
         final Instant createdAt;
@@ -640,13 +654,15 @@ public class Jobs implements AutoCloseable {
         final AtomicLong sequence = new AtomicLong();
         volatile String component = COMPONENT;
         volatile String phase;
+        volatile String rootTitle;
 
-        Job(String id, JobType type, String sourceId, String partitionKey, String owner, JobTask task,
-            Instant createdAt) {
+        Job(String id, JobType type, String sourceId, String partitionKey, String rootPageId, String owner,
+            JobTask task, Instant createdAt) {
             this.id = id;
             this.type = type;
             this.sourceId = sourceId;
             this.partitionKey = partitionKey;
+            this.rootPageId = rootPageId;
             this.owner = owner;
             this.task = task;
             this.createdAt = createdAt;
@@ -661,7 +677,13 @@ public class Jobs implements AutoCloseable {
         JobStatus snapshot() {
             return new JobStatus(id, type, sourceId, partitionKey, owner, state,
                     new JobProgress(discovered.get(), processed.get(), written.get(), failedPages.get()), error,
-                    cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt);
+                    cancelRequested && !state.terminal(), createdAt, startedAt, finishedAt, rootPageId,
+                    rootPageId == null ? null : rootTitle);
+        }
+
+        @Override
+        public void rootTitle(String title) {
+            this.rootTitle = title;
         }
 
         @Override

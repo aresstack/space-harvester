@@ -84,6 +84,10 @@ class ExportCardTest {
         // Die Kachel „Exportieren“ listet die erzeugte Datei.
         await(() -> view[0].files.getText().contains(".md"));
         await(() -> view[0].exportBlocked(job, "pdf") == null);
+        // Das JSON-Symbol erzeugt das Paket mit Medien als ZIP.
+        assertThat(ActivitiesView.FORMATS).contains("json-package").doesNotContain("json");
+        SwingUtilities.invokeAndWait(() -> view[0].exportAs(job, "json-package"));
+        await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".zip")));
     }
 
     @Test
