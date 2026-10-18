@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * Anwendungsfälle der cachegestützten Query-API (#27): flache Seitenliste, ID-Baum und native Einzelseite.
@@ -66,7 +67,7 @@ public class PageQueries {
     private final PageFreshness freshness;
     private final PageCacheFill fill;
     private final int maxTreeNodes;
-    private final CacheFreshness cacheFreshness;
+    private final Function<String, CacheFreshness> cacheFreshness;
     private final Clock clock;
     /** Letzte Versionsprüfung ohne neuen Inhalt; die gespeicherten Kopfdaten tragen nur ihren eigenen Stand. */
     /** So viele letzte Prüfungen merkt sich der Use-Case höchstens. */
@@ -92,6 +93,17 @@ public class PageQueries {
     /** @param cacheFreshness wann eine Seite aus dem Cache ohne Rückfrage bei der Quelle gilt (ADR 0013) */
     public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
                        PageCacheFill fill, int maxTreeNodes, CacheFreshness cacheFreshness, Clock clock) {
+        this(catalog, cache, access, freshness, fill, maxTreeNodes, fixed(cacheFreshness), clock);
+    }
+
+    /**
+     * Wie oben, mit der Aktualität je Quelle, die jeder Abruf neu liest (Konfiguration zur Laufzeit, ADR 0015).
+     *
+     * @param cacheFreshness Aktualität vorhandener Inhalte je Quellen-ID
+     */
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       PageCacheFill fill, int maxTreeNodes, Function<String, CacheFreshness> cacheFreshness,
+                       Clock clock) {
         this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.fill = Objects.requireNonNull(fill, "fill");
@@ -103,6 +115,16 @@ public class PageQueries {
             throw new IllegalArgumentException("maxTreeNodes muss positiv sein");
         }
         this.maxTreeNodes = maxTreeNodes;
+    }
+
+    private static Function<String, CacheFreshness> fixed(CacheFreshness cacheFreshness) {
+        Objects.requireNonNull(cacheFreshness, "cacheFreshness");
+        return sourceId -> cacheFreshness;
+    }
+
+    private CacheFreshness freshnessFor(String sourceId) {
+        CacheFreshness found = cacheFreshness.apply(sourceId);
+        return found == null ? CacheFreshness.DEFAULT : found;
     }
 
     /**
@@ -267,8 +289,9 @@ public class PageQueries {
         // Vor dem Abruf, damit eine inzwischen abgelegte neuere Fassung nicht überschrieben wird.
         String seen = stateQuietly(new PageKey(sourceId, pageId));
         PageFreshness.Refreshed checked;
+        CacheFreshness rule = freshnessFor(sourceId);
         // Ohne Versionsprüfung wird eine Seite nach Ablauf neu abgerufen, als läge sie nicht im Cache.
-        Optional<PageSnapshot> compareWith = cacheFreshness.versionCheck() ? cached.map(CachedPage::snapshot)
+        Optional<PageSnapshot> compareWith = rule.versionCheck() ? cached.map(CachedPage::snapshot)
                 : Optional.empty();
         try {
             checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header), compareWith,
@@ -301,7 +324,7 @@ public class PageQueries {
                 live = false;
             }
         }
-        if (checked.outcome() == PageFreshness.Outcome.CURRENT && !cacheFreshness.maxAge().isZero()) {
+        if (checked.outcome() == PageFreshness.Outcome.CURRENT && !rule.maxAge().isZero()) {
             if (this.checked.size() >= MAX_CHECKED) {
                 // Begrenzt: ohne Eintrag zählt das Zeitfenster ab Inhaltsabruf bzw. den Kopfdaten im Cache.
                 this.checked.clear();
@@ -324,7 +347,7 @@ public class PageQueries {
         if (lastChecked == null || observed.isAfter(lastChecked)) {
             lastChecked = observed;
         }
-        return cacheFreshness.fresh(page.snapshot().retrievedAt(), lastChecked, clock.instant());
+        return freshnessFor(page.header().key().sourceId()).fresh(page.snapshot().retrievedAt(), lastChecked, clock.instant());
     }
 
     /**
