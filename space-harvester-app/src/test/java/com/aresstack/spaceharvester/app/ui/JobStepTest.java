@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,18 @@ class JobStepTest {
         assertThat(step.done()).isEqualTo(30);
         assertThat(ActivitiesView.Counters.of(JobType.ENRICHMENT).discovered())
                 .isEqualTo("Schritte (Seiten × Prozessoren)");
+    }
+
+    @Test
+    void collectingImagesCountsCheckedAndStoredImagesAndTheCardSaysExportingStillWorks() {
+        assertThat(ActivitiesView.Step.of(JobType.ASSETS, "Bilder beschaffen", new JobProgress(12, 5, 4, 1)))
+                .isEqualTo(new ActivitiesView.Step("Bilder beschaffen · 5 von 12 Bildern geprüft, 4 abgelegt", 5, 12));
+        assertThat(ActivitiesView.Counters.of(JobType.ASSETS))
+                .isEqualTo(new ActivitiesView.Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend"));
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.COLLECTING))
+                .startsWith("Bilder: werden beschafft").contains("noch ohne Bilder");
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.COMPLETE)).isEqualTo("Bilder: vollständig");
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE)).startsWith("Bilder: unvollständig");
     }
 
     @Test
