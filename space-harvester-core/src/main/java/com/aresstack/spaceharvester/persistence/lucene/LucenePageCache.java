@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Function;
@@ -285,6 +286,32 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                     BooleanClause.Occur.FILTER);
         }
         return headers(query.build(), limit);
+    }
+
+    /**
+     * Was der Cache von einem Space kennt (ADR 0014, Punkt 2): je Seite mit gespeichertem Snapshot, deren aktuelle
+     * Kopfdaten in diesem Space liegen, der Stand dieses Snapshots, auch ohne bestätigte Generation, etwa durch Suche
+     * oder Abruf. Ohne Payload.
+     */
+    public Map<String, BaselineEntry> knownPages(String sourceId, String spaceKey) {
+        Query query = pages(sourceId).add(exact(PageCacheSchema.SPACE_KEY, spaceKey), BooleanClause.Occur.FILTER)
+                .build();
+        return read(searcher -> {
+            int count = searcher.count(query);
+            Map<String, BaselineEntry> known = new TreeMap<>();
+            if (count == 0) {
+                return known;
+            }
+            StoredFields stored = searcher.storedFields();
+            for (ScoreDoc hit : searcher.search(query, count).scoreDocs) {
+                Document doc = stored.document(hit.doc, PageCacheSchema.KNOWN_FIELDS);
+                BaselineEntry entry = PageCacheSchema.known(doc);
+                if (entry != null) {
+                    known.put(entry.pageId(), entry);
+                }
+            }
+            return known;
+        });
     }
 
     /** Direkte Kinder einer Seite nach aktuellen Kopfdaten, über alle Spaces der Quelle, nach Seiten-ID. */

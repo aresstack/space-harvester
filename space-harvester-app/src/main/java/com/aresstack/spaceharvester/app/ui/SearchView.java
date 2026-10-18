@@ -33,10 +33,10 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Globale Suche als reine Schlagwortsuche ({@code KeywordSearch} des Core, ADR 0010 Punkt 9): Jede angehakte Quelle
- * sucht selbst über Titel und Inhalt (Confluence-Websuche), jeder Treffer ist live auf Freigabe geprüft und zeigt
- * Titel, Quelle, Space und den Textauszug der Quelle, in deren Rangfolge. Eine Synchronisierung ist nie
- * Voraussetzung. Unter der Liste steht je Quelle, ob sie keine eigene Suche kennt oder nicht erreichbar war, statt
+ * Globale Suche als reine Schlagwortsuche über den Cache ({@code KeywordSearch} des Core, ADR 0013): Die native Suche
+ * jeder angehakten Quelle entdeckt passende Seiten, der Core legt sie mit den Rechten des Aufrufers in den Cache, und
+ * die Treffer kommen aus dessen Volltextindex, mit Textauszug aus dem Cache. Seiten, die beim Antworten noch laden,
+ * nennt die Zeile unter der Liste; „Weitere laden“ holt sie nach. Eine Synchronisierung ist nie Voraussetzung. Unter der Liste steht je Quelle, ob sie keine eigene Suche kennt oder nicht erreichbar war, statt
  * still „keine Treffer“ zu melden; ein unvollständiges Ergebnis ist so gekennzeichnet.
  * Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine einzelne Quelle
  * mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces der angehakten
@@ -312,7 +312,9 @@ public final class SearchView implements View {
             incomplete = false;
             model.set(hits(results));
             show(q, results);
-            if (results.hits().isEmpty() && results.nextCursor() != null) {
+            if (results.loading() > 0) {
+                feedback.info(loadingTitle(results.loading()), loadingHint());
+            } else if (results.hits().isEmpty() && results.nextCursor() != null) {
                 // Dieser Stapel war leer, weitere Kandidaten folgen noch: kein endgültiges „Keine Treffer“.
                 feedback.info("Noch keine Treffer", "Im ersten Stapel war nichts Passendes; „Weitere laden“ sucht weiter.");
             } else if (results.hits().isEmpty() && !results.complete()) {
@@ -414,7 +416,9 @@ public final class SearchView implements View {
             run.setEnabled(true);
             model.add(hits(results));
             show(q, results);
-            if (model.rows.isEmpty() && results.nextCursor() != null) {
+            if (results.loading() > 0) {
+                feedback.info(loadingTitle(results.loading()), loadingHint());
+            } else if (model.rows.isEmpty() && results.nextCursor() != null) {
                 feedback.info("Noch keine Treffer", "Auch dieser Stapel war leer; „Weitere laden“ sucht weiter.");
             } else if (model.rows.isEmpty()) {
                 feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
@@ -452,7 +456,10 @@ public final class SearchView implements View {
         results.sources().forEach(state -> states.put(state.sourceId(), state));
         more.setEnabled(nextCursor != null);
         StringBuilder line = new StringBuilder(Texts.count(model.rows.size(), "Treffer", "Treffer"));
-        if (nextCursor != null) {
+        if (results.loading() > 0) {
+            line.append(" · ").append(Texts.count(results.loading(), "Seite lädt", "Seiten laden"))
+                    .append(" noch in den Cache");
+        } else if (nextCursor != null) {
             line.append(" · weitere vorhanden");
         }
         for (KeywordSearch.SourceState state : states.values()) {
@@ -464,6 +471,7 @@ public final class SearchView implements View {
                 case INDEXED -> line.append(" · ").append(title(state.sourceId()))
                         .append(": Volltext im Cache");
                 case SEARCHED -> {
+                    // Von der Quelle gefunden und im Cache gesucht (ADR 0013): der Normalfall, ohne Zusatz.
                 }
             }
         }
@@ -472,6 +480,15 @@ public final class SearchView implements View {
         }
         status.setText(line.toString());
         status.setForeground(incomplete ? Comic.ORANGE : Comic.MUTED);
+    }
+
+    /** Gefundene Seiten, die beim Antworten noch in den Cache geladen wurden; der Cursor fragt sie wieder ab. */
+    static String loadingTitle(int loading) {
+        return Texts.count(loading, "Seite wird", "Seiten werden") + " noch in den Cache geladen";
+    }
+
+    private static String loadingHint() {
+        return "Gesucht wird im Cache. „Weitere laden“ holt die Treffer unter diesen Seiten, sobald sie dort liegen.";
     }
 
     /** Ob mindestens eine Quelle gesucht hat. */

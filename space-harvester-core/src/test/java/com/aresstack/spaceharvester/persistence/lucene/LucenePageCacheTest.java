@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sync.BaselineEntry;
 import com.aresstack.spaceharvester.application.sync.SyncBaseline;
 import com.aresstack.spaceharvester.application.sync.SyncConflictException;
 import java.io.IOException;
@@ -272,6 +273,25 @@ class LucenePageCacheTest {
         assertThat(cache.find(snapshot.key())).contains(snapshot);
         // Suchgeneration, Seite und Verlauf.
         assertThat(cache.documentCount()).isEqualTo(3);
+    }
+
+    @Test
+    void knownPagesListsCachedSnapshotsOfASpaceWithTheirStoredVersion() {
+        LucenePageCache cache = open();
+        PageSnapshot dev = page("wiki", "101", "DEV", "100", "3", json("{}"));
+        cache.save(dev);
+        cache.save(page("wiki", "102", "OPS", null, "1", json("{}")));
+        cache.save(page("archive", "103", "DEV", null, "1", json("{}")));
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            batch.saveHeader(page("wiki", "104", "DEV", null, "2", json("{}")).header());
+            batch.commit();
+        }
+
+        Map<String, BaselineEntry> known = cache.knownPages("wiki", "DEV");
+
+        assertThat(known).containsOnlyKeys("101");
+        assertThat(known.get("101")).isEqualTo(new BaselineEntry("101", "DEV", "100", "3", dev.metadataHash(),
+                dev.attributesHash()));
     }
 
     // --- Abfragen ohne Payload ------------------------------------------------------------------------------------

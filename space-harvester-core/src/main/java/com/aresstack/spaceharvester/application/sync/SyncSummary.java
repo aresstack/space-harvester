@@ -12,6 +12,8 @@ import java.util.Objects;
  * @param inventory         Zustand der Inventur
  * @param listed            gelesene Seiten
  * @param added             neue Seiten
+ * @param notLoaded         gelistete, aber unbekannte Seiten, die ein Abgleich ohne Erstbefüllung nicht lädt (ADR 0014);
+ *                          sie zählen zu {@code missingPageIds}
  * @param contentChanged    Seiten mit neuer Revision
  * @param metadataChanged   Seiten mit neuen Metadaten bei gleicher Revision (umbenannt, verschoben)
  * @param attributesChanged Seiten mit nur neuen Attributen (Labels)
@@ -31,6 +33,7 @@ import java.util.Objects;
  * @param notConfirmed      warum keine Generation bestätigt wurde, sonst {@code null}
  */
 public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inventory, int listed, int added,
+                          int notLoaded,
                           int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
                           int withheld, int purged, int movedOut, int unverified, List<String> failedPageIds, List<String> missingPageIds,
                           Long generation, boolean complete, String spaceFingerprint, String notConfirmed) {
@@ -64,6 +67,7 @@ public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inv
         SyncBaseline confirmed = run.confirmed();
         return new SyncSummary(plan.inventory().sourceId(), plan.inventory().spaceKey(), plan.inventory().status(),
                 plan.inventory().pages().size(), plan.changes(PageChange.Kind.NEW).size(),
+                plan.changes(PageChange.Kind.NOT_LOADED).size(),
                 plan.changes(PageChange.Kind.CONTENT_CHANGED).size(),
                 plan.changes(PageChange.Kind.METADATA_CHANGED).size(),
                 plan.changes(PageChange.Kind.ATTRIBUTES_CHANGED).size(),
