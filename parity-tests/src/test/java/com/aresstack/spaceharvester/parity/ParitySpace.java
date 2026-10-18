@@ -49,6 +49,29 @@ public final class ParitySpace {
             "Satz India aus dem Auszug.",
     };
 
+    /**
+     * Adressformen, unter denen man eine Seite öffnet (#178): Name und Vorlage; {@code {base}} ist die Basis-URL der
+     * Quelle ohne abschließenden Schrägstrich, {@code {loc}} dieselbe ohne Schema (Host, Port, Kontextpfad).
+     */
+    public static final String[][] ADDRESSES = {
+            {"page-id", "{base}/pages/viewpage.action?pageId=1002"},
+            {"spaces-pages", "{base}/spaces/PARITY/pages/1002/Architektur"},
+            {"display-title", "{base}/display/PARITY/Architektur"},
+            {"display-title-encoded", "{base}/display/PARITY/Ebene+4"},
+            {"viewpage-title", "{base}/pages/viewpage.action?spaceKey=PARITY&title=Architektur"},
+            {"space-home", "{base}/display/PARITY"},
+            {"bookmark", "confluence://{loc}/page/1002"},
+            {"resource-id", "confluence:{loc}/page/1002"},
+            {"unknown-title", "{base}/display/PARITY/Gibt+es+nicht"},
+            {"foreign-host", "https://anderes.example.org/wiki/display/PARITY/Architektur"},
+    };
+
+    /** Eine Adresse aus {@link #ADDRESSES} für eine Quelle mit dieser Basis-URL. */
+    public static String address(String template, String baseUrl) {
+        String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        return template.replace("{base}", base).replace("{loc}", base.substring(base.indexOf("://") + 3));
+    }
+
     static final String SYSTEM_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"60\">"
             + "<rect x=\"0\" y=\"0\" width=\"120\" height=\"60\" fill=\"#3366cc\"/>"
             + "<text x=\"10\" y=\"35\" fill=\"#ffffff\">System</text></svg>";
