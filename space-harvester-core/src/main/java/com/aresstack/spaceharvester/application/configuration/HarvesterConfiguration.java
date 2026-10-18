@@ -102,8 +102,9 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem("ai." + AiServiceSettings.BASE_URL,
                     "Das Chat-Modell braucht die Adresse des KI-Dienstes"));
         }
-        if (sync.interval() != null && (sync.interval().isNegative() || sync.interval().isZero())) {
-            problems.add(new ConfigurationProblem(SyncSettings.INTERVAL, "Der Abstand muss positiv sein"));
+        if (sync.interval() != null && sync.interval().compareTo(SyncSettings.MIN_INTERVAL) < 0) {
+            problems.add(new ConfigurationProblem(SyncSettings.INTERVAL, "Der Abstand muss mindestens eine Minute "
+                    + "betragen"));
         }
         if (sync.withheldRetention().isNegative()) {
             problems.add(new ConfigurationProblem(SyncSettings.WITHHELD_RETENTION, "Die Frist darf nicht negativ sein"));
@@ -132,7 +133,13 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         for (String name : properties.stringPropertyNames()) {
             String key = strip(name);
             if (key.startsWith("ai.")) {
-                aiProperties.setProperty(key.substring(3), properties.getProperty(name));
+                String value = properties.getProperty(name);
+                if (key.equals("ai." + AiServiceSettings.TIMEOUT) && value != null) {
+                    // Spring-Kurzform wie 45000ms, die auch die App schreibt; AiServiceSettings liest nur ISO-8601.
+                    Duration simple = Reader.simpleDuration(value.strip());
+                    value = simple == null ? value : simple.toString();
+                }
+                aiProperties.setProperty(key.substring(3), value);
             }
         }
         try {
@@ -155,7 +162,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 read.bool(SearchSettings.PREFETCH_HITS, SearchSettings.DEFAULT.prefetchHits()), freshness);
         SyncSettings sync = new SyncSettings(read.bool(SyncSettings.EVENTS, false), read.duration(SyncSettings.INTERVAL),
                 read.list(SyncSettings.SPACES), read.bool(SyncSettings.BEFORE_SEARCH, false),
-                read.duration(SyncSettings.WITHHELD_RETENTION));
+                read.duration(SyncSettings.WITHHELD_RETENTION), read.bool(SyncSettings.CATCH_UP_ON_START, true),
+                read.bool(SyncSettings.LOAD_UNKNOWN, true));
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
                 storage);
@@ -276,7 +284,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         private static final Pattern SIMPLE_DURATION = Pattern.compile("(\\d+)(ms|s|m|h|d)");
 
         /** Kurzform wie in Spring: {@code 500ms}, {@code 30s}, {@code 10m}, {@code 6h}, {@code 1d}. */
-        private static Duration simpleDuration(String value) {
+        static Duration simpleDuration(String value) {
             var matcher = SIMPLE_DURATION.matcher(value);
             if (!matcher.matches()) {
                 return null;

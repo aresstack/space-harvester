@@ -47,6 +47,17 @@ class ConfigurationManagerTest {
     }
 
     @Test
+    void theNewVersionBecomesVisibleOnlyAfterAllCommits() {
+        List<Long> seenDuringCommit = new ArrayList<>();
+        manager.register(change -> () -> seenDuringCommit.add(manager.current().version()));
+
+        manager.apply(manager.current().configuration().withAi(AI.withRerankModel("rerank-b")));
+
+        assertThat(seenDuringCommit).containsExactly(1L);
+        assertThat(manager.current().version()).isEqualTo(2);
+    }
+
+    @Test
     void sameConfigurationChangesNothing() {
         var activation = manager.apply(manager.current().configuration());
 
@@ -175,23 +186,28 @@ class ConfigurationManagerTest {
         properties.setProperty("space-harvester.sync.interval", "1d");
         properties.setProperty("space-harvester.sync.spaces[0]", "wiki/DOC");
         properties.setProperty("cache.max-age", "PT6H");
+        properties.setProperty("ai.timeout", "45000ms");
 
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
 
         assertThat(read.semanticSearch()).isTrue();
         assertThat(read.sync().interval()).isEqualTo(Duration.ofDays(1));
+        assertThat(read.ai().timeout()).isEqualTo(Duration.ofSeconds(45));
         assertThat(read.sync().spaces()).containsExactly("wiki/DOC");
+        assertThat(read.sync().catchUpOnStart()).isTrue();
+        assertThat(read.sync().loadUnknown()).isTrue();
         assertThat(read.search().cacheFreshness().maxAge()).isEqualTo(Duration.ofHours(6));
 
         Properties broken = new Properties();
         broken.setProperty("ai.timeout", "lange");
         broken.setProperty("search.semantic", "vielleicht");
         broken.setProperty("sync.spaces", "ohne-schraegstrich");
+        broken.setProperty("sync.interval", "30s");
 
         var parsed = HarvesterConfiguration.fromProperties(broken);
 
         assertThat(parsed.valid()).isFalse();
         assertThat(parsed.problems()).extracting(ConfigurationProblem::key)
-                .containsExactlyInAnyOrder("ai.timeout", "search.semantic", "sync.spaces");
+                .containsExactlyInAnyOrder("ai.timeout", "search.semantic", "sync.spaces", "sync.interval");
     }
 }

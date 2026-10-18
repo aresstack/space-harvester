@@ -75,8 +75,10 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Treffer der Quellensuche zuerst in den Cache | `search.prefetch-hits` (Standard `true`) | ja |
 | Cache-Frische | `cache.max-age`, `cache.version-check` | ja |
 | Änderungsereignisse (Webhooks) | `sync.events` (Standard `false`) | ja |
-| Zeitplan des Nachholabgleichs | `sync.interval` (z. B. `P1D`, ohne: kein Zeitplan), `sync.spaces` | ja, Scheduler neu gesetzt |
+| Zeitplan des Nachholabgleichs | `sync.interval` (z. B. `P1D`, mindestens `PT1M`, ohne: kein Zeitplan), `sync.spaces` | ja, Scheduler neu gesetzt |
 | Nachholen vor jeder Suche | `sync.before-search` (Standard `false`) | ja |
+| Nachholen beim Start | `sync.catch-up-on-start` (Standard `true`) | ja, ab dem nächsten Start |
+| Unbekannte Seiten mit Inhalt laden | `sync.load-unknown` (Standard `true`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |

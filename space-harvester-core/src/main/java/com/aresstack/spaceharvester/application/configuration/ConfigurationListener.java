@@ -14,6 +14,8 @@ package com.aresstack.spaceharvester.application.configuration;
  *
  * Lehnt ein Beobachter ab, bekommen alle bereits vorbereiteten {@link Preparation#rollback()}, und die bisherige
  * Konfiguration bleibt aktiv. {@code commit} darf nicht scheitern; was scheitern kann, gehört in {@code prepare}.
+ * {@code commit} liest die neue Konfiguration aus {@link ConfigurationChange#next()}; {@code ConfigurationManager.current()}
+ * zeigt sie erst, wenn alle ausgetauscht haben.
  */
 @FunctionalInterface
 public interface ConfigurationListener {

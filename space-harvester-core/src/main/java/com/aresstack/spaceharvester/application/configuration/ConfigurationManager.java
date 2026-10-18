@@ -108,16 +108,19 @@ public final class ConfigurationManager {
                     return Activation.rejected(before, problems);
                 }
             }
-            ConfigurationSnapshot after = new ConfigurationSnapshot(change.version(), effective, clock.instant());
-            current = after;
+            // Erst tauschen alle Beobachter aus, dann wird der Schnappschuss sichtbar: Wer die neue Version sieht,
+            // bekommt auch die neuen Instanzen. Instanzen holt eine Aufgabe aus dem Swappable ihrer Komponente, nicht
+            // aus dem Schnappschuss; der beschreibt nur, was wirksam ist.
             for (ConfigurationListener.Preparation preparation : prepared) {
                 try {
                     preparation.commit();
                 } catch (RuntimeException e) {
-                    LOG.error("Austausch zur Konfiguration {} gescheitert: {}", after.version(),
+                    LOG.error("Austausch zur Konfiguration {} gescheitert: {}", change.version(),
                             e.getClass().getName());
                 }
             }
+            ConfigurationSnapshot after = new ConfigurationSnapshot(change.version(), effective, clock.instant());
+            current = after;
             LOG.info("Konfiguration {} aktiv", after.version());
             return new Activation(Outcome.ACTIVATED, after, List.of(), restart);
         }
