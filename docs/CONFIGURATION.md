@@ -62,7 +62,7 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 - Mit dem Config Server: Löst ein Refresh ein `EnvironmentChangeEvent` mit Schlüsseln unter `space-harvester.` aus,
   liest der Dienst die Konfiguration neu und aktiviert sie; das Log nennt nur Version und Schlüssel. Einen
   Refresh-Endpunkt gibt der Dienst nicht frei. Was zuvor per `POST` geändert wurde, überschreibt der Refresh.
-- In der Bibliothek (`Harvester.builder().configuration(manager)`, etwa in der Desktop-App) wirkt eine aktivierte
+- In der Bibliothek (`Harvester.builder().configuration(manager)`; die Desktop-App baut ihn so und übernimmt Änderungen ihrer Datei über `manager.apply`, siehe [DESKTOP_APP.md](DESKTOP_APP.md)) wirkt eine aktivierte
   Version sofort: Aktualität vorhandener Inhalte und Frist für gesperrte Seiten je Quelle (`freshnessFor`,
   `syncFor`) beim nächsten Abruf bzw. Lauf, Embedding-Modell und Reranker für neue Suchen (alte Vektoren werden ohne
   neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht), der Zeitplan aus `sync.spaces` mit Abstand und

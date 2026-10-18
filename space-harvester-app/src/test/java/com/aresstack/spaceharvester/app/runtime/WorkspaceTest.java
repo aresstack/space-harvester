@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -229,6 +230,39 @@ class WorkspaceTest {
 
         assertThat(workspace.sources()).extracting(HarvestSource::id).containsExactly("handbuch");
         assertThat(workspace.removeSource("wiki")).isFalse();
+    }
+
+    @Test
+    void syncRulesAndAiReleaseTakeEffectWithoutARestartButNewSourcesRestart() throws Exception {
+        AppSettings settings = settings(Map.of("WIKI_TOKEN", TOKEN, "CLIENT_PASSWORD",
+                TestCertificates.CLIENT_PASSWORD));
+        AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        runtime = AppRuntime.start(settings, secrets, "test");
+        long before = runtime.configurationVersion();
+
+        // Regel je Quelle und KI-Freigabe: neue Version im laufenden Harvester (ADR 0015).
+        AppSettings.AiSettings ai = settings.ai();
+        AppSettings live = new AppSettings(settings.file(), settings.sources(), settings.proxy(),
+                settings.asyncTransport(), settings.trustStores(), settings.storage(), settings.jobLimits(),
+                new AppSettings.AiSettings(ai.baseUrl(), ai.chatModel(), ai.embeddingModel(), ai.embeddingDimensions(),
+                        ai.timeout(), List.of("handbuch"), ai.rerankModel(), ai.chunkTokens(),
+                        ai.chunkOverlapSentences()),
+                settings.outputDirectory(), settings.problems(), settings.disabledSources(), settings.tls(),
+                settings.cache(), settings.setupCompleted(), Map.of("handbuch", new SourceSyncOverride(null, null,
+                null, null, null, null, null, null, java.time.Duration.ofDays(3))), settings.sync());
+        assertThat(AppRuntime.liveChange(settings, live)).isTrue();
+        assertThat(runtime.reconfigure(live, secrets, "test")).isTrue();
+        assertThat(runtime.configurationVersion()).isGreaterThan(before);
+        assertThat(runtime.settings()).isSameAs(live);
+
+        // Eine abgeschaltete Quelle, andere Zerlegung oder ein neues Token der Sitzung brauchen einen Neustart.
+        AppSettings disabled = new AppSettings(live.file(), live.sources(), live.proxy(), live.asyncTransport(),
+                live.trustStores(), live.storage(), live.jobLimits(), live.ai(), live.outputDirectory(),
+                live.problems(), java.util.Set.of("handbuch"), live.tls(), live.cache(), live.setupCompleted(),
+                live.syncRules(), live.sync());
+        assertThat(runtime.reconfigure(disabled, secrets, "test")).isFalse();
+        secrets.put("wiki", "pat", "neues-token".toCharArray());
+        assertThat(runtime.reconfigure(live, secrets, "test")).isFalse();
     }
 
     @Test

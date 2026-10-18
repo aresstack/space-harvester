@@ -346,23 +346,31 @@ public final class AppContext {
     public void reload(Runnable done) {
         AppRuntime previous = runtime;
         Background.run(() -> {
+            AppSettings loaded = loader.load(configFile);
+            unlock(loaded);
+            // Nur Laufzeitwerte geändert (KI-Dienst, Modelle, Freigaben, Synchronisierung): der Core übernimmt sie
+            // ohne Neustart, laufende Aufträge laufen weiter (ADR 0015).
+            if (previous != null && previous.reconfigure(loaded, secrets, version)) {
+                return new Started(loaded, previous, null);
+            }
             if (previous != null) {
                 previous.close();
             }
-            AppSettings loaded = loader.load(configFile);
-            unlock(loaded);
             try {
                 return new Started(loaded, AppRuntime.start(loaded, secrets, version), null);
             } catch (RuntimeException e) {
                 return new Started(loaded, null, e);
             }
         }, started -> {
+            boolean restarted = started.runtime() != previous;
             settings = started.settings();
             runtime = started.runtime();
             startProblem = started.problem();
-            connections.clear();
+            if (restarted) {
+                connections.clear();
+            }
             fire();
-            if (runtime != null) {
+            if (runtime != null && restarted) {
                 // Verbindungen gleich prüfen, damit Spaces und Zustand ohne weiteren Klick da sind.
                 runtime.workspace().sources().forEach(source -> checkConnection(source.id(), () -> { }));
             }
