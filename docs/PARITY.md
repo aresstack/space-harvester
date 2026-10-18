@@ -316,7 +316,8 @@ Inhaltsverzeichnisseite, Seitenzahlen und Lesezeichen im PDF (#202), eingebettet
 Asset-Manifest aus Runde 7).
 
 Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
-Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht.
+Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht, `text` zählt
+Wörter aus Überschriften nur einmal.
 
 ### Live-Lauf gegen echte Daten
 
