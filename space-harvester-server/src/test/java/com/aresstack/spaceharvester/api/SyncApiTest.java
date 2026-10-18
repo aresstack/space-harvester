@@ -133,6 +133,17 @@ class SyncApiTest {
     }
 
     @Test
+    void theCatalogOfASpaceNeedsTheMetadataGrantAndNoSource() throws Exception {
+        HttpResponse<String> catalog = send(SYNC_TOKEN, "GET", "/api/v1/sources/wiki/spaces/DEV/catalog");
+        assertThat(catalog.statusCode()).as(catalog.body()).isEqualTo(200);
+        JsonNode body = json.readTree(catalog.body());
+        // Ohne Inhaltsabruf bleibt der Katalog leer; ein Nachholen anderer Tests setzt höchstens den Ausgangspunkt.
+        assertThat(body.get("state").asString()).isIn("unknown", "cataloged");
+        assertThat(body.get("knownPages").asInt()).isZero();
+        assertThat(send(SYNC_TOKEN, "GET", "/api/v1/sources/wiki/spaces/OPS/catalog").statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void startingNeedsTheSyncGrantForThatSpace() throws Exception {
         assertThat(post(TestClient.TOKEN, "/api/v1/sources/wiki/spaces/DEV/syncs").statusCode()).isEqualTo(403);
         assertThat(post(SYNC_TOKEN, "/api/v1/sources/wiki/spaces/OPS/syncs").statusCode()).isEqualTo(403);

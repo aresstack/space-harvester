@@ -64,6 +64,13 @@ public final class InMemorySyncStore implements SyncBaselineStore {
         return known;
     }
 
+    /** Nur mit {@link InMemorySnapshotRepository}: Seiten mit Kopfdaten im Space, mit oder ohne Snapshot. */
+    @Override
+    public int catalogedPages(String sourceId, String spaceKey) {
+        return repository instanceof InMemorySnapshotRepository memory
+                ? memory.countHeaders(sourceId, spaceKey) : knownPages(sourceId, spaceKey).size();
+    }
+
     @Override
     public StagedGeneration begin(String sourceId, String spaceKey) {
         return new StagedGeneration() {

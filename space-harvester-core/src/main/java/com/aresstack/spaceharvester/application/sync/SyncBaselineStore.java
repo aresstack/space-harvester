@@ -28,6 +28,14 @@ public interface SyncBaselineStore {
     }
 
     /**
+     * Wie viele Seiten der Katalog in diesem Space kennt, mit oder ohne Inhalt, nach aktuellen Kopfdaten. Standard: die
+     * Seiten mit Inhalt ({@link #knownPages}).
+     */
+    default int catalogedPages(String sourceId, String spaceKey) {
+        return knownPages(sourceId, spaceKey).size();
+    }
+
+    /**
      * Alle Spaces mit bestätigter Generation, je {@code {sourceId, spaceKey}}; Ausgangspunkt für das Nachholen beim Start
      * (ADR 0014). Standard: keine.
      */

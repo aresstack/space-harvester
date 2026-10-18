@@ -45,4 +45,12 @@ public final class InMemorySnapshotRepository implements SnapshotRepository {
         boolean hadHeader = headers.remove(key) != null;
         return hadSnapshot || hadHeader;
     }
+
+    /** Seiten mit Kopfdaten im Space, mit oder ohne Snapshot. */
+    public int countHeaders(String sourceId, String spaceKey) {
+        return (int) headers.values().stream()
+                .filter(header -> header.key().sourceId().equals(sourceId)
+                        && header.metadata().partitionKey().equals(spaceKey))
+                .count();
+    }
 }

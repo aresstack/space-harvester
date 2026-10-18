@@ -485,6 +485,34 @@ public final class Harvester implements AutoCloseable {
         return syncs.catchUp(sourceId, spaceKey, OWNER, since);
     }
 
+    /**
+     * Vorschau eines Abgleichs („Bestand prüfen“, ADR 0014): was ein Lauf in der Betriebsart ändern würde, neue,
+     * geänderte, verschobene, gelöschte und gesperrte Seiten, ohne zu laden oder zu schreiben. Wartet auf die
+     * Inventur.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie {@code SYNC}
+     *                                                                               nicht freigibt
+     */
+    public com.aresstack.spaceharvester.application.sync.SyncPreview preview(String sourceId, String spaceKey,
+                                                                            SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.preview(sourceId, spaceKey, mode);
+    }
+
+    /**
+     * Bestand eines Space im Cache: Katalogstand, bekannte Seiten und Seiten mit Inhalt (ADR 0014). Fragt die Quelle
+     * nicht.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie
+     *                                                                               {@code METADATA} nicht freigibt
+     */
+    public com.aresstack.spaceharvester.application.sync.SpaceCatalog catalog(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        requireActive(sourceId);
+        return syncs.catalog(sourceId, spaceKey);
+    }
+
     /** Wie {@link #catchUp(String, String, Instant)}, in der Betriebsart {@code mode}. */
     public JobStatus catchUp(String sourceId, String spaceKey, Instant since, SyncMode mode) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
