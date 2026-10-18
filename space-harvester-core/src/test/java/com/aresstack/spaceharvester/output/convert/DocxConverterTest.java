@@ -79,7 +79,7 @@ class DocxConverterTest {
             storagePage("101", "100", 1, "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body>"
                     + "<![CDATA[line 1\n  line <2>]]></ac:plain-text-body></ac:structured-macro>"),
             storagePage("102", "101", 2, "<p>Enkel</p>"),
-            storagePage("200", null, 0, "<p>Zweite Wurzel</p>"));
+            storagePage("200", null, 0, "<p>Zweite Wurzel ~~nicht gestrichen~~</p>"));
 
     private static byte[] convert() throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -165,7 +165,7 @@ class DocxConverterTest {
             assertThat(lists.get(0).split("/")[0]).isNotEqualTo(lists.get(3).split("/")[0]);
             assertThat(lists.get(2)).endsWith("/1:zwei-a");
             assertThat(text).contains("Seite 100 · Version 3", "Warnung", "Achtung", "Steuerzeichen entfernt",
-                    "line 1", "  line <2>", "Enkel", "Zweite Wurzel").doesNotContain("\u0001");
+                    "line 1", "  line <2>", "Enkel", "Zweite Wurzel ~~nicht gestrichen~~").doesNotContain("\u0001");
 
             XWPFTable table = word.getTables().get(0);
             assertThat(table.getRow(0).isRepeatHeader()).isTrue();

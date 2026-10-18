@@ -328,7 +328,7 @@ public final class MarkdownConverter implements ExportConverter {
     static String escape(String text) {
         StringBuilder escaped = new StringBuilder(text.length());
         for (char c : text.toCharArray()) {
-            if ("\\`*_[]<>|".indexOf(c) >= 0) {
+            if ("\\`*_[]<>|~".indexOf(c) >= 0) {
                 escaped.append('\\');
             }
             escaped.append(c);
