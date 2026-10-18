@@ -144,7 +144,7 @@ Nicht angebunden sind:
 | draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | Kopie vorhanden, ungenutzt | fehlt → #190 |
 | draw.io-XML und SVG textuell erhalten | — | Asset-Ernte bevorzugt `DIAGRAM` > `VECTOR` > `IMAGE` | SH+ |
 | Mermaid erkennen (Confluence-Makros) | nur Markdown-Fences | `StorageParser` (`mermaid`, `mermaid-cloud`, `mermaid-macro`) → Codeblock | SH+ |
-| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | keine | Word und PDF: in Arbeit (Strang R); Renderer im Core für Markdown und Leseansicht: fehlt → #190 |
+| Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | keine | Word, PDF und Markdown: in Arbeit (Strang R); Renderer als Core-Dienst für Leseansicht und gemeinsame Nutzung: fehlt → #190 |
 | PlantUML, Gliffy | — | Codeblock bzw. Hinweis | SH+ |
 
 ## 9. Word-Export
@@ -172,7 +172,8 @@ Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R e
 | Aus dem gespeicherten Datenbestand konvertieren, ohne erneuten Abruf | nein (lädt jede Seite neu) | Cache-Generation (ADR 0010); Konvertierung bestehender Exporte | SH+; Konvertierung aus Datenbestand in Arbeit (Q, Runde 7) |
 | Herkunft je Konvertierung (Konverterversion, Eingabe-Hash) | — | `manifest.conversions` | SH+ |
 | PDF: sichtbares Inhaltsverzeichnis über mehrere Seiten mit Einrückung, Seitenzahlen und Sprüngen (`tableOfContents()`), Seitenzahlen „12 / 85“, Kapitel je neuer Seite, Bilder, Mermaid | `doc/PdfExportWriter` | `core/output/convert/PdfConverter`: nur Lesezeichen (`PDDocumentOutline`) und interne Sprünge, Bilder als `[Bild: …]`; `PdfConverterTest` prüft kein Inhaltsverzeichnis | in Arbeit (Strang R, gemeinsames Kapitelmodell für Word und PDF) |
-| Markdown: eine Datei, Bilder eingebettet, Mermaid als Code und Grafik | `doc/MarkdownExportWriter` | `MarkdownConverter` (Anker; Bilder nur als `attachment:`-Verweis) | teilweise → #191 (auf Rs Kapitelmodell) |
+| Markdown: eine Datei, Bilder als PNG-Data-URI eingebettet, Mermaid als Code und Grafik, fehlende Bilder gemeldet | `doc/MarkdownExportWriter` | `MarkdownConverter`: Sprungmarken und interne Seitenlinks (besser als EAC, bleiben), Bilder nur als `attachment:`-Verweis, Mermaid nur als Code | in Arbeit (Strang R, „Export-Parität: Markdown, Word, PDF und Bilder“, gemeinsamer Dokumentbaum) |
+| Verlinktes Inhaltsverzeichnis in Markdown | — | — | in keinem; keine Paritätslücke |
 | Exportumfang einzelne Seite oder Teilbaum | `KnowledgeExportUseCase` | nur ganze Spaces (`ExportScope`) | fehlt → #186 |
 | Portables ZIP (JSON + Bilder) | — | — | in Arbeit (Q, Runde 7, nachrangig) |
 
@@ -252,14 +253,13 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
 | #189 | Proxy-Anmeldung, PAC-Skript, Windows-Vertrauen, Diagnose, Kopfzeilen | Q |
 | #190 | draw.io- und Mermaid-Rendering im Core | R |
-| #191 | Markdown-Export auf dem Stand des EAC | R |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
 
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- Word-Export über `:docx-export` (R, #175) und PDF-Export mit sichtbarem Inhaltsverzeichnis auf demselben Kapitelmodell (R),
+- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:docx-export`, #175),
 - Auftragskarte und Ausgabeordner (L).
 
 ## Vergleichstests
