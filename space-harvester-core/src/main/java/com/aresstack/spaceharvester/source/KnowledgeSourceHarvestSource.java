@@ -73,19 +73,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static final String SPACE_NODE = "space:";
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
-    /** Längste Ausschlussliste in einer Suchanfrage; darüber filtert nur die Nachprüfung. */
-    static final int MAX_EXCLUDED_SPACES = 200;
-    /** So lange gilt die gemerkte Partitionsliste für den Space-Filter. */
-    static final long PARTITION_CACHE_SECONDS = 60;
-
-    private static final System.Logger LOG = System.getLogger(KnowledgeSourceHarvestSource.class.getName());
 
     private final String id;
     private final String type;
     private final String title;
     private final KnowledgeSourcePort port;
     private final InFlightLimit inFlight;
-    private volatile CachedPartitions partitionCache;
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
         this(id, type, title, port, null);
@@ -153,10 +146,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * Der Space-Filter geht wie im Enterprise AI Client als {@code space not in (…)} in die Anfrage der Quelle
-     * ({@link SourceQuery#withExcludedPartitions}). Nur bestimmte Spaces werden als Ausschluss aller übrigen
-     * Partitionen gesetzt, solange das höchstens {@value #MAX_EXCLUDED_SPACES} sind; bei mehr bleibt die Auswahl der
-     * Nachprüfung an den Kopfdaten überlassen.
+     * Der Space-Filter geht in die Anfrage der Quelle: eine Auswahl als {@code space in (…)}
+     * ({@link SourceQuery#withIncludedPartitions}), ein Ausschluss wie im Enterprise AI Client als
+     * {@code space not in (…)} ({@link SourceQuery#withExcludedPartitions}); beides ohne Obergrenze der Spaces.
      */
     @Override
     public List<SourceSearchMatch> searchPages(String text, int limit, SearchSpaces spaces) {
@@ -165,7 +157,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         List<SourceSearchHit> hits;
         try {
-            hits = searchable.search(new SourceQuery(text, limit).withExcludedPartitions(excluded(spaces)));
+            hits = searchable.search(new SourceQuery(text, limit).withIncludedPartitions(spaces.only())
+                    .withExcludedPartitions(spaces.excluded()));
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
@@ -177,48 +170,6 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     hit.revision().modifiedAt().orElse(null)));
         }
         return List.copyOf(matches.values());
-    }
-
-    /**
-     * Die auszuschließenden Spaces: der Ausschluss und, für eine Auswahl, alle übrigen bekannten Partitionen. Lässt
-     * sich die Partitionsliste nicht lesen, entfällt nur diese Ergänzung; die Auswahl prüft dann die Nachprüfung.
-     */
-    private Set<String> excluded(SearchSpaces spaces) {
-        Set<String> excluded = new TreeSet<>(spaces.excluded());
-        if (!spaces.only().isEmpty()) {
-            Set<String> union;
-            try {
-                union = new TreeSet<>(partitionKeys());
-            } catch (KnowledgeSourceException | RuntimeException e) {
-                LOG.log(System.Logger.Level.INFO, "Spaces von {0} für den Suchfilter nicht lesbar ({1})", id,
-                        e.getClass().getSimpleName());
-                return excluded;
-            }
-            union.removeAll(spaces.only());
-            union.addAll(excluded);
-            if (union.size() <= MAX_EXCLUDED_SPACES) {
-                return union;
-            }
-        }
-        return excluded;
-    }
-
-    /** Die Partitionen der Quelle, {@value #PARTITION_CACHE_SECONDS} s gemerkt: Folgestapel kosten nichts. */
-    private Set<String> partitionKeys() throws KnowledgeSourceException {
-        CachedPartitions cached = partitionCache;
-        long now = System.nanoTime();
-        if (cached != null && now - cached.readAt() < PARTITION_CACHE_SECONDS * 1_000_000_000L) {
-            return cached.keys();
-        }
-        Set<String> keys = new TreeSet<>();
-        for (SourcePartition partition : port.partitions()) {
-            keys.add(partition.key());
-        }
-        partitionCache = new CachedPartitions(Set.copyOf(keys), now);
-        return keys;
-    }
-
-    private record CachedPartitions(Set<String> keys, long readAt) {
     }
 
     @Override

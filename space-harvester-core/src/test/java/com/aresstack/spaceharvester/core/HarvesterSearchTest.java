@@ -125,8 +125,9 @@ class HarvesterSearchTest {
                     new KeywordSearch.Query("Nachtlauf", "wiki", Set.of(), Set.of(), Set.of("DEV")), null, 50);
             String withoutCql = lastCql();
 
-            // Wie im Enterprise AI Client: space not in (…) in der CQL, nicht erst nachträglich gefiltert.
-            assertThat(onlyCql).contains("space not in (\"DEV\")");
+            // In der CQL, nicht erst nachträglich gefiltert: Auswahl als space in (…), Ausschluss wie im Enterprise AI
+            // Client als space not in (…).
+            assertThat(onlyCql).contains("space in (\"OPS\")").doesNotContain("not in");
             assertThat(withoutCql).contains("space not in (\"DEV\")");
             assertThat(only.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
             assertThat(without.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");

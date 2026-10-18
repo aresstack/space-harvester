@@ -885,7 +885,12 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
 
     @Override
     public List<SourceSearchHit> search(final SourceQuery query) throws KnowledgeSourceException {
-        final String cql = cql(query.text(), config.searchSpaceKeys(), query.excludedPartitions());
+        List<String> spaces = searchSpaces(config.searchSpaceKeys(), query.includedPartitions());
+        if (spaces == null) {
+            // Gewählte Spaces liegen alle außerhalb der konfigurierten Suchspaces.
+            return Collections.emptyList();
+        }
+        final String cql = cql(query.text(), spaces, query.excludedPartitions());
         return withSession(new Operation<List<SourceSearchHit>>() {
             @Override
             public List<SourceSearchHit> run(Session session) throws KnowledgeSourceException {
@@ -1160,6 +1165,26 @@ public class ConfluenceKnowledgeSource implements SearchableKnowledgeSource, Ima
                     resourceId + " gehört nicht zur Confluence-Quelle " + sourceId);
         }
         return parsed;
+    }
+
+    /**
+     * Die Spaces der Suche: die konfigurierten Suchspaces, mit einer Auswahl der Anfrage ihre Schnittmenge; leer =
+     * alle, {@code null} = die Schnittmenge ist leer.
+     */
+    static List<String> searchSpaces(List<String> configured, Set<String> included) {
+        if (included.isEmpty()) {
+            return configured;
+        }
+        if (configured.isEmpty()) {
+            return new ArrayList<String>(included);
+        }
+        List<String> spaces = new ArrayList<String>();
+        for (String key : configured) {
+            if (included.contains(key)) {
+                spaces.add(key);
+            }
+        }
+        return spaces.isEmpty() ? null : spaces;
     }
 
     /** CQL of the page search; quotes and backslashes in the search text are escaped. */

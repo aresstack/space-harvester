@@ -16,12 +16,13 @@ public final class SourceQuery {
     private final String text;
     private final int limit;
     private final Set<String> excludedPartitions;
+    private final Set<String> includedPartitions;
 
     public SourceQuery(String text, int limit) {
-        this(text, limit, Collections.<String>emptySet());
+        this(text, limit, Collections.<String>emptySet(), Collections.<String>emptySet());
     }
 
-    private SourceQuery(String text, int limit, Set<String> excludedPartitions) {
+    private SourceQuery(String text, int limit, Set<String> excludedPartitions, Set<String> includedPartitions) {
         if (text == null || text.trim().isEmpty()) {
             throw new IllegalArgumentException("text must not be blank");
         }
@@ -31,6 +32,7 @@ public final class SourceQuery {
         this.text = text;
         this.limit = limit;
         this.excludedPartitions = excludedPartitions;
+        this.includedPartitions = includedPartitions;
     }
 
     public static SourceQuery of(String text) {
@@ -50,17 +52,37 @@ public final class SourceQuery {
         return excludedPartitions;
     }
 
+    /**
+     * Schlüssel der Bereiche, auf die die Suche sich beschränkt; leer = keine Beschränkung. Quellen ohne Bereiche
+     * oder ohne eigene Bereichsfilterung dürfen das ignorieren; Aufrufer prüfen den Bereich der Treffer selbst.
+     */
+    public Set<String> includedPartitions() {
+        return includedPartitions;
+    }
+
     /** Dieselbe Anfrage ohne die angegebenen Bereiche. */
     public SourceQuery withExcludedPartitions(Collection<String> keys) {
-        Set<String> excluded = new LinkedHashSet<String>();
+        return new SourceQuery(text, limit, keys(keys), includedPartitions);
+    }
+
+    /**
+     * Dieselbe Anfrage nur in den angegebenen Bereichen, etwa wenn wenige Bereiche gewählt und sehr viele
+     * abgewählt sind; ein Ausschluss gilt zusätzlich.
+     */
+    public SourceQuery withIncludedPartitions(Collection<String> keys) {
+        return new SourceQuery(text, limit, excludedPartitions, keys(keys));
+    }
+
+    private static Set<String> keys(Collection<String> keys) {
+        Set<String> result = new LinkedHashSet<String>();
         if (keys != null) {
             for (String key : keys) {
                 if (key != null && !key.trim().isEmpty()) {
-                    excluded.add(key.trim());
+                    result.add(key.trim());
                 }
             }
         }
-        return new SourceQuery(text, limit, Collections.unmodifiableSet(excluded));
+        return Collections.unmodifiableSet(result);
     }
 
     @Override
@@ -77,11 +99,13 @@ public final class SourceQuery {
             return false;
         }
         SourceQuery that = (SourceQuery) o;
-        return limit == that.limit && text.equals(that.text) && excludedPartitions.equals(that.excludedPartitions);
+        return limit == that.limit && text.equals(that.text) && excludedPartitions.equals(that.excludedPartitions)
+                && includedPartitions.equals(that.includedPartitions);
     }
 
     @Override
     public int hashCode() {
-        return 31 * (31 * text.hashCode() + limit) + excludedPartitions.hashCode();
+        return 31 * (31 * (31 * text.hashCode() + limit) + excludedPartitions.hashCode())
+                + includedPartitions.hashCode();
     }
 }
