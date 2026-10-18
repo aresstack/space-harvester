@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
@@ -14,6 +15,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
@@ -21,6 +23,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.lang.reflect.Proxy;
@@ -30,6 +33,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.BeforeEach;
@@ -186,6 +190,52 @@ class RelevanceLiveCheckTest {
 
         assertThat(ids(search((context, scope, kind) -> AccessDecision.ALLOW).search(CALLER, dev, "Betrieb", 3)))
                 .containsExactly("1", "3", "4");
+    }
+
+    @Test
+    void aFullTextHitMovedToASpaceWithoutContentAccessVanishes() {
+        index.publish("wiki", STATE, List.of(
+                entry(page("DEV", "1", "Betrieb eins", "1"), confirmed("g1")),
+                entry(page("DEV", "5", "Wartung", "1"), confirmed("g1"))));
+        // Kein Embedding für 5: ihr Platz stammt nur aus dem Volltext. Bei der Quelle liegt sie inzwischen in SECRET,
+        // wo nur Kopfdaten freigegeben sind.
+        live.put("5", metadata("SECRET", "5", "1"));
+        AccessPolicy secretWithoutContent = (context, scope, kind) -> kind == AccessKind.CONTENT
+                && "SECRET".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
+        PageTextIndex texts = new PageTextIndex() {
+            @Override
+            public void put(Entry entry) {
+            }
+
+            @Override
+            public Optional<String> inputSha256(PageKey key) {
+                return Optional.empty();
+            }
+
+            @Override
+            public void remove(PageKey key) {
+            }
+
+            @Override
+            public void removeSource(String sourceId) {
+            }
+
+            @Override
+            public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit) {
+                return List.of(new Match("wiki", "5", "DEV", "Wartung", "Wartung"));
+            }
+
+            @Override
+            public void flush() {
+            }
+        };
+        RelevanceSearch search = new RelevanceSearch(catalog, index, new AccessGuard(secretWithoutContent), store,
+                store, processor, (caller, key) -> renewed.add(key), SearchReranker.NONE, texts);
+
+        RelevanceSearch.RelevanceResults results = search.search(CALLER, query(), "Betrieb Wartung", 5);
+
+        assertThat(ids(results)).containsExactly("1");
+        assertThat(results.complete()).isTrue();
     }
 
     private RelevanceSearch search(AccessPolicy policy) {

@@ -248,13 +248,15 @@ public class RelevanceSearch {
             ordered = custom.apply(query, ordered);
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
+        Set<PageKey> contentRanked = new LinkedHashSet<>();
+        ranked.forEach(hit -> contentRanked.add(hit.page().header().key()));
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
         boolean complete = true;
         int next = 0;
         // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
         while (hits.size() < limit && next < ordered.size()) {
             int end = Math.min(ordered.size(), next + limit - hits.size());
-            for (Verified verified : verify(caller, query, ordered.subList(next, end), scores)) {
+            for (Verified verified : verify(caller, query, ordered.subList(next, end), scores, contentRanked)) {
                 complete &= !verified.failed();
                 if (verified.hit() != null && hits.size() < limit) {
                     hits.add(verified.hit());
@@ -265,9 +267,14 @@ public class RelevanceSearch {
         return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete);
     }
 
-    /** Prüft Treffer parallel, Reihenfolge bleibt. */
+    /**
+     * Prüft Treffer parallel, Reihenfolge bleibt.
+     *
+     * @param contentRanked Seiten, deren Platz aus dem Volltext stammt; sie brauchen live {@code content} wie Treffer
+     *                      mit Ähnlichkeit
+     */
     private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
-                                  Map<SearchHit, Score> scores) {
+                                  Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
         if (renewal == null) {
             return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false)).toList();
         }
@@ -278,7 +285,8 @@ public class RelevanceSearch {
                 futures.add(checks.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
-                        return verify(caller, query, hit, scores.get(hit));
+                        return verify(caller, query, hit, scores.get(hit),
+                                contentRanked.contains(hit.page().header().key()));
                     } finally {
                         slots.release();
                     }
@@ -304,7 +312,8 @@ public class RelevanceSearch {
      * Wie das Lesen einer Seite: ein Metadatenabruf bei der Quelle liefert Recht und Version in einem Schritt. Die
      * Rechte gelten für den aktuellen Space der Seite, nicht den im Index.
      */
-    private Verified verify(AccessContext caller, PageSearchQuery query, SearchHit hit, Score score) {
+    private Verified verify(AccessContext caller, PageSearchQuery query, SearchHit hit, Score score,
+                            boolean contentRanked) {
         PageKey key = hit.page().header().key();
         HarvestSource source = catalog.find(key.sourceId()).orElse(null);
         if (source == null) {
@@ -331,8 +340,8 @@ public class RelevanceSearch {
         }
         ResourceScope scope = ResourceScope.page(key.sourceId(), live.partitionKey(), key.pageId());
         if (!access.permits(caller, scope, AccessKind.METADATA)
-                || score != null && !access.permits(caller, scope, AccessKind.CONTENT)) {
-            // Auch die Position eines Treffers mit Ähnlichkeit stammt aus dem Inhalt.
+                || (score != null || contentRanked) && !access.permits(caller, scope, AccessKind.CONTENT)) {
+            // Auch die Position eines Treffers mit Ähnlichkeit oder Volltextrang stammt aus dem Inhalt.
             return Verified.DROPPED;
         }
         Score checked = score;
