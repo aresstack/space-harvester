@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
@@ -287,6 +288,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
+        return images(view);
+    }
+
+    private static List<ViewImage> images(PageView view) {
         return view.images().stream().map(image -> {
             KnowledgeResource resource = image.resource();
             String version = resource == null ? null : resource.revision().version();
@@ -294,6 +299,29 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     resource == null ? null : resource.contentType(),
                     version == null || version.isEmpty() ? null : version);
         }).toList();
+    }
+
+    /**
+     * Ansicht ({@link PageViewSource#pageView}, bei Confluence {@code body.export_view}) und Lesetext
+     * ({@link KnowledgeSourcePort#load}, bei Confluence {@code body.view}) wie im Enterprise AI Client. Die Version
+     * nennt die Ansicht selbst nicht; sie gilt nur, wenn Metadaten vorher und Lesetext danach dieselbe nennen.
+     */
+    @Override
+    public ReadingPage readingPage(String pageId) {
+        if (!(port instanceof PageViewSource views) || !(port instanceof ResourceMetadataSource single)) {
+            return HarvestSource.super.readingPage(pageId);
+        }
+        try {
+            KnowledgeResource before = single.resourceMetadata(pageId);
+            PageView view = views.pageView(before.id());
+            KnowledgeDocument document = port.load(before.id());
+            String version = before.revision().version();
+            boolean same = version != null && !version.isEmpty()
+                    && version.equals(document.resource().revision().version());
+            return new ReadingPage(same ? version : null, view.html(), view.baseUri(), document.text(), images(view));
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
     }
 
     @Override

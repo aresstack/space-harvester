@@ -33,6 +33,12 @@ public class Enrichments {
     /** Fehlercode eines Prozessors, der eine Ausnahme geworfen hat. */
     public static final String PROCESSOR_ERROR = "PROCESSOR_ERROR";
 
+    /**
+     * Vorbehaltene Prozessor-ID: unter ihr legt die Lese-Ansicht (#176) ihre abgeleitete Darstellung in derselben
+     * Ablage ab. Sie ist kein Prozessor, erscheint nie in {@link #view} und wird mit der Seite entfernt.
+     */
+    public static final String READING_VIEW = "reading-view";
+
     private static final System.Logger LOG = System.getLogger(Enrichments.class.getName());
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
@@ -132,6 +138,10 @@ public class Enrichments {
         String input = projection(snapshot).map(PageText::inputSha256).orElse(null);
         List<View> views = new ArrayList<>();
         for (Enrichment enrichment : store.find(snapshot.key())) {
+            if (READING_VIEW.equals(enrichment.processorId())) {
+                // Rechte für eingebundene Inhalte prüft nur die Lese-Ansicht selbst.
+                continue;
+            }
             EnrichmentProcessor processor = processors.get(enrichment.processorId());
             Enrichment.Freshness freshness = input == null ? Enrichment.Freshness.STALE
                     : enrichment.freshness(input, processor == null ? null : processor.version());

@@ -166,6 +166,39 @@ public interface HarvestSource {
     }
 
     /**
+     * Die Lese-Ansicht einer Seite, wie die Quelle sie rendert (bei Confluence {@code body.export_view} mit
+     * ausgeführten Makros), dazu der Lesetext für Leser und KI und die Bilder der Ansicht (#176). Lädt keine Bilder.
+     * Die Quelle rendert mit ihren eigenen Zugangsdaten; was der Aufrufer davon sehen darf, entscheidet der
+     * Anwendungsfall.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne Lese-Ansicht, sonst wie {@link #storedPage(String)}
+     */
+    default ReadingPage readingPage(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle hat keine Lese-Ansicht", null);
+    }
+
+    /**
+     * Die Lese-Ansicht einer Seite.
+     *
+     * @param version Version der Seite, aus der die Ansicht stammt, oder {@code null}, wenn die Quelle sie nicht
+     *                eindeutig nennt (etwa weil sich die Seite während des Lesens änderte)
+     * @param html    bereinigter HTML-Körper ohne Skripte und eingebettete Objekte
+     * @param baseUri Basis für relative Adressen
+     * @param text    Lesetext mit Markdown-Struktur, wie ihn die Quelle für Index und KI liefert
+     * @param images  Bilder der Ansicht in Dokumentreihenfolge
+     */
+    record ReadingPage(String version, String html, String baseUri, String text, List<ViewImage> images) {
+
+        public ReadingPage {
+            html = html == null ? "" : html;
+            baseUri = baseUri == null ? "" : baseUri;
+            text = text == null ? "" : text;
+            images = List.copyOf(images);
+        }
+    }
+
+    /**
      * Ein Bild der Lese-Ansicht.
      *
      * @param src          aufgelöste Adresse aus dem {@code <img>}
