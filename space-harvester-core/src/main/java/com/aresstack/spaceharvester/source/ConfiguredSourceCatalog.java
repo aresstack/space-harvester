@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
@@ -9,13 +10,16 @@ import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,20 +50,36 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         WEB_CLIENT
     }
 
-    private final Map<String, HarvestSource> sources;
-    private final Map<String, DelegatedConfluenceHttp> delegated;
+    private final Map<String, SourceAdapter> adapters;
+    private final ConfiguredSecrets secrets;
+    private final SourceAdapter.Context context;
     private final AsyncSnapshotTransports async;
     private final ProxyRoutes routes;
-    private final Map<String, URI> baseUrls;
+    /**
+     * Die geöffneten Quellen in Konfigurationsreihenfolge; zur Laufzeit (#188) als Ganzes unter {@code this} ersetzt,
+     * gelesen ohne Sperre.
+     */
+    private volatile Map<String, Opened> opened;
 
-    private ConfiguredSourceCatalog(Map<String, HarvestSource> sources,
-                                    Map<String, DelegatedConfluenceHttp> delegated, AsyncSnapshotTransports async,
-                                    ProxyRoutes routes, Map<String, URI> baseUrls) {
-        this.sources = sources;
-        this.delegated = delegated;
-        this.async = async;
-        this.routes = routes;
-        this.baseUrls = baseUrls;
+    /** Eine geöffnete Quelle mit ihren Einstellungen. */
+    private record Opened(SourceSettingsConfig config, HarvestSource source, DelegatedConfluenceHttp delegated,
+                          URI baseUrl) {
+
+        void close() {
+            if (delegated != null) {
+                delegated.close();
+            }
+        }
+    }
+
+    private ConfiguredSourceCatalog(Map<String, SourceAdapter> adapters, ConfiguredSecrets secrets,
+                                    SourceAdapter.Context context, Map<String, Opened> opened) {
+        this.adapters = adapters;
+        this.secrets = secrets;
+        this.context = context;
+        this.async = context.async();
+        this.routes = context.routes();
+        this.opened = opened;
     }
 
     /** Ohne eigene Vertrauensquellen und ohne Proxy. */
@@ -135,55 +155,60 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
         SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, userAgent, trustBundles, async);
-        Map<String, HarvestSource> sources = new LinkedHashMap<>();
-        Map<String, DelegatedConfluenceHttp> delegated = new LinkedHashMap<>();
-        Map<String, URI> baseUrls = new LinkedHashMap<>();
+        Map<String, Opened> opened = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
             SourceSettingsConfig config = configs.get(i);
             String label = "sources[" + i + "]" + (config.id() == null ? "" : " (id=" + config.id() + ")");
-            List<String> own = check(config, seenIds, byType);
+            List<String> own = check(config, seenIds, byType, secrets.external());
             if (config.id() != null) {
                 seenIds.add(config.id());
-            }
-            SourceAdapter adapter = config.type() == null ? null : byType.get(config.type());
-            if (adapter != null) {
-                own = new ArrayList<>(own);
-                own.addAll(adapter.check(config, secrets.external()));
             }
             if (!own.isEmpty()) {
                 own.forEach(problem -> problems.add(label + ": " + problem));
                 continue;
             }
-            String title = config.title() == null || config.title().isBlank() ? config.id() : config.title();
             try {
-                SourceAdapter.OpenedSource opened = adapter.open(config, context);
-                sources.put(config.id(), new KnowledgeSourceHarvestSource(config.id(), config.type(), title,
-                        opened.port(), async == null ? null : async.inFlight()));
-                URI baseUrl = config.baseUrl();
-                if (baseUrl != null && baseUrl.getScheme() != null
-                        && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT))) {
-                    baseUrls.put(config.id(), baseUrl);
-                }
-                if (opened.delegated() != null) {
-                    delegated.put(config.id(), opened.delegated());
-                }
+                opened.put(config.id(), open(config, byType.get(config.type()), context));
             } catch (InvalidSourceConfigurationException e) {
                 e.problems().forEach(problem -> problems.add(label + ": " + problem));
             }
         }
         if (!problems.isEmpty()) {
-            delegated.values().forEach(DelegatedConfluenceHttp::close);
+            opened.values().forEach(Opened::close);
             if (async != null) {
                 async.close();
             }
             throw new InvalidSourceConfigurationException(problems);
         }
-        return new ConfiguredSourceCatalog(sources, delegated, async, routes, baseUrls);
+        return new ConfiguredSourceCatalog(Collections.unmodifiableMap(byType), secrets, context,
+                Collections.unmodifiableMap(opened));
     }
 
+    private static Opened open(SourceSettingsConfig config, SourceAdapter adapter, SourceAdapter.Context context) {
+        String title = config.title() == null || config.title().isBlank() ? config.id() : config.title();
+        SourceAdapter.OpenedSource source = adapter.open(config, context);
+        URI baseUrl = config.baseUrl();
+        boolean http = baseUrl != null && baseUrl.getScheme() != null
+                && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT));
+        return new Opened(config, new KnowledgeSourceHarvestSource(config.id(), config.type(), title, source.port(),
+                context.async() == null ? null : context.async().inFlight()), source.delegated(),
+                http ? baseUrl : null);
+    }
+
+    /** Eigene Probleme und die des Typs; ohne etwas zu öffnen. */
     private static List<String> check(SourceSettingsConfig config, Set<String> knownIds,
-                                      Map<String, SourceAdapter> adapters) {
+                                      Map<String, SourceAdapter> adapters, boolean externalSecrets) {
+        List<String> problems = new ArrayList<>(checkIdentity(config, knownIds, adapters));
+        SourceAdapter adapter = config.type() == null ? null : adapters.get(config.type());
+        if (adapter != null) {
+            problems.addAll(adapter.check(config, externalSecrets));
+        }
+        return problems;
+    }
+
+    private static List<String> checkIdentity(SourceSettingsConfig config, Set<String> knownIds,
+                                              Map<String, SourceAdapter> adapters) {
         List<String> problems = new ArrayList<>();
         if (config.id() == null || !ID.matcher(config.id()).matches()) {
             problems.add("id fehlt oder ist ungültig (erlaubt: Kleinbuchstaben, Ziffern, Bindestrich; z. B. "
@@ -199,12 +224,131 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     @Override
     public List<HarvestSource> all() {
-        return List.copyOf(sources.values());
+        return opened.values().stream().map(Opened::source).toList();
     }
 
     @Override
     public Optional<HarvestSource> find(String sourceId) {
-        return Optional.ofNullable(sources.get(sourceId));
+        return Optional.ofNullable(opened.get(sourceId)).map(Opened::source);
+    }
+
+    // --- Quellen zur Laufzeit (#188) --------------------------------------------------------------------------------
+
+    /** Die Einstellungen aller Quellen in ihrer Reihenfolge; ihr {@code toString} zeigt keine Geheimnisse. */
+    public List<SourceSettingsConfig> configs() {
+        return opened.values().stream().map(Opened::config).toList();
+    }
+
+    /** Die Einstellungen einer Quelle; leer für unbekannte. */
+    public Optional<SourceSettingsConfig> config(String sourceId) {
+        return Optional.ofNullable(opened.get(sourceId)).map(Opened::config);
+    }
+
+    /**
+     * Probleme der Einstellungen, ohne etwas zu öffnen, wie beim Start (ohne Positionsangabe).
+     *
+     * @param replacing ob die Quelle eine vorhandene gleicher ID ersetzen soll; sonst ist eine vergebene ID ein Problem
+     */
+    public List<String> problems(SourceSettingsConfig config, boolean replacing) {
+        Objects.requireNonNull(config, "config");
+        Set<String> taken = new HashSet<>(opened.keySet());
+        if (replacing) {
+            taken.remove(config.id());
+        }
+        return check(config, taken, adapters, secrets.external());
+    }
+
+    /**
+     * Fügt eine Quelle hinzu und öffnet sie; Verbindungen entstehen erst bei der ersten Anfrage.
+     *
+     * @throws InvalidSourceConfigurationException mit den Problemen; dann ändert sich nichts
+     */
+    public synchronized void add(SourceSettingsConfig config) {
+        requireValid(config, false);
+        Opened source = open(config, adapters.get(config.type()), context);
+        Map<String, Opened> next = new LinkedHashMap<>(opened);
+        next.put(config.id(), source);
+        opened = Collections.unmodifiableMap(next);
+    }
+
+    /**
+     * Ersetzt die Einstellungen einer vorhandenen Quelle derselben ID an ihrer Stelle; die bisherige schließt erst,
+     * wenn die neue geöffnet ist.
+     *
+     * @return die bisherigen Einstellungen
+     * @throws InvalidSourceConfigurationException mit den Problemen; dann bleibt die bisherige Quelle unverändert
+     * @throws UnknownSourceException wenn es keine Quelle mit dieser ID gibt
+     */
+    public synchronized SourceSettingsConfig replace(SourceSettingsConfig config) {
+        Opened previous = opened.get(Objects.requireNonNull(config, "config").id());
+        if (previous == null) {
+            throw new UnknownSourceException(config.id());
+        }
+        requireValid(config, true);
+        ConfiguredSecrets.Saved saved = secrets.save(config.id());
+        secrets.forget(config.id());
+        Opened source;
+        try {
+            source = open(config, adapters.get(config.type()), context);
+        } catch (RuntimeException e) {
+            secrets.restore(saved);
+            throw e;
+        }
+        Map<String, Opened> next = new LinkedHashMap<>(opened);
+        next.put(config.id(), source);
+        opened = Collections.unmodifiableMap(next);
+        previous.close();
+        return previous.config();
+    }
+
+    /**
+     * Entfernt eine Quelle; ab dann ist sie unbekannt, ihre Zugangsdaten sind vergessen. Abgeleitete Daten (Cache,
+     * Assets, Anreicherungen) entfernt der Aufrufer.
+     *
+     * @return die Einstellungen der entfernten Quelle, leer, wenn es keine gab
+     */
+    public synchronized Optional<SourceSettingsConfig> remove(String sourceId) {
+        Opened previous = opened.get(sourceId);
+        if (previous == null) {
+            return Optional.empty();
+        }
+        Map<String, Opened> next = new LinkedHashMap<>(opened);
+        next.remove(sourceId);
+        opened = Collections.unmodifiableMap(next);
+        previous.close();
+        secrets.forget(sourceId);
+        return Optional.of(previous.config());
+    }
+
+    /**
+     * Öffnet die Einstellungen nur für {@code use}, ohne sie in den Katalog aufzunehmen, etwa zum Prüfen der
+     * Verbindung vor dem Speichern. Mit denselben Netzwegen, Vertrauensquellen und demselben Anbieter von Zugangsdaten,
+     * aber eigenen Zugangsdaten und synchronem Transport; danach geschlossen.
+     *
+     * @param replacing wie bei {@link #problems}
+     * @throws InvalidSourceConfigurationException mit den Problemen der Einstellungen
+     */
+    public <T> T probe(SourceSettingsConfig config, boolean replacing, Function<HarvestSource, T> use) {
+        Objects.requireNonNull(use, "use");
+        List<String> problems = problems(config, replacing);
+        if (!problems.isEmpty()) {
+            throw new InvalidSourceConfigurationException(problems);
+        }
+        SourceAdapter.Context probing = new SourceAdapter.Context(secrets.fresh(), routes, context.userAgent(),
+                context.trustBundles(), null);
+        Opened source = open(config, adapters.get(config.type()), probing);
+        try {
+            return use.apply(source.source());
+        } finally {
+            source.close();
+        }
+    }
+
+    private void requireValid(SourceSettingsConfig config, boolean replacing) {
+        List<String> problems = problems(config, replacing);
+        if (!problems.isEmpty()) {
+            throw new InvalidSourceConfigurationException(problems);
+        }
     }
 
     /**
@@ -212,7 +356,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * dasselbe Client-Zertifikat wie das Ernten; leer für unbekannte Quellen.
      */
     public Optional<DelegatedConfluenceHttp> delegatedHttp(String sourceId) {
-        return Optional.ofNullable(delegated.get(sourceId));
+        return Optional.ofNullable(opened.get(sourceId)).map(Opened::delegated);
     }
 
     /**
@@ -221,7 +365,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * nicht.
      */
     public Optional<String> route(String sourceId) {
-        URI baseUrl = baseUrls.get(sourceId);
+        Opened source = opened.get(sourceId);
+        URI baseUrl = source == null ? null : source.baseUrl();
         if (baseUrl == null) {
             return Optional.empty();
         }
@@ -240,7 +385,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     /** Gibt die Verbindungspools der delegierten und asynchronen Aufrufe frei (Spring ruft das beim Herunterfahren). */
     @Override
     public void close() {
-        delegated.values().forEach(DelegatedConfluenceHttp::close);
+        opened.values().forEach(Opened::close);
         if (async != null) {
             async.close();
         }

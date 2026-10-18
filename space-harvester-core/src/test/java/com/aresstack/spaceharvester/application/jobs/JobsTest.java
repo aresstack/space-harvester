@@ -55,6 +55,24 @@ class JobsTest {
     }
 
     @Test
+    void cancellingASourceStopsItsOpenJobsOnlyAndWaitsForTheRunningOnes() throws Exception {
+        Jobs jobs = jobs(1, 5);
+        JobStatus running = jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a",
+                JobTask.blocking(JobContext::checkpoint));
+        JobStatus queued = jobs.submit(JobType.EXPORT, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));
+        JobStatus other = jobs.submit(JobType.SYNC, "files", "DOCS", "client-a", JobTask.blocking(context -> { }));
+
+        // Der laufende endet erst an seinem nächsten Checkpoint.
+        assertThat(jobs.cancelSource("confluence", Duration.ZERO)).isFalse();
+        assertThat(jobs.status(queued.id()).state()).isEqualTo(JobState.CANCELLED);
+        executor.runNext();
+
+        assertThat(jobs.status(running.id()).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(jobs.cancelSource("confluence", Duration.ZERO)).isTrue();
+        assertThat(jobs.status(other.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
     void submittedStatusIsQueued() {
         Jobs jobs = jobs(1, 5);
         jobs.submit(JobType.SYNC, "confluence", "DEV", "client-a", JobTask.blocking(context -> { }));

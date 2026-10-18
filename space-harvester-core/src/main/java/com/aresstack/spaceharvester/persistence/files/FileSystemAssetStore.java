@@ -17,11 +17,15 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -199,6 +203,76 @@ public class FileSystemAssetStore implements AssetStore {
                     text.toString().getBytes(StandardCharsets.UTF_8));
         } catch (IOException | UncheckedIOException e) {
             throw new AssetStoreException("Bildbeschreibung nicht ablegbar", e);
+        }
+    }
+
+    /**
+     * Entfernt die Einträge einer Quelle (#188) und danach jeden Inhalt, auf den kein Eintrag mehr verweist und den
+     * {@code keep} nicht nennt (etwa Bilder bestehender Exporte), samt seinen Bildbeschreibungen. Inhalte, die seit
+     * {@code since} geschrieben wurden, bleiben: Sie gehören zu Ablagen, die gerade laufen.
+     *
+     * @param keep {@code sha256:<hex>} von Inhalten, die bleiben müssen
+     * @return Anzahl der entfernten Inhalte
+     */
+    public synchronized int removeSource(String sourceId, Predicate<String> keep, Instant since) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(keep, "keep");
+        Objects.requireNonNull(since, "since");
+        try {
+            deleteTree(root.resolve("index").resolve(name(sourceId)));
+            Set<String> referenced = new HashSet<>();
+            Path index = root.resolve("index");
+            if (Files.isDirectory(index)) {
+                try (Stream<Path> entries = Files.walk(index)) {
+                    for (Path entry : (Iterable<Path>) entries.filter(path -> path.getFileName().toString()
+                            .endsWith(".properties"))::iterator) {
+                        Properties p = new Properties();
+                        try (var in = Files.newBufferedReader(entry, StandardCharsets.UTF_8)) {
+                            p.load(in);
+                        }
+                        String sha = p.getProperty("sha256");
+                        if (sha != null) {
+                            referenced.add(sha);
+                        }
+                    }
+                }
+            }
+            Path blobs = root.resolve("blobs");
+            if (!Files.isDirectory(blobs)) {
+                return 0;
+            }
+            int removed = 0;
+            try (Stream<Path> files = Files.walk(blobs)) {
+                for (Path blob : (Iterable<Path>) files.filter(Files::isRegularFile)::iterator) {
+                    String hex = blob.getFileName().toString();
+                    String sha = "sha256:" + hex;
+                    if (!HEX_SHA.matcher(sha).matches() || referenced.contains(sha) || keep.test(sha)
+                            || !Files.getLastModifiedTime(blob).toInstant().isBefore(since)) {
+                        continue;
+                    }
+                    long size = Files.size(blob);
+                    Files.deleteIfExists(blob);
+                    if (usedBytes >= 0) {
+                        usedBytes = Math.max(0, usedBytes - size);
+                    }
+                    deleteTree(root.resolve("descriptions").resolve(hex));
+                    removed++;
+                }
+            }
+            return removed;
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Assets der Quelle nicht entfernbar", e);
+        }
+    }
+
+    private static void deleteTree(Path directory) throws IOException {
+        if (!Files.exists(directory)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(directory)) {
+            for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) {
+                Files.deleteIfExists(path);
+            }
         }
     }
 

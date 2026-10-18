@@ -236,6 +236,14 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         return first(new TermQuery(PageCacheSchema.pageTerm(key)), HEADER_FIELDS, PageCacheSchema::header);
     }
 
+    /** Entfernt alles einer Quelle in einem eigenen Schreiblauf, siehe {@link Batch#removeSource}. */
+    public void removeSource(String sourceId) {
+        try (Batch batch = begin()) {
+            batch.removeSource(sourceId);
+            batch.commit();
+        }
+    }
+
     @Override
     public boolean remove(PageKey key) {
         try (Batch batch = begin()) {
@@ -429,6 +437,18 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                 writer.deleteDocuments(PageCacheSchema.revisionsOfPage(key));
             });
             return existed;
+        }
+
+        /**
+         * Entfernt alles einer Quelle (#188): Seiten samt Verlauf, bestätigte Generationen und ihre Seiteneinträge. Die
+         * Suchgeneration der Quelle steigt mit dem Commit, damit kein Cursor von vorher weiter gilt.
+         */
+        public void removeSource(String sourceId) {
+            Objects.requireNonNull(sourceId, "sourceId");
+            requireActive();
+            dirty = true;
+            touchedSources.add(sourceId);
+            write(() -> writer.deleteDocuments(PageCacheSchema.ofSource(sourceId)));
         }
 
         /**

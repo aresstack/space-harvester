@@ -28,6 +28,8 @@ import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.PrefixQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.util.BytesRef;
 
 /**
@@ -152,6 +154,16 @@ public final class PageCacheSchema {
 
     static Term sourceTerm(String sourceId) {
         return new Term(ID, id(SOURCE, sourceId));
+    }
+
+    /**
+     * Alle Dokumente einer Quelle außer ihrer Suchgeneration (#188): Seiten, Verlauf, bestätigte Generationen und ihre
+     * Seiteneinträge.
+     */
+    static Query[] ofSource(String sourceId) {
+        String prefix = SEPARATOR + sourceId + SEPARATOR;
+        return new Query[]{new PrefixQuery(new Term(ID, PAGE + prefix)), new PrefixQuery(new Term(ID, REVISION + prefix)),
+                new PrefixQuery(new Term(ID, SPACE + prefix)), new PrefixQuery(new Term(BASELINE_OF, SPACE + prefix))};
     }
 
     /** Alle Seiteneinträge der bestätigten Generation eines Space. */

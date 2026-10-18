@@ -6,8 +6,10 @@ import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@link SecretProvider} für Zugangsdaten aus der Konfiguration (YAML, Umgebungsvariablen). Jede Quelle mit
@@ -19,7 +21,7 @@ import java.util.Optional;
  */
 final class ConfiguredSecrets implements SecretProvider {
 
-    private final Map<SecretRef, Credentials> credentials = new HashMap<>();
+    private final Map<SecretRef, Credentials> credentials = new ConcurrentHashMap<>();
     private final SourceSecrets fallback;
 
     ConfiguredSecrets() {
@@ -58,6 +60,51 @@ final class ConfiguredSecrets implements SecretProvider {
 
     void put(SecretRef ref, String principal, String secret) {
         credentials.put(ref, new Credentials(principal, secret));
+    }
+
+    /** Zugangsdaten einer Quelle zum späteren {@link #restore}, etwa wenn ihr Ersatz nicht öffnet (#188). */
+    Saved save(String sourceId) {
+        Map<SecretRef, Credentials> saved = new HashMap<>();
+        for (SecretRef ref : List.of(refFor(sourceId), certificateRefFor(sourceId))) {
+            Credentials found = credentials.get(ref);
+            if (found != null) {
+                saved.put(ref, found);
+            }
+        }
+        return new Saved(sourceId, Map.copyOf(saved));
+    }
+
+    void restore(Saved saved) {
+        forget(saved.sourceId);
+        credentials.putAll(saved.credentials);
+    }
+
+    /** Vergisst die Zugangsdaten einer Quelle, die entfernt oder ersetzt wird. */
+    void forget(String sourceId) {
+        credentials.remove(refFor(sourceId));
+        credentials.remove(certificateRefFor(sourceId));
+    }
+
+    /** Gesicherte Zugangsdaten; das {@code toString} zeigt keine. */
+    static final class Saved {
+
+        private final String sourceId;
+        private final Map<SecretRef, Credentials> credentials;
+
+        private Saved(String sourceId, Map<SecretRef, Credentials> credentials) {
+            this.sourceId = sourceId;
+            this.credentials = credentials;
+        }
+
+        @Override
+        public String toString() {
+            return "Saved[sourceId=" + sourceId + ", entries=" + credentials.size() + "]";
+        }
+    }
+
+    /** Ein frischer Satz mit demselben Anbieter, etwa für die Prüfung einer Quelle vor dem Speichern. */
+    ConfiguredSecrets fresh() {
+        return new ConfiguredSecrets(fallback);
     }
 
     @Override
