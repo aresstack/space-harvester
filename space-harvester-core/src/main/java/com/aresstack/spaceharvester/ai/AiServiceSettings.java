@@ -19,7 +19,7 @@ import java.util.Set;
  *
  * @param baseUrl                   Basisadresse, z. B. {@code https://ki.example.org/v1}; ohne gibt es keinen Dienst
  * @param apiKey                    Bearer-Token oder {@code null}; erscheint nie in {@link #toString()}, Logs oder Fehlern
- * @param chatModel                 Chat-Modell für spätere Schritte (Schlagwörter aus Fragen) oder {@code null}
+ * @param chatModel                 Chat-Modell für Suchvarianten (ADR 0017) oder {@code null}
  * @param embeddingModel            Embedding-Modell oder {@code null}; ohne gibt es keine semantische Suche
  * @param embeddingDimensions       Länge der Vektoren des Embedding-Modells; Pflicht mit {@code embeddingModel}, die
  *                                  Oberfläche misst sie einmal mit {@code Harvester.aiEmbeddingDimension}
@@ -131,6 +131,11 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Ob ein Dienst eingerichtet ist ({@link #baseUrl}). */
     public boolean configured() {
         return baseUrl != null;
+    }
+
+    /** Ob ein Chat-Modell Suchvarianten formulieren kann: Dienst und Modell (ADR 0017). */
+    public boolean chat() {
+        return baseUrl != null && chatModel != null;
     }
 
     /** Ob Embeddings berechnet werden können: Dienst, Modell und Dimension. */

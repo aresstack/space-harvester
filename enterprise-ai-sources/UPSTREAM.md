@@ -21,6 +21,7 @@ Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPS
 | `proasteion/emporion/deigma/document-tika` | nur `SimpleContentDetector` (Erkennung nach Endung, nur JDK), ohne Apache Tika |
 | `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
+| `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |
 | `model-kipitz` | nur der Modellkatalog für `GET /models`: `KipitzModelCatalogAdapter`, `KipitzModelCatalogConfig`, `KipitzModelListParser`, `KipitzConnections` |
 | `LICENSE` | die Lizenz des Upstreams (MIT, AresStack), mitkopiert und mitgeprüft |
