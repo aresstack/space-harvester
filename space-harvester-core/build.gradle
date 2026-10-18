@@ -19,6 +19,8 @@ dependencies {
     api project(':enterprise-ai-sources')
     // Proxy-Route je Ziel-URL: PAC per PowerShell/Windows-Einstellungen/fester Adresse, GraalJS-Auswertung (#34)
     implementation libs.win.proxy.java
+    // TLS-Vertrauen aus JVM-Truststore und Windows-Speichern Root/CA wie network.tls im Enterprise AI Client (#189)
+    implementation libs.win.trust.java
     // Asynchroner Confluence-Transport (#47, ADR 0001): WebClient auf Reactor Netty nur als HTTP-Client
     implementation libs.spring.webflux
     // ReactorClientHttpConnector implementiert SmartLifecycle (spring-context), webflux zieht es nicht mit; ohne es

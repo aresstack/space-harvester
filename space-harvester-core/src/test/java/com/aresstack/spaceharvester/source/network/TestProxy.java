@@ -16,12 +16,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Minimaler HTTP-Forward-Proxy für Tests: leitet Anfragen in Absolute-Form ({@code GET http://host:port/...}) an
  * das Ziel weiter und merkt sich Anfragezeile und Kopfzeilen. {@code CONNECT host:port} öffnet einen Tunnel zum Ziel
  * und leitet die Bytes (TLS) unverändert in beide Richtungen; ist das Ziel nicht erreichbar, antwortet er mit 502.
+ * Mit {@link #requireBasic} verlangt er eine Anmeldung und antwortet ohne passende {@code Proxy-Authorization} mit 407.
  */
 public final class TestProxy implements AutoCloseable {
 
     private final ServerSocket server;
     private final List<String> requestLines = new CopyOnWriteArrayList<>();
     private final List<String> headerBlocks = new CopyOnWriteArrayList<>();
+    private volatile String expectedAuthorization;
 
     public TestProxy() throws IOException {
         server = new ServerSocket();
@@ -41,6 +43,28 @@ public final class TestProxy implements AutoCloseable {
 
     public List<String> headerBlocks() {
         return headerBlocks;
+    }
+
+    /** Verlangt ab jetzt BASIC mit diesem Benutzer und Passwort. */
+    public TestProxy requireBasic(String user, String password) {
+        expectedAuthorization = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8));
+        return this;
+    }
+
+    private boolean authorized(String head) {
+        String expected = expectedAuthorization;
+        if (expected == null) {
+            return true;
+        }
+        for (String line : head.split("\r\n")) {
+            int colon = line.indexOf(':');
+            if (colon > 0 && line.substring(0, colon).trim().equalsIgnoreCase("Proxy-Authorization")
+                    && line.substring(colon + 1).trim().equals(expected)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void accept() {
@@ -69,6 +93,13 @@ public final class TestProxy implements AutoCloseable {
                 requestLines.add(requestLine);
                 headerBlocks.add(head);
                 String[] parts = requestLine.split(" ");
+                if (!authorized(head)) {
+                    out.write(("HTTP/1.1 407 Proxy Authentication Required\r\n"
+                            + "Proxy-Authenticate: Basic realm=\"test-proxy\"\r\nContent-Length: 0\r\n\r\n")
+                            .getBytes(StandardCharsets.US_ASCII));
+                    out.flush();
+                    continue;
+                }
                 if (parts[0].equals("CONNECT")) {
                     tunnel(parts[1], in, out);
                     return;
@@ -76,8 +107,10 @@ public final class TestProxy implements AutoCloseable {
                 java.net.URI target = java.net.URI.create(parts[1]);
                 int port = target.getPort() < 0 ? 80 : target.getPort();
                 try (Socket upstream = new Socket(target.getHost(), port)) {
-                    // Anfrage ohne Keep-Alive weitergeben; der Fake-Server versteht die Absolute-Form.
-                    String forwarded = head.replaceAll("(?i)\r\n(proxy-)?connection:[^\r]*", "")
+                    // Anfrage ohne Keep-Alive und ohne Proxy-Anmeldung weitergeben (wie ein echter Proxy); der Fake-Server
+                    // versteht die Absolute-Form.
+                    String forwarded = head
+                            .replaceAll("(?i)\r\n(proxy-connection|connection|proxy-authorization):[^\r]*", "")
                             .replace("\r\n\r\n", "\r\nConnection: close\r\n\r\n");
                     upstream.getOutputStream().write(forwarded.getBytes(StandardCharsets.ISO_8859_1));
                     upstream.getOutputStream().flush();

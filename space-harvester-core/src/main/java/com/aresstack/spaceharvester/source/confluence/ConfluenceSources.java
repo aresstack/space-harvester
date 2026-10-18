@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import java.net.URI;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -81,6 +82,15 @@ public final class ConfluenceSources {
     public static DelegatedConfluenceHttp delegatedHttp(URI baseUrl, SecretProvider secrets, HttpRoutePort routes,
                                                         String userAgent, X509TrustManager trust, String thumbprint,
                                                         String alias, Path keyStoreFile, SecretRef passwordRef) {
+        return delegatedHttp(baseUrl, secrets, routes, userAgent, trust, thumbprint, alias, keyStoreFile, passwordRef,
+                ProxyCredentials.none());
+    }
+
+    /** Wie oben, mit Anmeldung am Proxy (#189). */
+    public static DelegatedConfluenceHttp delegatedHttp(URI baseUrl, SecretProvider secrets, HttpRoutePort routes,
+                                                        String userAgent, X509TrustManager trust, String thumbprint,
+                                                        String alias, Path keyStoreFile, SecretRef passwordRef,
+                                                        ProxyCredentials proxyCredentials) {
         if (routes == null) {
             throw new IllegalArgumentException("routes must not be null");
         }
@@ -93,6 +103,7 @@ public final class ConfluenceSources {
                 .clientTls(clientTls)
                 .anonymousTls(trustOnly)
                 .userAgent(userAgent)
+                .proxyCredentials(proxyCredentials)
                 .build();
         return new DelegatedConfluenceHttp(baseUrl, transport, DelegatedConfluenceHttp.TIMEOUT);
     }

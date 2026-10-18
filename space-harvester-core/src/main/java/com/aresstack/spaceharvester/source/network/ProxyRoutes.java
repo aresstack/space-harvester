@@ -171,6 +171,19 @@ public final class ProxyRoutes implements HttpRoutePort {
         if (settings.cacheTtl().isNegative() || settings.failureTtl().isNegative()) {
             problems.add("cache-ttl und failure-ttl dürfen nicht negativ sein");
         }
+        if (settings.pacDiscoveryScript() != null && settings.mode() != ProxySettings.Mode.PAC_URL_POWERSHELL
+                && settings.mode() != ProxySettings.Mode.PAC_URL_WSCRIPT) {
+            problems.add("pac-discovery-script gilt nur für mode pac-url-powershell und pac-url-wscript");
+        }
+        ProxySettings.Authentication authentication = settings.authentication();
+        if (authentication != null) {
+            if (settings.mode() == ProxySettings.Mode.DISABLED) {
+                problems.add("auth gilt nur mit Proxy, nicht mit mode disabled");
+            }
+            if (authentication.username() != null && authentication.username().indexOf(':') >= 0) {
+                problems.add("auth.username darf für BASIC keinen Doppelpunkt enthalten");
+            }
+        }
         for (String host : settings.nonProxyHosts()) {
             if (host == null || host.isBlank()) {
                 problems.add("non-proxy-hosts enthält einen leeren Eintrag");
@@ -196,6 +209,9 @@ public final class ProxyRoutes implements HttpRoutePort {
         }
         if (settings.proxyPort() != null) {
             builder.manualProxyPort(settings.proxyPort());
+        }
+        if (settings.pacDiscoveryScript() != null) {
+            builder.pacUrlDiscoveryScript(settings.pacDiscoveryScript());
         }
         return builder.build();
     }
@@ -283,7 +299,12 @@ public final class ProxyRoutes implements HttpRoutePort {
         switch (settings.mode()) {
             case MANUAL_PROXY -> text.append(' ').append(settings.proxyHost()).append(':').append(settings.proxyPort());
             case PAC_URL_MANUAL -> text.append(' ').append(displayUrl(settings.pacUrl().toString()));
+            case PAC_URL_POWERSHELL, PAC_URL_WSCRIPT -> text.append(settings.pacDiscoveryScript() == null
+                    ? " (Standardskript)" : " (eigenes Skript)");
             default -> { }
+        }
+        if (settings.authentication() != null) {
+            text.append(", Anmeldung BASIC");
         }
         if (!settings.nonProxyHosts().isEmpty()) {
             text.append(", ohne Proxy: ").append(settings.nonProxyHosts());

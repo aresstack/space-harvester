@@ -109,7 +109,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         }
         X509TrustManager trust;
         try {
-            trust = config.trustBundle() == null ? null : context.trustBundles().trustManager(config.trustBundle());
+            trust = config.trustBundle() == null ? context.trustBundles().defaultTrust() : context.trustBundles().trustManager(config.trustBundle());
         } catch (IllegalArgumentException e) {
             throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
         }
@@ -129,7 +129,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             DelegatedConfluenceHttp delegated = ConfluenceSources.delegatedHttp(config.baseUrl(), secrets,
                     context.routes(), context.userAgent(), trust, thumbprint,
                     certificate.enabled() ? certificate.alias().trim() : null, pkcs12 ? certificate.path() : null,
-                    pkcs12 ? ConfiguredSecrets.certificateRefFor(config.id()) : null);
+                    pkcs12 ? ConfiguredSecrets.certificateRefFor(config.id()) : null, context.proxyCredentials());
             return new OpenedSource(port, delegated);
         } catch (ClientCertificateException e) {
             throw new InvalidSourceConfigurationException(List.of("client-certificate: " + e.getMessage()));

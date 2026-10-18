@@ -230,7 +230,45 @@ space-harvester:
   Fehlermeldungen zeigen Ziel- und PAC-URLs nur ohne Query (`?…`), auch in Meldungen der Bibliothek. Die
   Auflösung läuft auf einem eigenen Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage.
 - **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization`, Zugangsdaten und das Client-Zertifikat (mTLS)
-  gehen nur durch den Tunnel zum Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.
+  gehen nur durch den Tunnel zum Ziel, nicht an den Proxy.
+- **Anmeldung am Proxy** (BASIC, [#189](https://github.com/aresstack/space-harvester/issues/189)): `auth.username`
+  und `auth.password` (Passwort über einen Platzhalter, z. B. `${PROXY_PASSWORD}`). Der WebClient-Transport meldet
+  sich je Verbindung an, auch im `CONNECT`-Tunnel. Für `HttpURLConnection` (synchrone Confluence-Aufrufe,
+  KI-Dienst) setzt der Core wie der Enterprise AI Client einen prozessweiten `Authenticator`, der nur dem Proxy
+  antwortet, und gibt BASIC für den Tunnel frei (`jdk.http.auth.tunneling.disabledSchemes`, sofern nicht gesetzt).
+  Einbettende Programme können das Passwort auch über `Harvester.builder().secretProvider(…)` unter
+  `network:proxy` liefern; dann reicht `auth.username` oder ein leeres `auth`. Weder Benutzer noch Passwort
+  erscheinen im Protokoll.
+
+  ```yaml
+  space-harvester:
+    network:
+      proxy:
+        mode: pac-url-powershell
+        auth:
+          username: proxy-nutzer
+          password: ${PROXY_PASSWORD}
+  ```
+- **Eigenes Skript zur PAC-Ermittlung** (#189): `pac-discovery-script` ersetzt bei `pac-url-powershell` das
+  eingebaute PowerShell-Skript und bei `pac-url-wscript` das VBScript; es gibt die PAC-Adresse aus, wie
+  `network.proxy.pacDiscoveryScript` im Enterprise AI Client.
+- **TLS-Vertrauen** ([#189](https://github.com/aresstack/space-harvester/issues/189)) für Quellen und KI-Dienst
+  ohne eigenes `trust-bundle`, wie `network.tls` im Enterprise AI Client: JVM-Truststore (`use-jvm-default`,
+  Standard an), Windows-Stammzertifikate (`use-windows-root`), Windows-Speicher Root und CA samt
+  Zwischenzertifikaten (`use-windows-ca-stores`) und eine PEM-/DER-Datei mit weiteren CAs
+  (`ca-certificates-file`, z. B. die CA eines TLS-prüfenden Firmen-Proxys). Ein Zertifikat gilt, sobald eine Quelle
+  es akzeptiert; Kette, Gültigkeit und Hostname prüft die Java-Laufzeit. Die Windows-Speicher liest der Core erst
+  bei der ersten TLS-Verbindung (außerhalb von Windows bleiben sie mit Hinweis im Protokoll aus); prozessweit wird
+  nichts umgestellt. Bibliothek: `Harvester.builder().trust(new TrustSettings(…))`.
+
+  ```yaml
+  space-harvester:
+    network:
+      tls:
+        use-windows-root: true
+        use-windows-ca-stores: true
+        ca-certificates-file: C:/firma/proxy-ca.pem
+  ```
 - **Windows-Dienst:** `pac-url-powershell`, `pac-url-windows-settings`, `pac-url-wscript` und `windows-static-proxy`
   lesen `HKCU` des **ausführenden Dienstkontos**, nicht die Einstellungen des angemeldeten Benutzers. Hat das
   Dienstkonto keine `AutoConfigURL`, `pac-url-manual` mit der PAC-Adresse des Unternehmens verwenden.

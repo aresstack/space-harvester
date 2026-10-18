@@ -213,6 +213,22 @@ class ProxyRoutesTest {
     }
 
     @Test
+    void anOwnPacDiscoveryScriptReachesTheLibraryOnlyForScriptModes() {
+        String script = "Write-Output 'http://pac.example/proxy.pac'";
+        ProxySettings powershell = new ProxySettings(ProxySettings.Mode.PAC_URL_POWERSHELL, null, null, null, null,
+                null, null, null).withPacDiscoveryScript(script);
+
+        assertThat(ProxyRoutes.libraryConfiguration(powershell).getPacUrlDiscoveryScript()).isEqualTo(script);
+        assertThat(ProxyRoutes.validationProblems(powershell, true)).isEmpty();
+        assertThat(ProxyRoutes.validationProblems(new ProxySettings(ProxySettings.Mode.PAC_URL_WSCRIPT, null, null,
+                null, null, null, null, null).withPacDiscoveryScript("WScript.Echo \"x\""), true)).isEmpty();
+        assertThat(ProxyRoutes.validationProblems(new ProxySettings(ProxySettings.Mode.PAC_URL_WINDOWS_SETTINGS,
+                null, null, null, null, null, null, null).withPacDiscoveryScript(script), true))
+                .containsExactly("pac-discovery-script gilt nur für mode pac-url-powershell und pac-url-wscript");
+        assertThat(powershell.withPacDiscoveryScript("  ").pacDiscoveryScript()).isNull();
+    }
+
+    @Test
     void everyConfigurableModeExistsInTheLibrary() {
         for (ProxySettings.Mode mode : ProxySettings.Mode.values()) {
             assertThat(ProxyRoutes.libraryMode(mode).name()).isEqualTo(mode.name());
