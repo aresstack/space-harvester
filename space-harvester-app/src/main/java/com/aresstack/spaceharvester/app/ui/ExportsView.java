@@ -11,6 +11,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.KeyStroke;
+import javax.swing.ListSelectionModel;
 import javax.swing.table.AbstractTableModel;
 import java.awt.BorderLayout;
 import java.awt.event.ActionEvent;
@@ -47,6 +48,7 @@ public final class ExportsView implements View {
         this.context = context;
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+        table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         start.addActionListener(e -> start());
         remove.addActionListener(e -> removeSelected());
         clear.addActionListener(e -> {
