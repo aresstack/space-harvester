@@ -86,6 +86,12 @@ public final class Feedback extends JPanel {
                 problem.technical());
     }
 
+    /** Zeigt eine bereits beschriebene Störung mit Ursache, Abhilfe und technischen Details. */
+    public void problem(Problems.Problem problem) {
+        show(Comic.RED, problem.title(), problem.message() + (problem.hint() == null ? "" : "\n" + problem.hint()),
+                problem.technical());
+    }
+
     /** Für Tests: Überschrift und Text der Meldung. */
     public String text() {
         return title.getText() + "\n" + message.getText();

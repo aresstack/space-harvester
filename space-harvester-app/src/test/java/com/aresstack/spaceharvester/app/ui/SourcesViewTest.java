@@ -263,8 +263,76 @@ class SourcesViewTest {
             exports[0].prepare("lang", List.of(key, "zweiter"));
         });
         assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter");
+        assertThat(exports[0].chosenSources()).containsExactly("lang", "lang");
         assertThat(exports[0].chosenFormats()).containsExactly("json");
+
+        // Kein zweiter Quell-/Space-Picker: ausschließlich von anderswo gesammelte Einträge.
+        assertThat(find((Container) exports[0].component(), JComboBox.class)).isEmpty();
+        assertThat(find((Container) exports[0].component(), AbstractButton.class))
+                .anyMatch(button -> "Ausführen".equals(button.getText()));
+
+        // Ein neuer Download einer anderen Quelle ergänzt die Sammlung, statt sie zu ersetzen.
+        SwingUtilities.invokeAndWait(() -> {
+            exports[0].prepare("kurz", List.of("dritter"));
+            exports[0].prepare("lang", List.of(key));  // Duplikat wird ignoriert.
+        });
+        assertThat(exports[0].chosenSources()).containsExactly("lang", "lang", "kurz");
+        assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter", "dritter");
+        JTable basket = find((Container) exports[0].component(), JTable.class).get(0);
+        assertThat(basket.getRowCount()).isEqualTo(3);
+
+        SwingUtilities.invokeAndWait(() -> {
+            basket.setRowSelectionInterval(0, 0);
+            button(exports[0], "Ausgewählte entfernen").doClick();
+        });
+        assertThat(exports[0].chosenSpaces()).containsExactly("zweiter", "dritter");
         assertThat(context.runtime().workspace().jobs()).isEmpty();
+
+        // Mehrfachauswahl entfernt alle markierten Einträge.
+        SwingUtilities.invokeAndWait(() -> {
+            exports[0].prepare("kurz", List.of("vierter"));
+            basket.setRowSelectionInterval(0, 1);
+            button(exports[0], "Ausgewählte entfernen").doClick();
+        });
+        assertThat(exports[0].chosenSpaces()).containsExactly("vierter");
+    }
+
+    @Test
+    void aFailedDownloadStartKeepsItsDiagnosisAndStaysCollected() throws Exception {
+        start();
+        ExportsView[] exports = new ExportsView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            exports[0] = new ExportsView(context);
+            exports[0].prepare("fehlt", List.of("X"));
+            button(exports[0], "Ausführen").doClick();
+        });
+        await(() -> exports[0].feedback().text().contains("fehlt / X"));
+        assertThat(exports[0].feedback().text()).startsWith("Download nicht gestartet (fehlt / X): ");
+        assertThat(exports[0].chosenSpaces()).as("bleibt für einen neuen Versuch").containsExactly("X");
+        assertThat(context.runtime().workspace().jobs()).isEmpty();
+    }
+
+    @Test
+    void severalFailedStartsListCauseAndRemedyPerSpace() {
+        ExportsView.Started result = new ExportsView.Started(List.of(), List.of(), List.of(
+                new ExportsView.Failure(new ExportsView.QueuedSpace("a", "ONE"),
+                        new Problems.Problem("Zugriff verweigert", "Kein Recht.", "Rechte prüfen.", "E1")),
+                new ExportsView.Failure(new ExportsView.QueuedSpace("b", "TWO"),
+                        new Problems.Problem("Quelle nicht erreichbar", "Zeitüberschreitung.", "Proxy prüfen.", "E2"))));
+
+        Problems.Problem problem = ExportsView.failure(result);
+
+        assertThat(problem.title()).isEqualTo("2 Downloads ließen sich nicht starten");
+        assertThat(problem.message()).isEqualTo("a / ONE: Zugriff verweigert. Kein Recht.\n"
+                + "b / TWO: Quelle nicht erreichbar. Zeitüberschreitung.");
+        assertThat(problem.hint()).isEqualTo("Rechte prüfen.\nProxy prüfen.");
+        assertThat(problem.technical()).isEqualTo("a / ONE: E1\nb / TWO: E2");
+    }
+
+    private static AbstractButton button(ExportsView view, String text) {
+        return find((Container) view.component(), AbstractButton.class).stream()
+                .filter(button -> text.equals(button.getText()))
+                .findFirst().orElseThrow();
     }
 
     private void start() throws Exception {

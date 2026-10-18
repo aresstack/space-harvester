@@ -104,8 +104,9 @@ public final class PageDetailPanel extends JPanel {
             "Vergleicht die Seite live mit der Quelle (refresh); der Bestand ändert sich erst beim Abgleich");
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
-    private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
-            "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
+    private final ComposerButton harvest = Comic.button("Alle Anhänge herunterladen",
+            "Lädt alle Anhänge dieser Seite in den lokalen Bestand der App (nicht in den Downloads-Ordner); "
+                    + "einzelne Dateien speichert „Anhang speichern …“");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
     private final ComposerButton recompute = Comic.button("Neu berechnen", "Analysen dieser Seite neu berechnen");
 
@@ -543,16 +544,16 @@ public final class PageDetailPanel extends JPanel {
         }
         String source = sourceId;
         String id = pageId;
-        feedback.working("Anhänge werden abgelegt …");
+        feedback.working("Anhänge werden heruntergeladen …");
         Background.run(() -> runtime.workspace().harvestAssets(source, id), result -> {
             long failed = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.FAILED).count();
             long stored = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.STORED).count();
             long reused = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.REUSED).count();
             String summary = stored + " abgelegt, " + reused + " schon vorhanden, " + failed + " fehlgeschlagen";
             if (failed == 0 && result.listComplete()) {
-                feedback.success("Anhänge abgelegt: " + summary);
+                feedback.success("Anhänge im lokalen Bestand: " + summary + ". Dateien speichert „Anhang speichern …“");
             } else {
-                feedback.warning("Anhänge nur teilweise abgelegt", summary
+                feedback.warning("Anhänge nur teilweise heruntergeladen", summary
                         + (result.listComplete() ? "" : "; die Anhangsliste war unvollständig"));
             }
             loadAssets(true);
