@@ -1,20 +1,12 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
-import com.aresstack.enterpriseai.ui.comic.control.ComposerToggleButton;
-import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
-import com.aresstack.spaceharvester.application.query.CacheGenerationChangedException;
-import com.aresstack.spaceharvester.application.query.PageSearch;
-import com.aresstack.spaceharvester.application.query.PageSearchQuery;
-import com.aresstack.spaceharvester.application.query.SearchHit;
-import com.aresstack.spaceharvester.application.query.SearchResults;
-import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
-import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 
 import javax.swing.BorderFactory;
-import javax.swing.ButtonGroup;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -36,26 +28,25 @@ import java.util.Set;
 import java.util.TreeSet;
 
 /**
- * Globale Suche als reine Schlagwortsuche: Mit Suchtext sucht der Core live in den Quellen über Titel und Inhalt, lädt
- * fehlende Treffer nach und liefert sie (ADR 0010 Punkt 9); eine Synchronisierung ist nie Voraussetzung. Optional nach
- * Quelle und Space gefiltert, sortiert nach Titel oder Änderung. Nur Bedienung und Darstellung: Suche, Sortierung,
- * Rechte und Cursor kommen aus dem Core ({@code PageSearch}, #114), ohne gewählte Quelle als eine globale Suche über
- * alle Quellen. Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine
- * einzelne Quelle mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces
- * der angehakten Quellen an. Die semantische Suche ist nur als deaktiviertes Häkchen vorgesehen.
- * „Weitere laden“ folgt dem Cursor des Core; haben sich die Treffer inzwischen geändert, beginnt dieselbe Suche von
- * vorn. Nur die jeweils letzte Anfrage darf die Liste ändern.
+ * Globale Suche als reine Schlagwortsuche ({@code KeywordSearch} des Core, ADR 0010 Punkt 9): Jede angehakte Quelle
+ * sucht selbst über Titel und Inhalt (Confluence-Websuche), jeder Treffer ist live auf Freigabe geprüft und zeigt
+ * Titel, Quelle, Space und den Textauszug der Quelle, in deren Rangfolge. Eine Synchronisierung ist nie
+ * Voraussetzung. Unter der Liste steht je Quelle, ob sie keine eigene Suche kennt oder nicht erreichbar war, statt
+ * still „keine Treffer“ zu melden; ein unvollständiges Ergebnis ist so gekennzeichnet.
+ * Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine einzelne Quelle
+ * mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces der angehakten
+ * Quellen an. Die semantische Suche ist nur als deaktiviertes Häkchen vorgesehen.
+ * „Weitere laden“ folgt dem Cursor des Core, der nur für dieselbe Anfrage gilt. Nur die jeweils letzte Anfrage darf die
+ * Liste ändern.
  */
 public final class SearchView implements View {
 
-    private static final int LIMIT = PageSearch.MAX_LIMIT;
+    private static final int LIMIT = KeywordSearch.MAX_LIMIT;
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final JTextField query = Comic.field(30);
     private final SourcePicker picker;
-    private final ComposerToggleButton byTitle = toggle("Titel", "Nach Titel sortieren");
-    private final ComposerToggleButton byModified = toggle("Neueste", "Zuletzt geänderte zuerst");
     /** Platzhalter für die spätere semantische Suche: sichtbar, aber deaktiviert und nie gesetzt. */
     private final JCheckBox semantic = checkBox("Semantische Suche (experimentell)", "Noch nicht verfügbar");
     private final JPanel sourcesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
@@ -67,8 +58,12 @@ public final class SearchView implements View {
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel status = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
-    /** Anfrage und Cursor der zuletzt angezeigten Titelsuche, für „Weitere laden“. */
-    private PageSearchQuery lastQuery;
+    /** Anfrage und Cursor der zuletzt angezeigten Suche, für „Weitere laden“; der Cursor gilt nur für sie. */
+    private KeywordSearch.Query lastQuery;
+    /** Ob ein Stapel derselben Suche unvollständig war; bleibt bis zur nächsten Suche. */
+    private boolean incomplete;
+    /** Zustand je Quelle aus dem ersten Stapel, ergänzt um spätere Ausfälle. */
+    private final Map<String, KeywordSearch.SourceState> states = new LinkedHashMap<>();
     private String nextCursor;
     /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
     private int request;
@@ -80,10 +75,6 @@ public final class SearchView implements View {
         this.context = context;
         this.picker = new SourcePicker(context, true, true);
         root.setBackground(Comic.SURFACE);
-        ButtonGroup sorts = new ButtonGroup();
-        sorts.add(byTitle);
-        sorts.add(byModified);
-        byTitle.setSelected(true);
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
         query.addActionListener(e -> search());
         run.addActionListener(e -> search());
@@ -106,8 +97,7 @@ public final class SearchView implements View {
             }
         });
 
-        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Space"), picker.spaceBox(), byTitle,
-                byModified, run);
+        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Space"), picker.spaceBox(), run);
         JPanel lines = new JPanel(new BorderLayout(0, 6));
         lines.setOpaque(false);
         lines.add(bar, BorderLayout.NORTH);
@@ -219,39 +209,42 @@ public final class SearchView implements View {
             return;
         }
         String text = query.getText().trim();
-        // Eine angehakte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
-        String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-        String spaceKey = picker.spaceKey();
-        SearchSort sort = byModified.isSelected() ? SearchSort.MODIFIED_DESC : SearchSort.TITLE;
         if (picker.allSourceIds().isEmpty()) {
-            feedback.warning("Keine Quelle eingerichtet", "Wissensquellen werden in der Konfigurationsdatei angelegt.");
+            feedback.warning("Keine Quelle eingerichtet", "Wissensquellen legst du unter Wissensquellen an.");
             return;
         }
         if (text.isEmpty()) {
-            // Ohne Schlagwort würde nur der Index befragt, keine Quelle; das wäre keine Schlagwortsuche.
             feedback.warning("Suchtext fehlt", "Ein oder mehrere Schlagwörter eingeben.");
             return;
         }
-        List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
-        List<String> only = chosen.size() > 1 ? List.copyOf(chosen) : List.of();
+        KeywordSearch.Query q;
+        try {
+            // Eine angehakte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
+            String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
+            String spaceKey = picker.spaceKey();
+            q = new KeywordSearch.Query(text, sourceId, chosen.size() > 1 ? Set.copyOf(chosen) : Set.of(),
+                    spaceKey.isEmpty() ? Set.of() : Set.of(spaceKey));
+        } catch (InvalidQueryException invalid) {
+            feedback.warning("Suche so nicht möglich", invalid.getMessage());
+            return;
+        }
         int id = ++request;
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Suche läuft …");
-        Background.run(() -> {
-            PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text, null, null,
-                    null, null, null, sort);
-            SearchResults results = runtime.workspace().search(q, null, LIMIT);
-            return new Outcome(q, hits(results), results.nextCursor());
-        }, outcome -> {
+        Background.run(() -> runtime.workspace().keywordSearch(q, null, LIMIT), results -> {
             if (id != request) {
                 return;
             }
             run.setEnabled(true);
-            model.set(outcome.hits());
-            show(outcome);
-            if (outcome.hits().isEmpty()) {
-                feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
+            states.clear();
+            incomplete = false;
+            model.set(hits(results));
+            show(q, results);
+            if (results.hits().isEmpty()) {
+                feedback.info("Keine Treffer", searched()
+                        ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
+                        : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
             } else {
                 feedback.clear();
             }
@@ -261,18 +254,16 @@ public final class SearchView implements View {
             }
             run.setEnabled(true);
             model.set(List.of());
-            show(new Outcome(null, List.of(), null));
+            states.clear();
+            reset();
             feedback.problem(error);
         });
     }
 
-    /**
-     * Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. Lehnt der Core den Cursor ab, weil sich
-     * der Index geändert hat (409 {@code cache-generation-changed}), ersetzt die erste Seite derselben Anfrage die Liste.
-     */
+    /** Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. */
     private void loadMore() {
         AppRuntime runtime = context.runtime();
-        PageSearchQuery q = lastQuery;
+        KeywordSearch.Query q = lastQuery;
         String cursor = nextCursor;
         if (runtime == null || q == null || cursor == null) {
             return;
@@ -281,81 +272,113 @@ public final class SearchView implements View {
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Weitere Treffer werden geladen …");
-        Background.run(() -> {
-            try {
-                SearchResults results = runtime.workspace().search(q, cursor, LIMIT);
-                return new Page(new Outcome(q, hits(results), results.nextCursor()), false);
-            } catch (CacheGenerationChangedException changed) {
-                SearchResults results = runtime.workspace().search(q, null, LIMIT);
-                return new Page(new Outcome(q, hits(results), results.nextCursor()), true);
-            }
-        }, page -> {
+        Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
             if (id != request) {
                 return;
             }
             run.setEnabled(true);
-            if (page.restarted()) {
-                model.set(page.outcome().hits());
-                show(page.outcome());
-                feedback.info("Ergebnisse geändert", "Die Treffer haben sich inzwischen geändert; die Suche beginnt von vorn.");
-            } else {
-                model.add(page.outcome().hits());
-                show(page.outcome());
-                feedback.clear();
-            }
+            model.add(hits(results));
+            show(q, results);
+            feedback.clear();
         }, error -> {
             if (id != request) {
                 return;
             }
             // Die bisherigen Treffer bleiben stehen; eine neue Suche beginnt von vorn.
             run.setEnabled(true);
-            show(new Outcome(null, List.of(), null));
+            reset();
             feedback.problem(error);
         });
     }
 
-    private void show(Outcome outcome) {
-        lastQuery = outcome.query();
-        nextCursor = outcome.nextCursor();
-        more.setEnabled(nextCursor != null);
-        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
-                + (nextCursor != null ? " · weitere vorhanden" : ""));
+    private void reset() {
+        lastQuery = null;
+        nextCursor = null;
+        more.setEnabled(false);
+        status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        status.setForeground(Comic.MUTED);
     }
 
-    private static List<Hit> hits(SearchResults results) {
+    private void show(KeywordSearch.Query q, KeywordSearch.Results results) {
+        lastQuery = q;
+        nextCursor = results.nextCursor();
+        // complete ist auch false, solange noch Treffer folgen; unvollständig heißt: eine Quelle fiel aus, oder am
+        // Ende ließ sich nicht alles prüfen.
+        incomplete |= !results.complete() && results.nextCursor() == null
+                || results.sources().stream().anyMatch(state -> state.status()
+                == KeywordSearch.SourceState.Status.UNAVAILABLE);
+        // Folgestapel nennen nur noch offene Quellen; ein späterer Ausfall ersetzt den früheren Zustand.
+        results.sources().forEach(state -> states.put(state.sourceId(), state));
+        more.setEnabled(nextCursor != null);
+        StringBuilder line = new StringBuilder(Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        if (nextCursor != null) {
+            line.append(" · weitere vorhanden");
+        }
+        for (KeywordSearch.SourceState state : states.values()) {
+            switch (state.status()) {
+                case NOT_SUPPORTED -> line.append(" · ").append(title(state.sourceId()))
+                        .append(": keine eigene Suche");
+                case UNAVAILABLE -> line.append(" · ").append(title(state.sourceId())).append(": nicht erreichbar")
+                        .append(state.reason() == null ? "" : " (" + reason(state.reason()) + ")");
+                case SEARCHED -> {
+                }
+            }
+        }
+        if (incomplete) {
+            line.append(" · unvollständig: nicht jede Quelle oder jeder Treffer ließ sich prüfen");
+        }
+        status.setText(line.toString());
+        status.setForeground(incomplete ? Comic.ORANGE : Comic.MUTED);
+    }
+
+    /** Ob mindestens eine Quelle gesucht hat. */
+    private boolean searched() {
+        return states.values().stream().anyMatch(s -> s.status() == KeywordSearch.SourceState.Status.SEARCHED);
+    }
+
+    private String title(String sourceId) {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            for (HarvestSource source : runtime.workspace().sources()) {
+                if (source.id().equals(sourceId) && source.title() != null && !source.title().isBlank()) {
+                    return source.title();
+                }
+            }
+        }
+        return sourceId;
+    }
+
+    /** {@code SourceAccessException.Reason} verständlich. */
+    private static String reason(String reason) {
+        return switch (reason) {
+            case "ACCESS_DENIED" -> "Anmeldung abgelehnt";
+            case "UNAVAILABLE" -> "keine Verbindung";
+            case "RATE_LIMITED" -> "gedrosselt";
+            case "INVALID_RESPONSE" -> "unerwartete Antwort";
+            default -> reason.toLowerCase(java.util.Locale.ROOT).replace('_', ' ');
+        };
+    }
+
+    /** Für Tests: die Zeile unter der Liste. */
+    String statusText() {
+        return status.getText();
+    }
+
+    private static List<Hit> hits(KeywordSearch.Results results) {
         return results.hits().stream().map(Hit::of).toList();
     }
 
-    private static ComposerToggleButton toggle(String text, String tooltip) {
-        ComposerToggleButton button = new ComposerToggleButton(null, text, tooltip);
-        button.setAccent(ResearchUiPalette.SECONDARY_SURFACE);
-        return button;
-    }
-
-    /**
-     * @param query      Anfrage der Titelsuche für „Weitere laden“ oder {@code null}
-     * @param nextCursor Cursor des Core oder {@code null}, wenn alle Treffer geladen sind
-     */
-    private record Outcome(PageSearchQuery query, List<Hit> hits, String nextCursor) {
-    }
-
-    /** Ein Stapel von „Weitere laden“; {@code restarted}: die erste Seite nach geändertem Index. */
-    private record Page(Outcome outcome, boolean restarted) {
-    }
-
     /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */
-    record Hit(String sourceId, String pageId, String title, String spaceKey, Instant modifiedAt) {
+    record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
 
-        static Hit of(SearchHit hit) {
-            PageMetadata m = hit.page().header().metadata();
-            return new Hit(hit.page().header().key().sourceId(), m.pageId(), m.title(), m.partitionKey(),
-                    m.modifiedAt());
+        static Hit of(KeywordSearch.Hit hit) {
+            return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt());
         }
     }
 
     private static final class HitsModel extends AbstractTableModel {
 
-        private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Seiten-ID", "Geändert"};
+        private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Auszug", "Geändert"};
         private List<Hit> rows = new ArrayList<>();
 
         void set(List<Hit> hits) {
@@ -393,7 +416,7 @@ public final class SearchView implements View {
                 case 0 -> hit.title();
                 case 1 -> hit.sourceId();
                 case 2 -> hit.spaceKey();
-                case 3 -> hit.pageId();
+                case 3 -> hit.snippet() == null ? "" : hit.snippet().replaceAll("\\s+", " ").strip();
                 default -> Texts.time(hit.modifiedAt());
             };
         }
