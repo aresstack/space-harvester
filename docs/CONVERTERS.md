@@ -14,7 +14,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
 | `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
-| `pdf` | `pages.pdf` | PDF (A4), Lesezeichen entlang des Seitenbaums, jede Wurzelseite beginnt auf einer neuen Seite |
+| `pdf` | `pages.pdf` | PDF (A4) mit sichtbarem Inhaltsverzeichnis, Seitenzahlen und Lesezeichen; dasselbe Kapitelmodell wie Word (Abschnitt „PDF“) |
 
 ## Gemeinsame Regeln
 
@@ -36,8 +36,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 
-Markdown und PDF setzen jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), Word unter
-dem Space-Kapitel (Abschnitt „Word“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
+Markdown setzt jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), Word und PDF als
+Kapitel unter dem Space-Kapitel (Abschnitte „Word“ und „PDF“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
 zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
 
 Word und PDF sind deterministisch: feste Zeitstempel im Archiv und kein Erstelldatum beziehungsweise feste
@@ -76,6 +76,26 @@ Swing-Anwendung.
   bleiben nur das aktuelle Kapitel, Formatvorlagen, Listennummern, Linkziele und eingebettete Bilder: gemessen etwa
   4 KiB je Seite (4000 Seiten: 18 MiB). Eine eigene Seitengrenze für Word gibt es deshalb nicht; es gilt
   `max-converted-bytes`. Die temporären Dateien liegen im Temp-Verzeichnis der JVM und werden in jedem Fall gelöscht.
+
+## PDF
+
+`pages.pdf` schreibt der PDF-Exporter des Enterprise AI Client (`PdfExportWriter` auf PDFBox), angepasst im selben
+Modul `:document-export` (Abweichungen in [document-export/UPSTREAM.md](../document-export/UPSTREAM.md)). Word und PDF
+bekommen dieselben Kapitel aus demselben Markdown (`ExportChapters` im Core).
+
+- **Kapitelmodell** wie bei Word: Kapitel 1 ist der Space, jede Seite ein Unterkapitel nach ihrer Tiefe im Baum. Jedes
+  Kapitel beginnt auf einer neuen PDF-Seite; Lesezeichen folgen derselben Hierarchie.
+- **Inhaltsverzeichnis.** Hat der Export mindestens eine Seite, stehen vorn sichtbare Inhaltsseiten: jeder Titel nach
+  Hierarchie eingerückt, rechts seine Seitenzahl, der Eintrag springt zum Kapitel. Die Zahl der Inhaltsseiten steht
+  vorher fest (aus der Zahl der Kapitel), deshalb reicht ein Durchlauf; lange Exporte bekommen mehrere Inhaltsseiten.
+- **Seitenzahlen.** Jede Seite trägt unten mittig „Seite / Gesamt“.
+- **Inhalt.** Überschriften, Listen, Tabellen mit Rahmen und Kopfzeile, Codeblöcke (Courier, grau hinterlegt, lange
+  Zeilen umbrochen), Zitate und Hinweise, Hyperlinks (extern als Adresse, intern als Sprung zum Kapitel der Seite).
+  Bilder, die nur als Anhang oder Adresse vorliegen, gelten nicht als eingebettet: an ihrer Stelle steht
+  „[Abbildung nicht verfügbar: …]“, auch in Tabellenzellen.
+- **Speicher.** Die Inhalte der Seiten gehen sofort in eine temporäre Datei (PDFBox-Scratch-Datei); im Speicher bleiben
+  Seitenbaum, Gliederung und Verweise. Deshalb gilt weiter die Grenze von 20 000 PDF-Seiten je Datei; darüber scheitert
+  nur diese Konvertierung (`CONVERSION_TOO_LARGE`). Bilder halten nur die des aktuellen Kapitels.
 
 ## Storage-Format und Formatverluste
 

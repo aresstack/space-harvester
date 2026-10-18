@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.document;
 
-import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
 import com.vladsch.flexmark.ast.FencedCodeBlock;
 import com.vladsch.flexmark.ast.Heading;
 import com.vladsch.flexmark.ast.Image;
@@ -27,7 +26,7 @@ import java.util.List;
  * Mermaid fence keeps its editable code and gets the drawn diagram as an image below it. A figure of the page that
  * could not be loaded becomes a visible notice and is reported.</p>
  */
-public final class MarkdownExportWriter implements ExportWriter {
+public final class MarkdownExportWriter {
 
     /** The deepest heading Markdown knows. */
     static final int MAX_LEVEL = 6;
@@ -50,7 +49,6 @@ public final class MarkdownExportWriter implements ExportWriter {
         this.parser = Parser.builder(options).build();
     }
 
-    @Override
     public void write(ExportDocumentNode root, OutputStream out) throws IOException {
         out.write(render(root).getBytes(StandardCharsets.UTF_8));
     }

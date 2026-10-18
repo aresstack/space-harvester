@@ -1,6 +1,5 @@
 package com.aresstack.spaceharvester.document;
 
-import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
 import com.vladsch.flexmark.ast.AutoLink;
 import com.vladsch.flexmark.ast.BlockQuote;
 import com.vladsch.flexmark.ast.BulletList;
@@ -11,6 +10,7 @@ import com.vladsch.flexmark.ast.HardLineBreak;
 import com.vladsch.flexmark.ast.Heading;
 import com.vladsch.flexmark.ast.HtmlBlock;
 import com.vladsch.flexmark.ast.HtmlCommentBlock;
+import com.vladsch.flexmark.ast.HtmlInline;
 import com.vladsch.flexmark.ast.HtmlInlineComment;
 import com.vladsch.flexmark.ast.Image;
 import com.vladsch.flexmark.ast.IndentedCodeBlock;
@@ -34,6 +34,10 @@ import com.vladsch.flexmark.ext.tables.TablesExtension;
 import com.vladsch.flexmark.parser.Parser;
 import com.vladsch.flexmark.util.ast.Node;
 import com.vladsch.flexmark.util.data.MutableDataSet;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSString;
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDDocumentInformation;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -41,9 +45,12 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.PageMode;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo;
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary;
@@ -53,13 +60,18 @@ import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlin
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineNode;
 
 import java.awt.Color;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Writes the export tree as a PDF (#115). Every page of the tree is a chapter that starts on a new PDF page; the
@@ -72,8 +84,17 @@ import java.util.Map;
  * <p>Figures (#132): a Markdown image the {@link ExportGraphics} of the export resolves is drawn as a picture where it
  * stands, scaled to the text width and to one page, with its caption below; a Mermaid fence is drawn as the diagram.
  * A figure that does not resolve leaves a visible notice and is reported by the graphics.</p>
+ *
+ * <p>Space Harvester: PDFBox 3 instead of 2. Chapters are handed in one by one in tree order
+ * ({@link #open(String, int, Set)}); the content streams go to a temporary file (PDFBox scratch file), so a long export
+ * keeps only the page tree, the outline and the links in memory, and {@code maxPages} ends a document that would grow
+ * beyond it ({@link PageLimitExceededException}). Instead of the standard fonts a TrueType font can be embedded, which
+ * then shows all its characters. A chapter with an anchor is the target of Markdown links {@code #<anchor>}. An image
+ * inside a table cell is a notice (resolved or missing) instead of "[Bild: …]". Inline {@code <br>} breaks the line, an
+ * empty header row is left out (as in {@link MarkdownDocxRenderer}). The file is deterministic: a fixed document ID
+ * from the caller and no dates.</p>
  */
-public final class PdfExportWriter implements ExportWriter {
+public final class PdfExportWriter {
 
     static final String TOC_TITLE = "Inhalt";
 
@@ -106,9 +127,16 @@ public final class PdfExportWriter implements ExportWriter {
 
     private static final float PIXELS_TO_POINTS = 0.75f;
     private static final String MISSING = "Abbildung nicht verfügbar";
+    private static final java.util.regex.Pattern BREAK = java.util.regex.Pattern.compile("(?i)<br\\s*/?>");
+
+    /** Pages of one PDF at most, unless the caller says otherwise. */
+    public static final int MAX_PAGES = 20_000;
 
     private final Parser parser;
     private final ExportGraphics graphics;
+    private final Path font;
+    private final int maxPages;
+    private final String creator;
 
     public PdfExportWriter() {
         this(ExportGraphics.standard());
@@ -116,51 +144,188 @@ public final class PdfExportWriter implements ExportWriter {
 
     /** @param graphics the figures of this export; it also collects the ones that are missing */
     public PdfExportWriter(ExportGraphics graphics) {
+        this(graphics, null, MAX_PAGES, "Space Harvester");
+    }
+
+    /**
+     * @param font     a TrueType font to embed, or {@code null} for the standard fonts (WinAnsi; other characters
+     *                 become {@code ?})
+     * @param maxPages more PDF pages end the document with {@link PageLimitExceededException}
+     */
+    public PdfExportWriter(ExportGraphics graphics, Path font, int maxPages, String creator) {
         if (graphics == null) {
             throw new IllegalArgumentException("graphics must not be null");
         }
         this.graphics = graphics;
+        this.font = font;
+        this.maxPages = maxPages;
+        this.creator = creator == null ? "" : creator;
         MutableDataSet options = new MutableDataSet();
         options.set(Parser.EXTENSIONS, Arrays.asList(TablesExtension.create(), StrikethroughExtension.create(),
                 AutolinkExtension.create()));
         this.parser = Parser.builder(options).build();
     }
 
-    @Override
     public void write(ExportDocumentNode root, OutputStream out) throws IOException {
-        graphics.with(root);
-        PDDocument document = new PDDocument();
-        try {
-            new Layout(document).run(root);
+        Set<String> anchors = new HashSet<String>();
+        collectAnchors(root, anchors);
+        try (Chapters chapters = open(root.title(), root.size(), anchors)) {
+            chapter(chapters, root, 1);
+            chapters.finish(out, null);
+        }
+    }
+
+    private static void collectAnchors(ExportDocumentNode node, Set<String> anchors) {
+        if (node.anchor() != null) {
+            anchors.add(node.anchor());
+        }
+        for (ExportDocumentNode child : node.children()) {
+            collectAnchors(child, anchors);
+        }
+    }
+
+    private static void chapter(Chapters chapters, ExportDocumentNode node, int depth) throws IOException {
+        chapters.chapter(node.title(), node.anchor(), node.text(), node.images(), depth);
+        for (ExportDocumentNode child : node.children()) {
+            chapter(chapters, child, depth + 1);
+        }
+    }
+
+    /**
+     * Start a PDF whose chapters follow in tree order.
+     *
+     * @param chapters how many chapters will come (the table of contents is laid out before them)
+     * @param anchors  the anchors of all chapters; links to others stay text
+     */
+    public Chapters open(String title, int chapters, Set<String> anchors) throws IOException {
+        return new Chapters(title, chapters, anchors);
+    }
+
+    /** The PDF would get more pages than allowed; nothing is cut, the document fails. */
+    public static final class PageLimitExceededException extends IOException {
+        private final int maxPages;
+
+        PageLimitExceededException(int maxPages) {
+            super("PDF überschreitet " + maxPages + " Seiten");
+            this.maxPages = maxPages;
+        }
+
+        public int maxPages() {
+            return maxPages;
+        }
+    }
+
+    /** One PDF being written; {@link #close()} releases it, with or without {@link #finish(OutputStream, byte[])}. */
+    public final class Chapters implements Closeable {
+        private final PDDocument document;
+        private final Layout layout;
+        private final String title;
+
+        private Chapters(String title, int chapters, Set<String> anchors) throws IOException {
+            this.title = title == null ? "" : title;
+            document = new PDDocument(IOUtils.createTempFileOnlyStreamCache());
+            try {
+                layout = new Layout(document, fonts(document), anchors == null ? Collections.<String>emptySet()
+                        : anchors);
+                layout.begin(chapters);
+            } catch (IOException | RuntimeException e) {
+                document.close();
+                throw e;
+            }
+        }
+
+        /** Write the next chapter in tree order; {@code depth} 1 is the root. */
+        public void chapter(String title, String anchor, String markdown, List<ExportImage> images, int depth)
+                throws IOException {
+            graphics.with(images);
+            try {
+                layout.chapter(title, anchor, markdown == null ? "" : markdown, depth);
+            } finally {
+                graphics.forget();
+                layout.pictures.clear();
+            }
+        }
+
+        /**
+         * Lay out the table of contents, outline, links and page numbers and write the PDF to {@code out}.
+         *
+         * @param documentId the fixed file identifier (for example a hash of the input), or {@code null}
+         */
+        public void finish(OutputStream out, byte[] documentId) throws IOException {
+            layout.finish();
+            PDDocumentInformation info = document.getDocumentInformation();
+            info.setTitle(title);
+            info.setCreator(creator);
+            if (documentId != null) {
+                COSArray ids = new COSArray();
+                ids.add(new COSString(documentId));
+                ids.add(new COSString(documentId));
+                document.getDocument().getTrailer().setItem(COSName.ID, ids);
+            }
             document.save(out);
-        } finally {
+        }
+
+        @Override
+        public void close() throws IOException {
             document.close();
+        }
+    }
+
+    private Fonts fonts(PDDocument document) throws IOException {
+        PDFont mono = new PDType1Font(Standard14Fonts.FontName.COURIER);
+        if (font != null) {
+            PDFont embedded = PDType0Font.load(document, font.toFile());
+            return new Fonts(embedded, embedded, embedded, embedded, mono);
+        }
+        return new Fonts(new PDType1Font(Standard14Fonts.FontName.HELVETICA),
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD),
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA_OBLIQUE),
+                new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD_OBLIQUE), mono);
+    }
+
+    /** The fonts of one document: four cuts for text (one embedded font for all) and a monospaced one. */
+    private static final class Fonts {
+        final PDFont regular;
+        final PDFont bold;
+        final PDFont italic;
+        final PDFont boldItalic;
+        final PDFont mono;
+
+        Fonts(PDFont regular, PDFont bold, PDFont italic, PDFont boldItalic, PDFont mono) {
+            this.regular = regular;
+            this.bold = bold;
+            this.italic = italic;
+            this.boldItalic = boldItalic;
+            this.mono = mono;
         }
     }
 
     // ------------------------------------------------------------------ chapters
 
-    /** One chapter with its place in the tree and where it starts. */
+    /** One chapter with its place in the tree and where it starts; its content is already on the pages. */
     private static final class Chapter {
-        final ExportDocumentNode node;
+        final String title;
         final int depth;
         final Chapter parent;
         PDPage page;
         float top;
         PDOutlineItem outline;
 
-        Chapter(ExportDocumentNode node, int depth, Chapter parent) {
-            this.node = node;
+        Chapter(String title, int depth, Chapter parent) {
+            this.title = title;
             this.depth = depth;
             this.parent = parent;
         }
     }
 
-    private static void flatten(ExportDocumentNode node, int depth, Chapter parent, List<Chapter> out) {
-        Chapter chapter = new Chapter(node, depth, parent);
-        out.add(chapter);
-        for (ExportDocumentNode child : node.children()) {
-            flatten(child, depth + 1, chapter, out);
+    /** A link to a chapter whose start may not be laid out yet; resolved in {@code finish}. */
+    private static final class PendingLink {
+        final PDAnnotationLink link;
+        final String anchor;
+
+        PendingLink(PDAnnotationLink link, String anchor) {
+            this.link = link;
+            this.anchor = anchor;
         }
     }
 
@@ -171,17 +336,24 @@ public final class PdfExportWriter implements ExportWriter {
         final float size;
         final Color color;
         final String url;
+        /** Jump target inside the document instead of {@code url}. */
+        final String anchor;
 
         Run(String text, PDFont font, float size, Color color, String url) {
+            this(text, font, size, color, url, null);
+        }
+
+        Run(String text, PDFont font, float size, Color color, String url, String anchor) {
             this.text = text;
             this.font = font;
             this.size = size;
             this.color = color;
             this.url = url;
+            this.anchor = anchor;
         }
 
         Run with(String other) {
-            return new Run(other, font, size, color, url);
+            return new Run(other, font, size, color, url, anchor);
         }
     }
 
@@ -193,6 +365,7 @@ public final class PdfExportWriter implements ExportWriter {
         float size = BODY_SIZE;
         Color color = TEXT;
         String url;
+        String anchor;
 
         Style copy() {
             Style copy = new Style();
@@ -202,17 +375,18 @@ public final class PdfExportWriter implements ExportWriter {
             copy.size = size;
             copy.color = color;
             copy.url = url;
+            copy.anchor = anchor;
             return copy;
         }
 
-        PDFont font() {
+        PDFont font(Fonts fonts) {
             if (code) {
-                return PDType1Font.COURIER;
+                return fonts.mono;
             }
             if (bold) {
-                return italic ? PDType1Font.HELVETICA_BOLD_OBLIQUE : PDType1Font.HELVETICA_BOLD;
+                return italic ? fonts.boldItalic : fonts.bold;
             }
-            return italic ? PDType1Font.HELVETICA_OBLIQUE : PDType1Font.HELVETICA;
+            return italic ? fonts.italic : fonts.regular;
         }
     }
 
@@ -239,40 +413,66 @@ public final class PdfExportWriter implements ExportWriter {
 
     private final class Layout {
         private final PDDocument document;
-        private final Map<Integer, Boolean> encodable = new HashMap<Integer, Boolean>();
+        private final Fonts fonts;
+        private final Set<String> anchors;
+        private final Map<PDFont, Map<Integer, Boolean>> encodable = new HashMap<PDFont, Map<Integer, Boolean>>();
         private final Map<ExportGraphics.Graphic, PDImageXObject> pictures =
                 new HashMap<ExportGraphics.Graphic, PDImageXObject>();
+        private final List<Chapter> chapters = new ArrayList<Chapter>();
+        private final Map<String, Chapter> anchored = new HashMap<String, Chapter>();
+        private final List<PendingLink> pendingLinks = new ArrayList<PendingLink>();
+        private final List<PDPage> tocPages = new ArrayList<PDPage>();
         private PDPage page;
         private PDPageContentStream stream;
         private float y;
 
-        Layout(PDDocument document) {
+        Layout(PDDocument document, Fonts fonts, Set<String> anchors) {
             this.document = document;
+            this.fonts = fonts;
+            this.anchors = anchors;
         }
 
-        void run(ExportDocumentNode root) throws IOException {
-            List<Chapter> chapters = new ArrayList<Chapter>();
-            flatten(root, 1, null, chapters);
-            List<PDPage> tocPages = new ArrayList<PDPage>();
-            if (chapters.size() > 1) {
-                for (int i = 0; i < tocPageCount(chapters.size()); i++) {
+        void begin(int chapterCount) throws IOException {
+            if (chapterCount > 1) {
+                for (int i = 0; i < tocPageCount(chapterCount); i++) {
                     PDPage toc = new PDPage(PAGE_SIZE);
-                    document.addPage(toc);
+                    addPage(toc);
                     tocPages.add(toc);
                 }
             }
-            for (Chapter chapter : chapters) {
-                chapter(chapter);
+        }
+
+        void chapter(String title, String anchor, String markdown, int depth) throws IOException {
+            Chapter parent = null;
+            for (int i = chapters.size() - 1; i >= 0; i--) {
+                if (chapters.get(i).depth < depth) {
+                    parent = chapters.get(i);
+                    break;
+                }
             }
+            Chapter chapter = new Chapter(title, depth, parent);
+            chapters.add(chapter);
+            if (anchor != null) {
+                anchored.put(anchor, chapter);
+            }
+            chapter(chapter, markdown);
+        }
+
+        void finish() throws IOException {
             closeStream();
             if (!tocPages.isEmpty()) {
                 tableOfContents(tocPages, chapters);
             }
             outline(chapters);
+            for (PendingLink pending : pendingLinks) {
+                Chapter target = anchored.get(pending.anchor);
+                if (target != null) {
+                    PDActionGoTo action = new PDActionGoTo();
+                    action.setDestination(destination(target));
+                    pending.link.setAction(action);
+                }
+            }
             pageNumbers();
-            PDDocumentInformation info = document.getDocumentInformation();
-            info.setTitle(root.title());
-            info.setCreator("Enterprise AI Client");
         }
 
         // -------------------------------------------------------------- pages
@@ -285,10 +485,17 @@ public final class PdfExportWriter implements ExportWriter {
             return PAGE_SIZE.getWidth() - 2 * MARGIN;
         }
 
+        private void addPage(PDPage added) throws IOException {
+            if (document.getNumberOfPages() >= maxPages) {
+                throw new PageLimitExceededException(maxPages);
+            }
+            document.addPage(added);
+        }
+
         private void newPage() throws IOException {
             closeStream();
             page = new PDPage(PAGE_SIZE);
-            document.addPage(page);
+            addPage(page);
             stream = new PDPageContentStream(document, page);
             y = contentTop();
         }
@@ -309,7 +516,7 @@ public final class PdfExportWriter implements ExportWriter {
 
         // -------------------------------------------------------------- chapter
 
-        private void chapter(Chapter chapter) throws IOException {
+        private void chapter(Chapter chapter, String text) throws IOException {
             newPage();
             chapter.page = page;
             chapter.top = y;
@@ -318,11 +525,10 @@ public final class PdfExportWriter implements ExportWriter {
             style.bold = true;
             style.size = size;
             Frame frame = new Frame(MARGIN, contentWidth(), 0, chapter.depth);
-            paragraph(Arrays.asList(new Run(chapter.node.title(), style.font(), size, TEXT, null)), frame, null);
+            paragraph(Arrays.asList(new Run(chapter.title, style.font(fonts), size, TEXT, null)), frame, null);
             y -= size * 0.25f;
             stroke(RULE, 0.8f, MARGIN, y, MARGIN + contentWidth(), y);
             y -= BODY_SIZE;
-            String text = chapter.node.text();
             if (!text.trim().isEmpty()) {
                 blocks(parser.parse(text.replace("\r\n", "\n")), frame);
             }
@@ -394,7 +600,7 @@ public final class PdfExportWriter implements ExportWriter {
             }
             if (node instanceof HtmlBlock) {
                 Style style = base(frame);
-                paragraph(Arrays.asList(new Run(node.getChars().toString().trim(), style.font(), style.size,
+                paragraph(Arrays.asList(new Run(node.getChars().toString().trim(), style.font(fonts), style.size,
                         style.color, null)), frame, null);
                 return;
             }
@@ -405,7 +611,8 @@ public final class PdfExportWriter implements ExportWriter {
             String rest = node.getChars().toString().trim();
             if (!rest.isEmpty()) {
                 Style style = base(frame);
-                paragraph(Arrays.asList(new Run(rest, style.font(), style.size, style.color, null)), frame, null);
+                paragraph(Arrays.asList(new Run(rest, style.font(fonts), style.size, style.color, null)), frame,
+                        null);
             }
         }
 
@@ -434,7 +641,7 @@ public final class PdfExportWriter implements ExportWriter {
                         y -= BODY_SIZE * 0.2f;
                     } else {
                         if (first) {
-                            paragraph(Arrays.asList(new Run("", PDType1Font.HELVETICA, BODY_SIZE, TEXT, null)), inner,
+                            paragraph(Arrays.asList(new Run("", fonts.regular, BODY_SIZE, TEXT, null)), inner,
                                     marker);
                         }
                         block(child, inner);
@@ -448,11 +655,11 @@ public final class PdfExportWriter implements ExportWriter {
         private void code(String code, Frame frame) throws IOException {
             String body = code.endsWith("\n") ? code.substring(0, code.length() - 1) : code;
             float lineHeight = CODE_SIZE * LEADING;
-            PDFont font = PDType1Font.COURIER;
+            PDFont font = fonts.mono;
             float inner = frame.width - 2 * CELL_PADDING;
             y -= CODE_SIZE * 0.3f;
             for (String raw : body.split("\n", -1)) {
-                for (String line : breakChars(fit(raw.replace("\t", "    ")), font, CODE_SIZE, inner)) {
+                for (String line : breakChars(fit(raw.replace("\t", "    "), font), font, CODE_SIZE, inner)) {
                     ensure(lineHeight);
                     fill(CODE_FILL, frame.x, y - lineHeight, frame.width, lineHeight);
                     text(line, font, CODE_SIZE, TEXT, frame.x + CELL_PADDING, y - CODE_SIZE);
@@ -473,6 +680,9 @@ public final class PdfExportWriter implements ExportWriter {
                 for (Node row = section.getFirstChild(); row != null; row = row.getNext()) {
                     if (!(row instanceof TableRow)) {
                         continue;
+                    }
+                    if (section instanceof TableHead && plain(row).isEmpty()) {
+                        continue; // Space Harvester: leere Kopfzeile einer Tabelle ohne Kopf (Confluence) entfällt
                     }
                     List<Node> cells = new ArrayList<Node>();
                     for (Node cell = row.getFirstChild(); cell != null; cell = cell.getNext()) {
@@ -645,7 +855,8 @@ public final class PdfExportWriter implements ExportWriter {
                 runs.add(run(((Code) node).getText().toString(), inner));
             } else if (node instanceof SoftLineBreak) {
                 runs.add(run(" ", style));
-            } else if (node instanceof HardLineBreak) {
+            } else if (node instanceof HardLineBreak
+                    || node instanceof HtmlInline && BREAK.matcher(node.getChars()).matches()) {
                 runs.add(run("\n", style));
             } else if (node instanceof Link) {
                 link(runs, plain(node), ((Link) node).getUrl().unescape(), style);
@@ -656,8 +867,14 @@ public final class PdfExportWriter implements ExportWriter {
                 String mail = ((MailLink) node).getText().toString();
                 link(runs, mail, "mailto:" + mail, style);
             } else if (node instanceof Image) {
-                String alt = plain(node); // inside a table cell: no room for the picture
-                runs.add(run("[Bild" + (alt.isEmpty() ? "" : ": " + alt) + "]", style));
+                // inside a table cell: no room for the picture; whether it resolves is still told and reported
+                String alt = plain(node);
+                Style notice = style.copy();
+                notice.italic = true;
+                notice.color = MUTED;
+                ExportGraphics.Graphic graphic = graphics.image(((Image) node).getUrl().unescape(), alt);
+                runs.add(run("[" + (graphic == null ? MISSING : "Abbildung in der Tabelle nicht dargestellt")
+                        + (alt.isEmpty() ? "" : ": " + alt) + "]", notice));
             } else if (node instanceof HtmlInlineComment) {
                 return;
             } else if (node.hasChildren()) {
@@ -669,7 +886,10 @@ public final class PdfExportWriter implements ExportWriter {
 
         private void link(List<Run> runs, String label, String url, Style style) {
             Style inner = style.copy();
-            if (MarkdownDocxRenderer.isWebLink(url)) {
+            if (url.startsWith("#") && anchors.contains(url.substring(1))) {
+                inner.color = LINK;
+                inner.anchor = url.substring(1);
+            } else if (MarkdownDocxRenderer.isWebLink(url)) {
                 inner.color = LINK;
                 inner.url = url.trim();
             }
@@ -677,7 +897,7 @@ public final class PdfExportWriter implements ExportWriter {
         }
 
         private Run run(String text, Style style) {
-            return new Run(text, style.font(), style.size, style.color, style.url);
+            return new Run(text, style.font(fonts), style.size, style.color, style.url, style.anchor);
         }
 
         // -------------------------------------------------------------- lines
@@ -694,9 +914,9 @@ public final class PdfExportWriter implements ExportWriter {
                 ensure(lineHeight);
                 float baseline = y - size;
                 if (i == 0 && marker != null) {
-                    String shown = fit(marker);
-                    float width = width(shown, PDType1Font.HELVETICA, BODY_SIZE);
-                    text(shown, PDType1Font.HELVETICA, BODY_SIZE, TEXT, frame.x - width - 5f, baseline);
+                    String shown = fit(marker, fonts.regular);
+                    float width = width(shown, fonts.regular, BODY_SIZE);
+                    text(shown, fonts.regular, BODY_SIZE, TEXT, frame.x - width - 5f, baseline);
                 }
                 if (frame.quotes > 0) {
                     stroke(RULE, 2f, frame.x - QUOTE_INDENT / 2f, y, frame.x - QUOTE_INDENT / 2f, y - lineHeight);
@@ -712,7 +932,7 @@ public final class PdfExportWriter implements ExportWriter {
             List<Run> line = new ArrayList<Run>();
             float used = 0f;
             for (Run run : runs) {
-                String text = fit(run.text);
+                String text = fit(run.text, run.font);
                 int start = 0;
                 while (start < text.length()) {
                     char c = text.charAt(start);
@@ -782,15 +1002,20 @@ public final class PdfExportWriter implements ExportWriter {
             List<String> pieces = new ArrayList<String>();
             float limit = Math.max(size, firstWidth);
             StringBuilder piece = new StringBuilder();
-            for (int i = 0; i < text.length(); i++) {
-                piece.append(text.charAt(i));
-                if (width(piece.toString(), font, size) > limit && piece.length() > 1) {
-                    piece.setLength(piece.length() - 1);
+            float used = 0f;
+            // Space Harvester: widths add up per character; measuring the growing piece took quadratic time
+            for (int i = 0; i < text.length(); ) {
+                int end = i + Character.charCount(text.codePointAt(i));
+                float charWidth = width(text.substring(i, end), font, size);
+                if (used + charWidth > limit && piece.length() > 0) {
                     pieces.add(piece.toString());
                     piece.setLength(0);
-                    piece.append(text.charAt(i));
+                    used = 0f;
                     limit = Math.max(size, contentWidth());
                 }
+                piece.append(text, i, end);
+                used += charWidth;
+                i = end;
             }
             pieces.add(piece.toString());
             return pieces;
@@ -803,13 +1028,17 @@ public final class PdfExportWriter implements ExportWriter {
                 if (!run.text.trim().isEmpty()) {
                     text(run.text, run.font, run.size, run.color, at, baseline);
                 }
-                if (run.url != null) {
+                if (run.url != null || run.anchor != null) {
                     PDAnnotationLink link = new PDAnnotationLink();
                     link.setRectangle(new PDRectangle(at, baseline - run.size * 0.25f, width, run.size * 1.2f));
                     link.setBorderStyle(noBorder());
-                    PDActionURI action = new PDActionURI();
-                    action.setURI(run.url);
-                    link.setAction(action);
+                    if (run.url != null) {
+                        PDActionURI action = new PDActionURI();
+                        action.setURI(run.url);
+                        link.setAction(action);
+                    } else {
+                        pendingLinks.add(new PendingLink(link, run.anchor));
+                    }
                     page.getAnnotations().add(link);
                 }
                 at += width;
@@ -829,7 +1058,7 @@ public final class PdfExportWriter implements ExportWriter {
             page = pages.get(0);
             stream = new PDPageContentStream(document, page);
             y = contentTop();
-            text(TOC_TITLE, PDType1Font.HELVETICA_BOLD, TOC_TITLE_SIZE, TEXT, MARGIN, y - TOC_TITLE_SIZE);
+            text(TOC_TITLE, fonts.bold, TOC_TITLE_SIZE, TEXT, MARGIN, y - TOC_TITLE_SIZE);
             y -= TOC_TITLE_SPACE;
             for (Chapter chapter : chapters) {
                 if (y - TOC_LEADING < MARGIN) {
@@ -838,12 +1067,12 @@ public final class PdfExportWriter implements ExportWriter {
                     stream = new PDPageContentStream(document, page);
                     y = contentTop();
                 }
-                PDFont font = chapter.depth == 1 ? PDType1Font.HELVETICA_BOLD : PDType1Font.HELVETICA;
+                PDFont font = chapter.depth == 1 ? fonts.bold : fonts.regular;
                 String number = String.valueOf(document.getPages().indexOf(chapter.page) + 1);
                 float numberWidth = width(number, font, TOC_SIZE);
                 float indent = Math.min(contentWidth() / 2f, (chapter.depth - 1) * TOC_INDENT);
                 float titleWidth = contentWidth() - indent - numberWidth - TOC_INDENT;
-                String title = shorten(fit(chapter.node.title()), font, TOC_SIZE, titleWidth);
+                String title = shorten(fit(chapter.title, font), font, TOC_SIZE, titleWidth);
                 float baseline = y - TOC_SIZE;
                 text(title, font, TOC_SIZE, TEXT, MARGIN + indent, baseline);
                 text(number, font, TOC_SIZE, TEXT, MARGIN + contentWidth() - numberWidth, baseline);
@@ -862,7 +1091,7 @@ public final class PdfExportWriter implements ExportWriter {
             PDDocumentOutline outline = new PDDocumentOutline();
             for (Chapter chapter : chapters) {
                 PDOutlineItem item = new PDOutlineItem();
-                item.setTitle(chapter.node.title());
+                item.setTitle(chapter.title);
                 item.setDestination(destination(chapter));
                 chapter.outline = item;
                 PDOutlineNode parent = chapter.parent == null ? outline : chapter.parent.outline;
@@ -890,12 +1119,13 @@ public final class PdfExportWriter implements ExportWriter {
                 PDPage numbered = document.getPage(i);
                 PDPageContentStream footer = new PDPageContentStream(document, numbered,
                         PDPageContentStream.AppendMode.APPEND, true, true);
+                PDFont footerFont = fonts.regular;
                 try {
                     String label = (i + 1) + " / " + total;
-                    float width = width(label, PDType1Font.HELVETICA, FOOTER_SIZE);
+                    float width = width(label, footerFont, FOOTER_SIZE);
                     footer.setNonStrokingColor(MUTED);
                     footer.beginText();
-                    footer.setFont(PDType1Font.HELVETICA, FOOTER_SIZE);
+                    footer.setFont(footerFont, FOOTER_SIZE);
                     footer.newLineAtOffset((PAGE_SIZE.getWidth() - width) / 2f, FOOTER_OFFSET);
                     footer.showText(label);
                     footer.endText();
@@ -959,8 +1189,8 @@ public final class PdfExportWriter implements ExportWriter {
             return shortened.trim() + ellipsis;
         }
 
-        /** Keep what the standard fonts can show; replace the rest (tabs as spaces, arrows as ASCII, else "?"). */
-        private String fit(String text) {
+        /** Keep what {@code font} can show; replace the rest (tabs as spaces, arrows as ASCII, else "?"). */
+        private String fit(String text, PDFont font) {
             StringBuilder out = new StringBuilder(text.length());
             for (int i = 0; i < text.length(); ) {
                 int codePoint = text.codePointAt(i);
@@ -976,10 +1206,10 @@ public final class PdfExportWriter implements ExportWriter {
                 if (Character.isISOControl(codePoint)) {
                     continue;
                 }
-                String replacement = substitute(codePoint);
+                String replacement = canShow(codePoint, font) ? null : substitute(codePoint);
                 if (replacement != null) {
                     out.append(replacement);
-                } else if (canShow(codePoint)) {
+                } else if (canShow(codePoint, font)) {
                     out.appendCodePoint(codePoint);
                 } else {
                     out.append(REPLACEMENT);
@@ -988,18 +1218,23 @@ public final class PdfExportWriter implements ExportWriter {
             return out.toString();
         }
 
-        private boolean canShow(int codePoint) {
-            Boolean known = encodable.get(codePoint);
+        private boolean canShow(int codePoint, PDFont font) {
+            Map<Integer, Boolean> known = encodable.get(font);
             if (known == null) {
-                try {
-                    PDType1Font.HELVETICA.encode(new String(Character.toChars(codePoint)));
-                    known = Boolean.TRUE;
-                } catch (IllegalArgumentException | IOException e) {
-                    known = Boolean.FALSE;
-                }
-                encodable.put(codePoint, known);
+                known = new HashMap<Integer, Boolean>();
+                encodable.put(font, known);
             }
-            return known;
+            Boolean shown = known.get(codePoint);
+            if (shown == null) {
+                try {
+                    font.encode(new String(Character.toChars(codePoint)));
+                    shown = font.getStringWidth(new String(Character.toChars(codePoint))) >= 0;
+                } catch (IllegalArgumentException | IOException e) {
+                    shown = Boolean.FALSE;
+                }
+                known.put(codePoint, shown);
+            }
+            return shown;
         }
     }
 
