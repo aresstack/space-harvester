@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import org.yaml.snakeyaml.error.YAMLException;
@@ -347,6 +348,60 @@ public final class ConfigFileEditor {
                     + "bearbeiten." + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /**
+     * Setzt die Regeln einer Quelle unter {@code space-harvester.sync.sources.<Quelle>}; {@link SourceSyncOverride#NONE}
+     * entfernt ihren Eintrag, dann gilt für sie alles global. Die Regeln der anderen Quellen bleiben.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSyncRule(Path file, Draft base, String sourceId, SourceSyncOverride rule) {
+        AppSettings before = base.settings() != null ? base.settings() : loader.read(file, base.text());
+        java.util.Map<String, SourceSyncOverride> rules = new java.util.TreeMap<>(before.syncRules());
+        if (rule == null || rule.equals(SourceSyncOverride.NONE)) {
+            rules.remove(sourceId);
+        } else {
+            rules.put(sourceId, rule);
+        }
+        String text = nested(base.text(), "sync", "sources", indent -> syncRulesYaml(indent, rules));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.syncRules().equals(rules)) {
+            throw new IllegalArgumentException("Die Regeln der Quelle ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync.sources von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    private static String syncRulesYaml(String indent, java.util.Map<String, SourceSyncOverride> rules) {
+        if (rules.isEmpty()) {
+            return "";
+        }
+        StringBuilder yaml = new StringBuilder(indent).append("sources:\n");
+        String inner = indent + "  ";
+        String field = inner + "  ";
+        rules.forEach((id, rule) -> {
+            yaml.append(inner).append('"').append(id.replace("\\", "\\\\").replace("\"", "\\\"")).append("\":\n");
+            line(yaml, field, SourceSyncOverride.CHANGE_SEARCH_INTERVAL, rule.changeSearchInterval());
+            line(yaml, field, SourceSyncOverride.INVENTORY_INTERVAL, rule.inventoryInterval());
+            line(yaml, field, SourceSyncOverride.EVENTS, rule.events());
+            line(yaml, field, SourceSyncOverride.CATCH_UP_ON_START, rule.catchUpOnStart());
+            line(yaml, field, SourceSyncOverride.BEFORE_SEARCH, rule.beforeSearch());
+            line(yaml, field, SourceSyncOverride.MODE, rule.mode() == null ? null : rule.mode().key());
+            line(yaml, field, SourceSyncOverride.REFRESH_STRATEGY,
+                    rule.refreshStrategy() == null ? null : rule.refreshStrategy().key());
+            line(yaml, field, SourceSyncOverride.MAX_AGE, rule.maxAge());
+            line(yaml, field, SourceSyncOverride.WITHHELD_RETENTION, rule.withheldRetention());
+        });
+        return yaml.toString();
+    }
+
+    private static void line(StringBuilder yaml, String indent, String key, Object value) {
+        if (value != null) {
+            yaml.append(indent).append(key).append(": ")
+                    .append(value instanceof java.time.Duration d ? duration(d) : value).append('\n');
+        }
     }
 
     /** Eine Dauer so kurz wie möglich: 30d, 6h, 15m, 0s. */

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -32,12 +33,14 @@ import java.util.Set;
  *                        samt Bestand, der Core kennt sie aber nicht ({@code SourceManagement.setEnabled})
  * @param setupCompleted  der Einrichtungsassistent lief schon ({@code space-harvester-app.setup-completed}); sonst
  *                        öffnet er sich beim Start
+ * @param syncRules       Regeln je Quelle ({@code space-harvester.sync.sources.<Quelle>.*}); leer gilt global
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
                           AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
-                          TrustSettings tls, Cache cache, boolean setupCompleted) {
+                          TrustSettings tls, Cache cache, boolean setupCompleted,
+                          Map<String, SourceSyncOverride> syncRules) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -52,18 +55,24 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         disabledSources = disabledSources == null ? Set.of() : Set.copyOf(disabledSources);
         tls = tls == null ? TrustSettings.jvm() : tls;
         cache = cache == null ? Cache.DEFAULT : cache;
+        syncRules = syncRules == null ? Map.of() : Map.copyOf(syncRules);
     }
 
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources, tls, cache, setupCompleted);
+                problems, disabledSources, tls, cache, setupCompleted, syncRules);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
-                outputDirectory, problems, disabledSources, tls, cache, true);
+                outputDirectory, problems, disabledSources, tls, cache, true, syncRules);
+    }
+
+    /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
+    public SourceSyncOverride syncRule(String sourceId) {
+        return syncRules.getOrDefault(sourceId, SourceSyncOverride.NONE);
     }
 
     /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */

@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
+import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncMode;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -198,10 +201,61 @@ public final class AppSettingsLoader {
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
                 path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
                 tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems),
-                flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems));
+                flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
+                syncRules(map(get(map(get(root, "sync")), "sources")), problems));
     }
 
     /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */
+    /**
+     * Regeln je Quelle unter {@code space-harvester.sync.sources.<Quelle>}, wie {@code HarvesterConfiguration} sie
+     * liest; ein fehlendes Feld gilt global.
+     */
+    private Map<String, SourceSyncOverride> syncRules(Map<?, ?> sources, List<String> problems) {
+        Map<String, SourceSyncOverride> rules = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : sources.entrySet()) {
+            String id = String.valueOf(entry.getKey());
+            if (!(entry.getValue() instanceof Map<?, ?> rule)) {
+                problems.add("space-harvester.sync.sources." + id + " braucht Felder wie interval oder mode");
+                continue;
+            }
+            String prefix = "space-harvester." + SourceSyncOverride.key(id, "");
+            SyncMode mode = null;
+            String modeText = text(get(rule, SourceSyncOverride.MODE), problems);
+            if (modeText != null && !modeText.isBlank()) {
+                mode = SyncMode.parse(modeText);
+                if (mode == null) {
+                    problems.add(prefix + "mode: erwartet catalog-only, sync-cache oder full");
+                }
+            }
+            RefreshStrategy strategy = null;
+            String strategyText = text(get(rule, SourceSyncOverride.REFRESH_STRATEGY), problems);
+            if (strategyText != null && !strategyText.isBlank()) {
+                strategy = RefreshStrategy.parse(strategyText);
+                if (strategy == null) {
+                    problems.add(prefix + "refresh-strategy: erwartet always-check-version, time-based oder "
+                            + "time-based-with-version-check");
+                }
+            }
+            rules.put(id, new SourceSyncOverride(
+                    optionalDuration(get(rule, SourceSyncOverride.CHANGE_SEARCH_INTERVAL), prefix + "interval", problems),
+                    optionalDuration(get(rule, SourceSyncOverride.INVENTORY_INTERVAL), prefix + "inventory-interval",
+                            problems),
+                    optionalFlag(get(rule, SourceSyncOverride.EVENTS), prefix + "events", problems),
+                    optionalFlag(get(rule, SourceSyncOverride.CATCH_UP_ON_START), prefix + "catch-up-on-start",
+                            problems),
+                    optionalFlag(get(rule, SourceSyncOverride.BEFORE_SEARCH), prefix + "before-search", problems),
+                    mode, strategy,
+                    optionalDuration(get(rule, SourceSyncOverride.MAX_AGE), prefix + "max-age", problems),
+                    optionalDuration(get(rule, SourceSyncOverride.WITHHELD_RETENTION), prefix + "withheld-retention",
+                            problems)));
+        }
+        return rules;
+    }
+
+    private Boolean optionalFlag(Object raw, String key, List<String> problems) {
+        return raw == null ? null : flag(raw, false, key, problems);
+    }
+
     private AppSettings.Cache cache(Map<?, ?> cache, Map<?, ?> sync, List<String> problems) {
         Duration maxAge = duration(get(cache, "max-age"), Duration.ZERO, "space-harvester.cache.max-age", problems);
         if (maxAge.isNegative() || maxAge.compareTo(CacheFreshness.MAX_AGE) > 0) {
