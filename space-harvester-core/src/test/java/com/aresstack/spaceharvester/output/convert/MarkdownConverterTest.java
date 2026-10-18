@@ -132,14 +132,16 @@ class MarkdownConverterTest {
     }
 
     @Test
-    void codeKeepsBlankLinesAndWebImagesStayLinks() throws Exception {
+    void codeKeepsBlankLinesAndWebImagesAreNotEmbedded() throws Exception {
         String markdown = convert(storagePage("100", null, 0,
                 "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body><![CDATA[a\n\n\n\nb]]>"
                         + "</ac:plain-text-body></ac:structured-macro>"
                         + "<p><ac:image><ri:url ri:value=\"https://example.org/logo.png\" /></ac:image></p>"));
 
-        assertThat(markdown).contains("```\na\n\n\n\nb\n```").contains("(https://example.org/logo.png)")
-                .doesNotContain("Abbildung nicht verfügbar");
+        // Externe Bilder: nicht eingebettet, Hinweis mit Link auf die Adresse
+        assertThat(markdown).contains("```\na\n\n\n\nb\n```")
+                .contains("*\\[Abbildung nicht verfügbar: Bild\\]* ([Adresse](https://example.org/logo.png))")
+                .doesNotContain("![");
     }
 
     @Test

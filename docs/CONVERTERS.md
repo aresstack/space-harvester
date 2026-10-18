@@ -36,8 +36,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 
-Markdown setzt jede Seite als Überschrift, deren Ebene ihrer Tiefe im Baum folgt (höchstens 6), Word und PDF als
-Kapitel unter dem Space-Kapitel (Abschnitte „Word“ und „PDF“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
+Markdown, Word und PDF folgen demselben Kapitelmodell (`ExportChapters`): Kapitel 1 ist der Space, jede Seite ein
+Unterkapitel nach ihrer Tiefe im Baum (Markdown: `#` Space, `##` Wurzelseiten …, tiefer als sechs Ebenen eine fette
+Zeile; Abschnitte „Word“ und „PDF“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
 zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
 
 Word und PDF sind deterministisch: feste Zeitstempel im Archiv und kein Erstelldatum beziehungsweise feste
@@ -111,7 +112,7 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | Makros `code`, `noformat` | Codeblock mit Sprache |
 | Makros `info`, `note`, `warning`, `tip`, `panel`, `expand` | Zitatblock mit Beschriftung |
 | `ac:link` auf eine Seite | Link auf deren Sprungmarke `#page-<id>`, wenn sie im Export liegt, sonst nur der Text |
-| `ac:link` auf Anhang, `ac:image` | Verweis `attachment:<Datei>`, das Bild selbst gehört nicht zum Export; Word: „[Abbildung nicht verfügbar: …]“ |
+| `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: „[Abbildung nicht verfügbar: …]“ in allen Formaten, bis die Bilder aus dem Datenbestand eingebettet werden; ein externes Bild (`ri:url`) zusätzlich mit Link „Adresse“ |
 | PlantUML, Mermaid | Codeblock mit der Textquelle des Diagramms |
 | draw.io, Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include` | Hinweis auf die eingebundene Seite |
