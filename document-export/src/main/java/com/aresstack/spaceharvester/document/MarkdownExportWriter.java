@@ -25,6 +25,12 @@ import java.util.List;
  * embedded as a PNG {@code data:} URI, so the file reads offline and never points at a private source address; a
  * Mermaid fence keeps its editable code and gets the drawn diagram as an image below it. A figure of the page that
  * could not be loaded becomes a visible notice and is reported.</p>
+ *
+ * <p>Space Harvester: chapters can also be rendered one at a time ({@link #chapter(String, String, String, List,
+ * int)}), so a long export never holds the whole file; a chapter with an anchor gets {@code <a id="…"></a>} before its
+ * heading as the target of Markdown links {@code #<anchor>}. The title is written as given (the caller escapes it).
+ * Every image that is not a web address counts as a figure of the export: unknown, it becomes the notice "Abbildung
+ * nicht verfügbar" and is reported, like in Word and PDF (upstream it stayed as written).</p>
  */
 public final class MarkdownExportWriter {
 
@@ -47,6 +53,29 @@ public final class MarkdownExportWriter {
         MutableDataSet options = new MutableDataSet();
         options.set(Parser.EXTENSIONS, Collections.singletonList(TablesExtension.create()));
         this.parser = Parser.builder(options).build();
+    }
+
+    /**
+     * Render one chapter: anchor, heading at {@code depth} (1 is the root) and its content with the figures of
+     * {@code images} embedded, ending with a blank line. Unlike {@link #render(ExportDocumentNode)}, blank lines inside
+     * the content (for example in code blocks) stay as they are.
+     */
+    public String chapter(String title, String anchor, String markdown, List<ExportImage> images, int depth) {
+        graphics.with(images);
+        try {
+            StringBuilder out = new StringBuilder();
+            if (anchor != null && !anchor.trim().isEmpty()) {
+                out.append("<a id=\"").append(anchor.trim()).append("\"></a>\n\n");
+            }
+            out.append(heading(depth, title == null || title.trim().isEmpty() ? "Ohne Titel" : title)).append("\n\n");
+            String content = markdown == null ? "" : markdown.replace("\r\n", "\n").trim();
+            if (!content.isEmpty()) {
+                out.append(embedFigures(shiftHeadings(content, depth))).append("\n\n");
+            }
+            return out.toString();
+        } finally {
+            graphics.forget();
+        }
     }
 
     public void write(ExportDocumentNode root, OutputStream out) throws IOException {
@@ -127,7 +156,7 @@ public final class MarkdownExportWriter {
             }
             Image image = (Image) node;
             String src = image.getUrl().unescape();
-            if (!graphics.knows(src)) {
+            if (!graphics.knows(src) && MarkdownDocxRenderer.isWebLink(src)) {
                 continue; // an address of the text itself (e.g. a web image): stays as written
             }
             String caption = image.getText().toString().replaceAll("[\\[\\]\\r\\n]+", " ").trim();
