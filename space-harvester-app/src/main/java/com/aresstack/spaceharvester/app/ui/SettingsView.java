@@ -87,7 +87,18 @@ public final class SettingsView implements View {
         tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.component())));
         tabs.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
         root.add(tabs, BorderLayout.CENTER);
-        context.onChange(ignored -> render());
+        context.onChange(ignored -> {
+            render();
+            // Eingaben im offenen Reiter „KI“ bleiben stehen; beim nächsten Öffnen gilt der neue Stand.
+            if (!AI.equals(tabs.selected())) {
+                ai.render();
+            }
+        });
+        tabs.onSelect(name -> {
+            if (AI.equals(name)) {
+                ai.render();
+            }
+        });
         render();
     }
 
