@@ -26,6 +26,13 @@ public interface StagedGeneration extends AutoCloseable {
     void remove(PageKey key);
 
     /**
+     * Sperrt eine Seite für jede Ausgabe (ADR 0014, {@link RemovalCheck.Verdict#INACCESSIBLE}), wirksam erst nach
+     * {@link #commit}: Sie ist danach wie entfernt nicht mehr sichtbar. Einen Revisionsverlauf behält die Umsetzung bis
+     * zum endgültigen {@link #remove} nach Ablauf der Frist.
+     */
+    void withhold(PageKey key);
+
+    /**
      * Macht alle vorgemerkten Änderungen und {@code next} als bestätigte Generation in einem Schritt sichtbar.
      *
      * @throws SyncConflictException wenn {@code next.generation()} nicht genau um eins über der aktuell bestätigten

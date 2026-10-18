@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -19,8 +20,11 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,25 +39,36 @@ import java.util.concurrent.Semaphore;
 import java.util.regex.Pattern;
 
 /**
- * Die globale Schlagwortsuche: jede Quelle des Umfangs sucht selbst über Titel und Inhalt (Confluence: CQL
- * {@code siteSearch} über {@code /rest/api/search}, wie die Websuche), die Treffer werden zusammengeführt. Der Bestand
- * ist dafür weder Voraussetzung noch Ergebnis: die Suche lädt keine Seiteninhalte und legt nichts ab; den Inhalt
- * beschafft erst das Öffnen einer Seite ({@link PageQueries#page}). REST und Desktop-App nutzen genau diesen
- * Anwendungsfall.
+ * Die globale Schlagwortsuche über den Cache (ADR 0013). Sie läuft in drei Schritten, REST und Desktop-App nutzen genau
+ * diesen Anwendungsfall:
  *
- * <p>Jeder Treffer trägt Titel, Textauszug der Quelle, Adresse, Version, Quelle und Space. Bevor er erscheint, liest
- * die Suche die Kopfdaten der Seite live bei der Quelle und prüft an ihnen die Freigabe {@link AccessKind#METADATA}
- * für genau diese Seite; bei delegierten Benutzern über die Quelle mit ihrer Identität. So ist der Space bekannt,
- * gilt der Space-Filter auch global, und nicht freigegebene Seiten erscheinen nirgends, auch nicht als Titel oder
- * Auszug. Was nicht mehr existiert oder nicht freigegeben ist, fällt ohne Spur weg.
+ * <ol>
+ *   <li><b>Finden:</b> Jede Quelle des Umfangs mit eigener Suche sucht über Titel und Inhalt (Confluence: CQL
+ *       {@code siteSearch} über {@code /rest/api/search}, wie die Websuche). Ihre Treffer sind nur Kandidaten: Die
+ *       Suche liest ihre Kopfdaten live bei der Quelle und prüft an ihnen {@link AccessKind#METADATA} für genau diese
+ *       Seite, bei delegierten Benutzern über die Quelle mit ihrer Identität. Ein Stapel nimmt reihum Kandidaten aus
+ *       jeder Quelle in deren Rangfolge, bis {@code limit} erreicht ist; je Quelle reicht das Finden höchstens
+ *       {@value #MAX_DEPTH} Treffer tief.</li>
+ *   <li><b>Laden:</b> Sichtbare Kandidaten, deren Version nicht im Cache liegt, lädt {@link Prefetch} seitenweise mit
+ *       den Rechten des Aufrufers über den Beschaffungs-Use-Case; gleiche Versionen werden nicht erneut geladen. Ein
+ *       vollständiger Abgleich ist nie Voraussetzung. Was beim Antworten noch lädt, zählt {@link Results#loading()}.</li>
+ *   <li><b>Suchen:</b> Der {@link PageTextIndex} (BM25 über Titel und Text) sucht im Cache, über die Seiten aller
+ *       erreichbaren Quellen des Umfangs, auch solcher ohne eigene Suche (lokale Dateien, #180). Nur von hier kommen
+ *       Treffer; Ergebnislisten werden nicht zusammengeführt. Jeder Treffer braucht {@link AccessKind#METADATA} und
+ *       {@link AccessKind#CONTENT}, weil Fundstelle und Auszug aus dem Inhalt stammen, und wird live geprüft, wenn er
+ *       nicht eben erst gefunden wurde.</li>
+ * </ol>
  *
- * <p>Ein Stapel nimmt reihum Treffer aus jeder Quelle in deren Rangfolge, bis {@code limit} erreicht ist; der Cursor
- * merkt sich je Quelle, wie weit sie gelesen ist („Weitere laden“). Eine Quelle, die nicht antwortet, verwirft die
- * anderen nicht: sie steht mit {@link SourceState.Status#UNAVAILABLE} in {@link Results#sources()}, und das Ergebnis
- * ist nicht {@code complete}, auch in allen Folgestapeln desselben Cursors. Quellen ohne eigene Suche stehen dort als {@link SourceState.Status#NOT_SUPPORTED},
- * statt still „keine Treffer“ zu melden. Je Quelle reicht die Suche höchstens {@value #MAX_DEPTH} Treffer tief.
+ * <p>Der Space-Filter gilt in beiden Suchen. Nicht freigegebene Seiten erscheinen nirgends, auch nicht als Titel,
+ * Auszug oder Zähler; was nicht mehr existiert, fällt ohne Spur weg. Der Cursor („Weitere laden“) merkt sich je Quelle,
+ * wie weit sie gefunden hat, und welche Seiten schon ausgeliefert sind; der nächste Stapel findet weiter und sucht
+ * erneut im Cache, sodass inzwischen geladene Seiten nachrücken. Eine Quelle, die nicht antwortet, verwirft die anderen
+ * nicht: sie steht mit {@link SourceState.Status#UNAVAILABLE} in {@link Results#sources()}, und das Ergebnis ist nicht
+ * {@code complete}, auch in allen Folgestapeln desselben Cursors. Quellen ohne eigene Suche stehen als
+ * {@link SourceState.Status#INDEXED} darin, ohne Cache als {@link SourceState.Status#NOT_SUPPORTED}. Ohne Cache
+ * ({@code texts == null}) liefert die Suche die geprüften Treffer der Quellen selbst.
  *
- * <p>Nur Schlagworte; die experimentelle semantische Suche ist
+ * <p>Nur Schlagworte, nie Embeddings; die semantische Suche (nur mit Haken) ist
  * {@link com.aresstack.spaceharvester.application.ranking.RelevanceSearch}.
  */
 public class KeywordSearch {
@@ -69,16 +84,41 @@ public class KeywordSearch {
     static final int PARALLEL_CHECKS = 6;
 
     private static final System.Logger LOG = System.getLogger(KeywordSearch.class.getName());
-    private static final String CURSOR_PREFIX = "k1.";
-    private static final Pattern CURSOR_ENTRY = Pattern.compile("[^\\t\\n]{1,255}\\t[0-9]{1,4}");
+    private static final String CURSOR_PREFIX = "k2.";
+    private static final Pattern CURSOR_OFFSET = Pattern.compile("s\\t[^\\t\\n]{1,255}\\t[0-9]{1,4}");
+    private static final Pattern CURSOR_UNAVAILABLE = Pattern.compile("u\\t[^\\t\\n]{1,255}");
+    private static final Pattern CURSOR_PENDING = Pattern.compile(
+            "p\\t[^\\t\\n]{1,255}\\t[A-Za-z0-9._:-]{1,64}\\t[^\\t\\n]{1,255}");
+    private static final Pattern CURSOR_VERSION = Pattern.compile("[A-Za-z0-9._:]{1,64}");
+    private static final Pattern CURSOR_DELIVERED = Pattern.compile("d\\t[A-Za-z0-9_-]{1,14000}");
+    /** Länge der Hashes ausgelieferter Seiten im Cursor. */
+    private static final int MARK_BYTES = 6;
     private static final Pattern CURSOR_HEAD = Pattern.compile("[0-9a-f]{24}\\t[01]");
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
+    private final PageTextIndex texts;
+    private final Prefetch prefetch;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
+        this(catalog, access, null, null);
+    }
+
+    /**
+     * @param texts    Volltextindex über den Cache oder {@code null} ohne Cache
+     * @param prefetch lädt gefundene Seiten in den Cache oder {@code null}; ohne findet die Suche nur, was schon dort
+     *                 liegt
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
+        this.texts = texts;
+        this.prefetch = prefetch;
+    }
+
+    /** Ob die Treffer aus dem Cache kommen (ADR 0013); ohne Cache kommen sie aus der Suche der Quellen. */
+    public boolean searchesTheCache() {
+        return texts != null;
     }
 
     /**
@@ -100,20 +140,42 @@ public class KeywordSearch {
         scope.requireKnown(catalog);
         Position position = cursor == null || cursor.isEmpty() ? null : decode(cursor, fingerprint(query));
         Map<String, Integer> offsets = position == null ? null : position.offsets();
+        boolean cached = texts != null;
 
         List<SourceState> states = new ArrayList<>();
         Map<String, List<SourceSearchMatch>> pending = new LinkedHashMap<>();
         Map<String, Boolean> more = new LinkedHashMap<>();
         Map<String, Integer> start = new LinkedHashMap<>();
+        Set<String> indexed = new HashSet<>();
+        Set<String> searchable = new LinkedHashSet<>();
         // Was ein früherer Stapel nicht prüfen konnte, bleibt bis zum Ende offen.
         boolean complete = position == null || !position.incomplete();
         for (HarvestSource source : catalog.all()) {
             String sourceId = source.id();
-            if (!scope.sourceIds().contains(sourceId) || (offsets != null && !offsets.containsKey(sourceId))) {
+            if (!scope.sourceIds().contains(sourceId)) {
                 continue;
             }
-            if (!source.capabilities().contains(SourceCapability.LIVE_SEARCH)) {
-                states.add(new SourceState(sourceId, SourceState.Status.NOT_SUPPORTED, null));
+            boolean live = source.capabilities().contains(SourceCapability.LIVE_SEARCH);
+            if (!live && !cached) {
+                if (position == null) {
+                    states.add(new SourceState(sourceId, SourceState.Status.NOT_SUPPORTED, null));
+                }
+                continue;
+            }
+            if (!live) {
+                // Ohne eigene Suche: nur der Cache, in jedem Stapel.
+                indexed.add(sourceId);
+                searchable.add(sourceId);
+                if (position == null) {
+                    states.add(new SourceState(sourceId, SourceState.Status.INDEXED, null));
+                }
+                continue;
+            }
+            if (offsets != null && !offsets.containsKey(sourceId)) {
+                // Fertig gesucht; ihre geladenen Seiten stehen weiter im Cache.
+                if (cached && !position.unavailable().contains(sourceId)) {
+                    searchable.add(sourceId);
+                }
                 continue;
             }
             int offset = offsets == null ? 0 : offsets.get(sourceId);
@@ -125,6 +187,7 @@ public class KeywordSearch {
                 pending.put(sourceId, new ArrayList<>(fresh));
                 more.put(sourceId, matches.size() > offset + fresh.size() && offset + fresh.size() < MAX_DEPTH);
                 start.put(sourceId, offset);
+                searchable.add(sourceId);
                 states.add(new SourceState(sourceId, SourceState.Status.SEARCHED, null));
             } catch (SourceAccessException e) {
                 // Ohne Meldung: Texte des Transports können Hosts und Routen nennen.
@@ -133,6 +196,9 @@ public class KeywordSearch {
                 complete = false;
             }
         }
+        Set<String> unavailable = new TreeSet<>(position == null ? Set.of() : position.unavailable());
+        states.stream().filter(state -> state.status() == SourceState.Status.UNAVAILABLE)
+                .forEach(state -> unavailable.add(state.sourceId()));
 
         // Reihum je Quelle in ihrer Rangfolge, bis der Stapel voll ist.
         List<Candidate> candidates = new ArrayList<>();
@@ -144,7 +210,7 @@ public class KeywordSearch {
             for (Map.Entry<String, List<SourceSearchMatch>> entry : pending.entrySet()) {
                 int index = taken.get(entry.getKey());
                 if (index < entry.getValue().size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index)));
+                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null));
                     taken.put(entry.getKey(), index + 1);
                     added = true;
                 }
@@ -158,10 +224,94 @@ public class KeywordSearch {
                 next.put(sourceId, start.get(sourceId) + used);
             }
         }
-        Checked checked = check(caller, query, candidates);
-        boolean checkedAll = complete && checked.complete();
-        return new Results(scope.sourceId(), checked.hits(), states,
-                next.isEmpty() ? null : encode(fingerprint(query), !checkedAll, next), checkedAll && next.isEmpty());
+        Checked found = check(caller, query, candidates);
+        if (!cached) {
+            // Ohne Cache: die Treffer der Quellen selbst.
+            boolean checkedAll = complete && found.complete();
+            return new Results(scope.sourceId(), found.hits(), states, next.isEmpty() ? null
+                    : encode(fingerprint(query), !checkedAll, next, unavailable, Set.of(), List.of()),
+                    checkedAll && next.isEmpty(), 0);
+        }
+
+        // ADR 0013: Gefundenes zuerst in den Cache, dann sucht der Volltextindex über den Cache. Was ein früherer Stapel
+        // noch lud, fragt dieser Stapel wieder ab, damit es nicht verloren geht.
+        List<Hit> toLoad = new ArrayList<>(found.hits());
+        if (position != null) {
+            Set<PageKey> seen = new HashSet<>();
+            toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
+            for (Hit hit : position.pending()) {
+                if (scope.sourceIds().contains(hit.sourceId()) && !unavailable.contains(hit.sourceId())
+                        && seen.add(new PageKey(hit.sourceId(), hit.pageId()))) {
+                    toLoad.add(hit);
+                }
+            }
+        }
+        List<Hit> stillLoading = List.of();
+        if (prefetch != null && !toLoad.isEmpty()) {
+            try {
+                Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
+                stillLoading = fill.pending().size() > MAX_LIMIT ? fill.pending().subList(0, MAX_LIMIT)
+                        : fill.pending();
+                // Gescheitertes Laden ist eine Lücke; der Stapel ist dann nicht vollständig.
+                complete &= fill.failed() == 0 && fill.pending().size() <= MAX_LIMIT;
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Laden der Treffer nicht möglich ({0})", e.getClass().getName());
+                complete = false;
+            }
+        }
+        int loading = stillLoading.size();
+        Map<PageKey, Hit> known = new HashMap<>();
+        found.hits().forEach(hit -> known.put(new PageKey(hit.sourceId(), hit.pageId()), hit));
+        Set<String> delivered = position == null ? new LinkedHashSet<>() : new LinkedHashSet<>(position.delivered());
+        List<Candidate> fromCache = new ArrayList<>();
+        boolean moreInCache = false;
+        if (!searchable.isEmpty() && delivered.size() < MAX_DEPTH) {
+            try {
+                int wanted = Math.min(delivered.size() + limit + 1, MAX_DEPTH);
+                for (PageTextIndex.Match match : texts.search(query.text(), searchable, query.spaces(), wanted)) {
+                    String mark = mark(match.sourceId(), match.pageId());
+                    if (delivered.contains(mark)) {
+                        continue;
+                    }
+                    if (fromCache.size() == limit) {
+                        moreInCache = true;
+                        break;
+                    }
+                    SourceSearchMatch hit = new SourceSearchMatch(match.pageId(), match.title(), match.snippet(), null,
+                            null, null);
+                    fromCache.add(new Candidate(match.sourceId(), hit, true,
+                            known.get(new PageKey(match.sourceId(), match.pageId()))));
+                }
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
+                for (int i = 0; i < states.size(); i++) {
+                    SourceState state = states.get(i);
+                    if (state.status() == SourceState.Status.INDEXED) {
+                        states.set(i, new SourceState(state.sourceId(), SourceState.Status.UNAVAILABLE,
+                                SourceAccessException.Reason.UNAVAILABLE.name()));
+                    }
+                }
+                complete = false;
+            }
+        }
+        Checked checked = check(caller, query, fromCache);
+        fromCache.forEach(candidate -> delivered.add(mark(candidate.sourceId(), candidate.match().pageId())));
+        boolean checkedAll = complete && found.complete() && checked.complete();
+        boolean exhausted = next.isEmpty() && !moreInCache && loading == 0;
+        String nextCursor = exhausted || delivered.size() >= MAX_DEPTH ? null
+                : encode(fingerprint(query), !checkedAll, next, unavailable, delivered, stillLoading);
+        return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading);
+    }
+
+    /** Kurzes Zeichen einer ausgelieferten Seite für den Cursor; verrät weder Quelle noch Seite. */
+    private static String mark(String sourceId, String pageId) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest((sourceId + "\u0000" + pageId).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, MARK_BYTES);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
     }
 
     /** Kopfdaten live und Freigabe je Treffer; parallel, Reihenfolge der Kandidaten bleibt. */
@@ -201,6 +351,20 @@ public class KeywordSearch {
      * @throws SourceAccessException wenn die Kopfdaten nicht lesbar sind; der Stapel ist dann unvollständig
      */
     private Optional<Hit> hit(AccessContext caller, Query query, Candidate candidate) {
+        if (candidate.known() != null) {
+            // Eben gefunden, live geprüft und geladen; aus dem Cache kommen nur Fundstelle und Auszug.
+            Hit known = candidate.known();
+            if (!access.permits(caller, ResourceScope.page(known.sourceId(), known.spaceKey(), known.pageId()),
+                    AccessKind.CONTENT)) {
+                return Optional.empty();
+            }
+            // Steht das Wort nur im Titel, hat der Cache kein Textfenster; dann bleibt der Auszug der Quelle.
+            String snippet = candidate.match().snippet() == null || candidate.match().snippet().isEmpty()
+                    ? known.snippet() : candidate.match().snippet();
+            return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
+                    known.url(), known.version(), known.modifiedAt(),
+                    known.parentPageId()));
+        }
         PageMetadata metadata;
         HarvestSource source = catalog.find(candidate.sourceId()).orElse(null);
         if (source == null) {
@@ -221,8 +385,12 @@ public class KeywordSearch {
         if (!query.spaces().permits(metadata.partitionKey())) {
             return Optional.empty();
         }
-        if (!access.permits(caller, ResourceScope.page(candidate.sourceId(), metadata.partitionKey(),
-                metadata.pageId()), AccessKind.METADATA)) {
+        ResourceScope page = ResourceScope.page(candidate.sourceId(), metadata.partitionKey(), metadata.pageId());
+        if (!access.permits(caller, page, AccessKind.METADATA)) {
+            return Optional.empty();
+        }
+        // Fundstelle und Auszug aus dem Index stammen aus dem Inhalt.
+        if (candidate.indexed() && !access.permits(caller, page, AccessKind.CONTENT)) {
             return Optional.empty();
         }
         SourceSearchMatch match = candidate.match();
@@ -234,10 +402,27 @@ public class KeywordSearch {
                 metadata.parentPageId()));
     }
 
-    /** Der Cursor gilt nur für dieselbe Anfrage; er trägt mit, ob ein früherer Stapel unvollständig war. */
-    private static String encode(String fingerprint, boolean incomplete, Map<String, Integer> offsets) {
+    /**
+     * Der Cursor gilt nur für dieselbe Anfrage. Er trägt mit, ob ein früherer Stapel unvollständig war, wie weit jede
+     * Quelle gesucht ist, welche ausgefallen sind und welche Seiten schon ausgeliefert wurden (als kurze Hashes), damit
+     * „Weitere laden“ nach dem Nachladen im Cache weitersucht, ohne Seiten doppelt zu zeigen.
+     */
+    private static String encode(String fingerprint, boolean incomplete, Map<String, Integer> offsets,
+                                 Set<String> unavailable, Set<String> delivered, List<Hit> pending) {
         StringBuilder text = new StringBuilder(fingerprint).append('\t').append(incomplete ? '1' : '0');
-        offsets.forEach((id, offset) -> text.append('\n').append(id).append('\t').append(offset));
+        offsets.forEach((id, offset) -> text.append("\ns\t").append(id).append('\t').append(offset));
+        unavailable.forEach(id -> text.append("\nu\t").append(id));
+        for (Hit hit : pending) {
+            if (hit.pageId().length() <= 255 && hit.pageId().indexOf('\t') < 0 && hit.pageId().indexOf('\n') < 0
+                    && (hit.version() == null || CURSOR_VERSION.matcher(hit.version()).matches())) {
+                text.append("\np\t").append(hit.sourceId()).append('\t')
+                        .append(hit.version() == null ? "-" : hit.version()).append('\t').append(hit.pageId());
+            }
+        }
+        if (!delivered.isEmpty()) {
+            text.append("\nd\t").append(Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(HexFormat.of().parseHex(String.join("", delivered))));
+        }
         return CURSOR_PREFIX + Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(text.toString().getBytes(StandardCharsets.UTF_8));
     }
@@ -254,25 +439,48 @@ public class KeywordSearch {
             throw new InvalidQueryException("cursor ist ungültig");
         }
         String[] lines = text.split("\n");
-        if (lines.length < 2 || !CURSOR_HEAD.matcher(lines[0]).matches()) {
+        if (lines.length < 1 || !CURSOR_HEAD.matcher(lines[0]).matches()) {
             throw new InvalidQueryException("cursor ist ungültig");
         }
         if (!lines[0].startsWith(fingerprint)) {
             throw new InvalidQueryException("cursor gehört zu einer anderen Suchanfrage");
         }
         Map<String, Integer> offsets = new LinkedHashMap<>();
+        Set<String> unavailable = new TreeSet<>();
+        Set<String> delivered = new LinkedHashSet<>();
+        List<Hit> pending = new ArrayList<>();
         for (String entry : List.of(lines).subList(1, lines.length)) {
-            if (!CURSOR_ENTRY.matcher(entry).matches()) {
+            if (CURSOR_OFFSET.matcher(entry).matches()) {
+                int tab = entry.lastIndexOf('\t');
+                int offset = Integer.parseInt(entry.substring(tab + 1));
+                if (offset >= MAX_DEPTH) {
+                    throw new InvalidQueryException("cursor ist ungültig");
+                }
+                offsets.put(entry.substring(2, tab), offset);
+            } else if (CURSOR_PENDING.matcher(entry).matches() && pending.size() < MAX_LIMIT) {
+                String[] parts = entry.split("\t", 4);
+                pending.add(new Hit(parts[1], parts[3], null, "", "", null, "-".equals(parts[2]) ? null : parts[2],
+                        null, null));
+            } else if (CURSOR_UNAVAILABLE.matcher(entry).matches()) {
+                unavailable.add(entry.substring(2));
+            } else if (CURSOR_DELIVERED.matcher(entry).matches() && delivered.isEmpty()) {
+                byte[] marks;
+                try {
+                    marks = Base64.getUrlDecoder().decode(entry.substring(2));
+                } catch (IllegalArgumentException e) {
+                    throw new InvalidQueryException("cursor ist ungültig");
+                }
+                if (marks.length % MARK_BYTES != 0 || marks.length / MARK_BYTES > MAX_DEPTH) {
+                    throw new InvalidQueryException("cursor ist ungültig");
+                }
+                for (int i = 0; i < marks.length; i += MARK_BYTES) {
+                    delivered.add(HexFormat.of().formatHex(marks, i, i + MARK_BYTES));
+                }
+            } else {
                 throw new InvalidQueryException("cursor ist ungültig");
             }
-            int tab = entry.indexOf('\t');
-            int offset = Integer.parseInt(entry.substring(tab + 1));
-            if (offset >= MAX_DEPTH) {
-                throw new InvalidQueryException("cursor ist ungültig");
-            }
-            offsets.put(entry.substring(0, tab), offset);
         }
-        return new Position(offsets, lines[0].endsWith("1"));
+        return new Position(offsets, lines[0].endsWith("1"), unavailable, delivered, pending);
     }
 
     private static String fingerprint(Query query) {
@@ -291,10 +499,44 @@ public class KeywordSearch {
         }
     }
 
-    private record Position(Map<String, Integer> offsets, boolean incomplete) {
+    /** @param pending Seiten, die beim vorigen Stapel noch luden; nur Quelle, Seite und Version */
+    private record Position(Map<String, Integer> offsets, boolean incomplete, Set<String> unavailable,
+                            Set<String> delivered, List<Hit> pending) {
     }
 
-    private record Candidate(String sourceId, SourceSearchMatch match) {
+    /** @param known eben live geprüfter Treffer derselben Seite oder {@code null} */
+    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known) {
+    }
+
+    /**
+     * Lädt die gefundenen Seiten in den Cache (ADR 0013, wie {@code KnowledgePrefetchService} im Enterprise AI Client),
+     * mit den Rechten des Aufrufers über den Beschaffungs-Use-Case.
+     */
+    @FunctionalInterface
+    public interface Prefetch {
+
+        /**
+         * Lädt und wartet begrenzt.
+         *
+         * @param hits für {@code caller} sichtbare Treffer der Quellensuche in Rangfolge, dazu was ein früherer Stapel
+         *             noch lud
+         */
+        Fill prefetch(AccessContext caller, List<Hit> hits);
+
+        /**
+         * Ausgang des Ladens.
+         *
+         * @param pending Seiten, die beim Antworten noch laden; der Cursor fragt sie im nächsten Stapel wieder ab
+         * @param failed  wie viele sich nicht laden ließen; das Ergebnis ist dann unvollständig
+         */
+        record Fill(List<Hit> pending, int failed) {
+
+            public static final Fill NONE = new Fill(List.of(), 0);
+
+            public Fill {
+                pending = List.copyOf(pending);
+            }
+        }
     }
 
     private record Checked(List<Hit> hits, boolean complete) {
@@ -354,15 +596,18 @@ public class KeywordSearch {
      * Ein Stapel.
      *
      * @param sourceId   die angefragte Quelle oder {@code null} bei der globalen Suche
-     * @param hits       sichtbare Treffer, reihum aus den Quellen; kann kürzer als das Limit sein, auch wenn noch
-     *                   Treffer folgen
+     * @param hits       sichtbare Treffer aus dem Cache, in der Rangfolge des Volltextindex; kann kürzer als das Limit
+     *                   sein, auch wenn noch Treffer folgen
      * @param sources    je Quelle des Umfangs, ob sie gesucht hat; im ersten Stapel alle, danach nur die noch offenen
-     * @param nextCursor für „Weitere laden“ mit derselben Anfrage, {@code null}, wenn keine Quelle mehr Treffer hat
-     * @param complete   keine Quelle hat mehr Treffer, und jede Quelle und jeder Treffer dieses und aller früheren
- *                   Stapel ließ sich prüfen
+     * @param nextCursor für „Weitere laden“ mit derselben Anfrage, {@code null}, wenn keine Quelle mehr Treffer hat,
+     *                   der Cache keine weiteren kennt und nichts mehr lädt
+     * @param complete   nichts folgt mehr, und jede Quelle und jeder Treffer dieses und aller früheren Stapel ließ sich
+     *                   prüfen
+     * @param loading    gefundene Seiten dieses Stapels, die noch nicht im Cache liegen; sie fehlen in {@code hits}
+     *                   und erscheinen, sobald geladen, über „Weitere laden“
      */
     public record Results(String sourceId, List<Hit> hits, List<SourceState> sources, String nextCursor,
-                          boolean complete) {
+                          boolean complete, int loading) {
 
         public Results {
             hits = List.copyOf(hits);
@@ -371,9 +616,9 @@ public class KeywordSearch {
     }
 
     /**
-     * Ein Treffer; Kopfdaten live von der Quelle, Auszug aus ihrer Suche.
+     * Ein Treffer; Kopfdaten live von der Quelle, Auszug aus dem Cache (ohne Cache aus der Suche der Quelle).
      *
-     * @param snippet Textauszug der Quelle als Klartext, leer, wenn sie keinen liefert
+     * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
      */
     public record Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
                       String version, Instant modifiedAt, String parentPageId) {
@@ -388,9 +633,11 @@ public class KeywordSearch {
     public record SourceState(String sourceId, Status status, String reason) {
 
         public enum Status {
-            /** Die Quelle hat gesucht. */
+            /** Die Quelle hat gesucht; ihre Funde sind in den Cache geladen und dort gesucht. */
             SEARCHED,
-            /** Die Quelle kann nicht selbst suchen; ihre Seiten fehlen in der Schlagwortsuche. */
+            /** Die Quelle kann nicht selbst suchen; der Volltextindex des Caches hat für sie gesucht (#180). */
+            INDEXED,
+            /** Die Quelle kann nicht selbst suchen, und es gibt keinen Index; ihre Seiten fehlen. */
             NOT_SUPPORTED,
             /** Die Quelle hat nicht oder fehlerhaft geantwortet. */
             UNAVAILABLE

@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
@@ -35,20 +36,27 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
-import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
+import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
+import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -62,8 +70,11 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -122,6 +133,8 @@ public final class Harvester implements AutoCloseable {
     public static final String OWNER = "space-harvester-core";
 
     private static final Duration POLL = Duration.ofMillis(50);
+    /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
+    private static final int SEARCH_FILL_PARALLEL = 4;
 
     private final List<AutoCloseable> resources;
     private final AccessContext caller;
@@ -191,9 +204,10 @@ public final class Harvester implements AutoCloseable {
                 AiServiceSettings ai = builder.ai;
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
-                                builder.embeddingSources)
+                                KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences), builder.embeddingSources)
                         : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
-                                .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
+                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
+                                ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -207,8 +221,15 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
-            this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
-                    clock, background);
+            // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+            PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
+                    new LocalFilesTextProjector()));
+            this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
+            LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
+            opened.add(textIndex);
+            PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
+                    new LocalFilesTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
@@ -218,13 +239,21 @@ public final class Harvester implements AutoCloseable {
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
-                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
-                    builder.maxTreeNodes);
+                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
+                    builder.maxTreeNodes, builder.cacheFreshness, clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
-            this.keywordSearch = new KeywordSearch(catalog, access);
+            SearchHitPrefetch prefetch = null;
+            if (builder.prefetchSearchHits) {
+                // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
+                prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
+                        (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
+                        SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200));
+                opened.add(prefetch);
+            }
+            this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch);
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -235,10 +264,20 @@ public final class Harvester implements AutoCloseable {
                 });
                 renewal = new PageRenewal(pages, renewals);
             }
+            SearchReranker reranker = builder.reranker;
+            if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
+                // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
+                reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
+                        builder.userAgent).reranker(), builder.ai::mayProcessExternally);
+            }
+            // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
+            SemanticPreparation preparation = embedding == null || prefetch == null ? null
+                    : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, builder.reranker);
+                    renewal, reranker, textIndex, preparation);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs)));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), builder.withheldRetention);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
@@ -253,7 +292,7 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, assetStore,
+            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
                     exportWriter, clock);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
@@ -600,6 +639,9 @@ public final class Harvester implements AutoCloseable {
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
+        private boolean prefetchSearchHits = true;
+        private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
+        private Duration withheldRetention = SpaceSync.DEFAULT_WITHHELD_RETENTION;
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
@@ -607,6 +649,8 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
+        private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
+        private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
         private SourceSecrets secretProvider;
         private EmbeddingProvider embeddingProvider;
@@ -659,7 +703,8 @@ public final class Harvester implements AutoCloseable {
         /**
          * Ein Reranker des einbettenden Programms (#188), etwa ein Cross-Encoder: ordnet bei der semantischen Suche das
          * nach Ähnlichkeit sortierte Fenster freigegebener Treffer neu; er darf nur umordnen, nie Treffer entfernen oder
-         * hinzufügen. Standard ohne.
+         * hinzufügen. Standard ohne; dann ordnet mit {@code space-harvester.ai.rerank-model} der Cross-Encoder des
+         * KI-Dienstes um (#181).
          */
         public Builder reranker(SearchReranker reranker) {
             this.reranker = Objects.requireNonNull(reranker, "reranker");
@@ -708,6 +753,19 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder ai(AiServiceSettings ai) {
             this.ai = Objects.requireNonNull(ai, "ai");
+            return this;
+        }
+
+        /**
+         * Zerlegung für die semantische Suche (#181, wie {@code knowledge.chunk.maxTokens} und
+         * {@code knowledge.chunk.overlapSentences} im Enterprise AI Client): Budget je Stück in Tokens (Standard 350,
+         * mindestens 8) und wie viele Schlusssätze das nächste Stück wiederholt (Standard 1, 0 ohne Überlappung). Eine
+         * Änderung ändert die Prozessorversion; die Seiten werden neu eingebettet.
+         */
+        public Builder embeddingChunking(int maxTokens, int overlapSentences) {
+            KnowledgeTextSegmentation.of(maxTokens, overlapSentences);
+            this.chunkTokens = maxTokens;
+            this.chunkOverlapSentences = overlapSentences;
             return this;
         }
 
@@ -802,6 +860,40 @@ public final class Harvester implements AutoCloseable {
 
         public Builder maxTreeNodes(int maxTreeNodes) {
             this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /**
+         * Ob die Schlagwortsuche gefundene Seiten in den Cache lädt, bevor sie dort sucht (ADR 0013); Standard
+         * {@code true}. Ohne findet sie nur, was schon im Cache liegt.
+         */
+        public Builder prefetchSearchHits(boolean prefetchSearchHits) {
+            this.prefetchSearchHits = prefetchSearchHits;
+            return this;
+        }
+
+        /**
+         * Wann eine Seite aus dem Cache ohne Rückfrage bei der Quelle gilt (ADR 0013): Zeitfenster ab dem Abruf und ob
+         * danach die Version geprüft oder die Seite neu abgerufen wird. Standard {@link CacheFreshness#DEFAULT}: jeder
+         * Abruf prüft die Version.
+         */
+        public Builder cacheFreshness(CacheFreshness cacheFreshness) {
+            this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
+            return this;
+        }
+
+        /**
+         * Wie lange der Abgleich die Rohdaten einer gesperrten Seite behält (ADR 0014): Meldet die Quelle dem technischen
+         * Konto „nicht gefunden“, ohne die Löschung zu bestätigen, ist die Seite sofort für jede Ausgabe gesperrt und
+         * aus den Indizes genommen; nach dieser Frist entfernt ein Abgleich auch die Rohdaten. Standard
+         * {@link SpaceSync#DEFAULT_WITHHELD_RETENTION}.
+         */
+        public Builder withheldRetention(Duration withheldRetention) {
+            Objects.requireNonNull(withheldRetention, "withheldRetention");
+            if (withheldRetention.isNegative()) {
+                throw new IllegalArgumentException("withheldRetention darf nicht negativ sein");
+            }
+            this.withheldRetention = withheldRetention;
             return this;
         }
 

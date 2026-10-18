@@ -68,7 +68,7 @@ Nicht angebunden sind:
 | Labels samt Vollständigkeit | `#toPage`, `LABELS_COMPLETE` | Kopie; `attributesHash` | gleich |
 | Anhangsliste, Download mit Bytegrenze | `#storedAttachments`, `#loadAttachmentFile` | Kopie; `core/application/assets/Assets`; fremde Weiterleitungen bewusst aus (SSRF, #90) | gleich |
 | Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` | keine | fehlt → #183 |
-| CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | Kopie über `searchPages`; Space-Filter wird nachträglich angewendet, `excludedPartitions` ungenutzt | teilweise → #179 |
+| CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | dieselbe Quelle über `KnowledgeSourceHarvestSource#searchPages(text, limit, SearchSpaces)`: `KeywordSearch.Query` mit `spaceKeys`/`excludedSpaceKeys` (REST `spaceKey`, `excludeSpaceKey`) wird zu `space in (…)` und `space not in (…)` in der CQL, ohne Obergrenze (`SourceQuery.withIncludedPartitions`/`withExcludedPartitions`) | gleich (#179) |
 | URL-Auflösung: `pageId=`, `/spaces/K/pages/ID`, `/x/…` | `conf/ConfluenceLinks`, `#resolveAddress` | `core/application/query/PageUrls` | gleich |
 | URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | `Harvester.addresses()` (`PageAddresses`), `pageByUrl`, REST `GET /api/v1/addresses` (#239); dazu Lesezeichen `space-harvester://…` | gleich (Vergleichstest Adressen) |
 | Paginierung, Wiederholung bei 429/5xx mit Backoff, Fehlerabbildung, HTML-statt-Datei-Erkennung | `#paged`, `#retryable`, `#statusFailure`, `HtmlResponseDiagnosis` | Kopie; `maxRetries=2`, `InFlightLimit`, `SourceAccessException.Reason` | gleich |
@@ -85,9 +85,9 @@ Nicht angebunden sind:
 | Paginierung | `limit`, Vorladen über `KnowledgePrefetchService` | Cursor je Quelle, „Weitere laden“ | gleich |
 | Metadaten und Auszüge je Treffer | `SourceSearchHit`, `ConfluenceRestClient#excerpt` | `KeywordSearch.Hit` (Version, Änderung, URL, Space, Elternseite, Auszug) | gleich |
 | Rechte je Treffer | eigene Anmeldung | `AccessGuard` je Treffer, gesperrte fallen ohne Spur weg | SH+ |
-| Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | keiner | fehlt → #180 |
-| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | nur Titel und Metadaten (`core/persistence/lucene/LucenePageSearchIndex`) | fehlt → #180 |
-| Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | keine (Zielablauf ADR 0011, Schritt 2) | fehlt → #180 |
+| Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | Mit Cache sucht `KeywordSearch` im Volltextindex des Caches (ADR 0013), damit auch über Quellen ohne eigene Suche (`PageTextIndex`, Status `INDEXED`, REST `indexed`); Treffer verlangen zusätzlich das Inhaltsrecht; ohne Cache (Server ohne `space-harvester.cache.directory`) liefert sie die geprüften Treffer der Quellen, Quellen ohne eigene Suche sind dann `NOT_SUPPORTED` | gleich (Vergleichstest Suche, #180) |
+| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff; lokale Dateien nur als Text (UTF-8, JSON, XML), PDF und Word werden nicht extrahiert (`LocalFilesTextProjector`), der EAC liest sie über `DocumentExtraction.registry()` | teilweise → #183 (Textdateien gleich laut Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung) |
+| Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | `SearchHitPrefetch` lädt jede sichtbare gefundene Seite eines Stapels, deren Version nicht im Cache liegt, seitenweise mit den Rechten des Aufrufers über den Beschaffungs-Use-Case in den Cache, auch für delegierte Benutzer (nur während ihres Aufrufs); die Suche wartet höchstens 5 s und sucht dann im Cache, Nachzügler zählen in `Results.loading()` (REST `loading`) und rücken mit dem nächsten Stapel nach (#255); `Harvester.builder().prefetchSearchHits(boolean)`, Standard an | gleich (Vergleichstest Suche) |
 
 ## 3. Navigation
 
@@ -105,7 +105,7 @@ Nicht angebunden sind:
 |---|---|---|---|
 | Authentifizierung beim Abruf | `ConfluenceKnowledgeSource#withSession` | Kopie; Client-Token am Dienst | gleich |
 | Rechteprüfung | `chalco/tamias/…/ClientResourceAccessPolicy` (Einbenutzer) | `AccessGuard`, `CorpusReleasePolicy`, `DelegatedAccessPolicy` je Seite | SH+ |
-| Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1` | SH+ |
+| Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1`; Zeitfenster ab Inhaltsabruf bzw. letzter Prüfung (`space-harvester.cache.max-age`, Standard `0s`) und abschaltbare Versionsprüfung (`space-harvester.cache.version-check`, sonst Neuabruf), im Core `Harvester.builder().cacheFreshness(CacheFreshness)`; Rechte werden auch bei frischen Seiten geprüft (#256, ADR 0013) | SH+ |
 | Quelle nicht erreichbar → Cache-Stand | Prefetch | `PageQueries#page` liefert Cache bei `UNAVAILABLE`/`RATE_LIMITED` | gleich |
 | Text der Seite zum Lesen | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `ReadingViews` (#176): Lesetext aus `body.view` mit ausgeführten Makros | gleich (Vergleichstest Leseansicht) |
 | Ausgeführte Makros (`include`, `excerpt-include`, `children`) in Word, PDF und Markdown | über `body.view` im Export | Leseansicht im Datenbestand (`views/`, `export-reading-view/v1`, `ConversionInput#readingView`, Q #222), in Word, PDF und Markdown aus der Leseansicht, ohne Quellabfrage (R #230); fehlt sie, Hinweis und `OMITTED_CONTENT` | gleich (Vergleichstest Makros) |
@@ -117,6 +117,7 @@ Nicht angebunden sind:
 |---|---|---|---|
 | Originaldaten persistent | keine (In-Memory-Payloads, Index hält Text) | `core/persistence/lucene/LucenePageCache` (Rohbytes + SHA-256) | SH+ |
 | Versioniert, inkrementell, Löschungen | `RefreshKnowledgeSourceUseCase`, `chalco/ResourceArchive` | `SpaceSync`, `SyncPlanner`, `RemovalCheck`, Generationen | SH+ |
+| Getrennte Löschfeststellung | `ResourceArchive#removeByUri`: an der Quelle weggefallen, ohne Unterscheidung zwischen gelöscht und nicht mehr sichtbar | `RemovalCheck.Verdict`: `DELETED` nur bei bestätigter Löschung (`HarvestSource.confirmsDeletion()`, heute lokale Dateien) wird entfernt; `INACCESSIBLE` (für das technische Konto nicht sichtbar) wird sofort gesperrt und aus den Indizes genommen, die Rohdaten nach `space-harvester.sync.withheld-retention` (Standard 30 Tage) entfernt; `SyncSummary`/REST mit `withheld` und `purged`, `removed` zählt nur bestätigte Löschungen; Benutzerrechte werden bei jeder Ausgabe unabhängig geprüft (#263, [ADR 0014](adr/0014-abgleich-berechtigung-suche-getrennt.md)) | SH+ |
 | Transparentes Nachladen | `KnowledgePrefetchService` | `PageQueries`, `PageCacheFill` (ADR 0010) | gleich |
 
 ## 6. Bilder
@@ -190,11 +191,12 @@ Allgemeine Infrastruktur gehört in den Core, Rechercheplanung bleibt im EAC (AD
 | Embeddings über OpenAI-kompatiblen Dienst, Modellkatalog | `embedding-openai/…/OpenAiCompatibleEmbeddingAdapter`, `model-kipitz/…/KipitzModelCatalogAdapter` | dieselben Klassen (Kopie) über `core/source/ai/RemoteAi` | gleich |
 | Lokale Embeddings im Prozess (ONNX) | `text-local/…/LocalEmbeddingAdapter`, `text-onnx` | entfernt (ADR 0011) | bewusst nicht; der EAC hängt seinen lokalen Adapter als eigenen `EmbeddingProvider` ein → #188 |
 | Vektorablage je Modell | `chalco/pinakes/…/FileVectorIndex` (exakt) | `LuceneEnrichmentStore` (HNSW) | gleich |
-| Zerlegung in Abschnitte mit Satzgrenzen und Token-Budget | `astu/…/knowledge/KnowledgeChunker`, `KnowledgeChunkingPolicy`, `SentenceSplitter` | `EmbeddingProcessor` (Abschnitte, Zeichen) | teilweise → #181 |
+| Zerlegung in Abschnitte mit Satzgrenzen und Token-Budget | `astu/…/knowledge/KnowledgeChunker`, `KnowledgeChunkingPolicy`, `SentenceSplitter` | `KnowledgeTextSegmentation` mit denselben Klassen (`SentenceSplitter`, `KnowledgeChunkingPolicy.defaults()`: 350 Tokens, ein Satz Überlappung) im `EmbeddingProcessor` (#252); Token-Budget und Überlappung einstellbar wie `knowledge.chunk.maxTokens`, `knowledge.chunk.overlapSentences`: `space-harvester.ai.embedding-chunk-tokens` (350), `embedding-chunk-overlap-sentences` (1), im Core `Harvester.builder().embeddingChunking(tokens, overlap)` (#256) | gleich (#181) |
 | Semantische Passagen (Themenwechsel) | `astu/acropolis/…/passage/PassageSegmentation`, `TopicClusterer` | keine | fehlt → #181 |
-| Hybride Suche (Volltext + Vektor, Reciprocal Rank Fusion) | `rag/RetrieveKnowledgeUseCase`, `rag/ReciprocalRankFusion` | `RelevanceSearch` (Titel + Vektor, Kosinus) | teilweise → #181 |
-| Reranking über Modell (`/rerank`) | `model-kipitz/…/KipitzRerankAdapter`, `rag/CrossEncoderRanking` | SPI `SearchReranker`, nur `CosineReranker` | teilweise → #181 |
-| Verwandte Abschnitte | `chalco/KnowledgeRelationsPort`, `know/IndexKnowledgeRelations` | keine | fehlt → #181 |
+| Semantische Suche über frisch gefundene Seiten | `SearchDrivenIndexingUseCase#searchAndIndex` (Agent-Werkzeug `knowledge_search`): live suchen, Treffer vorladen, zerlegen, einbetten, darauf warten | mit Haken (`sort=relevance`, „Semantische Suche (experimentell)“) bereitet `RelevanceSearch` selbst vor: Quellen finden wie in der Schlagwortsuche, gefundene Seiten mit den Rechten des Aufrufers laden, fehlende oder veraltete Embeddings im Aufruf berechnen (höchstens 10 s, sonst `complete=false`), dann einmal über die Vektoren suchen (#258, `SemanticPreparation`, ADR 0013) | gleich, mit Zeitgrenze |
+| Hybride Suche (Volltext + Vektor, Reciprocal Rank Fusion) | `rag/RetrieveKnowledgeUseCase`, `rag/ReciprocalRankFusion` | keine Fusion: die Schlagwortsuche findet über die Suche der Quellen, lädt die Funde in den Cache und liefert Treffer nur aus dessen Volltextindex (`KeywordSearch.searchesTheCache()`, REST `origin=cache`, #255; ohne konfigurierten Cache die geprüften Treffer der Quellen, `origin=source`), semantische Suche nur mit Haken bzw. `sort=relevance` und nur über die Vektoren (`reranker` = `embedding-cosine@…`) | gewollte Abweichung ([ADR 0013](adr/0013-suche-ueber-den-cache.md)) |
+| Reranking über Modell (`/rerank`) | `model-kipitz/…/KipitzRerankAdapter`, `rag/CrossEncoderRanking` | `ModelReranker` über `POST /rerank` des KI-Dienstes, eingeschaltet mit `space-harvester.ai.rerank-model` (`AiServiceSettings.rerankModel`, `RemoteAi.reranker()`), sonst `CosineReranker` (#248), nur in der semantischen Suche (ADR 0013); gewollte Abweichung: kein `topK`, der Core ordnet alle Kandidaten nur um und schneidet nichts ab | gleich (#181) |
+| Verwandte Abschnitte | `chalco/KnowledgeRelationsPort`, `know/IndexKnowledgeRelations` | `RelevanceSearch.related` mit `RelatedSections` (#260), REST `GET /api/v1/sources/{sourceId}/pages/{pageId}/related`: dieselben Kantenarten (`SIMILAR_TO` ab 0,80 ohne das Stück und seine Nachbarstücke, `PARENT`, `NEXT`/`PREVIOUS`, `SAME_SECTION` nächstgelegen zuerst), je Art höchstens drei, erste Kante je Ziel gewinnt, `LINKS_TO` fehlt in beiden; zusätzlich Rechte je Zielseite. Das Anreichern der RAG-Treffer mit Nachbarn (`RetrieveKnowledgeUseCase`, `relationSeeds`/`relationWeight`) bleibt Rechercheorchestrierung im EAC | gleich (#181, am Code verglichen) |
 | Live-Prüfung jedes Treffers, Freigabe je Quelle für externe Verarbeitung | — | ADR 0011, Punkte 4 und 7 | SH+ |
 | Suchlauf-Protokoll | `search-run-api/…/KnowledgeSearchRunPort`, `search-run-h2` | keines | fehlt → #182 |
 | Metadaten-Fakten je Ressource | `fact-api/…/FactStorePort`, `fact-h2` | Anreicherungen je Seite (`EnrichmentStore`), nicht abfragbar | fehlt → #182 |
@@ -245,11 +247,11 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #176 | Leseansicht (`body.view`/`export_view`) als Core-Use-Case | Q |
 | #177 | Live-Navigation: Kindseiten, Breadcrumbs, Querverweise | Q |
 | #178 | URL- und Ressourcenauflösung vollständig | Q |
-| #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q |
-| #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q |
-| #181 | Hybride Suche: Zerlegung, RRF, Rerank-Modell, verwandte Abschnitte | Q |
+| #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q, erledigt |
+| #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
+| #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013) | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
-| #183 | Textextraktion, Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
+| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
 | #184 | `ImageDescriber` über den externen KI-Dienst | Q |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | Q |
 | #186 | Export einzelner Seiten und Teilbäume | Q |
@@ -291,13 +293,15 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/` sowie Kinder, Breadcrumbs und Querverweise
    (`children`, `position`, `crossReferences`) in `navigation.properties`, außerdem die Schritte der
    Quellenverwaltung (`KnowledgeSourceManagement` mit dem echten Confluence-Provider über dem Fake) in
-   `management.properties` sowie die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties`.
+   `management.properties`, die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties` sowie die
+   Suche (`SearchKnowledgeSourcesUseCase` über eine indexierte Dateiquelle, Vorladen der Confluence-Treffer mit
+   `KnowledgePrefetchService`) in `search.properties`.
    Die CI von Space Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
    die Navigation (`Harvester.navigation()`), spielt die Schritte der Quellenverwaltung mit
-   `Harvester.sourceManagement()` nach und vergleicht mit den Referenzen. Bericht:
+   `Harvester.sourceManagement()` nach, sucht mit `Harvester.keywordSearch()` und vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -323,6 +327,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
 | Adressen | je Form (#178) | dieselbe Seite wie beim Maßstab für Seiten-ID, `/spaces/…/pages/…`, `display/KEY/Titel`, `viewpage.action?spaceKey&title`, Space-Startseite, `confluence://`-Bookmark und Ressourcen-ID; keine Seite für unbekannten Titel und fremden Host |
+| Suche | je Suchbegriff und Live-Treffer (#180) | Quelle ohne eigene Suche: dieselben Dateien wie beim Maßstab (eine, zwei, Großschreibung, keine), jeder Auszug zeigt den Suchbegriff; jeder Treffer der Live-Suche in Confluence danach vorgeladen |
 | Quellenverwaltung | Szenario (#188) | je Schritt dasselbe Ergebnis: prüfen (vollständig, ohne Basis-URL, dasselbe Ziel doppelt), Verbindung testen (erreichbar, nicht erreichbar, unvollständig), hinzufügen, ändern mit und ohne neues Ziel (Daten bleiben bzw. werden zurückgezogen), abschalten, entfernen (Daten zurückgezogen, gemessen am Cache) |
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
@@ -350,6 +355,7 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 ### Noch nicht abgedeckt
 
-Suche und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen: Space-Filter der Suche in der Anfrage #179, Text aus Anhängen #183,
+Die Trefferauswahl der Live-Suche vergleicht `:parity-tests` nicht, weil der Fake feste Treffer liefert und beide Seiten
+dieselbe CQL bauen. Anhänge fehlen noch, dafür fehlen Core-Schnittstellen: Text aus Anhängen #183,
 Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.

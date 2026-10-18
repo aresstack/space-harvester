@@ -28,6 +28,8 @@ modules=(
 
 # Einzelne Klassen aus weiteren Modulen: <Modulpfad>:<Klassenpfad unter src/main/java ohne .java>.
 # SimpleContentDetector (nur JDK) erkennt Dateitypen für source-localfiles, ohne Apache Tika mitzunehmen.
+# KipitzRerankAdapter (#181) liest Fehlermeldungen über KipitzSpeechAdapter.errorMessage; deshalb kommen der
+# Sprachadapter und seine drei Sprach-Schnittstellen mit, ohne dass der Space Harvester sie benutzt.
 module_classes=(
   proasteion/emporion/deigma/document-tika:com/aresstack/enterpriseai/proasteion/emporion/deigma/tika/SimpleContentDetector
   model-api:com/aresstack/enterpriseai/model/api/ModelCatalogPort
@@ -36,6 +38,13 @@ module_classes=(
   model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelCatalogConfig
   model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelListParser
   model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzConnections
+  model-api:com/aresstack/enterpriseai/model/api/RerankPort
+  model-api:com/aresstack/enterpriseai/model/api/RerankException
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzRerankAdapter
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzSpeechAdapter
+  speech-api:com/aresstack/enterpriseai/speech/api/SpeechSynthesisPort
+  speech-api:com/aresstack/enterpriseai/speech/api/SpeechSynthesisException
+  speech-api:com/aresstack/enterpriseai/speech/api/SynthesizedSpeech
 )
 
 # Aus astu nur die Klassen, die die Module oben (inklusive Tests) transitiv brauchen.
@@ -43,6 +52,8 @@ astu_classes=(
   knowledge/KnowledgeDocument knowledge/KnowledgeMetadata knowledge/KnowledgeResource
   knowledge/KnowledgeResourceId knowledge/KnowledgeRevision knowledge/KnowledgeStructuralBlock
   knowledge/KnowledgeText knowledge/SourceAddress knowledge/UnicodeClasses
+  knowledge/SentenceSplitter knowledge/KnowledgeTokenCounter knowledge/WordAndSymbolTokenCounter
+  knowledge/KnowledgeChunkingPolicy
   security/SecretRef
   embedding/EmbeddingModelIdentity embedding/EmbeddingVector embedding/EmbeddingWorldMismatchException
   modelcatalog/ModelCategory modelcatalog/ModelClassification modelcatalog/ModelDescriptor

@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -34,6 +35,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.Locale;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -67,6 +73,9 @@ class CoreParityTest {
     private static final Map<String, List<String>> CORE_OMITTED = new LinkedHashMap<>();
     @TempDir
     static Path managed;
+    private static final Map<String, String> CORE_SEARCH = new LinkedHashMap<>();
+    @TempDir
+    static Path searched;
 
     @BeforeAll
     static void exportThroughTheCore() throws Exception {
@@ -113,6 +122,80 @@ class CoreParityTest {
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
         sourceManagement();
+        search();
+    }
+
+    /**
+     * Suche (#180) wie {@code EacParityExport.search}: Eine Dateiquelle ohne eigene Suche wird abgeglichen und dann im
+     * Volltextindex des Caches gesucht (Status {@code INDEXED}); danach die Live-Suche in Confluence, deren sichtbare
+     * Treffer der Core im Hintergrund in den Cache lädt ({@code prefetchSearchHits}, Standard an). Dieselben Schlüssel
+     * wie {@code eac/search.properties}.
+     */
+    private static void search() throws Exception {
+        Path files = Files.createDirectories(searched.resolve("files"));
+        for (String[] file : ParitySpace.FILES) {
+            Files.writeString(files.resolve(file[0]), file[1], StandardCharsets.UTF_8);
+        }
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("docs", "files", "Dokumente", null, null,
+                        Map.of("directory", files.toString())))
+                .source(config("wiki", "Wiki", server.baseUrl()))
+                .dataDirectory(searched.resolve("data"))
+                .build()) {
+            JobStatus sync = harvester.await(harvester.sync("docs", "docs").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            awaitEnrichments(harvester);
+            for (String[] query : ParitySpace.SEARCHES) {
+                KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                        new KeywordSearch.Query(query[1], "docs", Set.of(), Set.of()), null, 10);
+                assertThat(results.sources()).extracting(KeywordSearch.SourceState::status)
+                        .containsExactly(KeywordSearch.SourceState.Status.INDEXED);
+                Set<String> found = new TreeSet<>();
+                boolean snippets = true;
+                for (KeywordSearch.Hit hit : results.hits()) {
+                    found.add(new String(Base64.getUrlDecoder().decode(hit.pageId()), StandardCharsets.UTF_8));
+                    snippets &= hit.snippet() != null && hit.snippet().toLowerCase(Locale.ROOT)
+                            .contains(query[1].toLowerCase(Locale.ROOT));
+                }
+                CORE_SEARCH.put("search." + query[0], found.isEmpty() ? "-" : String.join(",", found));
+                CORE_SEARCH.put("search." + query[0] + ".snippet", found.isEmpty() ? "-" : snippets ? "ja" : "nein");
+            }
+
+            harvester.keywordSearch().search(harvester.caller(),
+                    new KeywordSearch.Query(ParitySpace.LIVE_SEARCH, "wiki", Set.of(), Set.of()), null, 10);
+            Instant deadline = Instant.now().plusSeconds(30);
+            while (!cachedPages(harvester).containsAll(List.of(ParitySpace.LIVE_HITS))
+                    && Instant.now().isBefore(deadline)) {
+                Thread.sleep(50);
+            }
+            Set<String> cached = cachedPages(harvester);
+            for (String page : ParitySpace.LIVE_HITS) {
+                CORE_SEARCH.put("prefetch." + page, cached.contains(page) ? "ja" : "nein");
+            }
+        }
+    }
+
+    private static Set<String> cachedPages(Harvester harvester) {
+        try {
+            Set<String> pages = new TreeSet<>();
+            harvester.pages().pages(harvester.caller(), "wiki", ParitySpace.SPACE, null, 100).pages()
+                    .forEach(page -> pages.add(page.pageId()));
+            return pages;
+        } catch (CacheMissException e) {
+            return Set.of();
+        }
+    }
+
+    private static void awaitEnrichments(Harvester harvester) throws InterruptedException {
+        Instant deadline = Instant.now().plusSeconds(60);
+        while (Instant.now().isBefore(deadline)) {
+            var enrichments = harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT);
+            if (!enrichments.isEmpty() && enrichments.stream().allMatch(job -> job.finishedAt() != null)) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Anreicherung läuft nach 60 s noch");
     }
 
     /**
@@ -236,6 +319,14 @@ class CoreParityTest {
         List<Finding> addresses = ParityComparison.addresses(eacProperties("addresses.properties"), CORE_ADDRESSES);
         report.append('\n').append(ParityReport.section("Adressen", addresses, gaps));
         for (Finding finding : addresses) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
+        List<Finding> search = ParityComparison.search(eacProperties("search.properties"), CORE_SEARCH);
+        report.append('\n').append(ParityReport.section("Suche", search, gaps));
+        for (Finding finding : search) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
                         + finding.core() + "; " + finding.detail() + ")");

@@ -54,6 +54,11 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
             }
 
             @Override
+            public void withhold(PageKey key) {
+                batch.withhold(key);
+            }
+
+            @Override
             public void commit(SyncBaseline next) {
                 if (!next.sourceId().equals(sourceId) || !next.spaceKey().equals(spaceKey)) {
                     throw new IllegalArgumentException("Generation gehört zu " + next.sourceId() + "/"

@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -26,8 +27,8 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
@@ -92,7 +93,7 @@ class RelevanceSearchApiTest {
                 public List<float[]> embed(List<String> texts) {
                     return texts.stream().map(RelevanceSearchApiTest::axes).toList();
                 }
-            }, 1500);
+            }, 1500, KnowledgeTextSegmentation.defaults());
         }
     }
 
@@ -148,6 +149,32 @@ class RelevanceSearchApiTest {
         JsonNode body = json.readTree(response.body());
         assertThat(body.get("hits").isEmpty()).isTrue();
         assertThat(response.body()).doesNotContain("similarity").doesNotContain("900");
+    }
+
+    @Test
+    void relatedSectionsComeFromTheStoredVectorsAndNeedContentAccess() throws Exception {
+        HttpResponse<String> response = related(TestClient.TOKEN, "102", "kind=similar-to&minSimilarity=0.5");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("origin").get("chunk").asInt()).isZero();
+        assertThat(body.get("relations").valueStream().map(relation -> relation.get("page").get("pageId")
+                .asString())).containsExactly("101", "900");
+        assertThat(body.get("relations").get(0).get("kind").asString()).isEqualTo("similar-to");
+        assertThat(body.get("relations").get(0).get("score").asDouble()).isBetween(0.7999, 0.8001);
+        assertThat(body.get("complete").asBoolean()).isTrue();
+
+        HttpResponse<String> hidden = related(METADATA_ONLY_TOKEN, "102", "");
+        assertThat(hidden.statusCode()).isEqualTo(404);
+        assertThat(hidden.body()).doesNotContain("101").doesNotContain("900");
+        assertThat(related(TestClient.TOKEN, "102", "kind=links-to").statusCode()).isEqualTo(400);
+    }
+
+    private HttpResponse<String> related(String token, String pageId, String parameters) throws Exception {
+        URI uri = URI.create("http://localhost:" + environment.getProperty("local.server.port")
+                + "/api/v1/sources/wiki/pages/" + pageId + "/related?" + parameters);
+        return http.send(HttpRequest.newBuilder(uri).header("Authorization", "Bearer " + token).build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private void embed(String pageId, String vector) {

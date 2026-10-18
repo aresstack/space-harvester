@@ -37,6 +37,16 @@ public interface HarvestSource {
     }
 
     /**
+     * Ob {@link SourceAccessException.Reason#NOT_FOUND} aus {@link #pageMetadata(String)} eine Löschung autoritativ
+     * bestätigt (ADR 0014, Punkt 4), etwa eine fehlende Datei in einem lesbaren Verzeichnis. Standard {@code false}:
+     * „nicht gefunden“ kann auch heißen, dass das technische Konto die Seite nicht mehr sieht (Confluence antwortet
+     * dann ebenfalls mit 404).
+     */
+    default boolean confirmsDeletion() {
+        return false;
+    }
+
+    /**
      * Alle Partitionen der Quelle (bei Confluence: Spaces), die mit den konfigurierten Zugangsdaten sichtbar sind;
      * ungekürzt.
      *

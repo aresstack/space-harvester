@@ -178,6 +178,47 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Suche (#180): je Suche über eine Quelle ohne eigene Suche die gefundenen Dateien ({@code -}: keine) und ob jeder
+     * Auszug den Suchbegriff zeigt ({@code ja}/{@code nein}), je Live-Treffer, ob er vorgeladen wurde. Findet der Core
+     * eine Datei nicht, fehlt ihm ein Auszug oder lädt er einen Treffer nicht vor, ist das eine Lücke; findet er
+     * zusätzlich etwas, kann er mehr. Fehlt ein Ergebnis im Core ganz, ist das ebenfalls eine Lücke.
+     */
+    public static List<Finding> search(Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String key = entry.getKey();
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(key, "fehlt");
+            Verdict verdict;
+            if (!core.containsKey(key)) {
+                verdict = Verdict.CORE_WENIGER;
+            } else if (expected.equals(actual)) {
+                verdict = Verdict.GLEICH;
+            } else if (yesNo(expected) && yesNo(actual)) {
+                verdict = expected.equals("ja") ? Verdict.CORE_WENIGER : Verdict.CORE_MEHR;
+            } else {
+                verdict = items(actual).containsAll(items(expected)) ? Verdict.CORE_MEHR : Verdict.CORE_WENIGER;
+            }
+            String title = key.startsWith("prefetch.") ? "Live-Treffer " + key.substring("prefetch.".length())
+                    + " vorgeladen"
+                    : key.endsWith(".snippet") ? "Auszug zeigt den Suchbegriff: "
+                    + key.substring("search.".length(), key.length() - ".snippet".length())
+                    : "Treffer: " + key.substring(key.indexOf('.') + 1);
+            findings.add(new Finding("suche", key, title, expected, actual, verdict,
+                    verdict == Verdict.CORE_WENIGER ? "im Core weniger oder nicht gemessen" : ""));
+        }
+        return findings;
+    }
+
+    private static boolean yesNo(String value) {
+        return value.equals("ja") || value.equals("nein");
+    }
+
+    private static Set<String> items(String value) {
+        return value.equals("-") ? Set.of() : new java.util.TreeSet<>(List.of(value.split(",")));
+    }
+
     /** Titel der Prüfpunkte der Quellenverwaltung (#188), in der Reihenfolge des Berichts. */
     private static final Map<String, String> MANAGEMENT = Map.ofEntries(
             Map.entry("validate.complete", "Vollständige Einstellungen sind gültig"),

@@ -356,6 +356,7 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/children[?cursor=…]` | Direkte Kindseiten einer Seite live, wie oben (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/ancestors` | Breadcrumbs: Space mit Namen, Vorfahren von oben nach unten, die Seite selbst; live (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/links` | Querverweise auf andere Seiten der Quelle (ausgehend; eingehend nur, wenn die Quelle sie vollständig kennt, `incomingSupported`); verlangt `content`, Ziele ohne Freigabe fehlen (#177) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/related[?chunk=…&kind=…]` | Verwandte Abschnitte eines eingebetteten Stücks wie im Enterprise AI Client: ähnliche Stücke (`similar-to`, ab `minSimilarity` 0,80), Elternseite, Nachbarstücke, gleicher Abschnitt; aus den gespeicherten Vektoren, nichts geht an den KI-Dienst; verlangt `content`, Ziele ohne Freigabe fehlen (#181, [EMBEDDINGS.md](docs/EMBEDDINGS.md#verwandte-abschnitte)) |
 | `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre Adresse: URL mit Seiten-ID, `/display/KEY/Titel`, Space-Startseite, `confluence://…`, Ressourcen-ID oder Lesezeichen `space-harvester://…` (#178) |
 | `GET /api/v1/addresses?address=…` | Eine Adresse über alle Quellen auflösen; je Treffer Seite und Lesezeichen (#178) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
@@ -429,7 +430,14 @@ Jeder Abruf einer Einzelseite prüft zuerst live bei der Quelle Recht und Versio
 Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
 geladene Payload (`content-changed`), die dabei im Cache abgelegt wird. Konnte sie nicht abgelegt werden (ein Abgleich
 schreibt gerade), tragen Abweichungen vom Cache `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand
-`stale`. Ist die Quelle für die Prüfung nicht erreichbar, kommt ohne `refresh` der Cache-Stand ungeprüft (ohne
+`stale`. Mit Zeitfenster ([ADR 0013](docs/adr/0013-suche-ueber-den-cache.md), Punkt 4) entfällt die Rückfrage:
+`space-harvester.cache.max-age` (Standard `0s`, im Core `Harvester.builder().cacheFreshness(…)`, höchstens 365 Tage)
+lässt eine Seite ab ihrem Abruf (`retrievedAt`, mit dem Cache gespeichert, übersteht also einen Neustart) ohne
+Rückfrage gelten; Beispiel: abgerufen um 10:00, `max-age: 6h`, bis 16:00 kommt die Seite ohne Frage an die Quelle aus
+dem Cache. Danach prüft der Abruf die Version (`space-harvester.cache.version-check: true`, Standard), und eine
+bestätigte Version öffnet ein neues Fenster; mit `false` wird die Seite stattdessen neu abgerufen. Die Rechte gelten
+auch im Fenster, bei delegierter Anmeldung mit der Identität des Benutzers; `refresh=true` fragt immer. Ist die Quelle
+für die Prüfung nicht erreichbar, kommt ohne `refresh` der Cache-Stand ungeprüft (ohne
 `X-Page-Refresh`), aber nur, wenn die Zugriffspolicy die Seite freigibt; `refresh=true` liefert nie ungeprüft. Die
 Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
@@ -470,17 +478,24 @@ und kommen nur von einem externen, OpenAI-kompatiblen KI-Dienst (`space-harveste
 diese Einstellungen ändert sich nichts ([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md),
 [ADR 0011](docs/adr/0011-embeddings-ueber-externen-ki-dienst.md)).
 
-**Schlagwortsuche ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 9):** Mit `text` sucht
-der Harvester in jeder Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über `/rest/api/search` wie die
-Websuche, also Titel und Inhalt), und führt die Treffer reihum zusammen (`origin: source`). Er lädt keine Seiten und
-legt nichts ab; den Inhalt beschafft erst das Öffnen einer Seite. Jeder Treffer trägt Titel, Textauszug (`snippet`),
-`url`, Version, Quelle und Space; vorher liest der Harvester die Kopfdaten der Seite live und prüft an ihnen
-`metadata` für genau diese Seite. `nextCursor` lädt weitere Treffer (höchstens 1000 je Quelle). `sources` nennt je
-Quelle `searched`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
-`complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) und `excludeSpaceKey` (ohne diese,
-wiederholbar) gehen wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), damit Treffer anderer Spaces
-die gesuchten nicht verdrängen. Eine Auswahl wird als Ausschluss aller übrigen Spaces gesetzt (Spaceliste 60 s gemerkt),
-solange das höchstens 200 sind; darüber filtert nur die Nachprüfung an den Kopfdaten, die ohnehin jeden Treffer prüft.
+**Schlagwortsuche über den Cache ([ADR 0013](docs/adr/0013-suche-ueber-den-cache.md)):** Mit `text` sucht der
+Harvester in drei Schritten. Erst findet jede Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über
+`/rest/api/search` wie die Websuche, also Titel und Inhalt), Kandidaten; der Harvester liest ihre Kopfdaten live und
+prüft an ihnen `metadata` für genau diese Seite. Dann lädt er die sichtbaren Kandidaten, deren Version nicht im Cache
+liegt, mit den Rechten des Aufrufers in den Cache (alle des Stapels, gleiche Versionen nicht erneut; ohne vorherigen
+Abgleich). Zuletzt sucht der Volltextindex über den Cache (BM25 über Titel und Lesetext, Auszug als Textfenster,
+Verzeichnis `text/` neben dem Cache), auch für Quellen ohne eigene Suche wie lokale Dateien (`indexed` in `sources`,
+ohne Cache `not-supported`). Nur von dort kommen Treffer (`origin: cache`); Ergebnislisten werden nicht
+zusammengeführt. Jeder Treffer verlangt `metadata` und `content`, weil Fundstelle und Auszug aus dem Inhalt stammen.
+Die Suche wartet höchstens 5 s auf das Laden; was dann noch lädt, zählt `loading` und erscheint über `nextCursor`.
+Delegierte Benutzer laden nur während ihrer Anfrage. Jeder Treffer trägt Titel, Textauszug (`snippet`), `url`,
+Version, Quelle und Space. `nextCursor` findet weiter (höchstens 1000 je Quelle) und sucht erneut im Cache, ohne
+ausgelieferte Seiten zu wiederholen. `sources` nennt je Quelle `searched`, `indexed`, `not-supported` oder
+`unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und `complete` ist dann `false`. Nie
+Embeddings, keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `space in (…)` und `excludeSpaceKey`
+(ohne diese, wiederholbar) wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), ohne Obergrenze der
+Spaces, und gilt ebenso im Volltextindex. Im Core lädt `Harvester.builder().prefetchSearchHits(false)` nichts; dann
+findet die Suche nur, was schon im Cache liegt.
 
 **Suche im Index (#28):** Ohne `text` sucht `GET /api/v1/search?sourceId=…`
 in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
@@ -513,8 +528,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 **Suche nach Relevanz (#89), experimentell:** die semantische Suche; die Standardsuche ist die Schlagwortsuche oben.
 `sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
 die Wörter aus `title`) liefert genau einen Stapel (kein `cursor`; `complete=false` nur, wenn ein Kandidat bei der Quelle nicht prüfbar war) aus höchstens 100 Kandidaten der
-Vektorsuche und der Titelsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet
-nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
+Vektorsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet nach der
+Kosinusähnlichkeit zu den gespeicherten Embeddings. Ergebnislisten werden nicht zusammengeführt, Volltext- und
+Titeltreffer kommen nicht hinzu ([ADR 0013](docs/adr/0013-suche-ueber-den-cache.md)). Alle Filter gelten
 weiter. Kandidaten der Vektorsuche brauchen `content` für ihre Seite; `relevance` (Ähnlichkeit, Abschnitt, `freshness`)
 steht nur an Treffern mit `content`-Freigabe. Jeder Treffer wird vor der Auslieferung live bei der Quelle auf Recht und Version geprüft (ADR 0011,
 Punkt 7). Ohne eingerichteten KI-Dienst, oder wenn er die Anfrage nicht
@@ -532,7 +548,11 @@ wird erst entfernt, wenn die Quelle sie einzeln als nicht vorhanden oder in eine
 
 **Abgleich als Auftrag (#16):** `POST …/spaces/{spaceKey}/syncs` verlangt die Freigabe `sync` für den Space und
 antwortet sofort mit 202. Der Lauf lädt nur neue und geänderte Seiten, übernimmt reine Metadaten- und Labeländerungen
-ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung. Leser sehen seine Änderungen erst zusammen mit
+ohne Inhaltsabruf und entfernt fehlende Seiten erst nach Einzelprüfung: Bestätigt die Quelle die Löschung (lokale
+Dateien), fällt die Seite samt Indizes weg (`removed`); meldet sie dem technischen Konto nur „nicht gefunden“
+(Confluence), ist die Seite sofort für jede Ausgabe gesperrt und aus den Indizes genommen (`withheld`), ihre Rohdaten
+entfernt erst ein Lauf nach `space-harvester.sync.withheld-retention` (Standard `30d`, `purged`); ein verweigerter
+Zugriff ändert nichts ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)). Leser sehen seine Änderungen erst zusammen mit
 der neuen Generation; ein abgebrochener, unvollständiger oder überholter Lauf hinterlässt nichts. `state` ist
 `completed` nur mit neu bestätigter Generation, in der jede Seite abgeglichen ist; sonst `failed` mit `error.code`
 `SYNC_INCOMPLETE` (nichts übernommen), `SYNC_CONFLICT` (nichts übernommen) oder `SYNC_PARTIAL` (Generation bestätigt,

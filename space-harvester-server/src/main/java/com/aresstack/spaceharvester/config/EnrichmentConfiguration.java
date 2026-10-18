@@ -1,19 +1,22 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
+import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
-import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
 import java.util.ArrayList;
@@ -41,14 +44,19 @@ class EnrichmentConfiguration {
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
         // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
-        return new Enrichments(new ConfluenceStorageTextProjector(), processors,
+        // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+        PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
+                new LocalFilesTextProjector()));
+        return new Enrichments(projector, processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
     }
 
     @Bean
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
-                                              ObjectProvider<Jobs> jobs) {
-        // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung.
-        return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable());
+                                              ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts) {
+        // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
+        // Volltextindex nach (#180).
+        return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
+                texts.getIfAvailable());
     }
 }

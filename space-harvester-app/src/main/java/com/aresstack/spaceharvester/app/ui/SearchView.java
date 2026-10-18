@@ -461,6 +461,8 @@ public final class SearchView implements View {
                         .append(": keine eigene Suche");
                 case UNAVAILABLE -> line.append(" · ").append(title(state.sourceId())).append(": nicht erreichbar")
                         .append(state.reason() == null ? "" : " (" + reason(state.reason()) + ")");
+                case INDEXED -> line.append(" · ").append(title(state.sourceId()))
+                        .append(": Volltext im Cache");
                 case SEARCHED -> {
                 }
             }
@@ -474,7 +476,8 @@ public final class SearchView implements View {
 
     /** Ob mindestens eine Quelle gesucht hat. */
     private boolean searched() {
-        return states.values().stream().anyMatch(s -> s.status() == KeywordSearch.SourceState.Status.SEARCHED);
+        return states.values().stream().anyMatch(s -> s.status() == KeywordSearch.SourceState.Status.SEARCHED
+                || s.status() == KeywordSearch.SourceState.Status.INDEXED);
     }
 
     private String title(String sourceId) {

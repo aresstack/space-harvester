@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
@@ -28,7 +29,9 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -37,6 +40,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -93,7 +97,7 @@ class RelevanceSearchTest {
             embeddedQueries.addAll(texts);
             return texts.stream().map(RelevanceSearchTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     @BeforeEach
     void publish() {
@@ -148,6 +152,58 @@ class RelevanceSearchTest {
     }
 
     @Test
+    void theFullTextIndexNeverAddsCandidatesOrChangesTheOrder() {
+        // ADR 0013: keine zweite Ergebnisliste, keine Fusion. 13 hat kein Embedding und ist nur ein Volltexttreffer.
+        index.publish("wiki", STATE, List.of(
+                entry(page("DEV", "10", "Architektur-Übersicht", "3"), confirmed("g1")),
+                entry(page("DEV", "11", "Nachtbetrieb", "5"), confirmed("g1")),
+                entry(page("DEV", "12", "Betrieb Handbuch", "2"), confirmed("g1")),
+                entry(page("DEV", "13", "Wartungsfenster", "1"), confirmed("g1")),
+                entry(page("OPS", "20", "Urlaubsplanung", "1"), confirmed("g2")),
+                entry(page("OPS", "21", "Geheimer Betrieb", "1"), confirmed("g2"))));
+
+        RelevanceSearch.RelevanceResults results = withTexts(ALLOW_ALL, List.of(match("DEV", "13"), match("OPS", "20"),
+                match("DEV", "10"))).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        assertThat(ids(results)).containsExactly("21", "11", "12", "10", "20");
+        assertThat(results.reranker()).isEqualTo("embedding-cosine@" + processor.version());
+        assertThat(results.hits()).allSatisfy(hit -> assertThat(hit.relevance()).isNotNull());
+    }
+
+    @Test
+    void aRerankerSeesTheQueryTitlesAndOnlyWithContentAccessAnExcerptAroundTheBestChunk() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        List<String> texts = new ArrayList<>();
+        SearchReranker recording = new SearchReranker() {
+            @Override
+            public String id() {
+                return "aufzeichnung@1";
+            }
+
+            @Override
+            public List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates) {
+                throw new AssertionError("ohne Texte aufgerufen");
+            }
+
+            @Override
+            public List<SearchHit> rerank(Request request) {
+                texts.add(request.text());
+                request.candidates().forEach(hit -> documents.put(hit.page().pageId(), request.documents().apply(hit)));
+                return request.candidates();
+            }
+        };
+        AccessPolicy noOpsContent = (context, scope, kind) -> kind == AccessKind.CONTENT
+                && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
+
+        withTexts(noOpsContent, List.of(), recording).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        assertThat(texts).containsExactly("nächtlicher Betrieb");
+        // Der Text ist kürzer als das Fenster: ganz. OPS hat kein content, seine Seiten sind gar keine Kandidaten.
+        assertThat(documents).containsOnlyKeys("11", "12", "10")
+                .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
+    }
+
+    @Test
     void anEmbeddingFromAnOlderRevisionIsMarkedStale() {
         RelevanceSearch.RelevanceResults results = search(ALLOW_ALL).search(CALLER, query(null), "Betrieb", 10);
 
@@ -164,12 +220,11 @@ class RelevanceSearchTest {
         assertThat(ids(search(noOpsContent).search(CALLER, query(null), "Betrieb", 10)))
                 .containsExactly("11", "12", "10");
 
-        // Als Titeltreffer bleibt sie sichtbar, aber ohne Ähnlichkeit und hinter allen Treffern mit Ähnlichkeit.
+        // Auch ihr Titel holt sie nicht herein: Titelwörter filtern nur (ADR 0013).
         RelevanceSearch.RelevanceResults byTitle = search(noOpsContent).search(CALLER, query("betrieb"), "Betrieb",
                 10);
-        assertThat(ids(byTitle)).containsExactly("12", "21");
-        assertThat(byTitle.hits().get(0).relevance()).isNotNull();
-        assertThat(byTitle.hits().get(1).relevance()).isNull();
+        assertThat(ids(byTitle)).containsExactly("12");
+        assertThat(byTitle.hits().getFirst().relevance()).isNotNull();
     }
 
     @Test
@@ -241,18 +296,57 @@ class RelevanceSearchTest {
                 .isInstanceOf(InvalidQueryException.class);
     }
 
-    @Test
-    void interleavingAlternatesAndDropsDuplicates() {
-        var a = index.search(query(null), "i1", null, 10);
-        List<String> mixed = RelevanceSearch.interleave(List.of(a.get(0), a.get(1), a.get(2)),
-                List.of(a.get(1), a.get(3))).stream().map(hit -> hit.page().pageId()).toList();
-
-        assertThat(mixed).containsExactly(a.get(0).page().pageId(), a.get(1).page().pageId(),
-                a.get(3).page().pageId(), a.get(2).page().pageId());
-    }
-
     private RelevanceSearch search(AccessPolicy policy) {
         return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store, processor);
+    }
+
+    /** Mit Volltextindex, der für jede Anfrage {@code matches} liefert oder ohne sie scheitert. */
+    private RelevanceSearch withTexts(AccessPolicy policy, List<PageTextIndex.Match> matches) {
+        return withTexts(policy, matches, SearchReranker.NONE);
+    }
+
+    private RelevanceSearch withTexts(AccessPolicy policy, List<PageTextIndex.Match> matches, SearchReranker reranker) {
+        PageTextIndex texts = new PageTextIndex() {
+            @Override
+            public void put(Entry entry) {
+            }
+
+            @Override
+            public Optional<String> inputSha256(PageKey key) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<String> text(PageKey key) {
+                return Optional.of("0123456789Lesetext von " + key.pageId());
+            }
+
+            @Override
+            public void remove(PageKey key) {
+            }
+
+            @Override
+            public void removeSource(String sourceId) {
+            }
+
+            @Override
+            public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit) {
+                if (matches == null) {
+                    throw new IllegalStateException("Index geschlossen");
+                }
+                return matches;
+            }
+
+            @Override
+            public void flush() {
+            }
+        };
+        return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store, processor, null,
+                reranker, texts);
+    }
+
+    private static PageTextIndex.Match match(String space, String pageId) {
+        return new PageTextIndex.Match("wiki", pageId, space, "", "");
     }
 
     private static PageSearchQuery query(String title) {

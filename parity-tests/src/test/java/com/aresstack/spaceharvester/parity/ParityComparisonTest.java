@@ -107,6 +107,26 @@ class ParityComparisonTest {
                 .isEqualTo(Verdict.CORE_WENIGER);
     }
 
+    @Test
+    void aSearchFindingLessIsAGapAndMissingResultsToo() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("search.two-files", "betrieb.md,notfall.md");
+        eac.put("search.two-files.snippet", "ja");
+        eac.put("search.one-file", "urlaub.txt");
+        eac.put("search.none", "-");
+        eac.put("prefetch.1002", "ja");
+        eac.put("prefetch.1003", "ja");
+        Map<String, String> core = new LinkedHashMap<>();
+        core.put("search.two-files", "betrieb.md,notfall.md");
+        core.put("search.two-files.snippet", "nein");
+        core.put("search.one-file", "kantine.txt,urlaub.txt");
+        core.put("search.none", "-");
+        core.put("prefetch.1002", "nein");
+
+        assertThat(ParityComparison.search(eac, core)).extracting(Finding::verdict).containsExactly(Verdict.GLEICH,
+                Verdict.CORE_WENIGER, Verdict.CORE_MEHR, Verdict.GLEICH, Verdict.CORE_WENIGER, Verdict.CORE_WENIGER);
+    }
+
     private static DocumentOutline outline(String text, int images, int notes) {
         return new DocumentOutline("md", List.of(), false, false, false, 0, images, notes, List.of(), Set.of(), 0, 0,
                 text);

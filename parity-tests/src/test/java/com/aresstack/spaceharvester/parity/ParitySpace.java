@@ -66,6 +66,26 @@ public final class ParitySpace {
             {"foreign-host", "https://anderes.example.org/wiki/display/PARITY/Architektur"},
     };
 
+    /** Dateien einer Quelle ohne eigene Suche (#180): Name und Inhalt. */
+    public static final String[][] FILES = {
+            {"betrieb.md", "# Betrieb\n\nDer Nachtlauf startet um zwei Uhr.\n\nDanach läuft die Sicherung.\n"},
+            {"notfall.md", "# Notfall\n\nBei Störungen im Nachtlauf hilft die Rufbereitschaft.\n"},
+            {"urlaub.txt", "Urlaubsplanung für das Team im Sommer."},
+            {"kantine.txt", "Die Kantine öffnet um elf Uhr."},
+    };
+
+    /** Suchen über {@link #FILES} (#180): Name und Suchbegriff. */
+    public static final String[][] SEARCHES = {
+            {"one-file", "Urlaubsplanung"},
+            {"two-files", "Nachtlauf"},
+            {"upper-case", "KANTINE"},
+            {"none", "Raumstation"},
+    };
+
+    /** Suchbegriff der Live-Suche in Confluence und die Seiten, die sie liefert und die beide vorladen (#180). */
+    public static final String LIVE_SEARCH = "Architektur";
+    public static final String[] LIVE_HITS = {"1002", "1003"};
+
     /** Eine Adresse aus {@link #ADDRESSES} für eine Quelle mit dieser Basis-URL. */
     public static String address(String template, String baseUrl) {
         String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
@@ -93,6 +113,7 @@ public final class ParitySpace {
                 "<p>Satz Alpha der Einleitung.</p><h1>Zweck</h1><p>Satz Bravo zum Zweck.</p>",
                 "<p>Satz Alpha der Einleitung.</p><h1 id=\"Handbuch-Zweck\">Zweck</h1><p>Satz Bravo zum Zweck.</p>");
         confluence.homepage(SPACE, HOME);
+        confluence.searchResults(LIVE_HITS);
 
         page(confluence, "1002", "Architektur",
                 "<p>Satz Charlie zur Architektur. Siehe <a href=\"https://example.org/doku\">Dokumentation</a>"

@@ -603,6 +603,30 @@ public class ConfluenceKnowledgeSourceTest {
     }
 
     @Test
+    public void aSelectionOfTheQueryRestrictsTheSearchWithoutListingAllOtherSpaces() throws Exception {
+        confluence.searchResults.addAll(Arrays.asList("101"));
+
+        source().search(new SourceQuery("x", 5).withIncludedPartitions(Arrays.asList("OPS", " "))
+                .withExcludedPartitions(Arrays.asList("ARCHIV")));
+
+        assertEquals("siteSearch ~ \"x\" AND type=page AND space in (\"OPS\") AND space not in (\"ARCHIV\")",
+                confluence.lastCql);
+    }
+
+    @Test
+    public void aSelectionIsIntersectedWithTheConfiguredSearchSpaces() throws Exception {
+        confluence.searchResults.addAll(Arrays.asList("101"));
+        config.searchSpaceKey("DEV").searchSpaceKey("OPS");
+
+        source().search(new SourceQuery("x", 5).withIncludedPartitions(Arrays.asList("OPS", "HR")));
+        assertEquals("siteSearch ~ \"x\" AND type=page AND space in (\"OPS\")", confluence.lastCql);
+
+        int before = confluence.requestCount("/rest/api/search");
+        assertTrue(source().search(new SourceQuery("x", 5).withIncludedPartitions(Arrays.asList("HR"))).isEmpty());
+        assertEquals(before, confluence.requestCount("/rest/api/search"));
+    }
+
+    @Test
     public void cqlWithoutSpaces() {
         assertEquals("siteSearch ~ \"java\" AND type=page", ConfluenceKnowledgeSource.cql(" java ", new ArrayList<String>()));
     }

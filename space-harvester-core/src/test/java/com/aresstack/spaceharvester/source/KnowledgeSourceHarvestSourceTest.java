@@ -31,7 +31,6 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -174,30 +173,15 @@ class KnowledgeSourceHarvestSourceTest {
     }
 
     @Test
-    void theSpaceSelectionBecomesAnExclusionOfAllOtherSpacesCountedWithoutDuplicates() {
-        List<String> keys = new ArrayList<>();
-        for (int i = 0; i < 200; i++) {
-            keys.add(String.format("S%03d", i));
-        }
-        keys.add("A");
-        Searchable port = new Searchable(keys, null);
-        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
-
-        // 201 Spaces ohne A sind 200 Ausschlüsse, S000 zählt dabei nur einmal.
-        source.searchPages("x", 10, new SearchSpaces(Set.of("A"), Set.of("S000")));
-
-        assertThat(port.last.excludedPartitions()).hasSize(KnowledgeSourceHarvestSource.MAX_EXCLUDED_SPACES)
-                .doesNotContain("A").contains("S000", "S199");
-    }
-
-    @Test
-    void unreadableSpacesOnlyDropTheComplementNotTheSearch() {
+    void theSpaceSelectionGoesIntoTheQueryWithoutListingAllOtherSpaces() {
         Searchable port = new Searchable(List.of(), new KnowledgeSourceException(KnowledgeSourceException.Kind
                 .ACCESS_DENIED, "Spaces"));
         KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
 
+        // Die Spaceliste wird dafür nicht gebraucht: auch wenn sie nicht lesbar ist, läuft die Suche.
         source.searchPages("x", 10, new SearchSpaces(Set.of("A"), Set.of("B")));
 
+        assertThat(port.last.includedPartitions()).containsExactly("A");
         assertThat(port.last.excludedPartitions()).containsExactly("B");
     }
 

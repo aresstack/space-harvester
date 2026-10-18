@@ -58,6 +58,12 @@ public final class InMemorySyncStore implements SyncBaselineStore {
                 stage(repository -> repository.remove(key));
             }
 
+            /** Ohne Verlauf im Fake: wie {@link #remove}, sichtbar ist danach nichts mehr. */
+            @Override
+            public void withhold(PageKey key) {
+                stage(repository -> repository.remove(key));
+            }
+
             @Override
             public void commit(SyncBaseline next) {
                 if (!open) {
