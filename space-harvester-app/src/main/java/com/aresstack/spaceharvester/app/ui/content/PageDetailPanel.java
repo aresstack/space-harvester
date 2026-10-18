@@ -257,6 +257,11 @@ public final class PageDetailPanel extends JPanel {
         return tabs.selected();
     }
 
+    /** Für UI-Tests: wählt eine Ansicht wie ein Klick auf ihren Reiter. */
+    void selectTab(String name) {
+        tabs.select(name);
+    }
+
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
     public boolean isEmpty() {
         return pageId == null;
@@ -271,14 +276,17 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
+        // Eine andere Seite zeigt zuerst die gerenderte Leseansicht; „Aktualität prüfen“ derselben Seite behält die Ansicht.
+        boolean samePage = refresh && sourceId.equals(this.sourceId) && pageId.equals(this.pageId);
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
         this.readingLoaded = false;
         this.page = null;
         readingPane.clear(" ");
-        // Jede neu geöffnete Seite zeigt zuerst die gerenderte Leseansicht.
-        tabs.select(READING);
+        if (!samePage) {
+            tabs.select(READING);
+        }
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
