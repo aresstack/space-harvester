@@ -197,6 +197,39 @@ class RelevanceSearchTest {
     }
 
     @Test
+    void aRerankerSeesTheQueryTitlesAndOnlyWithContentAccessAnExcerptAroundTheBestChunk() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        List<String> texts = new ArrayList<>();
+        SearchReranker recording = new SearchReranker() {
+            @Override
+            public String id() {
+                return "aufzeichnung@1";
+            }
+
+            @Override
+            public List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates) {
+                throw new AssertionError("ohne Texte aufgerufen");
+            }
+
+            @Override
+            public List<SearchHit> rerank(Request request) {
+                texts.add(request.text());
+                request.candidates().forEach(hit -> documents.put(hit.page().pageId(), request.documents().apply(hit)));
+                return request.candidates();
+            }
+        };
+        AccessPolicy noOpsContent = (context, scope, kind) -> kind == AccessKind.CONTENT
+                && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
+
+        hybrid(noOpsContent, List.of(), recording).search(CALLER, query("betrieb"), "nächtlicher Betrieb", 10);
+
+        assertThat(texts).containsExactly("nächtlicher Betrieb");
+        // Der Text ist kürzer als das Fenster: ganz; ohne content nur der Titel.
+        assertThat(documents).containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12")
+                .containsEntry("21", "Geheimer Betrieb");
+    }
+
+    @Test
     void rankFusionSumsReciprocalRanksAndKeepsUnrankedCandidatesInOrder() {
         var hits = index.search(query(null), "i1", null, 10);
         List<SearchHit> fused = ReciprocalRankFusion.fuse(hits, List.of(List.of(hits.get(3), hits.get(1)),
@@ -316,6 +349,10 @@ class RelevanceSearchTest {
 
     /** Mit Volltextindex, der für jede Anfrage {@code matches} liefert oder ohne sie scheitert. */
     private RelevanceSearch hybrid(AccessPolicy policy, List<PageTextIndex.Match> matches) {
+        return hybrid(policy, matches, SearchReranker.NONE);
+    }
+
+    private RelevanceSearch hybrid(AccessPolicy policy, List<PageTextIndex.Match> matches, SearchReranker reranker) {
         PageTextIndex texts = new PageTextIndex() {
             @Override
             public void put(Entry entry) {
@@ -324,6 +361,11 @@ class RelevanceSearchTest {
             @Override
             public Optional<String> inputSha256(PageKey key) {
                 return Optional.empty();
+            }
+
+            @Override
+            public Optional<String> text(PageKey key) {
+                return Optional.of("0123456789Lesetext von " + key.pageId());
             }
 
             @Override
@@ -347,7 +389,7 @@ class RelevanceSearchTest {
             }
         };
         return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store, processor, null,
-                SearchReranker.NONE, texts);
+                reranker, texts);
     }
 
     private static PageTextIndex.Match match(String space, String pageId) {

@@ -7,6 +7,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Wendet einen {@link SearchReranker} auf ein begrenztes Fenster freigegebener Treffer an. Liefert er etwas anderes
@@ -35,6 +36,15 @@ public class Reranking {
      * @return die Umordnung des Rerankers oder {@code candidates} unverändert
      */
     public List<SearchHit> apply(PageSearchQuery query, List<SearchHit> candidates) {
+        return apply(candidates, () -> reranker.rerank(query, List.copyOf(candidates)));
+    }
+
+    /** Wie {@link #apply(PageSearchQuery, List)}, mit Anfrage- und Dokumenttexten für den Reranker (#181). */
+    public List<SearchHit> apply(SearchReranker.Request request) {
+        return apply(request.candidates(), () -> reranker.rerank(request));
+    }
+
+    private List<SearchHit> apply(List<SearchHit> candidates, Supplier<List<SearchHit>> call) {
         if (candidates.size() > MAX_WINDOW) {
             throw new IllegalArgumentException("Höchstens " + MAX_WINDOW + " Treffer je Reranking");
         }
@@ -43,7 +53,7 @@ public class Reranking {
         }
         List<SearchHit> reordered;
         try {
-            reordered = reranker.rerank(query, List.copyOf(candidates));
+            reordered = call.get();
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Reranker {0} scheiterte ({1}); Reihenfolge des Index bleibt",
                     reranker.id(), e.getClass().getName());

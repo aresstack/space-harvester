@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.application.ranking;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * Ordnet Suchtreffer nach Relevanz neu, z. B. über Embedding-Ähnlichkeit oder ein Cross-Encoder-Modell. Ein Reranker
@@ -20,6 +22,32 @@ public interface SearchReranker {
      * @return dieselben Treffer in neuer Reihenfolge
      */
     List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates);
+
+    /**
+     * Mit Anfragetext und Dokumenttexten (#181), etwa für einen Cross-Encoder. Ohne eigene Umsetzung wie
+     * {@link #rerank(PageSearchQuery, List)}.
+     */
+    default List<SearchHit> rerank(Request request) {
+        return rerank(request.query(), request.candidates());
+    }
+
+    /**
+     * Eine Umordnung mit Texten.
+     *
+     * @param text      Anfragetext der Relevanzsuche
+     * @param documents Text, nach dem ein Treffer bewertet wird (Titel, mit {@code content}-Freigabe auch ein Auszug
+     *                  des Lesetexts); nie die Adresse der Seite
+     */
+    record Request(PageSearchQuery query, String text, List<SearchHit> candidates,
+                   Function<SearchHit, String> documents) {
+
+        public Request {
+            Objects.requireNonNull(query, "query");
+            Objects.requireNonNull(text, "text");
+            candidates = List.copyOf(candidates);
+            Objects.requireNonNull(documents, "documents");
+        }
+    }
 
     /** Lässt die Reihenfolge des Index unverändert; Standard, solange kein Modell konfiguriert ist. */
     SearchReranker NONE = new SearchReranker() {
