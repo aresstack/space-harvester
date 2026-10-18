@@ -1,7 +1,9 @@
 # ADR 0014: Abgleich, Berechtigung und Suche getrennt
 
 - Status: **Angenommen** (Strang Q, 18.10.2026; Entscheidung von Angelo, 18.10. 13:33, Review in #181
-  issuecomment-6250444078). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md), ohne die Suchpipeline zu ändern.
+  issuecomment-6250444078). **Fortgeschrieben** am 18.10. (Angelo 14:43–15:10, #181 issuecomment-6251484855):
+  Ereignisse der Quelle sind der Hauptweg, Abgleiche nur noch Nachholen; siehe „Fortschreibung“. Ergänzt
+  [ADR 0013](0013-suche-ueber-den-cache.md), ohne die Suchpipeline zu ändern.
 - Bezüge: `SpaceSync`, `InventoryCollector`, `SyncPlanner`, `SyncBaseline`, `RemovalCheck`, `PageQueries` mit
   `CacheFreshness` (#256).
 
@@ -52,6 +54,46 @@ Sichtbarkeit für das technische Konto zusammen, weil Confluence beides mit 404 
    darf, ändert den gemeinsamen Cache nie.
 7. **Zustand dauerhaft.** Zeitpunkt und Ergebnis jedes Laufs, die Marke der Änderungssuche, die letzte Prüfung je
    Seite (`lastCheckedAt`) und der Beginn eines `INACCESSIBLE`-Zustands werden dauerhaft gespeichert.
+
+## Fortschreibung (18.10.2026)
+
+Gemessen auf confluence.atlassian.com (Strang T): flache Inventur 2 Anfragen und 2,3 s, Baum-Traversierung 69 Anfragen
+und 68,8 s, Änderungssuche per CQL `lastmodified` 1 Anfrage und 1,1 s, Papierkorb 1 Anfrage und 0,9 s. Confluence Data
+Center meldet Änderungen außerdem selbst über Webhooks (ab 7.7), aber nur, wenn ein Administrator sie registriert und
+der Empfänger für Confluence erreichbar ist; das ist nicht überall gegeben. Daraus folgt, und das ersetzt Punkt 1, 3
+und 6, soweit sie widersprechen, drei voneinander unabhängige Ebenen:
+
+1. **Entdecken: die Suche.** Welche Seiten in den Cache gehören, entscheidet die native Schlagwortsuche
+   ([ADR 0013](0013-suche-ueber-den-cache.md)). Das funktioniert mit leerem Katalog, ohne Erstinventur, ohne
+   Zeitplan und ohne Webhook; gesucht wird immer im Cache.
+2. **Aktualisieren: je Seite eine wählbare Strategie.** Für jeden Kandidaten gilt: nicht im Cache → Inhalt laden;
+   im Cache → nach der eingestellten Strategie „Immer Version prüfen“ (Standard, `CacheFreshness(ZERO, true)`: nur
+   Kopfdaten abfragen, Inhalt nur bei neuer Version), „zeitbasiert ohne Versionsprüfung“ oder „zeitbasiert mit
+   Versionsprüfung“. Neue Seiten werden immer übernommen.
+   Kein Zeitplan lädt dafür Inhalte vorab; ein Abgleich führt unbekannte Seiten nur im Katalog
+   (`space-harvester.sync.load-unknown`, Standard aus), außer wer ausdrücklich den ganzen Space halten will.
+3. **Änderungsquellen: optional, Standard aus.** Sie geben nur Beschaffungs- und Invalidierungsaufträge in dieselbe
+   Pipeline und sind keine Voraussetzung für Ebene 1 und 2:
+   - **Webhooks**, wo ein Administrator sie einrichten kann (Geheimnis je Quelle, asynchron, idempotent): eine
+     angelegte oder geänderte Seite wird sofort mit Inhalt übernommen, eine entfernte bestätigt und als `DELETED`
+     entfernt, eine Rechteänderung lässt das technische Konto die Seite neu prüfen.
+   - **Nachholen** per Änderungssuche (CQL `lastmodified` seit dem letzten Stand, mit Überlappung) plus
+     Papierkorbabfrage je Space: manuell mit optionalem Zeitpunkt (`POST …/syncs?listing=changes&since=…`), beim Start
+     (`space-harvester.sync.catch-up-on-start`), nach Zeitplan oder vor jeder Suche, alles Standard aus. Geänderte
+     bekannte Seiten werden neu geladen, unbekannte nur in den Katalog übernommen.
+   Ohne eine aktivierte Änderungsquelle behauptet der Dienst nicht, den ganzen Bestand aktuell zu halten; für die
+   suchgesteuerte Nutzung ist das nicht nötig.
+3. **Die Inventur bleibt Sicherheitsnetz** für verpasste Löschungen, Verschiebungen aus dem Space und endgültig aus
+   dem Papierkorb gelöschte Seiten; nur sie stellt Vollständigkeit fest. Sie läuft auf Anforderung oder nach
+   optionalem Zeitplan.
+4. **Rechteprüfung nur am Endergebnis** (ersetzt Punkt 6, wie im Nachtrag zu ADR 0012): Nur die endgültige, aus dem
+   Cache erzeugte Ergebnisliste wird seitenweise gegen die Rechte des Benutzers geprüft, und nur, wenn delegierte
+   Anmeldung aktiv ist und der Dienst bzw. die Bibliothek keine eigenen Zugangsdaten hat. Keine zusätzliche Prüfung
+   für Auszüge der Quelle, Kandidaten, Reranker oder Embeddings. Dass ein Benutzer eine Seite nicht sehen darf, ändert
+   den gemeinsamen Cache weiterhin nie.
+5. **Zustand.** Jede Generation trägt `changesSince`, den Beginn der Inventur oder Änderungssuche, die sie bestätigt
+   hat; die nächste Änderungssuche fragt ab dort. Ereignisse schieben diese Marke nicht vor, weil sie keine
+   Vollständigkeit belegen.
 
 ## Folgen
 

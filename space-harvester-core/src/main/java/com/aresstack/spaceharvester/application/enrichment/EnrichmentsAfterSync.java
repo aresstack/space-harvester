@@ -120,7 +120,7 @@ public class EnrichmentsAfterSync implements SyncCommitted {
         List<PageKey> pages = new ArrayList<>();
         for (PageChange change : run.plan().changes()) {
             if (change.kind() == PageChange.Kind.NOT_SEEN || change.kind() == PageChange.Kind.MISSING
-                    || change.kind() == PageChange.Kind.NOT_LOADED
+                    || change.kind() == PageChange.Kind.NOT_LOADED || change.kind() == PageChange.Kind.OUTDATED
                     || run.failedPageIds().contains(change.pageId())) {
                 continue;
             }

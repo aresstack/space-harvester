@@ -59,6 +59,7 @@ import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
@@ -460,6 +461,61 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * Wie {@link #sync(String, String)}, in der Betriebsart {@code mode}: {@link SyncMode#CATALOG_ONLY} initialisiert
+     * oder bereinigt nur den Seitenkatalog, {@link SyncMode#SYNC_CACHE} hält zusätzlich gecachte Inhalte aktuell (ADR 0014).
+     */
+    public JobStatus sync(String sourceId, String spaceKey, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.start(sourceId, spaceKey, OWNER, mode);
+    }
+
+    /**
+     * Holt verpasste Änderungen eines Space nach, ohne zu warten (ADR 0014): eine Änderungssuche seit {@code since} und
+     * eine Papierkorbabfrage, wo die Quelle das kann, sonst ein Abgleich ohne Erstbefüllung. Bekannte Seiten mit neuer
+     * Version werden neu geladen, unbekannte nur in den Katalog übernommen, gelöschte entfernt.
+     *
+     * @param since ab wann, oder {@code null} für den Stand des letzten Laufs
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie {@code SYNC}
+     *                                                                               nicht freigibt
+     */
+    public JobStatus catchUp(String sourceId, String spaceKey, Instant since) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.catchUp(sourceId, spaceKey, OWNER, since);
+    }
+
+    /** Wie {@link #catchUp(String, String, Instant)}, in der Betriebsart {@code mode}. */
+    public JobStatus catchUp(String sourceId, String spaceKey, Instant since, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.catchUp(sourceId, spaceKey, OWNER, since, mode);
+    }
+
+    /**
+     * Holt für alle Spaces mit bestätigter Generation die verpassten Änderungen nach, etwa beim Start (ADR 0014); nur
+     * Spaces, für die die Richtlinie {@code SYNC} freigibt. Wartet nicht.
+     *
+     * @return die gestarteten Aufträge
+     */
+    public List<JobStatus> catchUpAll() {
+        List<JobStatus> started = new java.util.ArrayList<>();
+        for (com.aresstack.spaceharvester.application.sync.SyncBaselineStore.SpaceRef space : syncs.confirmedSpaces()) {
+            if (access.permits(caller, ResourceScope.space(space.sourceId(), space.spaceKey()), AccessKind.SYNC)
+                    && catalog.find(space.sourceId()).isPresent()) {
+                try {
+                    started.add(syncs.catchUp(space.sourceId(), space.spaceKey(), OWNER, null));
+                } catch (com.aresstack.spaceharvester.application.sync.SyncAlreadyRunningException e) {
+                    // läuft schon
+                } catch (com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException e) {
+                    break;
+                }
+            }
+        }
+        return started;
+    }
+
+    /**
      * Plant den regelmäßigen Abgleich eines Space ein oder ersetzt seine Einplanung (ADR 0014): je {@code interval} eine
      * Metadateninventur, die nur geänderte Inhalte lädt und Fehlendes einzeln prüft. Ohne {@code loadUnknown} lädt sie
      * keine unbekannten Seiten, sondern hält nur aktuell, was der Cache schon kennt. Gilt bis {@link #close()}; die
@@ -474,6 +530,13 @@ public final class Harvester implements AutoCloseable {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
         return reconciliation.schedule(sourceId, spaceKey, interval, loadUnknown);
+    }
+
+    /** Wie {@link #reconcile(String, String, Duration, boolean)}, in der Betriebsart {@code mode}. */
+    public Reconciliation.Schedule reconcile(String sourceId, String spaceKey, Duration interval, SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return reconciliation.schedule(sourceId, spaceKey, interval, mode);
     }
 
     /** Nimmt den Space aus dem regelmäßigen Abgleich; {@code false}, wenn er nicht eingeplant war. */

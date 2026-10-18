@@ -246,7 +246,7 @@ class HarvestWalkingSkeletonIntegrationTest {
     }
 
     private JsonNode syncUntilFinished() throws Exception {
-        HttpResponse<String> started = send("POST", "/api/v1/sources/demo/spaces/DEMO/syncs",
+        HttpResponse<String> started = send("POST", "/api/v1/sources/demo/spaces/DEMO/syncs?mode=full",
                 HttpResponse.BodyHandlers.ofString());
         assertThat(started.statusCode()).as(started.body()).isEqualTo(202);
         return poll(started.headers().firstValue("Location").orElseThrow());

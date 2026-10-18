@@ -44,8 +44,9 @@ class SyncConfiguration {
     /**
      * Regelmäßiger Abgleich (ADR 0014) der Spaces aus {@code space-harvester.sync.spaces} im Abstand
      * {@code space-harvester.sync.interval}; ohne Abstand oder Spaces, oder solange Cache oder Inhaltsabruf fehlen, ist
-     * nichts eingeplant. {@code space-harvester.sync.load-unknown} (Standard {@code true}) hält die Spaces vollständig;
-     * {@code false} hält nur aktuell, was der Cache schon kennt.
+     * nichts eingeplant. {@code space-harvester.sync.mode} (Standard {@code catalog-only}) pflegt nur den Katalog;
+     * {@code sync-cache} lädt zusätzlich gecachte Seiten mit neuer Version neu, {@code full} hält die Spaces
+     * vollständig.
      */
     @Bean
     Reconciliation reconciliation(SpaceSyncJobs syncJobs, SyncProperties properties) {
@@ -60,8 +61,31 @@ class SyncConfiguration {
         for (String space : properties.spaces()) {
             int slash = space.indexOf('/');
             reconciliation.schedule(space.substring(0, slash), space.substring(slash + 1), properties.interval(),
-                    properties.loadUnknown());
+                    properties.mode());
         }
         return reconciliation;
+    }
+
+    /**
+     * Holt beim Start die verpassten Änderungen aller Spaces mit bestätigter Generation nach (ADR 0014,
+     * {@code space-harvester.sync.catch-up-on-start}, Standard aus).
+     */
+    @Bean
+    org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
+            catchUpOnStart(SpaceSyncJobs syncJobs, SyncProperties properties) {
+        return event -> {
+            if (!properties.catchUpOnStart() || !syncJobs.available()) {
+                return;
+            }
+            try {
+                int started = syncJobs.catchUpAll(null, properties.mode()).size();
+                if (started > 0) {
+                    LOG.info("Nachholen beim Start: {} Spaces", started);
+                }
+            } catch (RuntimeException e) {
+                // Das Nachholen ist ein Sicherheitsnetz; es darf den Start nicht verhindern.
+                LOG.warn("Nachholen beim Start nicht möglich ({})", e.getClass().getName());
+            }
+        };
     }
 }

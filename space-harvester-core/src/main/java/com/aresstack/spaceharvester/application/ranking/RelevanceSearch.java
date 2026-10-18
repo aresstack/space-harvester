@@ -405,7 +405,9 @@ public class RelevanceSearch {
             return Verified.DROPPED;
         }
         Score checked = score;
-        if (live.version() != null && !live.version().equals(hit.page().header().revision())) {
+        // Auch bei aktuellen Kopfdaten (Katalogabgleich ohne Inhaltsabruf, ADR 0014) kann der Vektor älter sein.
+        boolean staleScore = score != null && score.freshness() == Freshness.STALE;
+        if (live.version() != null && (staleScore || !live.version().equals(hit.page().header().revision()))) {
             renew(caller, key);
             if (checked != null) {
                 checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE);

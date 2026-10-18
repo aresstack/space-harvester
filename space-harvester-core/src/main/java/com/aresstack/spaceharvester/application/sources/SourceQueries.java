@@ -58,6 +58,52 @@ public class SourceQueries {
     }
 
     /**
+     * Wie {@link #pageMetadata(String, String, String, int)}, aber nur die Seiten, die innerhalb von {@code within}
+     * angelegt oder geändert wurden ({@link HarvestSource#changedPageMetadata}).
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle keine Änderungen meldet
+     */
+    public PageMetadataListing changedPageMetadata(String sourceId, String partitionKey, java.time.Duration within,
+                                                   String cursor, int limit) {
+        requireLimit(limit);
+        HarvestSource source = source(sourceId);
+        return listing(source, partitionKey, source.changedPageMetadata(partitionKey, within,
+                cursor == null || cursor.isEmpty() ? null : cursor, limit));
+    }
+
+    /**
+     * Wie {@link #pageMetadata(String, String, String, int)}, aber nur die Seiten, die die Quelle als gelöscht führt
+     * ({@link HarvestSource#removedPageMetadata}).
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED}, wenn die Quelle keine Löschungen meldet
+     */
+    public PageMetadataListing removedPageMetadata(String sourceId, String partitionKey, String cursor, int limit) {
+        requireLimit(limit);
+        HarvestSource source = source(sourceId);
+        return listing(source, partitionKey, source.removedPageMetadata(partitionKey,
+                cursor == null || cursor.isEmpty() ? null : cursor, limit));
+    }
+
+    /** Ob die Quelle Änderungen gezielt meldet ({@link HarvestSource#listsChanges()}). */
+    public boolean listsChanges(String sourceId) {
+        return source(sourceId).listsChanges();
+    }
+
+    private static void requireLimit(int limit) {
+        if (limit < 1 || limit > MAX_PAGE_METADATA_LIMIT) {
+            throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_PAGE_METADATA_LIMIT + " liegen");
+        }
+    }
+
+    private PageMetadataListing listing(HarvestSource source, String partitionKey, PageMetadataBatch batch) {
+        List<PageMetadataListing.Entry> entries = batch.pages().stream()
+                .map(page -> new PageMetadataListing.Entry(page, MetadataHash.of(source.id(), page),
+                        AttributesHash.of(source.id(), page)))
+                .toList();
+        return new PageMetadataListing(source.id(), partitionKey, entries, batch.nextCursor(), clock.instant());
+    }
+
+    /**
      * Metadaten einer einzelnen Seite mit {@code metadataHash} und {@code attributesHash}, live aus der Quelle; dieselben
      * Werte wie in {@link #pageMetadata(String, String, String, int)}.
      *

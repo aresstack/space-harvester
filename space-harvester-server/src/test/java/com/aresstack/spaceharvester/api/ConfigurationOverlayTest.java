@@ -8,7 +8,7 @@ import com.aresstack.spaceharvester.application.configuration.HarvesterConfigura
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
-import com.aresstack.spaceharvester.application.configuration.SyncMode;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.network.ProxySettings;

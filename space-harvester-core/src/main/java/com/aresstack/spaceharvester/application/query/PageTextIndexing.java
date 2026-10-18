@@ -74,9 +74,10 @@ public final class PageTextIndexing {
     /**
      * Version einer Seite im Cache für das Laden der Suchtreffer (ADR 0013): gleiche Version heißt nur dann „nichts zu
      * laden“, wenn auch der Volltextindex die Seite führt. Fehlt sie dort, etwa nach einem abgebrochenen Indizieren
-     * oder einem neu aufgebauten Index, wird sie aus dem Cache nachindiziert.
+     * oder einem neu aufgebauten Index, wird sie aus dem Cache nachindiziert. Maßgeblich ist die Version der
+     * abgelegten Payload: Kopfdaten können neuer sein (Katalogabgleich ohne Inhaltsabruf, ADR 0014).
      *
-     * @return die Version im Cache, leer, wenn die Seite dort fehlt
+     * @return die Version der Payload im Cache, leer, wenn die Seite dort fehlt oder ihre Version unbekannt ist
      */
     public Optional<String> cachedVersion(PageKey key, Function<PageKey, Optional<PageHeader>> headers,
                                           Function<PageKey, Optional<PageSnapshot>> snapshots) {
@@ -84,22 +85,21 @@ public final class PageTextIndexing {
         if (header.isEmpty()) {
             return Optional.empty();
         }
+        Optional<PageSnapshot> snapshot;
         try {
-            if (index.inputSha256(key).isEmpty()) {
-                Optional<PageSnapshot> snapshot = snapshots.apply(key);
-                if (snapshot.isEmpty()) {
-                    return Optional.empty();
-                }
-                if (index(snapshot.get(), header.get().metadata())) {
-                    flush();
-                }
+            snapshot = snapshots.apply(key);
+            if (snapshot.isEmpty()) {
+                return Optional.empty();
+            }
+            if (index.inputSha256(key).isEmpty() && index(snapshot.get(), header.get().metadata())) {
+                flush();
             }
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Volltextindex einer Seite in {0} nicht prüfbar ({1})",
                     key.sourceId(), e.getClass().getName());
             return Optional.empty();
         }
-        return Optional.of(header.get().metadata().version());
+        return Optional.ofNullable(snapshot.get().revision());
     }
 
     /** Entfernt eine Seite, die es im Cache nicht mehr gibt. */
