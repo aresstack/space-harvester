@@ -360,10 +360,11 @@ class PageQueryApiTest {
         assertThat(resolved.get("matches").get(0).get("bookmark").asString())
                 .startsWith("space-harvester://wiki/page/101?version=");
         assertThat(resolved.get("unavailableSources")).isEmpty();
-        // Über die URL ebenso; ohne content-Freigabe keine Treffer, ohne Hinweis auf die Seite.
+        // Eine URL, die keine Quelle sich zuordnet (hier ein anderer Host als die Basis-URL), ruft global nichts ab;
+        // mit Quelle bleibt sie über …/pages?url= erreichbar. Ohne content-Freigabe keine Treffer.
         String url = URLEncoder.encode("https://wiki.example.org/pages/viewpage.action?pageId=101",
                 StandardCharsets.UTF_8);
-        assertThat(json.readTree(get("/api/v1/addresses?address=" + url).body()).get("matches")).hasSize(1);
+        assertThat(json.readTree(get("/api/v1/addresses?address=" + url).body()).get("matches")).isEmpty();
         HttpResponse<String> hidden = getAs(METADATA_TOKEN, "/api/v1/addresses?address=" + bookmark);
         assertThat(hidden.statusCode()).isEqualTo(200);
         assertThat(json.readTree(hidden.body()).get("matches")).isEmpty();

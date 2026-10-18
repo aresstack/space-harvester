@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
+import com.aresstack.spaceharvester.application.query.PageUrls;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -126,6 +127,30 @@ class HarvesterAddressesTest {
             assertThatThrownBy(() -> harvester.pages().pageByUrl(harvester.caller(), "wiki", "Start", false))
                     .isInstanceOf(InvalidQueryException.class);
         }
+    }
+
+    @Test
+    void theGlobalResolutionNeverFetchesAPageIdFromAForeignUrl() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            int before = CONFLUENCE.requests().size();
+
+            assertThat(harvester.addresses().resolve(harvester.caller(),
+                    "https://fremd.example.org/pages/viewpage.action?pageId=102").matches()).isEmpty();
+            // Die Quelle ordnet die fremde Adresse nicht zu: kein Abruf der Seite 102.
+            assertThat(CONFLUENCE.requests().subList(before, CONFLUENCE.requests().size()))
+                    .noneMatch(uri -> uri.getPath().contains("102"));
+        }
+    }
+
+    @Test
+    void longPageIdsStayUsableAsBookmarks() {
+        PageBookmark bookmark = new PageBookmark("docs", "a".repeat(PageUrls.MAX_URL_LENGTH), "7");
+
+        assertThat(bookmark.value().length()).isGreaterThan(PageUrls.MAX_URL_LENGTH)
+                .isLessThanOrEqualTo(PageBookmark.MAX_LENGTH);
+        assertThat(PageBookmark.parse(bookmark.value())).contains(bookmark);
+        assertThatThrownBy(() -> new PageBookmark("docs", "%".repeat(PageUrls.MAX_URL_LENGTH), null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

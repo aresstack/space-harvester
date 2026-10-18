@@ -320,10 +320,20 @@ public class PageQueries {
      * @throws SourceAccessException wenn die Quelle für die Auflösung eines Titels nicht erreichbar ist
      */
     public DeliveredPage pageByUrl(AccessContext caller, String sourceId, String url, boolean refresh) {
+        return pageByAddress(caller, sourceId, url, refresh, true);
+    }
+
+    /**
+     * Wie {@link #pageByUrl}; ohne {@code byKnownUrl} nur Adressen, die Lesezeichen oder Quelle selbst zuordnen, ohne
+     * den Abruf über eine Seiten-ID aus einer fremden URL. So fragt die Auflösung über alle Quellen
+     * ({@link PageAddresses}) keine Quelle nach einer Seite, die zu einer anderen gehört.
+     */
+    DeliveredPage pageByAddress(AccessContext caller, String sourceId, String url, boolean refresh,
+                                boolean byKnownUrl) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         HarvestSource source = catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
-        if (url == null || url.isBlank() || url.length() > PageUrls.MAX_URL_LENGTH) {
-            throw new InvalidQueryException("url fehlt oder ist länger als " + PageUrls.MAX_URL_LENGTH + " Zeichen");
+        if (url == null || url.isBlank() || url.length() > PageBookmark.maxAddressLength(url)) {
+            throw new InvalidQueryException("url fehlt oder ist zu lang");
         }
         String address = url.trim();
         Optional<PageBookmark> bookmark;
@@ -346,7 +356,7 @@ public class PageQueries {
                 return page(caller, sourceId, resolved.get(), refresh);
             }
         }
-        Optional<String> pageId = PageUrls.pageId(address);
+        Optional<String> pageId = byKnownUrl ? PageUrls.pageId(address) : Optional.empty();
         if (pageId.isEmpty()) {
             if (addressable) {
                 // Passt zur Quelle, zeigt aber auf keine (sichtbare) Seite: wie eine unbekannte Seite.

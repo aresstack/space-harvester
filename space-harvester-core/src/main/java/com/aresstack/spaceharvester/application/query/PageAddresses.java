@@ -19,8 +19,9 @@ import java.util.Optional;
 
 /**
  * Adressauflösung über alle Quellen (#178, wie {@code ResolveKnowledgeAddressUseCase} im Enterprise AI Client): jede
- * Quelle, deren Adressmuster passt, wird einzeln über {@link PageQueries#pageByUrl} gefragt; geraten wird nie
- * zwischen Quellen. Ein Kandidat erscheint nur, wenn der Aufrufer die Seite lesen darf; eine nicht erreichbare Quelle
+ * Quelle, deren Adressmuster passt, wird einzeln gefragt; geraten wird nie zwischen Quellen. Zählen nur Lesezeichen
+ * und was die Quelle selbst zuordnet; eine Seiten-ID aus der URL einer anderen Instanz wird nirgends abgerufen (mit
+ * Quelle bleibt das über {@link PageQueries#pageByUrl} möglich). Ein Kandidat erscheint nur, wenn der Aufrufer die Seite lesen darf; eine nicht erreichbare Quelle
  * verdeckt die anderen nicht und steht in {@link Resolution#unavailableSources()}.
  */
 public final class PageAddresses {
@@ -40,9 +41,8 @@ public final class PageAddresses {
      * @throws InvalidQueryException wenn die Adresse fehlt, zu lang ist oder ein fehlerhaftes Lesezeichen ist
      */
     public Resolution resolve(AccessContext caller, String address) {
-        if (address == null || address.isBlank() || address.length() > PageUrls.MAX_URL_LENGTH) {
-            throw new InvalidQueryException("address fehlt oder ist länger als " + PageUrls.MAX_URL_LENGTH
-                    + " Zeichen");
+        if (address == null || address.isBlank() || address.length() > PageBookmark.maxAddressLength(address)) {
+            throw new InvalidQueryException("address fehlt oder ist zu lang");
         }
         String value = address.trim();
         Optional<PageBookmark> bookmark;
@@ -61,7 +61,7 @@ public final class PageAddresses {
                 continue;
             }
             try {
-                DeliveredPage page = pages.pageByUrl(caller, source.id(), value, false);
+                DeliveredPage page = pages.pageByAddress(caller, source.id(), value, false, false);
                 matches.add(Match.of(page.header()));
             } catch (CacheMissException | InvalidQueryException | AccessDeniedException
                      | UnknownSourceException e) {

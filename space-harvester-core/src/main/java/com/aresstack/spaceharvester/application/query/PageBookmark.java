@@ -24,6 +24,11 @@ public record PageBookmark(String sourceId, String pageId, String version) {
 
     /** Schema der Lesezeichen. */
     public static final String SCHEME = "space-harvester";
+    /**
+     * Längstes Lesezeichen. Länger als {@link PageUrls#MAX_URL_LENGTH}, damit jede Seite, deren Ressourcen-ID
+     * angenommen wird (etwa {@code files:<Quelle>/<lange ID>}), auch als Lesezeichen wieder auflösbar ist.
+     */
+    public static final int MAX_LENGTH = 4096;
 
     private static final String PREFIX = SCHEME + "://";
     private static final Pattern SOURCE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
@@ -43,6 +48,9 @@ public record PageBookmark(String sourceId, String pageId, String version) {
         }
         if (version != null && version.length() > MAX_VERSION_LENGTH) {
             throw new IllegalArgumentException("version ist zu lang");
+        }
+        if (text(sourceId, pageId, version).length() > MAX_LENGTH) {
+            throw new IllegalArgumentException("Lesezeichen wäre länger als " + MAX_LENGTH + " Zeichen");
         }
     }
 
@@ -76,8 +84,17 @@ public record PageBookmark(String sourceId, String pageId, String version) {
 
     /** Die Ressourcen-ID als Text, wie {@link #parse} sie liest. */
     public String value() {
+        return text(sourceId, pageId, version);
+    }
+
+    private static String text(String sourceId, String pageId, String version) {
         return PREFIX + sourceId + "/page/" + URLEncoder.encode(pageId, StandardCharsets.UTF_8)
                 + (version == null ? "" : "?version=" + URLEncoder.encode(version, StandardCharsets.UTF_8));
+    }
+
+    /** Die längste angenommene Eingabe: für Lesezeichen {@link #MAX_LENGTH}, sonst {@link PageUrls#MAX_URL_LENGTH}. */
+    static int maxAddressLength(String address) {
+        return isBookmark(address) ? MAX_LENGTH : PageUrls.MAX_URL_LENGTH;
     }
 
     /** Dasselbe Lesezeichen ohne Version: dieselbe Seite unabhängig von ihrem Stand. */

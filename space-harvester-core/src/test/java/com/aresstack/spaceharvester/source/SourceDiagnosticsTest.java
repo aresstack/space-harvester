@@ -151,7 +151,13 @@ class SourceDiagnosticsTest {
     void detailsMaskCredentials() {
         assertThat(ConnectionDiagnosis.detail(new IllegalStateException("Header Authorization: Bearer abc.def",
                 new RuntimeException("Basic dXNlcjpwdw=="))))
-                .contains("Bearer ***").contains("Basic ***").doesNotContain("abc.def").doesNotContain("dXNlcjpwdw");
+                .contains("***").doesNotContain("abc.def").doesNotContain("dXNlcjpwdw");
+        // Auch andere Formen aus Proxy-Auflösung, Tresor oder fremden Adaptern (wie Redaction).
+        String detail = ConnectionDiagnosis.detail(new IllegalStateException("password=geheim-1 token: geheim-2 "
+                + "Cookie=JSESSIONID-geheim-3 https://nutzer:geheim-4@wiki.example.org/pages?pageId=4711 "
+                + "eyJhbGciOiJIUzI1NiJ9geheim5geheim5geheim5geheim5"));
+        assertThat(detail).doesNotContain("geheim-1", "geheim-2", "geheim-3", "geheim-4", "geheim5", "4711")
+                .contains("wiki.example.org");
     }
 
     private ProxySettings proxy(ProxySettings.Authentication authentication) {

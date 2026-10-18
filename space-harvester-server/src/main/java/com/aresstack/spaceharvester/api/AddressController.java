@@ -30,7 +30,9 @@ public class AddressController {
 
     @GetMapping
     @Operation(summary = "Eine Adresse über alle Quellen auflösen",
-            description = "Fragt jede Quelle, deren Adressmuster passt, einzeln und rät nie zwischen Quellen. "
+            description = "Fragt jede Quelle, deren Adressmuster passt, einzeln und rät nie zwischen Quellen. Es "
+                    + "zählt nur, was die Quelle sich selbst zuordnet (bei Confluence: unter ihrer Basis-URL); eine "
+                    + "Seiten-ID aus der URL einer anderen Instanz wird nirgends abgerufen. "
                     + "Angenommen werden Seiten-URLs mit Seiten-ID, /display/KEY/Titel, "
                     + "viewpage.action?spaceKey=…&title=…, die Space-Startseite /display/KEY, Bookmarks "
                     + "confluence://…, Ressourcen-IDs der Quellen und Lesezeichen "

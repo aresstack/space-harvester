@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.source.network;
 
+import com.aresstack.spaceharvester.application.jobs.Redaction;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
 import java.net.SocketTimeoutException;
@@ -18,7 +19,7 @@ import javax.net.ssl.SSLException;
  *
  * <p>{@link #detail} folgt der Ursachenkette und reiht die Meldungen mit dem einfachen Klassennamen aneinander, ohne
  * Wiederholungen, auf {@value #MAX_DETAIL_LENGTH} Zeichen begrenzt; {@link #mask} ersetzt alles, was wie ein
- * Bearer-Token oder eine Basic-Anmeldung aussieht. {@link #hint} ordnet die Kette einer bekannten Ursache zu
+ * Bearer-Token oder eine Basic-Anmeldung aussieht, und maskiert danach wie {@link Redaction}. {@link #hint} ordnet die Kette einer bekannten Ursache zu
  * (Proxy-Anmeldung, Proxy-Route, Zertifikat, TLS, Namensauflösung, Zeitüberschreitung, Verbindung abgelehnt) oder
  * liefert {@code null}.
  */
@@ -109,7 +110,9 @@ public final class ConnectionDiagnosis {
 
     /** Ersetzt alles, was wie ein Bearer-Token oder eine Basic-Anmeldung aussieht, auch URL-kodiert. */
     public static String mask(String text) {
-        return text == null ? "" : CREDENTIALS.matcher(text).replaceAll("$1 " + MASKED);
+        // Danach dieselbe Maskierung wie für Diagnoseereignisse: Name=Wert-Geheimnisse, Cookies, URL-Pfade und
+        // Benutzerangaben, lange Token-ähnliche Zeichenketten.
+        return text == null ? "" : Redaction.mask(CREDENTIALS.matcher(text).replaceAll("$1 " + MASKED));
     }
 
     private static boolean has(List<Throwable> chain, Class<? extends Throwable> type) {
