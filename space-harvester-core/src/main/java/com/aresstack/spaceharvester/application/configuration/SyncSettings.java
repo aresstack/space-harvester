@@ -17,11 +17,11 @@ import java.util.List;
  * @param beforeSearch      vor jeder Suchanfrage nachholen; Standard aus
  * @param withheldRetention wie lange gesperrte Rohdaten bleiben (ADR 0014)
  * @param catchUpOnStart    beim Start verpasste Änderungen nachholen; Standard aus
- * @param loadUnknown       der Abgleich lädt auch Seiten mit Inhalt, die der Cache noch nicht kennt; Standard aus,
- *                          ein Zeitplan aktualisiert sonst nur bekannte Seiten
+ * @param mode              was ein Lauf aus Zeitplan oder Nachholen beim Start tut; Standard
+ *                          {@link SyncMode#CATALOG_ONLY}
  */
 public record SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
-                           Duration withheldRetention, boolean catchUpOnStart, boolean loadUnknown) {
+                           Duration withheldRetention, boolean catchUpOnStart, SyncMode mode) {
 
     public static final String EVENTS = "sync.events";
     public static final String INTERVAL = "sync.interval";
@@ -29,7 +29,7 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     public static final String BEFORE_SEARCH = "sync.before-search";
     public static final String WITHHELD_RETENTION = "sync.withheld-retention";
     public static final String CATCH_UP_ON_START = "sync.catch-up-on-start";
-    public static final String LOAD_UNKNOWN = "sync.load-unknown";
+    public static final String MODE = "sync.mode";
 
     /** Kleinster Abstand des Zeitplans, wie {@code Harvester.reconcile}. */
     public static final Duration MIN_INTERVAL = Duration.ofMinutes(1);
@@ -39,20 +39,21 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
 
     /** Keine Änderungsquelle: keine Ereignisse, kein Nachholen beim Start, kein Zeitplan, nicht vor jeder Suche. */
     public static final SyncSettings DEFAULT = new SyncSettings(false, null, List.of(), false,
-            DEFAULT_WITHHELD_RETENTION, false, false);
+            DEFAULT_WITHHELD_RETENTION, false, SyncMode.CATALOG_ONLY);
 
     public SyncSettings {
         spaces = spaces == null ? List.of() : List.copyOf(spaces);
         withheldRetention = withheldRetention == null ? DEFAULT_WITHHELD_RETENTION : withheldRetention;
+        mode = mode == null ? SyncMode.CATALOG_ONLY : mode;
     }
 
-    /** Ohne Nachholen beim Start und ohne Laden unbekannter Seiten. */
+    /** Ohne Nachholen beim Start, Läufe nur katalogisieren. */
     public SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
                         Duration withheldRetention) {
-        this(events, interval, spaces, beforeSearch, withheldRetention, false, false);
+        this(events, interval, spaces, beforeSearch, withheldRetention, false, SyncMode.CATALOG_ONLY);
     }
 
     public SyncSettings withInterval(Duration value) {
-        return new SyncSettings(events, value, spaces, beforeSearch, withheldRetention, catchUpOnStart, loadUnknown);
+        return new SyncSettings(events, value, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode);
     }
 }

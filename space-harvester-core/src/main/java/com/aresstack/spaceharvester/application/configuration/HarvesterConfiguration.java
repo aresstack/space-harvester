@@ -171,7 +171,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         SyncSettings sync = new SyncSettings(read.bool(SyncSettings.EVENTS, false), read.duration(SyncSettings.INTERVAL),
                 read.list(SyncSettings.SPACES), read.bool(SyncSettings.BEFORE_SEARCH, false),
                 read.duration(SyncSettings.WITHHELD_RETENTION), read.bool(SyncSettings.CATCH_UP_ON_START, false),
-                read.bool(SyncSettings.LOAD_UNKNOWN, false));
+                read.mode());
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
                 storage);
@@ -226,6 +226,16 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         String value(String key) {
             String value = properties.getProperty(PREFIX + key, properties.getProperty(key));
             return value == null || value.isBlank() ? null : value.strip();
+        }
+
+        SyncMode mode() {
+            String value = value(SyncSettings.MODE);
+            SyncMode mode = value == null ? SyncMode.CATALOG_ONLY : SyncMode.parse(value);
+            if (mode == null) {
+                problems.add(new ConfigurationProblem(SyncSettings.MODE, "Erwartet catalog-only, sync-cache oder full"));
+                return SyncMode.CATALOG_ONLY;
+            }
+            return mode;
         }
 
         boolean bool(String key, boolean fallback) {
