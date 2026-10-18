@@ -145,13 +145,18 @@ public final class ParityComparison {
                 verdict == Verdict.CORE_WENIGER ? (eac - core) + " weniger im Core" : "");
     }
 
-    /** Fehlende Bilder müssen gemeldet werden: meldet der Maßstab welche, muss der Core es auch. */
+    /**
+     * Fehlende Bilder müssen gemeldet werden: Jedes Bild des Maßstabs, eingebettet oder gemeldet, muss im Core
+     * eingebettet oder gemeldet sein. Weniger Hinweise sind nur in Ordnung, wenn der Core dafür mehr einbettet.
+     */
     private static Finding imageNotes(String format, DocumentOutline eac, DocumentOutline core) {
         Verdict verdict;
         String detail = "";
-        if (eac.imageNotes() > 0 && core.imageNotes() == 0 && core.images() <= eac.images()) {
+        int eacOutcomes = eac.images() + eac.imageNotes();
+        int coreOutcomes = core.images() + core.imageNotes();
+        if (core.imageNotes() < eac.imageNotes() && coreOutcomes < eacOutcomes) {
             verdict = Verdict.CORE_WENIGER;
-            detail = "der Core meldet keine fehlenden Bilder";
+            detail = (eacOutcomes - coreOutcomes) + " Bild(er) weder eingebettet noch gemeldet";
         } else {
             verdict = Verdict.GLEICH;
         }
@@ -196,19 +201,43 @@ public final class ParityComparison {
     }
 
     private static Finding text(String format, DocumentOutline eac, DocumentOutline core) {
-        Set<String> eacWords = words(eac.text());
-        Set<String> coreWords = words(core.text());
-        Set<String> missing = new LinkedHashSet<>(eacWords);
-        missing.removeAll(coreWords);
-        double recall = eacWords.isEmpty() ? 1.0 : 1.0 - (double) missing.size() / eacWords.size();
+        // Vorkommen zählen, nicht nur verschiedene Wörter: sonst fielen wiederholte Absätze nicht auf
+        Map<String, Integer> eacWords = bodyWords(eac);
+        Map<String, Integer> coreWords = bodyWords(core);
+        int total = 0;
+        int found = 0;
+        Set<String> missing = new LinkedHashSet<>();
+        for (Map.Entry<String, Integer> word : eacWords.entrySet()) {
+            int present = Math.min(word.getValue(), coreWords.getOrDefault(word.getKey(), 0));
+            total += word.getValue();
+            found += present;
+            if (present < word.getValue()) {
+                missing.add(word.getKey());
+            }
+        }
+        int absent = (int) eacWords.keySet().stream().filter(word -> !coreWords.containsKey(word)).count();
+        // Beide Maße: Vorkommen (wiederholte Absätze) und verschiedene Wörter (seltene Begriffe)
+        double recall = Math.min(total == 0 ? 1.0 : (double) found / total,
+                eacWords.isEmpty() ? 1.0 : 1.0 - (double) absent / eacWords.size());
         Verdict verdict = recall >= TEXT_RECALL ? Verdict.GLEICH : Verdict.CORE_WENIGER;
         String percent = String.format(Locale.ROOT, "%.1f %%", recall * 100);
-        return new Finding(format, "text", "Text (Wörter des Maßstabs im Core)", eacWords.size() + " Wörter",
-                percent, verdict, missing.isEmpty() ? "" : "fehlt im Core: " + listed(List.copyOf(missing)));
+        return new Finding(format, "text", "Text (Wörter des Maßstabs im Core)", total + " Wörter",
+                percent, verdict, missing.isEmpty() ? "" : "fehlt oder seltener im Core: " + listed(List.copyOf(missing)));
     }
 
-    static Set<String> words(String text) {
-        Set<String> words = new LinkedHashSet<>();
+    /** Wörter des Fließtexts; Überschriften prüft {@code kapitel}, ihre Wiederholung ist Layout des Exporters. */
+    private static Map<String, Integer> bodyWords(DocumentOutline outline) {
+        Map<String, Integer> words = counts(words(outline.text()));
+        for (Heading heading : outline.headings()) {
+            for (String word : words(heading.text())) {
+                words.computeIfPresent(word, (key, count) -> count > 1 ? count - 1 : null);
+            }
+        }
+        return words;
+    }
+
+    static List<String> words(String text) {
+        List<String> words = new ArrayList<>();
         String content = Patterns.CHROME_LINE.matcher(text).replaceAll("");
         for (String word : content.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
             // Zahlen sind meist Seitenzahlen des Layouts
