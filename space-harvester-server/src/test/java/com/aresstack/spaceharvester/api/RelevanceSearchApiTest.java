@@ -151,6 +151,32 @@ class RelevanceSearchApiTest {
         assertThat(response.body()).doesNotContain("similarity").doesNotContain("900");
     }
 
+    @Test
+    void relatedSectionsComeFromTheStoredVectorsAndNeedContentAccess() throws Exception {
+        HttpResponse<String> response = related(TestClient.TOKEN, "102", "kind=similar-to&minSimilarity=0.5");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("origin").get("chunk").asInt()).isZero();
+        assertThat(body.get("relations").valueStream().map(relation -> relation.get("page").get("pageId")
+                .asString())).containsExactly("101", "900");
+        assertThat(body.get("relations").get(0).get("kind").asString()).isEqualTo("similar-to");
+        assertThat(body.get("relations").get(0).get("score").asDouble()).isBetween(0.7999, 0.8001);
+        assertThat(body.get("complete").asBoolean()).isTrue();
+
+        HttpResponse<String> hidden = related(METADATA_ONLY_TOKEN, "102", "");
+        assertThat(hidden.statusCode()).isEqualTo(404);
+        assertThat(hidden.body()).doesNotContain("101").doesNotContain("900");
+        assertThat(related(TestClient.TOKEN, "102", "kind=links-to").statusCode()).isEqualTo(400);
+    }
+
+    private HttpResponse<String> related(String token, String pageId, String parameters) throws Exception {
+        URI uri = URI.create("http://localhost:" + environment.getProperty("local.server.port")
+                + "/api/v1/sources/wiki/pages/" + pageId + "/related?" + parameters);
+        return http.send(HttpRequest.newBuilder(uri).header("Authorization", "Bearer " + token).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     private void embed(String pageId, String vector) {
         store.save(new Enrichment(new PageKey("wiki", pageId), "embedding", processor.version(),
                 "sha256:" + "1".repeat(64), "3", Enrichment.Status.OK, "{\"model\":\"axes\",\"dimensions\":3,"

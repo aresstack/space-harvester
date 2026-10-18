@@ -292,6 +292,39 @@ public class RelevanceSearch {
     }
 
     /**
+     * Verwandte Abschnitte eines eingebetteten Stücks (#181, {@link RelatedSections}): ähnliche Stücke, Elternseite,
+     * Nachbarstücke und Stücke desselben Abschnitts. Nichts geht an den KI-Dienst; die Vektoren liegen schon in der
+     * Ablage.
+     *
+     * @param chunk Nummer des Stücks in der Seite, ab 0
+     * @throws SemanticSearchUnavailableException wenn kein Embedding-Dienst eingerichtet ist
+     * @throws com.aresstack.spaceharvester.application.query.CacheMissException wenn die Seite nicht im Cache liegt
+     *                                            oder nicht sichtbar ist
+     */
+    public RelatedSections.Results related(AccessContext caller, String sourceId, String pageId, int chunk,
+                                           RelatedSections.Query query) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(pageId, "pageId");
+        if (embedding == null) {
+            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
+        }
+        return new RelatedSections(catalog, index, access, store, vectors, embedding, this::checkLive)
+                .related(caller, sourceId, pageId, chunk, query);
+    }
+
+    /** Live-Prüfung wie für Treffer mit Ähnlichkeit: {@code metadata} und {@code content} im heutigen Space. */
+    private List<RelatedSections.Checked> checkLive(AccessContext caller, List<SearchHit> hits) {
+        PageSearchQuery any = PageSearchQuery.of(null, List.of(), null, null, null, null, null, null,
+                SearchSort.TITLE);
+        Set<PageKey> fromContent = new LinkedHashSet<>();
+        hits.forEach(hit -> fromContent.add(hit.page().header().key()));
+        return verify(caller, any, hits, Map.of(), fromContent).stream()
+                .map(verified -> new RelatedSections.Checked(verified.hit() == null ? null : verified.hit().hit(),
+                        verified.failed()))
+                .toList();
+    }
+
+    /**
      * Prüft Treffer parallel, Reihenfolge bleibt.
      *
      * @param contentRanked Seiten, deren Platz aus dem Volltext stammt; sie brauchen live {@code content} wie Treffer
