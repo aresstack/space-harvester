@@ -33,6 +33,7 @@ import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
+import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -66,8 +67,8 @@ class ExportMediaSignInTest {
     private final Jobs jobs = new Jobs(new InMemoryJobStore(), queued::add, new JobLimits(2, 10, Duration.ofHours(1)),
             Clock.systemUTC());
     private final InMemoryPageCache cache = new InMemoryPageCache();
-    private final ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter()),
-            ExportConverters.DEFAULT_MAX_BYTES);
+    private final ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter(),
+            new JsonPackageConverter()), ExportConverters.DEFAULT_MAX_BYTES);
 
     @TempDir
     Path data;
@@ -90,6 +91,37 @@ class ExportMediaSignInTest {
         assertThat(source.loaded).containsExactlyInAnyOrder("att-drawio", "att-foto");
         assertThat(setup.conversions.dataset(setup.export.id(), "client-a").orElseThrow().images())
                 .isEqualTo(ExportDatasetInfo.Images.COMPLETE);
+    }
+
+    @Test
+    void theJsonPackageCarriesTheMediaFolderWithRelativePathsAndTheDiagramAsGraph() throws Exception {
+        Source source = new Source(false);
+        Setup setup = setup(source, SignInRequests.none());
+        drain();
+
+        ExportConversions.ConvertedFile zip = setup.conversions.convert(setup.export.id(), "client-a",
+                JsonPackageConverter.FORMAT, data.resolve("out"));
+        assertThat(zip.path().getFileName().toString()).endsWith(".zip");
+        Map<String, byte[]> files = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipInputStream in = new java.util.zip.ZipInputStream(
+                java.nio.file.Files.newInputStream(zip.path()))) {
+            for (java.util.zip.ZipEntry entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                files.put(entry.getName(), in.readAllBytes());
+            }
+        }
+        assertThat(files.keySet()).containsExactly("pages.json", "assets.json", "assets/100/ablauf.drawio",
+                "assets/100/ablauf.graph.json", "assets/100/ablauf.svg", "assets/100/foto.png");
+        assertThat(files.get("assets/100/ablauf.drawio")).isEqualTo(MXFILE);
+        assertThat(files.get("assets/100/foto.png")).isEqualTo(PNG);
+        String manifest = new String(files.get("assets.json"), StandardCharsets.UTF_8);
+        assertThat(manifest).contains("\"status\":\"REDUNDANT\"").contains("\"reason\":\"drawio-preview\"")
+                .contains("\"path\":\"assets/100/foto.png\"").contains("\"graph\":\"assets/100/ablauf.graph.json\"")
+                .doesNotContain("base64");
+        assertThat(new String(files.get("assets/100/ablauf.graph.json"), StandardCharsets.UTF_8))
+                .contains("\"label\":\"Start\"");
+        // Deterministisch: dieselbe Datei beim zweiten Mal.
+        assertThat(setup.conversions.convert(setup.export.id(), "client-a", JsonPackageConverter.FORMAT,
+                data.resolve("out")).sha256()).isEqualTo(zip.sha256());
     }
 
     @Test

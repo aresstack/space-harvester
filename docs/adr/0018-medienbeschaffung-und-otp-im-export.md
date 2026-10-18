@@ -1,12 +1,16 @@
 # ADR 0018: Medienbeschaffung und Einmalcode (OTP) im Export
 
-- Status: **Angenommen, erster Schritt umgesetzt** (Strang M, 18.10.2026; Entscheidungen von Angelo, 18.10. 20:20).
+- Status: **Angenommen, zwei Schritte umgesetzt** (Strang M, 18.10.2026; Entscheidungen von Angelo, 18.10. 20:20).
   Ergänzt [ADR 0010](0010-export-ohne-vorbereiteten-bestand.md) (einmal beschaffen, beliebig konvertieren).
 - Umgesetzt im ersten Schritt: Einordnung vor dem Download (draw.io-Vorschau überflüssig), Warten des Auftrags auf den
   Einmalcode mit Fortsetzen an derselben Stelle (`SignInRequests`), Status `SIGN_IN_REQUIRED` und `REDUNDANT` in
   `assets.json`, erneutes Beschaffen (`ExportConversions.collectImages`).
-- Offen: Medienverzeichnis im JSON-Export (`assets/`), textuelle Beschreibung von draw.io (`*.graph.json`),
-  Abgleich des PDF-Exports mit dem Enterprise AI Client, REST für Anmeldungen, Eingabemaske in der App (Strang L).
+- Umgesetzt im zweiten Schritt: Format `json-package` (ZIP mit `pages.json`, `assets.json`, `assets/`) und draw.io als
+  Knoten und Verbindungen (`DrawioGraph`, `*.graph.json`).
+- PDF und Word: bereits die Writer des Enterprise AI Client (`document-export`, Kopie von `PdfExportWriter` und
+  `DocxExportWriter` mit Inhaltsverzeichnis, Bildplatzierung und Skalierung; Paritätstests ohne bekannte Lücken).
+- Offen: REST für Anmeldungen, Eingabemaske in der App (Strang L), Ansichtsbild der Vorschau doppelt, wenn das
+  Diagramm nicht zeichenbar ist.
 - Bezüge: Paritäts-Issues #185 (2FA beim Download), #190 (Diagramme), #184 (nur Textfassung von Diagrammen);
   `ExportAssetCollection`, `ExportAssetManifest`, `ExportChapters`, `SignInRequests`.
 
@@ -49,9 +53,11 @@ fehlendes Bild; er profitiert nur von einer vorher in der Leseansicht freigescha
    Dateien kommen aus dem Speicher, und was der neue Lauf nicht erreicht, behält den Stand des vorigen.
 5. **Der Code** wird nur an die Abfrage der Quelle gegeben und danach im `char[]` überschrieben. Er steht in keinem
    Feld, Log, Ereignis, Export und geht an kein Modell. Protokolliert wird nur „angenommen“ oder „nicht angenommen“.
-6. **JSON-Export mit Medienverzeichnis**, keine Base64-Einbettung: `pages.json`, `assets.json` mit Zuordnung zur
-   Seite, Dateiname, Medientyp, Prüfsumme und Status, Dateien unter `assets/` mit relativen Verweisen; transportierbar
-   als ZIP. PDF und Word betten Bilder ein, Markdown verweist auf `assets/`.
+6. **JSON-Export mit Medienverzeichnis**, keine Base64-Einbettung: Format `json-package` liefert ein ZIP mit
+   `pages.json` (wie `json`), `assets.json` (Format `space-harvester/export-package-assets/v1`: je Datei Seite, Art,
+   Dateiname, Medientyp, `sha256`, Status, Grund, relativer `path`, gezeichnete Grafik, bei draw.io `graph` und
+   `text`) und `assets/<Seiten-ID>/<Datei>`. Das Format `json` bleibt unverändert (REST-Verbraucher). PDF und Word
+   betten Bilder ein.
 7. **draw.io auch als Text**: neben der Originaldatei Beschriftungen, Knoten und Verbindungen als `*.graph.json` für
    KI-Systeme. PDF und Word zeichnen aus den Quelldaten.
 8. **PDF wie im Enterprise AI Client**: Bildplatzierung, Skalierung, Umbrüche und Inhaltsverzeichnis von dort
