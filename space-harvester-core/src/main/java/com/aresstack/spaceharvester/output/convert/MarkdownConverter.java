@@ -83,6 +83,7 @@ public final class MarkdownConverter implements ExportConverter {
             input.forEachPage(page -> {
                 try {
                     ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                    figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
                             figures.markdown(), figures.images(), ExportChapters.depth(page)));
                 } catch (IOException e) {
