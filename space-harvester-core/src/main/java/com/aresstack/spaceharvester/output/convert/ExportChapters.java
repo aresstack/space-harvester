@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.document.ExportGraphics;
 import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
@@ -101,6 +102,13 @@ final class ExportChapters {
                 codes.put(src, code(entry));
             }
         }
+        for (Entry entry : assets.forPage(page.pageId())) {
+            // Mermaid, das beim Beschaffen gezeichnet wurde: der Writer nimmt dieses Bild statt selbst zu zeichnen
+            if (entry.reference().kind() == Kind.MERMAID && entry.reference().source() != null && drawn(entry)) {
+                assets.rendition(entry).ifPresent(png -> images.add(ExportImage.loaded(
+                        ExportGraphics.mermaidAddress(entry.reference().source()), "Mermaid-Diagramm", png)));
+            }
+        }
         Matcher drawio = DRAWIO.matcher(markdown);
         Set<String> drawn = new HashSet<>();
         while (drawio.find()) {
@@ -116,6 +124,11 @@ final class ExportChapters {
     }
 
     /** Hinweise für Mermaid-Diagramme einer Seite, die der Writer nicht zeichnen konnte (bleiben Quelltext). */
+    /** Ob die Beschaffung das Diagramm schon gezeichnet abgelegt hat. */
+    private static boolean drawn(Entry entry) {
+        return entry.rendition() != null && entry.rendition().drawn();
+    }
+
     static List<ConversionNotice> mermaidNotices(ConvertiblePage page, List<String> failures) {
         return failures.isEmpty() ? List.of() : List.of(new ConversionNotice(page.pageId(),
                 ConversionNotice.Kind.MISSING_DIAGRAM, "mermaid", "render-failed"));
@@ -203,7 +216,15 @@ final class ExportChapters {
         if (source == null) {
             problem = "Quelldaten nicht im Datenbestand";
             code = "not-collected";
+        } else if (source.rendition() != null && source.rendition().problem() != null) {
+            // Beim Beschaffen schon nicht darstellbar: nicht erneut zeichnen
+            problem = "draw.io nicht darstellbar: " + source.rendition().problem();
+            code = "render-failed";
         } else {
+            Optional<byte[]> drawn = drawn(source) ? assets.rendition(source) : Optional.empty();
+            if (drawn.isPresent()) {
+                return ExportImage.loaded(src, title, drawn.get());
+            }
             Optional<byte[]> mxfile = source.stored() ? assets.content(source) : Optional.empty();
             if (mxfile.isPresent()) {
                 Diagrams.Rendering rendering = Diagrams.drawio(mxfile.get());

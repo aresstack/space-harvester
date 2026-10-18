@@ -164,12 +164,28 @@ public final class ExportGraphics {
         return graphic;
     }
 
+    /**
+     * The address under which a caller hands over an already drawn Mermaid diagram ({@link #with(List)}); the writers
+     * then embed that picture instead of drawing the fence themselves.
+     */
+    public static String mermaidAddress(String code) {
+        return "mermaid:" + (code == null ? "" : code.strip());
+    }
+
     /** The drawn Mermaid diagram, or {@code null} (then reported). */
     public Graphic mermaid(String code) {
         String key = "mermaid:" + code;
         Graphic cached = decoded.get(key);
         if (cached != null) {
             return cached;
+        }
+        ExportImage given = known.get(mermaidAddress(code));
+        if (given != null && given.ok()) {
+            Graphic graphic = decode(given.bytes(), svg);
+            if (graphic != null) {
+                decoded.put(key, graphic);
+                return graphic;
+            }
         }
         BufferedImage image = null;
         if (mermaid != null) {
