@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
@@ -122,6 +123,28 @@ class RelevanceSearchTest {
         assertThat(best.charEnd()).isEqualTo(20);
         assertThat(best.freshness()).isEqualTo(RelevanceSearch.Freshness.CURRENT);
         assertThat(embeddedQueries).containsExactly("nächtlicher Betrieb");
+    }
+
+    @Test
+    void aRerankerOfTheEmbeddingProgramReordersTheWindowAfterTheCosine() {
+        SearchReranker reverse = new SearchReranker() {
+            @Override
+            public String id() {
+                return "umgekehrt@1";
+            }
+
+            @Override
+            public List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates) {
+                return candidates.reversed();
+            }
+        };
+        RelevanceSearch search = new RelevanceSearch(CATALOG, index, new AccessGuard(ALLOW_ALL), store, store,
+                processor, null, reverse);
+
+        RelevanceSearch.RelevanceResults results = search.search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        assertThat(ids(results)).containsExactly("20", "10", "12", "11", "21");
+        assertThat(results.reranker()).isEqualTo("embedding-cosine@" + processor.version() + "+umgekehrt@1");
     }
 
     @Test

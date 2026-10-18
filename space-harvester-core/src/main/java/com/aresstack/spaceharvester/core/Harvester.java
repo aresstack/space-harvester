@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
@@ -40,6 +41,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
@@ -60,6 +62,8 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.SourceAdapter;
+import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
@@ -77,6 +81,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Predicate;
 
 /**
  * Space Harvester als Bibliothek: Quellen, Abgleich in den eingebetteten Lucene-Cache, Seiten, Baum, Suche und Export
@@ -141,7 +146,8 @@ public final class Harvester implements AutoCloseable {
         List<AutoCloseable> opened = new ArrayList<>();
         try {
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
-                    builder.trustBundles, builder.proxy, builder.asyncTransport);
+                    builder.trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
+                    builder.secretProvider);
             opened.add(catalog);
             this.catalog = catalog;
             this.trustBundles = builder.trustBundles;
@@ -171,11 +177,15 @@ public final class Harvester implements AutoCloseable {
             opened.add(enrichmentStore);
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
-            if (builder.ai.embeddings()) {
-                // ADR 0011: nur über den externen Dienst, im Hintergrund, nur für freigegebene Quellen.
+            if (builder.embeddingProvider != null || builder.ai.embeddings()) {
+                // ADR 0011: über den externen Dienst oder das Modell des Programms (#188), im Hintergrund, nur für
+                // freigegebene Quellen.
                 AiServiceSettings ai = builder.ai;
-                embedding = new EmbeddingProcessor(RemoteAi.of(ai, catalog, builder.trustBundles, builder.userAgent)
-                        .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
+                embedding = builder.embeddingProvider != null
+                        ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
+                                builder.embeddingSources)
+                        : new EmbeddingProcessor(RemoteAi.of(ai, catalog, builder.trustBundles, builder.userAgent)
+                                .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -217,7 +227,7 @@ public final class Harvester implements AutoCloseable {
                 renewal = new PageRenewal(pages, renewals);
             }
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal);
+                    renewal, builder.reranker);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
@@ -559,8 +569,75 @@ public final class Harvester implements AutoCloseable {
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
+        private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
+        private SourceSecrets secretProvider;
+        private EmbeddingProvider embeddingProvider;
+        private Predicate<String> embeddingSources;
+        private SearchReranker reranker = SearchReranker.NONE;
 
         private Builder() {
+        }
+
+        /**
+         * Ein weiterer Quellentyp des einbettenden Programms (#188), z. B. MediaWiki; ein Typ, den der Core schon kennt
+         * ({@link ConfiguredSourceCatalog#TYPES}), wird durch ihn ersetzt. Ein Typ zweimal ist ein Fehler beim Bauen.
+         */
+        public Builder sourceAdapter(SourceAdapter adapter) {
+            sourceAdapters.add(Objects.requireNonNull(adapter, "adapter"));
+            return this;
+        }
+
+        /**
+         * Zugangsdaten des einbettenden Programms (#188), z. B. KeePassRPC, ein Tresor oder eine Abfrage beim
+         * Benutzer. Gefragt wird erst beim ersten Zugriff einer Quelle und nur, was ihre Konfiguration nicht nennt:
+         * {@code source:<id>} (Benutzer und Passwort, ein Token ohne Benutzer) und
+         * {@code source:<id>:client-certificate} (Passwort der PKCS#12-Datei). Mit Anbieter darf eine Quelle mit
+         * Anmeldung Passwort und Token weglassen. Der Core speichert und protokolliert nichts davon.
+         */
+        public Builder secretProvider(SourceSecrets secretProvider) {
+            this.secretProvider = Objects.requireNonNull(secretProvider, "secretProvider");
+            return this;
+        }
+
+        /**
+         * Ein eigenes Embedding-Modell des einbettenden Programms (#188) statt des externen Dienstes aus {@link #ai};
+         * damit bleibt etwa ein lokales Modell im Programm möglich, ohne dass der Core eines mitbringt (ADR 0011).
+         * Eingebettet werden alle Quellen; welche das Modell sehen dürfen, steuert {@link #embeddings(EmbeddingProvider,
+         * Predicate)}.
+         */
+        public Builder embeddings(EmbeddingProvider provider) {
+            return embeddings(provider, sourceId -> true);
+        }
+
+        /**
+         * @param sources ob Inhalte der Quelle an das Modell gehen dürfen (Quellen-ID)
+         */
+        public Builder embeddings(EmbeddingProvider provider, Predicate<String> sources) {
+            this.embeddingProvider = Objects.requireNonNull(provider, "provider");
+            this.embeddingSources = Objects.requireNonNull(sources, "sources");
+            return this;
+        }
+
+        /**
+         * Ein Reranker des einbettenden Programms (#188), etwa ein Cross-Encoder: ordnet bei der semantischen Suche das
+         * nach Ähnlichkeit sortierte Fenster freigegebener Treffer neu; er darf nur umordnen, nie Treffer entfernen oder
+         * hinzufügen. Standard ohne.
+         */
+        public Builder reranker(SearchReranker reranker) {
+            this.reranker = Objects.requireNonNull(reranker, "reranker");
+            return this;
+        }
+
+        /** Die Quellentypen: die des Core, ersetzt oder ergänzt um die eigenen. */
+        private List<SourceAdapter> adapters() {
+            List<SourceAdapter> adapters = new ArrayList<>();
+            for (SourceAdapter adapter : ConfiguredSourceCatalog.DEFAULT_ADAPTERS) {
+                if (sourceAdapters.stream().noneMatch(own -> own.type().equals(adapter.type()))) {
+                    adapters.add(adapter);
+                }
+            }
+            adapters.addAll(sourceAdapters);
+            return adapters;
         }
 
         /** Exportartefakte; Standard {@code <dataDirectory>/exports}. */

@@ -112,6 +112,16 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    Cache-Verzeichnis dieselben Objekte, die heute `config` verdrahtet, und bietet Quellen, Abgleich, Seiten, Suche und
    Export als Methoden an. Der Server nutzt weiter die einzelnen Anwendungsfälle; der Einstieg ist eine zusätzliche
    Tür, keine zweite Implementierung. Paketnamen bleiben unverändert, damit Historie und Importe stabil bleiben.
+   Erweiterungspunkte für einbettende Programme wie den Enterprise AI Client (#188, ADR 0012), alle am
+   `Harvester.Builder`:
+   - `sourceAdapter(SourceAdapter)`: weitere Quellentypen; ein Typ des Core gleichen Namens wird ersetzt.
+   - `secretProvider(SourceSecrets)`: Zugangsdaten des Programms (KeePassRPC, Tresor, Abfrage). Er wird erst beim
+     ersten Zugriff gefragt und nur unter `source:<id>` bzw. `source:<id>:client-certificate`, wenn die Konfiguration
+     nichts nennt.
+   - `embeddings(EmbeddingProvider[, Predicate<String>])`: ein eigenes Embedding-Modell statt des externen Dienstes.
+     Ein lokales Modell bleibt damit im Programm, nicht im Core (ADR 0011).
+   - `reranker(SearchReranker)`: ordnet das Fenster der semantischen Suche nach der Ähnlichkeit neu, nur als Umordnung.
+   - `imageDescriber(ImageDescriber)` und `accessPolicy(AccessPolicy)`.
 6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
    Entwickler), Sources- und Javadoc-JAR; Koordinaten `com.aresstack:space-harvester-core`. Weil der Core die Kopie
    `enterprise-ai-sources` braucht, bekommt auch sie eine Publikation

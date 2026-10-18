@@ -105,6 +105,7 @@ public class RelevanceSearch {
     private final EmbeddingIndex vectors;
     private final EmbeddingProcessor embedding;
     private final Renewal renewal;
+    private final SearchReranker reranker;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -129,7 +130,18 @@ public class RelevanceSearch {
      */
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal) {
+        this(catalog, index, access, store, vectors, embedding, renewal, SearchReranker.NONE);
+    }
+
+    /**
+     * Mit einem weiteren Reranker des einbettenden Programms (#188), etwa einem Cross-Encoder: Er ordnet das nach
+     * Ähnlichkeit sortierte Fenster freigegebener Treffer neu, unter denselben Regeln ({@link Reranking}).
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker) {
         this.renewal = renewal;
+        this.reranker = Objects.requireNonNull(reranker, "reranker");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -198,6 +210,12 @@ public class RelevanceSearch {
                 });
         Reranking reranking = new Reranking(reranker);
         List<SearchHit> ordered = reranking.apply(query, window);
+        String rerankerId = reranking.rerankerId();
+        if (this.reranker != SearchReranker.NONE) {
+            Reranking custom = new Reranking(this.reranker);
+            ordered = custom.apply(query, ordered);
+            rerankerId = rerankerId + "+" + custom.rerankerId();
+        }
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
         boolean complete = true;
         int next = 0;
@@ -212,7 +230,7 @@ public class RelevanceSearch {
             }
             next = end;
         }
-        return new RelevanceResults(query.sourceId(), state, reranking.rerankerId(), hits, complete);
+        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete);
     }
 
     /** Prüft Treffer parallel, Reihenfolge bleibt. */

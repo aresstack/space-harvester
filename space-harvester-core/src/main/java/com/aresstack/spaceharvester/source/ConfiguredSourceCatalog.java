@@ -108,6 +108,19 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
                                              TrustBundles trustBundles, ProxySettings proxy,
                                              AsyncTransport asyncTransport, List<? extends SourceAdapter> adapters) {
+        return of(configs, userAgent, trustBundles, proxy, asyncTransport, adapters, null);
+    }
+
+    /**
+     * @param secretProvider Zugangsdaten des einbettenden Programms (#188) unter {@code source:<id>} (Anmeldung) und
+     *                       {@code source:<id>:client-certificate} (Passwort der PKCS#12-Datei), gefragt erst beim
+     *                       ersten Zugriff und nur, wenn die Konfiguration keine nennt; {@code null} ohne. Dann darf
+     *                       eine Quelle mit Anmeldung Passwort oder Token weglassen.
+     */
+    public static ConfiguredSourceCatalog of(List<SourceSettingsConfig> configs, String userAgent,
+                                             TrustBundles trustBundles, ProxySettings proxy,
+                                             AsyncTransport asyncTransport, List<? extends SourceAdapter> adapters,
+                                             SourceSecrets secretProvider) {
         Map<String, SourceAdapter> byType = new LinkedHashMap<>();
         for (SourceAdapter adapter : adapters) {
             if (byType.putIfAbsent(adapter.type(), adapter) != null) {
@@ -117,7 +130,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         ProxyRoutes routes = ProxyRoutes.from(proxy);
         LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
-        ConfiguredSecrets secrets = new ConfiguredSecrets();
+        ConfiguredSecrets secrets = new ConfiguredSecrets(secretProvider);
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
@@ -136,7 +149,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             SourceAdapter adapter = config.type() == null ? null : byType.get(config.type());
             if (adapter != null) {
                 own = new ArrayList<>(own);
-                own.addAll(adapter.check(config));
+                own.addAll(adapter.check(config, secrets.external()));
             }
             if (!own.isEmpty()) {
                 own.forEach(problem -> problems.add(label + ": " + problem));
