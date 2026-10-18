@@ -29,8 +29,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import javax.swing.AbstractButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
 import javax.swing.JTable;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
@@ -147,13 +145,12 @@ class SearchViewTest {
 
     private final java.util.Map<SearchView, javax.swing.JPanel> wholes = new java.util.IdentityHashMap<>();
 
-    /** Arbeitsfläche, Seitenleiste und Aktionszeile zusammen, wie im Hauptfenster. */
+    /** Arbeitsfläche und Aktionszeile zusammen, wie im Hauptfenster. */
     private javax.swing.JPanel whole(SearchView view) {
         return wholes.computeIfAbsent(view, v -> {
             javax.swing.JPanel[] panel = new javax.swing.JPanel[1];
             Runnable build = () -> {
                 panel[0] = new javax.swing.JPanel(new java.awt.BorderLayout());
-                panel[0].add(v.sidebar(), java.awt.BorderLayout.WEST);
                 panel[0].add(v.component(), java.awt.BorderLayout.CENTER);
                 panel[0].add(v.actions(), java.awt.BorderLayout.SOUTH);
             };
@@ -272,22 +269,19 @@ class SearchViewTest {
         start(false);
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
-        // Sichtbare Häkchen: „Alle“ ist vorgegeben; die Space-Auswahl zeigt die Spaces der Quellen mit Quelle.
-        // Die Häkchen entstehen bei jeder Änderung der Quellen neu (Verbindungsprüfung); daher jedes Mal frisch.
-        java.util.function.Supplier<List<JCheckBox>> boxes = () -> find(whole(view[0]), JCheckBox.class)
-                .stream().filter(JCheckBox::isEnabled).toList();
-        await(() -> context.connection("alpha").state() == AppContext.Connection.State.CONNECTED
-                && context.connection("beta").state() == AppContext.Connection.State.CONNECTED);
-        assertThat(boxes.get()).extracting(JCheckBox::getText).containsExactly("Alle", "Alpha", "Beta", "Dateien");
-        assertThat(boxes.get().get(0).isSelected()).isTrue();
-        JComboBox<?> spaces = find(whole(view[0]), JComboBox.class).get(0);
-        await(() -> spaces.getItemCount() >= 3);
+        // Der Umfang kommt aus dem Explorer: ohne Auswahl alle Wissensquellen, sonst die gewählten.
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
+        assertThat(view[0].everywhere.isVisible()).isFalse();
         SwingUtilities.invokeAndWait(() -> {
-            boxes.get().get(2).doClick();
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
             view[0].search("betrieb");
         });
-        assertThat(boxes.get().get(0).isSelected()).isFalse();
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta");
+        assertThat(view[0].everywhere.isVisible()).isTrue();
         assertThat(view[0].chosenSources()).containsExactly("beta");
+        assertThat(view[0].chosenSpaces()).isEmpty();
         JTable table = find(whole(view[0]), JTable.class).get(0);
         AbstractButton more = button(whole(view[0]), "Weitere laden");
         loadAll(table, more, PAGES_PER_SOURCE);
@@ -300,13 +294,13 @@ class SearchViewTest {
         assertThat(sourcesSeen).containsExactly("beta");
         assertThat(view[0].statusText()).doesNotContain("Dateien");
 
-        // „Alle“ hebt die Auswahl auf: Suche ohne sourceIds.
+        // „Überall suchen“ hebt die Auswahl auf: Suche ohne sourceIds.
         SwingUtilities.invokeAndWait(() -> {
-            boxes.get().get(0).doClick();
+            view[0].everywhere.doClick();
             view[0].search("betrieb");
         });
         assertThat(view[0].chosenSources()).isEmpty();
-        assertThat(boxes.get().get(2).isSelected()).isFalse();
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
         loadAll(table, more, 2 * PAGES_PER_SOURCE);
     }
 

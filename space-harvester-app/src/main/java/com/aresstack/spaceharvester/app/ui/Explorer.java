@@ -151,7 +151,7 @@ public final class Explorer {
     private final JLabel note = Comic.muted(" ");
     private final Timer debounce = new Timer(300, e -> runFilter());
     private List<String> shownSources = List.of();
-    private Consumer<Scope> scopeListener = scope -> { };
+    private Consumer<List<Scope>> scopeListener = scopes -> { };
     private int filterRequest;
 
     public Explorer(AppContext context) {
@@ -175,7 +175,9 @@ public final class Explorer {
             public void treeWillCollapse(TreeExpansionEvent event) {
             }
         });
-        tree.addTreeSelectionListener(e -> scopeListener.accept(scope()));
+        tree.getSelectionModel().setSelectionMode(
+                javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
+        tree.addTreeSelectionListener(e -> scopeListener.accept(scopes()));
         tree.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
@@ -254,23 +256,40 @@ public final class Explorer {
         return root;
     }
 
-    /** Meldet jede Änderung der Auswahl als Umfang (für die Suche). */
-    public void onScope(Consumer<Scope> listener) {
+    /** Meldet jede Änderung der Auswahl als Umfang (für die Suche); leer heißt alle. */
+    public void onScope(Consumer<List<Scope>> listener) {
         this.scopeListener = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Umfang der Auswahl: Quelle, Space oder der Space der gewählten Seite; ohne Auswahl alle. */
+    /** Hebt die Auswahl auf; der Umfang ist dann wieder alles. */
+    public void clearSelection() {
+        tree.clearSelection();
+    }
+
+    /** Umfang der ersten gewählten Zeile: Quelle, Space oder der Space einer Seite; ohne Auswahl alle. */
     public Scope scope() {
-        TreePath path = tree.getSelectionPath();
-        if (path == null || !(path.getLastPathComponent() instanceof Node node)) {
-            return Scope.ALL;
+        List<Scope> scopes = scopes();
+        return scopes.isEmpty() ? Scope.ALL : scopes.get(0);
+    }
+
+    /** Umfang aller gewählten Zeilen (Strg-Klick), ohne Doppelte; leer ohne Auswahl. */
+    public List<Scope> scopes() {
+        TreePath[] paths = tree.getSelectionPaths();
+        List<Scope> scopes = new ArrayList<>();
+        for (TreePath path : paths == null ? new TreePath[0] : paths) {
+            if (path.getLastPathComponent() instanceof Node node) {
+                Scope scope = switch (node.item()) {
+                    case SourceItem source -> new Scope(source.sourceId(), null);
+                    case SpaceItem space -> new Scope(space.sourceId(), space.spaceKey());
+                    case PageItem page -> new Scope(page.sourceId(), page.spaceKey());
+                    default -> null;
+                };
+                if (scope != null && !scopes.contains(scope)) {
+                    scopes.add(scope);
+                }
+            }
         }
-        return switch (node.item()) {
-            case SourceItem source -> new Scope(source.sourceId(), null);
-            case SpaceItem space -> new Scope(space.sourceId(), space.spaceKey());
-            case PageItem page -> new Scope(page.sourceId(), page.spaceKey());
-            default -> Scope.ALL;
-        };
+        return scopes;
     }
 
     // ------------------------------------------------------------------ Baum

@@ -66,16 +66,14 @@ public final class SearchView implements View {
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final JTextField query = Comic.field(30);
-    private final SourcePicker picker;
     /** Relevanzsuche ({@code sort=relevance}); nur mit eingerichtetem Embedding-Dienst aktivierbar. */
     final JCheckBox semantic = checkBox("Semantische Suche (experimentell)",
             "Sucht nach Bedeutung in den bereits eingebetteten Seiten freigegebener Quellen");
-    /** Seitenleiste: Wissensquellen untereinander, darunter der Space als Filter. */
-    private final JPanel side = new JPanel(new BorderLayout(0, 8));
-    private final JPanel sourcesRow = new JPanel();
-    private final JCheckBox all = checkBox("Alle", "Alle freigegebenen Quellen durchsuchen (ohne sourceIds)");
-    private final Map<String, JCheckBox> boxes = new LinkedHashMap<>();
-    private final ComposerButton run = Comic.primary("Suchen", "In den angehakten Quellen suchen (Titel und Inhalt)");
+    /** Der Umfang aus dem Explorer: „In: Alle Wissensquellen“ bzw. die gewählten Quellen und Spaces. */
+    final JLabel scopeLabel = Comic.muted(" ");
+    final ComposerButton everywhere = Comic.button("Überall suchen", "Auswahl im Explorer aufheben und in allen "
+            + "Wissensquellen suchen");
+    private final ComposerButton run = Comic.primary("Suchen", "Im gewählten Umfang suchen (Titel und Inhalt)");
     private final ComposerButton more = Comic.button("Weitere laden", "Die nächsten Treffer derselben Suche laden");
     private final HitsModel model = new HitsModel();
     private final JTable table = Comic.table(new JTable(model));
@@ -111,13 +109,17 @@ public final class SearchView implements View {
     private String shownCursor;
     /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
     private int request;
-    /** Angehakte Quellen; leer für alle. */
+    /** Quellen aus der Auswahl im Explorer; leer für alle. */
     private final Set<String> chosen = new TreeSet<>();
-    private boolean updating;
+    /** Spaces aus der Auswahl im Explorer; leer für alle Spaces der Quellen. */
+    private final Set<String> spaces = new TreeSet<>();
+    /** Gewählte Knoten mit Namen für die Umfangszeile. */
+    private List<Explorer.Scope> scopes = List.of();
+    /** Hebt die Auswahl im Explorer auf („Überall suchen“). */
+    private Runnable clearScope = () -> scope(List.of());
 
     public SearchView(AppContext context) {
         this.context = context;
-        this.picker = new SourcePicker(context, true, true);
         root.setBackground(Comic.SURFACE);
         query.setToolTipText("Wörter in Titel und Inhalt; die Quellen werden live durchsucht");
         query.addActionListener(e -> search());
@@ -133,9 +135,7 @@ public final class SearchView implements View {
         semantic.setSelected(false);
         semantic.setEnabled(false);
         semantic.setToolTipText(UNAVAILABLE);
-        all.addActionListener(e -> restrictTo(List.of()));
-        sourcesRow.setLayout(new javax.swing.BoxLayout(sourcesRow, javax.swing.BoxLayout.Y_AXIS));
-        sourcesRow.setOpaque(false);
+        everywhere.addActionListener(e -> clearScope.run());
         context.onChange(ignored -> refreshSources());
         refreshSources();
         table.addMouseListener(new MouseAdapter() {
@@ -152,7 +152,9 @@ public final class SearchView implements View {
 
         // Eine Suchleiste, daneben die semantische Suche; Erklärungen stehen im Tooltip des Infosymbols.
         JLabel info = new JLabel(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.info());
-        info.setToolTipText("<html>Schlagwortsuche über Titel und Inhalt, direkt in den angehakten Quellen.<br>"
+        info.setToolTipText("<html>Schlagwortsuche über Titel und Inhalt, direkt in den Quellen. Wo gesucht wird, "
+                + "wählst du im Explorer links:<br>eine Wissensquelle, einen Space oder mit Strg-Klick mehrere; "
+                + "ohne Auswahl in allen.<br>"
                 + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) im Suchfeld öffnet die Seite direkt."
                 + "<br>Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>");
         info.getAccessibleContext().setAccessibleName("Hinweise zur Suche");
@@ -165,28 +167,18 @@ public final class SearchView implements View {
         options.add(info);
         options.add(run);
         bar.add(options, BorderLayout.EAST);
+        JPanel scopeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        scopeRow.setOpaque(false);
+        scopeRow.add(scopeLabel);
+        scopeRow.add(everywhere);
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
         head.add(bar, BorderLayout.NORTH);
+        head.add(scopeRow, BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         root.add(head, BorderLayout.NORTH);
         root.add(Comic.scroll(table), BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
-
-        JPanel sources = new JPanel(new BorderLayout(0, 6));
-        sources.setOpaque(false);
-        sources.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
-        sources.add(sourcesRow, BorderLayout.CENTER);
-        JPanel space = new JPanel(new BorderLayout(0, 6));
-        space.setOpaque(false);
-        space.add(Comic.caption("Space"), BorderLayout.NORTH);
-        space.add(picker.spaceBox(), BorderLayout.CENTER);
-        JPanel filters = new JPanel(new BorderLayout(0, 16));
-        filters.setOpaque(false);
-        filters.add(sources, BorderLayout.NORTH);
-        filters.add(space, BorderLayout.CENTER);
-        side.setOpaque(false);
-        side.add(filters, BorderLayout.NORTH);
 
         actions.setOpaque(false);
         actions.add(progress, BorderLayout.NORTH);
@@ -200,11 +192,6 @@ public final class SearchView implements View {
         buttons.add(cancel);
         buttons.add(more);
         actions.add(buttons, BorderLayout.EAST);
-    }
-
-    @Override
-    public JComponent sidebar() {
-        return side;
     }
 
     @Override
@@ -228,24 +215,59 @@ public final class SearchView implements View {
         search();
     }
 
-    /** Beschränkt die Suche auf diese Quellen; leer sucht in allen. */
+    /** Wie {@link #scope(List)} für ganze Quellen. */
     void restrictTo(Collection<String> sourceIds) {
-        chosen.clear();
-        chosen.addAll(sourceIds);
-        chosen.retainAll(boxes.keySet());
-        updating = true;
-        all.setSelected(chosen.isEmpty());
-        boxes.forEach((id, box) -> box.setSelected(chosen.contains(id)));
-        updating = false;
-        picker.spaceScope(chosen);
+        scope(sourceIds.stream().map(id -> new Explorer.Scope(id, null)).toList());
     }
 
-    /** Die angehakten Quellen; leer heißt alle. */
+    /**
+     * Der Umfang aus der Auswahl im Explorer: die genannten Quellen, bei einem Space nur dieser; leer sucht in allen
+     * Wissensquellen. Eine laufende Suche bleibt; die nächste nutzt den neuen Umfang.
+     */
+    public void scope(List<Explorer.Scope> selection) {
+        Set<String> known = knownSources();
+        scopes = selection.stream().filter(scope -> scope.sourceId() != null && known.contains(scope.sourceId()))
+                .distinct().toList();
+        chosen.clear();
+        spaces.clear();
+        for (Explorer.Scope scope : scopes) {
+            chosen.add(scope.sourceId());
+            if (scope.spaceKey() != null) {
+                spaces.add(scope.spaceKey());
+            }
+        }
+        if (scopes.stream().anyMatch(scope -> scope.spaceKey() == null)) {
+            // Eine ganze Quelle in der Auswahl: alle ihre Spaces, kein Space-Filter für die anderen.
+            spaces.clear();
+        }
+        scopeLabel.setText(scopes.isEmpty() ? "In: Alle Wissensquellen" : "In: " + String.join(", ",
+                scopes.stream().map(scope -> title(scope.sourceId())
+                        + (scope.spaceKey() == null ? "" : " › " + scope.spaceKey())).toList()));
+        everywhere.setVisible(!scopes.isEmpty());
+    }
+
+    /** Hebt beim Klick auf „Überall suchen“ die Auswahl im Explorer auf; der meldet dann den leeren Umfang. */
+    public void onClearScope(Runnable action) {
+        this.clearScope = java.util.Objects.requireNonNull(action, "action");
+    }
+
+    /** Die Quellen des Umfangs; leer heißt alle. */
     Set<String> chosenSources() {
         return Set.copyOf(chosen);
     }
 
-    /** Ein Häkchen je laufender Quelle; entfernte Quellen fallen aus der Auswahl. */
+    /** Die Spaces des Umfangs; leer heißt alle. */
+    Set<String> chosenSpaces() {
+        return Set.copyOf(spaces);
+    }
+
+    private Set<String> knownSources() {
+        AppRuntime runtime = context.runtime();
+        return runtime == null ? Set.of() : runtime.workspace().sources().stream().map(HarvestSource::id)
+                .collect(java.util.stream.Collectors.toSet());
+    }
+
+    /** Semantische Suche je nach KI-Dienst; entfernte Quellen fallen aus dem Umfang. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
         boolean available = runtime != null && runtime.workspace().semanticSearch();
@@ -255,31 +277,7 @@ public final class SearchView implements View {
         }
         semantic.setToolTipText(available ? "Sucht nach Bedeutung: Embeddings über den KI-Dienst, nur Seiten "
                 + "freigegebener Quellen, die schon im Cache liegen" : UNAVAILABLE);
-        List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
-        boxes.clear();
-        sourcesRow.removeAll();
-        sourcesRow.add(all);
-        for (HarvestSource source : sources) {
-            JCheckBox box = checkBox(source.title() == null || source.title().isBlank() ? source.id() : source.title(),
-                    "Nur angehakte Quellen durchsuchen (" + source.id() + ")");
-            box.addActionListener(e -> {
-                if (updating) {
-                    return;
-                }
-                Set<String> next = new TreeSet<>(chosen);
-                if (box.isSelected()) {
-                    next.add(source.id());
-                } else {
-                    next.remove(source.id());
-                }
-                restrictTo(next);
-            });
-            boxes.put(source.id(), box);
-            sourcesRow.add(box);
-        }
-        restrictTo(new ArrayList<>(chosen));
-        sourcesRow.revalidate();
-        sourcesRow.repaint();
+        scope(scopes);
     }
 
     private static JCheckBox checkBox(String text, String tooltip) {
@@ -351,8 +349,9 @@ public final class SearchView implements View {
             return;
         }
         String text = query.getText().trim();
-        if (picker.allSourceIds().isEmpty()) {
-            feedback.warning("Keine Quelle eingerichtet", "Wissensquellen legst du unter Wissensquellen an.");
+        if (runtime.workspace().sources().isEmpty()) {
+            feedback.warning("Keine Quelle eingerichtet", "Wissensquellen legst du unter Wissensquellen verwalten "
+                    + "an (rechts oben).");
             return;
         }
         if (text.isEmpty()) {
@@ -369,11 +368,10 @@ public final class SearchView implements View {
         }
         KeywordSearch.Query q;
         try {
-            // Eine angehakte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
+            // Eine gewählte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
             String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-            String spaceKey = picker.spaceKey();
             q = new KeywordSearch.Query(text, sourceId, chosen.size() > 1 ? Set.copyOf(chosen) : Set.of(),
-                    spaceKey.isEmpty() ? Set.of() : Set.of(spaceKey));
+                    Set.copyOf(spaces));
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
@@ -432,10 +430,8 @@ public final class SearchView implements View {
                 throw new InvalidQueryException("höchstens " + RelevanceSearch.MAX_TEXT_LENGTH + " Zeichen");
             }
             String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
-            String spaceKey = picker.spaceKey();
             q = PageSearchQuery.of(sourceId, chosen.size() > 1 ? List.copyOf(chosen) : List.of(),
-                    spaceKey.isEmpty() ? List.of() : List.of(spaceKey), null, null, null, null, null, null,
-                    SearchSort.TITLE);
+                    List.copyOf(spaces), null, null, null, null, null, null, SearchSort.TITLE);
         } catch (InvalidQueryException invalid) {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
