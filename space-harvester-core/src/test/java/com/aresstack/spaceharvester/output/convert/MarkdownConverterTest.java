@@ -68,11 +68,13 @@ class MarkdownConverterTest {
                 storagePage("101", "100", 1, "<h1>Abschnitt</h1><p>Text</p>"),
                 storagePage("102", "101", 7, "<p>tief</p>"));
 
-        assertThat(markdown).contains("<a id=\"page-100\"></a>\n\n# Seite 100\n\n*Seite 100 · Version 3")
-                .contains("<a id=\"page-101\"></a>\n\n## Seite 101\n")
-                .contains("### Abschnitt\n\nText\n")
-                .contains("###### Seite 102\n");
-        assertThat(markdown.indexOf("# Seite 100")).isLessThan(markdown.indexOf("## Seite 101"));
+        // Kapitelmodell wie Word und PDF: der Space ist # , Wurzelseiten ##, tiefer als sechs Ebenen fett
+        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten der Quelle wiki, erzeugt mit markdown/4")
+                .contains("<a id=\"page-100\"></a>\n\n## Seite 100\n\n*Seite 100 · Version 3")
+                .contains("<a id=\"page-101\"></a>\n\n### Seite 101\n")
+                .contains("#### Abschnitt\n\nText\n")
+                .contains("<a id=\"page-102\"></a>\n\n**Seite 102**\n");
+        assertThat(markdown.indexOf("## Seite 100")).isLessThan(markdown.indexOf("### Seite 101"));
     }
 
     @Test
@@ -119,12 +121,27 @@ class MarkdownConverterTest {
 
         assertThat(markdown)
                 .contains("> **Info**\n>\n> Nur Testdaten.")
-                .contains("![diagramm.png](attachment:diagramm.png)")
+                // Nur als Anhang vorhanden: nicht eingebettet, sichtbar gemeldet
+                .contains("*[Abbildung nicht verfügbar: diagramm.png]*")
+                .doesNotContain("attachment:")
                 .contains("draw.io) „architektur“: die Quelle ist der Seitenanhang „architektur“")
                 .contains("```plantuml\n@startuml\nA -> B\n@enduml\n```")
                 .contains("Siehe [Seite 101](#page-101) und anderswo.")
                 .contains("Makro „toc“ wird in Confluence berechnet")
                 .contains("```json\n{\"pageId\": \"1002\"}\n```");
+    }
+
+    @Test
+    void codeKeepsBlankLinesAndWebImagesAreNotEmbedded() throws Exception {
+        String markdown = convert(storagePage("100", null, 0,
+                "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body><![CDATA[a\n\n\n\nb]]>"
+                        + "</ac:plain-text-body></ac:structured-macro>"
+                        + "<p><ac:image><ri:url ri:value=\"https://example.org/logo.png\" /></ac:image></p>"));
+
+        // Externe Bilder: nicht eingebettet, Hinweis mit Link auf die Adresse
+        assertThat(markdown).contains("```\na\n\n\n\nb\n```")
+                .contains("*\\[Abbildung nicht verfügbar: Bild\\]* ([Adresse](https://example.org/logo.png))")
+                .doesNotContain("![");
     }
 
     @Test

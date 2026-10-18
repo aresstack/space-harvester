@@ -25,7 +25,7 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
 | `ExportDocumentNode` | `astu/acropolis/…/acropolis/knowledge/ExportDocumentNode.java` |
 | `ExportImage` | `astu/acropolis/…/acropolis/knowledge/ExportImage.java` (nur Javadoc) |
 | `PdfExportWriter` | `proasteion/exedra/…/exedra/document/PdfExportWriter.java` |
-| `MarkdownExportWriter` | `proasteion/exedra/…/exedra/document/MarkdownExportWriter.java` (noch nicht eingehängt) |
+| `MarkdownExportWriter` | `proasteion/exedra/…/exedra/document/MarkdownExportWriter.java` |
 
 ## Abweichungen
 
@@ -53,8 +53,10 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
   Tabelle nicht dargestellt“ statt „[Bild: …]“. Inline `<br>` und leere Kopfzeile wie im Word-Renderer. Lange Wörter
   werden in linearer statt quadratischer Zeit umbrochen (ein Wort mit 200 000 Zeichen dauerte sonst Minuten).
   Feste Dateikennung vom Aufrufer, kein Datum; Ersteller „Space Harvester“.
-- **MarkdownExportWriter**: noch unverändert bis auf die Paketzeile und ohne `ExportWriter`-Interface; der
-  Markdown-Export nutzt ihn mit einem eigenen PR.
+- **MarkdownExportWriter**: Kapitel einzeln (`chapter(title, anchor, markdown, images, depth)`), mit
+  `<a id="…"></a>` vor der Überschrift als Ziel von Links `#<anker>`; Leerzeilen im Inhalt (Codeblöcke) bleiben. Ein
+  unbekanntes Bild, das keine Webadresse ist, wird „Abbildung nicht verfügbar“ und gemeldet (wie in Word und PDF;
+  upstream blieb es stehen). Kein `ExportWriter`-Interface.
 
 Verbesserungen, die beiden Seiten nützen (Textmarken, `<br>`, leere Kopfzeile, Speicher), gehören auch in den
 Enterprise AI Client; dort ändert sie ein eigener PR, nicht dieses Modul.

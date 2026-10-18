@@ -1,10 +1,9 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
-import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
-import com.aresstack.spaceharvester.application.snapshot.PageHeader;
-import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.document.ExportGraphics;
+import com.aresstack.spaceharvester.document.MarkdownExportWriter;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.CodeBlock;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Heading;
@@ -31,12 +30,15 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Markdown (#30): alle Seiten eines Exports in einer Datei {@code pages.md}, linear in Baumreihenfolge. Jede Seite
- * beginnt mit einer Sprungmarke {@code page-<id>} und einer Überschrift, deren Ebene ihrer Tiefe im Baum folgt
- * (höchstens 6), darunter Seiten-ID, Version und Adresse. Der Inhalt kommt aus dem Storage-Format; Verweise auf Seiten
- * desselben Exports zeigen auf deren Sprungmarke.
+ * Markdown (#30): alle Seiten eines Exports in einer Datei {@code pages.md}, linear in Baumreihenfolge, geschrieben mit
+ * dem Markdown-Exporter des Enterprise AI Client (Modul {@code :document-export}) aus demselben Kapitelmodell wie Word
+ * und PDF ({@link ExportChapters}): {@code #} ist der Space, Wurzelseiten {@code ##}, deren Kinder {@code ###} …; tiefer
+ * als sechs Ebenen wird die Überschrift eine fette Zeile. Jede Seite beginnt mit einer Sprungmarke {@code page-<id>},
+ * darunter Seiten-ID, Version und Adresse. Der Inhalt kommt aus dem Storage-Format; Verweise auf Seiten desselben
+ * Exports zeigen auf deren Sprungmarke.
  *
- * <p>Formatverluste: Bilder und Anhänge bleiben Verweise ({@code attachment:<Datei>}); draw.io- und Gliffy-Diagramme
+ * <p>Formatverluste: Bilder, die nur als Anhang vorliegen, gelten nicht als eingebettet und erscheinen als
+ * „Abbildung nicht verfügbar“; externe Bilder bleiben Links; draw.io- und Gliffy-Diagramme
  * erscheinen als Hinweis mit ihrem Namen, PlantUML und Mermaid als Codeblock mit ihrer Textquelle; Infokästen werden
  * Zitatblöcke; Zellen mit Listen oder mehreren Absätzen werden einzeilig; Farben, Ausrichtung und verbundene Zellen
  * entfallen. Nicht unterstützte Makros stehen als Hinweis im Text. Siehe {@code docs/CONVERTERS.md}.
@@ -44,7 +46,7 @@ import java.util.regex.Pattern;
 public final class MarkdownConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown";
-    public static final String VERSION = "markdown/3";
+    public static final String VERSION = "markdown/4";
 
     /** Zeichen am Zeilenanfang, die Markdown sonst als Überschrift, Liste oder Trennlinie läse. */
     private static final Pattern LINE_START = Pattern.compile("^(\\s*\\d*)([#=+-]|(?<=\\d)[.)])");
@@ -72,13 +74,15 @@ public final class MarkdownConverter implements ExportConverter {
     @Override
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
+        MarkdownExportWriter markdown = new MarkdownExportWriter(ExportGraphics.standard());
         Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
-        writer.write("<!-- Space " + input.spaceKey() + " der Quelle " + input.sourceId() + ", erzeugt mit "
-                + VERSION + " aus dem Confluence-Storage-Format. Bilder und Anhänge sind nur Verweise. -->\n");
+        String title = ExportChapters.title(input);
+        writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, VERSION), List.of(), 1));
         try {
             input.forEachPage(page -> {
                 try {
-                    writer.write("\n" + page(page, parser));
+                    writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
+                            ExportChapters.markdown(page, parser), List.of(), ExportChapters.depth(page)));
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
@@ -87,29 +91,6 @@ public final class MarkdownConverter implements ExportConverter {
             throw e.getCause();
         }
         writer.flush();
-    }
-
-    private static String page(ConvertiblePage page, StorageParser parser) {
-        PageHeader header = page.header();
-        PageMetadata metadata = header.metadata();
-        int level = Math.min(6, page.depth() + 1);
-        StringBuilder text = new StringBuilder();
-        text.append("<a id=\"").append(PageLinks.anchor(page.pageId())).append("\"></a>\n\n");
-        String title = metadata.title() == null || metadata.title().isBlank() ? "Seite " + page.pageId()
-                : metadata.title();
-        text.append("#".repeat(level)).append(' ').append(escape(title)).append("\n\n");
-        StringBuilder facts = new StringBuilder("Seite " + escape(page.pageId()));
-        if (metadata.version() != null) {
-            facts.append(" · Version ").append(escape(metadata.version()));
-        }
-        if (metadata.url() != null) {
-            facts.append(" · [In Confluence öffnen](").append(destination(metadata.url().toString())).append(')');
-        }
-        text.append('*').append(facts).append("*\n\n");
-        List<Block> blocks = PageBody.storage(page.snapshot().payload()).map(parser::parse)
-                .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
-        text.append(blocks(blocks, level));
-        return text.toString();
     }
 
     /** Blöcke, durch Leerzeilen getrennt; Überschriften im Inhalt liegen unter der Seitenüberschrift. */
