@@ -14,9 +14,13 @@ import java.util.Objects;
  * @param added             neue Seiten
  * @param notLoaded         gelistete, aber unbekannte Seiten, die ein Abgleich ohne Erstbefüllung nicht lädt (ADR 0014);
  *                          sie zählen zu {@code missingPageIds}
+ * @param outdated          bekannte Seiten mit neuer Version, deren Inhalt ein Lauf {@link SyncMode#CATALOG_ONLY} nicht
+ *                          lädt; sie bleiben veraltet erhalten
  * @param contentChanged    Seiten mit neuer Revision
  * @param metadataChanged   Seiten mit neuen Metadaten bei gleicher Revision (umbenannt, verschoben)
  * @param attributesChanged Seiten mit nur neuen Attributen (Labels)
+ * @param moved             Seiten unter einer anderen Elternseite oder in einem anderen Space als bisher, in jeder
+ *                          Änderungsart außer dem Entfernen; neu zugeordnet über die Eltern-ID
  * @param unchanged         unveränderte Seiten
  * @param removed           entfernte Seiten, deren Löschung die Quelle bestätigt hat
  * @param withheld          in diesem Lauf gesperrte Seiten: für das technische Konto nicht mehr sichtbar, ohne
@@ -33,8 +37,8 @@ import java.util.Objects;
  * @param notConfirmed      warum keine Generation bestätigt wurde, sonst {@code null}
  */
 public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inventory, int listed, int added,
-                          int notLoaded,
-                          int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
+                          int notLoaded, int outdated,
+                          int contentChanged, int metadataChanged, int attributesChanged, int moved, int unchanged, int removed,
                           int withheld, int purged, int movedOut, int unverified, List<String> failedPageIds, List<String> missingPageIds,
                           Long generation, boolean complete, String spaceFingerprint, String notConfirmed) {
 
@@ -67,10 +71,11 @@ public record SyncSummary(String sourceId, String spaceKey, Inventory.Status inv
         SyncBaseline confirmed = run.confirmed();
         return new SyncSummary(plan.inventory().sourceId(), plan.inventory().spaceKey(), plan.inventory().status(),
                 plan.inventory().pages().size(), plan.changes(PageChange.Kind.NEW).size(),
-                plan.changes(PageChange.Kind.NOT_LOADED).size(),
+                plan.changes(PageChange.Kind.NOT_LOADED).size(), plan.changes(PageChange.Kind.OUTDATED).size(),
                 plan.changes(PageChange.Kind.CONTENT_CHANGED).size(),
                 plan.changes(PageChange.Kind.METADATA_CHANGED).size(),
                 plan.changes(PageChange.Kind.ATTRIBUTES_CHANGED).size(),
+                (int) plan.changes().stream().filter(PageChange::moved).count(),
                 plan.changes(PageChange.Kind.UNCHANGED).size(), removed, withheld,
                 confirmed == null ? 0 : plan.purges().size(), movedOut, unverified,
                 run.failedPageIds().stream().sorted().toList(),

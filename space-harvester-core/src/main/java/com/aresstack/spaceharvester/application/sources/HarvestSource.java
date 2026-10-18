@@ -33,6 +33,9 @@ public interface HarvestSource {
         if (asyncStoredPages()) {
             capabilities.add(SourceCapability.ASYNC_STORED_PAGE);
         }
+        if (listsChanges()) {
+            capabilities.add(SourceCapability.CHANGES);
+        }
         return capabilities;
     }
 
@@ -223,6 +226,41 @@ public interface HarvestSource {
     default ReadingPage readingPage(String pageId) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle hat keine Lese-Ansicht", null);
+    }
+
+    /**
+     * Ob die Quelle Änderungen und Löschungen einer Partition gezielt melden kann ({@link #changedPageMetadata},
+     * {@link #removedPageMetadata}, ADR 0014). Dann hält eine Anfrage je Abgleich den Metadatenkatalog aktuell, statt
+     * die Partition neu zu inventarisieren.
+     */
+    default boolean listsChanges() {
+        return false;
+    }
+
+    /**
+     * Ein Stapel Metadaten der Seiten einer Partition, die innerhalb von {@code within} angelegt oder geändert wurden,
+     * älteste Änderung zuerst, ohne Inhalte. Das Zeitfenster gilt relativ zur Uhr der Quelle.
+     *
+     * @param within wie weit zurück, positiv; ohne Bedeutung, wenn {@code cursor} gesetzt ist
+     * @param cursor {@code null} für den ersten Stapel, sonst {@link PageMetadataBatch#nextCursor()}
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne {@link #listsChanges()} oder für einen fremden Cursor,
+     *                               sonst wie {@link #pageMetadata(String, String, int)}
+     */
+    default PageMetadataBatch changedPageMetadata(String partitionKey, java.time.Duration within, String cursor,
+                                                  int limit) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle meldet keine Änderungen", null);
+    }
+
+    /**
+     * Ein Stapel Metadaten der Seiten einer Partition, die die Quelle als gelöscht führt (Confluence: Papierkorb des
+     * Space). Eine solche Seite ist autoritativ gelöscht, für jeden Benutzer.
+     *
+     * @throws SourceAccessException wie {@link #changedPageMetadata}
+     */
+    default PageMetadataBatch removedPageMetadata(String partitionKey, String cursor, int limit) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle meldet keine Löschungen", null);
     }
 
     /**

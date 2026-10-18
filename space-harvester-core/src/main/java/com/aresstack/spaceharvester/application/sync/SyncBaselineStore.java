@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.sync;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,6 +25,18 @@ public interface SyncBaselineStore {
      */
     default Map<String, BaselineEntry> knownPages(String sourceId, String spaceKey) {
         return Map.of();
+    }
+
+    /**
+     * Alle Spaces mit bestätigter Generation, je {@code {sourceId, spaceKey}}; Ausgangspunkt für das Nachholen beim Start
+     * (ADR 0014). Standard: keine.
+     */
+    default List<SpaceRef> confirmedSpaces() {
+        return List.of();
+    }
+
+    /** Ein Space einer Quelle. */
+    record SpaceRef(String sourceId, String spaceKey) {
     }
 
     /** Beginnt die Schreibvorgänge eines Laufs für diesen Space; bis zum Commit für Leser unsichtbar. */

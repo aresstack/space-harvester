@@ -171,6 +171,44 @@ final class ConfluenceRestClient {
         return new PageBatch(pages, nextStart);
     }
 
+    /**
+     * Pfad eines Stapels der Seiten eines Space, die in den letzten {@code minutes} Minuten angelegt oder geändert
+     * wurden, jüngste Änderung zuerst: eine CQL-Anfrage {@code lastmodified >= now("-Nm")}. Relativ zur Uhr von
+     * Confluence, also ohne Zeitzone und ohne Uhrenabweichung des Aufrufers. Absteigend sortiert, damit Seiten, die
+     * während des Blätterns geändert werden, vorne einsortiert werden und keine noch nicht gelesene verdrängen.
+     */
+    static String changedPagesPath(String spaceKey, long minutes, int start, int limit) {
+        String cql = "space=\"" + spaceKey + "\" AND type=page AND lastmodified >= now(\"-" + minutes
+                + "m\") ORDER BY lastmodified DESC";
+        return "/rest/api/content/search?cql=" + query(cql) + "&expand=" + METADATA_EXPAND + "&start=" + start
+                + "&limit=" + limit;
+    }
+
+    /** Pfad eines Stapels der Seiten im Papierkorb eines Space ({@code status=trashed}). */
+    static String trashedPagesPath(String spaceKey, int start, int limit) {
+        return "/rest/api/content?type=page&status=trashed&spaceKey=" + query(spaceKey) + "&expand=version,space"
+                + "&start=" + start + "&limit=" + limit;
+    }
+
+    /**
+     * Genau ein Stapel von {@link #changedPagesPath} oder {@link #trashedPagesPath}. Nicht-Seiten werden übersprungen,
+     * zählen aber für die Position des nächsten Stapels mit.
+     */
+    CountedPageBatch countedPageBatch(Session session, String path, String what) throws KnowledgeSourceException {
+        JsonObject json = getJson(session, path, what);
+        List<Page> pages = new ArrayList<Page>();
+        List<JsonObject> results = results(json, what);
+        for (JsonObject result : results) {
+            JsonObject content = object(result, "content");
+            JsonObject page = content == null ? result : content;
+            String type = string(page, "type");
+            if (type == null || "page".equals(type)) {
+                pages.add(toPage(page));
+            }
+        }
+        return new CountedPageBatch(pages, results.size(), nextLink(json, what) != null);
+    }
+
     private static final java.util.regex.Pattern NEXT_START = java.util.regex.Pattern.compile("[?&]start=([0-9]{1,9})(?:&|$)");
 
     /**
@@ -1572,6 +1610,19 @@ final class ConfluenceRestClient {
         PageBatch(List<Page> pages, int nextStart) {
             this.pages = Collections.unmodifiableList(pages);
             this.nextStart = nextStart;
+        }
+    }
+
+    /** One batch of pages, how many results it consumed and whether more follow. */
+    static final class CountedPageBatch {
+        final List<Page> pages;
+        final int consumed;
+        final boolean more;
+
+        CountedPageBatch(List<Page> pages, int consumed, boolean more) {
+            this.pages = Collections.unmodifiableList(pages);
+            this.consumed = consumed;
+            this.more = more;
         }
     }
 

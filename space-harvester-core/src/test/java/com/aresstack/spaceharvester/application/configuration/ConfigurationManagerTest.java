@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;

@@ -32,7 +32,13 @@ public record PageChange(String pageId, Kind kind, BaselineEntry previous, PageM
          * Punkt 2): kein Inhaltsabruf, nur die Kopfdaten kommen in den Katalog; die Generation führt die Seite als
          * fehlend.
          */
-        NOT_LOADED
+        NOT_LOADED,
+        /**
+         * Neue Version einer bekannten Seite, aber der Lauf lädt keine Inhalte ({@link SyncMode#CATALOG_ONLY}): nichts
+         * wird geschrieben, die Seite behält ihren Stand und gilt als veraltet; die Versionsprüfung der Suche lädt sie
+         * bei Bedarf.
+         */
+        OUTDATED
     }
 
     public PageChange {

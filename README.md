@@ -567,10 +567,16 @@ erneut geladen. Mit `loadUnknown=false` gleicht der Lauf ohne Erstbefüllung ab:
 Bekanntes und lädt keine unbekannten Seiten (`summary.notLoaded`, Teil von `missing`, `complete: false`)
 ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)). Einen regelmäßigen Abgleich plant
 `space-harvester.sync.interval` (mindestens `PT1M`, etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je
-`<sourceId>/<spaceKey>`), mit `space-harvester.sync.load-unknown` (Standard `true`, Space vollständig halten); ein noch
+`<sourceId>/<spaceKey>`), mit `space-harvester.sync.load-unknown` (Standard `false`: unbekannte Seiten nur in den Katalog; `true` hält den Space vollständig); ein noch
 laufender Abgleich wird nicht doppelt gestartet. `GET /api/v1/reconciliations` zeigt je eingeplantem Space (nur mit
 `sync`-Freigabe) Abstand, letzten Start samt Ergebnis und nächsten Start; ohne Einplanung behauptet der Dienst keine
-lückenlose Aktualität.
+lückenlose Aktualität. Verpasste Änderungen holt `?listing=changes` nach: eine Änderungssuche seit dem letzten
+Lauf (oder seit `since`, ISO 8601) und eine Papierkorbabfrage je Space statt einer Inventur. Bekannte Seiten mit neuer
+Version werden neu geladen, unbekannte nur in den Katalog übernommen, Seiten im Papierkorb entfernt
+(`summary.inventory: changes`). Kann die Quelle das nicht, läuft ein Abgleich ohne Erstbefüllung. Auf Wunsch holt der
+Dienst das beim Start für jeden Space mit bestätigter Generation nach (`space-harvester.sync.catch-up-on-start`,
+Standard `false`); ein Zeitplan holt ebenfalls nur nach. Alle Änderungsquellen sind optional: Ohne sie beschafft und
+aktualisiert die Suche die Seiten, die sie findet ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)).
 
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export und
 antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Ein vorheriger Abgleich ist nicht nötig: Liegt

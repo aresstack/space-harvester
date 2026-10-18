@@ -128,4 +128,50 @@ class ReconcileWithoutFirstLoadTest {
         assertThat(next.confirmed().missingPageIds()).contains("2");
         assertThat(repository.findHeader(new PageKey("wiki", "2"))).isPresent();
     }
+
+    @Test
+    void catalogOnlyLoadsNoContentAndLeavesNewVersionsOutdated() {
+        cached("1", "DOC", null, "3");
+        cached("3", "DOC", null, "6");
+
+        SpaceSync.SyncRun run = sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.CATALOG_ONLY);
+
+        assertThat(run.plan().changes()).extracting(PageChange::pageId, PageChange::kind).containsExactly(
+                tuple("1", PageChange.Kind.UNCHANGED),
+                tuple("2", PageChange.Kind.NOT_LOADED),
+                tuple("3", PageChange.Kind.OUTDATED));
+        assertThat(fetched).isEmpty();
+        assertThat(run.confirmed().pages().get("3").version()).isEqualTo("6");
+        assertThat(run.confirmed().stalePageIds()).containsExactly("3");
+        assertThat(run.confirmed().missingPageIds()).containsExactly("2");
+        assertThat(run.summary().outdated()).isEqualTo(1);
+        assertThat(repository.find(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("6");
+        assertThat(repository.findHeader(new PageKey("wiki", "3")).orElseThrow().revision()).isEqualTo("7");
+    }
+
+    @Test
+    void syncCacheReloadsNewVersionsAndFullLoadsEverything() {
+        cached("3", "DOC", null, "6");
+
+        sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.SYNC_CACHE);
+        assertThat(fetched).containsExactly("3");
+
+        fetched.clear();
+        sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.FULL);
+        assertThat(fetched).containsExactlyInAnyOrder("1", "2");
+    }
+
+    @Test
+    void aPageUnderANewParentIsCountedAsMovedWithoutLoadingItsContent() {
+        cached("2", "DOC", null, "1");
+
+        SpaceSync.SyncRun run = sync.run("wiki", "DOC", applier, SyncListener.NONE, SyncMode.SYNC_CACHE);
+
+        assertThat(run.plan().changes()).extracting(PageChange::pageId, PageChange::kind)
+                .contains(tuple("2", PageChange.Kind.METADATA_CHANGED));
+        assertThat(run.summary().moved()).isEqualTo(1);
+        assertThat(fetched).isEmpty();
+        assertThat(repository.findHeader(new PageKey("wiki", "2")).orElseThrow().metadata().parentPageId())
+                .isEqualTo("1");
+    }
 }

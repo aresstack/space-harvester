@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.configuration;
 
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;

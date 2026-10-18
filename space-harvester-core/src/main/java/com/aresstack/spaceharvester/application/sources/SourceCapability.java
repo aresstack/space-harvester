@@ -25,5 +25,10 @@ public enum SourceCapability {
      * Adressen der Quelle auflösen, auch ohne Seiten-ID (Titel, Startseite des Space, Bookmarks und Ressourcen-IDs
      * der Quelle; {@link HarvestSource#resolveAddress}, #178).
      */
-    ADDRESSES
+    ADDRESSES,
+    /**
+     * Änderungen und Löschungen einer Partition gezielt melden ({@link HarvestSource#changedPageMetadata},
+     * {@link HarvestSource#removedPageMetadata}, ADR 0014).
+     */
+    CHANGES
 }
