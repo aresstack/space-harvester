@@ -222,6 +222,11 @@ public final class SearchView implements View {
             feedback.warning("Keine Quelle eingerichtet", "Wissensquellen werden in der Konfigurationsdatei angelegt.");
             return;
         }
+        if (text.isEmpty()) {
+            // Ohne Schlagwort würde nur der Index befragt, keine Quelle; das wäre keine Schlagwortsuche.
+            feedback.warning("Suchtext fehlt", "Ein oder mehrere Schlagwörter eingeben.");
+            return;
+        }
         List<String> spaces = spaceKey.isEmpty() ? List.of() : List.of(spaceKey);
         List<String> only = chosen.size() > 1 ? List.copyOf(chosen) : List.of();
         int id = ++request;
@@ -229,7 +234,7 @@ public final class SearchView implements View {
         more.setEnabled(false);
         feedback.working("Suche läuft …");
         Background.run(() -> {
-            PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text.isEmpty() ? null : text, null, null,
+            PageSearchQuery q = PageSearchQuery.of(sourceId, only, spaces, text, null, null,
                     null, null, null, sort);
             SearchResults results = runtime.workspace().search(q, null, LIMIT);
             return new Outcome(q, hits(results), results.nextCursor());
