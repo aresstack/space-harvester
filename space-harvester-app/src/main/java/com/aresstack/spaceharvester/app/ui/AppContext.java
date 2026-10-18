@@ -40,7 +40,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
         // Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), EXPORTS("Herunterladen"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
@@ -72,11 +72,14 @@ public final class AppContext {
         /** Status mit der Diagnose genau dieses Auftrags. */
         void showDiagnosis(String jobId);
 
-        /** Herunterladen mit Quelle und diesen Spaces vorbelegt; gestartet wird erst dort. */
-        void prepareExport(String sourceId, java.util.List<String> spaceKeys);
+        /**
+         * Startet sofort je Space einen Download (JSON-Datenbestand, {@link Downloads}), ohne Dialog; leer heißt alle
+         * Spaces der Quelle. Die Aufträge erscheinen unter Aufträge, exportiert wird dort.
+         */
+        void download(String sourceId, java.util.List<String> spaceKeys);
 
-        default void prepareExport(String sourceId, String spaceKey) {
-            prepareExport(sourceId, spaceKey == null ? java.util.List.of() : java.util.List.of(spaceKey));
+        default void download(String sourceId, String spaceKey) {
+            download(sourceId, spaceKey == null ? java.util.List.of() : java.util.List.of(spaceKey));
         }
 
         void search(String text);

@@ -87,10 +87,11 @@ class MainWindowTest {
         // Arbeitsbereiche, dann Verwaltung und Einstellungen.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Inhalte", "Herunterladen", "Aufträge", "Status",
-                        "Wissensquellen verwalten", "Einstellungen");
+                .containsSubsequence("Suche", "Inhalte", "Aufträge", "Status", "Wissensquellen verwalten",
+                        "Einstellungen")
+                .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Inhalte (Strg+2)", "Wissensquellen verwalten (Strg+6)");
+                .contains("Inhalte (Strg+2)", "Wissensquellen verwalten (Strg+5)");
         assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
                 .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
@@ -134,13 +135,29 @@ class MainWindowTest {
         SwingUtilities.invokeAndWait(() -> assertThat(window[0].explorer().matches().getModel().getSize())
                 .as("Titelfilter findet die Seite").isEqualTo(1));
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("explorer.png")));
+
+        // Rechtsbündig am Space das Download-Symbol: ein Klick startet den Auftrag sofort, ohne Dialog.
+        int jobsBefore = context.runtime().workspace().jobs().size();
+        SwingUtilities.invokeAndWait(() -> {
+            window[0].explorer().filter().setText("");
+            java.awt.Rectangle row = tree.getRowBounds(1);
+            java.awt.Point icon = new java.awt.Point(row.x + row.width - 10, row.y + row.height / 2);
+            for (java.awt.event.MouseListener listener : tree.getMouseListeners()) {
+                listener.mouseClicked(new MouseEvent(tree, MouseEvent.MOUSE_CLICKED, 0, 0, icon.x, icon.y, 1, false,
+                        MouseEvent.BUTTON1));
+            }
+        });
+        for (int i = 0; i < 100 && context.runtime().workspace().jobs().size() == jobsBefore; i++) {
+            Thread.sleep(50);
+        }
+        assertThat(context.runtime().workspace().jobs()).hasSize(jobsBefore + 1)
+                .anyMatch(j -> j.type() == com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
             window[0].showDiagnosis(job);
             window[0].openSpace("handbuch", space);
             window[0].openPage("handbuch", pageId);
             window[0].search("betrieb");
-            window[0].prepareExport("handbuch", space);
         });
         Thread.sleep(500);
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("export.png")));

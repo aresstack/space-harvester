@@ -52,7 +52,7 @@ class SourcesViewTest {
 
         // Keine Knopfleiste mehr, weder über den Details noch über der Space-Tabelle.
         assertThat(find(root, AbstractButton.class)).noneMatch(b -> List.of("Verbindung prüfen", "Bearbeiten …",
-                "Entfernen …", "Öffnen", "Synchronisieren", "Herunterladen …").contains(b.getText()));
+                "Entfernen …", "Öffnen", "Synchronisieren", "Herunterladen").contains(b.getText()));
         List<IconButton> syncs = buttons(root, "Gewählten Space");
         List<IconButton> pencils = buttons(root, "Einstellungen der Quelle");
         // Der Kreispfeil sitzt am Space, nicht mehr auf der Quellenkarte.
@@ -231,7 +231,7 @@ class SourcesViewTest {
     }
 
     @Test
-    void exportButtonsOpenExportsWithTheSpacesPreselectedAndStartNothing() throws Exception {
+    void downloadButtonsStartTheDownloadsOfTheseSpacesRightAway() throws Exception {
         start();
         List<Object> prepared = new ArrayList<>();
         context.setNavigator(new AppContext.Navigator() {
@@ -240,7 +240,7 @@ class SourcesViewTest {
             public void openSpace(String sourceId, String spaceKey) { }
             public void showJob(String jobId) { }
             public void showDiagnosis(String jobId) { }
-            public void prepareExport(String sourceId, List<String> spaceKeys) {
+            public void download(String sourceId, List<String> spaceKeys) {
                 prepared.add(sourceId);
                 prepared.add(spaceKeys);
             }
@@ -264,16 +264,7 @@ class SourcesViewTest {
             view[0].exportMarked.doClick();
         });
         assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
-        assertThat(context.runtime().workspace().jobs()).isEmpty();
-
-        // Herunterladen übernimmt die Spaces; JSON ist vorgewählt, gestartet ist noch nichts.
-        ExportsView[] exports = new ExportsView[1];
-        SwingUtilities.invokeAndWait(() -> {
-            exports[0] = new ExportsView(context);
-            exports[0].prepare("lang", List.of(key, "zweiter"));
-        });
-        assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter");
-        assertThat(exports[0].chosenFormats()).containsExactly("json");
+        // Der Navigator startet die Downloads (Downloads.start); hier ist er ersetzt, also lief nichts an.
         assertThat(context.runtime().workspace().jobs()).isEmpty();
     }
 

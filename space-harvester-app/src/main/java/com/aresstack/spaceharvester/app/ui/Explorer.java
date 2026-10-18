@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
@@ -69,6 +70,8 @@ public final class Explorer {
     private static final int MATCH_LIMIT = 50;
     private static final int TREE_LIMIT = 5_000;
     private static final int BATCH = 100;
+    private static final int ACTION_WIDTH = 30;
+    static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
 
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
     public record Scope(String sourceId, String spaceKey) {
@@ -153,6 +156,8 @@ public final class Explorer {
     private List<String> shownSources = List.of();
     private Consumer<List<Scope>> scopeListener = scopes -> { };
     private int filterRequest;
+    /** Zeile, über deren Download-Symbol die Maus steht; -1 sonst. */
+    private int hoverRow = -1;
 
     public Explorer(AppContext context) {
         this.context = context;
@@ -178,15 +183,56 @@ public final class Explorer {
         tree.getSelectionModel().setSelectionMode(
                 javax.swing.tree.TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION);
         tree.addTreeSelectionListener(e -> scopeListener.accept(scopes()));
-        tree.addMouseListener(new MouseAdapter() {
+        MouseAdapter mouse = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent event) {
                 TreePath path = tree.getPathForLocation(event.getX(), event.getY());
-                if (path != null && event.getClickCount() == 1) {
+                if (path == null || event.getClickCount() != 1 || !javax.swing.SwingUtilities.isLeftMouseButton(event)) {
+                    return;
+                }
+                if (onAction(path, event.getPoint())) {
+                    download(((Node) path.getLastPathComponent()).item());
+                } else {
                     activate(path);
                 }
             }
-        });
+
+            @Override
+            public void mousePressed(MouseEvent event) {
+                if (event.isPopupTrigger()) {
+                    popup(event);
+                }
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent event) {
+                if (event.isPopupTrigger()) {
+                    popup(event);
+                }
+            }
+
+            @Override
+            public void mouseMoved(MouseEvent event) {
+                TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+                int row = onAction(path, event.getPoint()) ? tree.getRowForPath(path) : -1;
+                tree.setToolTipText(row >= 0 ? DOWNLOAD_TIP : null);
+                if (row != hoverRow) {
+                    hoverRow = row;
+                    tree.repaint();
+                }
+            }
+
+            @Override
+            public void mouseExited(MouseEvent event) {
+                if (hoverRow >= 0) {
+                    hoverRow = -1;
+                    tree.repaint();
+                }
+            }
+        };
+        tree.addMouseListener(mouse);
+        tree.addMouseMotionListener(mouse);
+        javax.swing.ToolTipManager.sharedInstance().registerComponent(tree);
         bindEnter(tree, () -> {
             TreePath path = tree.getSelectionPath();
             if (path != null) {
@@ -239,6 +285,14 @@ public final class Explorer {
         bindKey(filter, KeyEvent.VK_ESCAPE, () -> filter.setText(""));
 
         JScrollPane treeScroll = Comic.scroll(tree);
+        treeScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        // Zeilen gehen über die volle Breite (Download-Symbol rechtsbündig); bei neuer Breite neu vermessen.
+        treeScroll.getViewport().addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                tree.setCellRenderer(new Renderer());
+            }
+        });
         JScrollPane matchScroll = Comic.scroll(matches);
         deck.setOpaque(false);
         deck.add(treeScroll, TREE);
@@ -559,35 +613,124 @@ public final class Explorer {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    /** Symbole je Ebene: Datenbank für Quellen, Ordner für Spaces, Seite für Seiten; Hinweise gedämpft. */
-    private static final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
+    /**
+     * Eine Zeile über die volle Breite: links Symbol und Titel je Ebene (Datenbank für Quellen, Ordner für Spaces, Seite
+     * für Seiten; Hinweise gedämpft), rechtsbündig das Download-Symbol im Stil der Space-Aktionen ({@link RoundHover}).
+     */
+    private final class Renderer extends JPanel implements javax.swing.tree.TreeCellRenderer {
+
+        private final javax.swing.tree.DefaultTreeCellRenderer label = new javax.swing.tree.DefaultTreeCellRenderer();
+        private final JLabel action = new JLabel(ComposerIcons.download());
+        private int row = -1;
+        private int width;
 
         Renderer() {
-            setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
-            setBorderSelectionColor(null);
+            super(new BorderLayout());
+            setOpaque(false);
+            label.setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
+            label.setBorderSelectionColor(null);
+            action.setHorizontalAlignment(JLabel.CENTER);
+            action.setPreferredSize(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE));
+            add(label, BorderLayout.WEST);
+            add(action, BorderLayout.EAST);
         }
 
         @Override
         public java.awt.Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected,
                                                                boolean expanded, boolean leaf, int row,
                                                                boolean focus) {
-            super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
+            label.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
             Item item = value instanceof Node node ? node.item() : null;
-            setForeground(selected ? getTextSelectionColor() : Comic.INK);
+            label.setForeground(selected ? label.getTextSelectionColor() : Comic.INK);
             switch (item) {
-                case SourceItem ignored -> setIcon(MainWindow.database());
-                case SpaceItem ignored -> setIcon(SidebarIcons.folder());
-                case PageItem ignored -> setIcon(SidebarIcons.page());
+                case SourceItem ignored -> label.setIcon(MainWindow.database());
+                case SpaceItem ignored -> label.setIcon(SidebarIcons.folder());
+                case PageItem ignored -> label.setIcon(SidebarIcons.page());
                 case MoreItem ignored -> {
-                    setIcon(null);
-                    setForeground(Comic.BLUE);
+                    label.setIcon(null);
+                    label.setForeground(Comic.BLUE);
                 }
                 case null, default -> {
-                    setIcon(null);
-                    setForeground(Comic.MUTED);
+                    label.setIcon(null);
+                    label.setForeground(Comic.MUTED);
                 }
             }
+            action.setVisible(downloadable(item));
+            this.row = row;
+            int depth = value instanceof Node node ? node.getLevel() : 1;
+            width = Math.max(label.getPreferredSize().width + ACTION_WIDTH,
+                    tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
             return this;
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            java.awt.Dimension size = super.getPreferredSize();
+            return new java.awt.Dimension(width, Math.max(size.height, RoundHover.SIZE));
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics graphics) {
+            super.paintComponent(graphics);
+            if (action.isVisible() && row == hoverRow) {
+                RoundHover.paint(graphics, action.getX(), 0, action.getWidth(), getHeight(), false);
+            }
+        }
+    }
+
+    /** Linker Rand einer Zeile dieser Tiefe, wie {@code BasicTreeUI} ihn ohne sichtbare Wurzel legt. */
+    private int indent(int depth) {
+        if (tree.getUI() instanceof javax.swing.plaf.basic.BasicTreeUI basic) {
+            return (basic.getLeftChildIndent() + basic.getRightChildIndent()) * depth;
+        }
+        return 20 * depth;
+    }
+
+    /** Herunterladen gibt es für Quellen und Spaces; Seiten folgen mit dem Download eines Teilbaums im Core. */
+    static boolean downloadable(Item item) {
+        return item instanceof SourceItem || item instanceof SpaceItem;
+    }
+
+    /** Startet den Download des Knotens sofort ({@link Downloads}); der Auftrag erscheint unter Aufträge. */
+    private void download(Item item) {
+        switch (item) {
+            case SourceItem source -> context.navigator().download(source.sourceId(), List.of());
+            case SpaceItem space -> context.navigator().download(space.sourceId(), space.spaceKey());
+            default -> {
+            }
+        }
+    }
+
+    /** Ob der Punkt auf dem Download-Symbol der Zeile liegt. */
+    private boolean onAction(TreePath path, java.awt.Point point) {
+        java.awt.Rectangle bounds = path == null ? null : tree.getPathBounds(path);
+        return bounds != null && path.getLastPathComponent() instanceof Node node && downloadable(node.item())
+                && point.x >= bounds.x + bounds.width - ACTION_WIDTH;
+    }
+
+    private void popup(MouseEvent event) {
+        TreePath path = tree.getPathForLocation(event.getX(), event.getY());
+        if (path == null || !(path.getLastPathComponent() instanceof Node node)) {
+            return;
+        }
+        if (!tree.isPathSelected(path)) {
+            tree.setSelectionPath(path);
+        }
+        javax.swing.JPopupMenu menu = new javax.swing.JPopupMenu();
+        Item item = node.item();
+        if (item instanceof PageItem page) {
+            javax.swing.JMenuItem open = new javax.swing.JMenuItem("Öffnen");
+            open.addActionListener(e -> context.navigator().openPage(page.sourceId(), page.pageId()));
+            menu.add(open);
+        }
+        if (downloadable(item)) {
+            javax.swing.JMenuItem download = new javax.swing.JMenuItem("Herunterladen");
+            download.setToolTipText(DOWNLOAD_TIP);
+            download.addActionListener(e -> download(item));
+            menu.add(download);
+        }
+        if (menu.getComponentCount() > 0) {
+            menu.show(tree, event.getX(), event.getY());
         }
     }
 

@@ -38,7 +38,7 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste in zwei Gruppen
- * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Herunterladen, Aufträge und Status,
+ * (Tooltip mit Namen, Strg+1 … Strg+6): links die Arbeitsbereiche Suche, Inhalte, Aufträge und Status,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
  * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}). Navigation und
@@ -68,7 +68,6 @@ public final class MainWindow implements AppContext.Navigator {
     private final SourcesView sources;
     private final ContentView content;
     private final ActivitiesView activities;
-    private final ExportsView exports;
     private final SearchView searchView;
     private final SettingsView settings;
 
@@ -79,7 +78,6 @@ public final class MainWindow implements AppContext.Navigator {
         sources = new SourcesView(context);
         content = new ContentView(context);
         activities = new ActivitiesView(context);
-        exports = new ExportsView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
         explorer = new Explorer(context);
@@ -89,7 +87,6 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.SOURCES, sources);
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
-        views.put(AppContext.Section.EXPORTS, exports);
         views.put(AppContext.Section.SEARCH, searchView);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
@@ -300,10 +297,29 @@ public final class MainWindow implements AppContext.Navigator {
         statusView.showJob(jobId);
     }
 
+    /** Startet die Downloads sofort und zeigt den ersten Auftrag; was nicht startet, nennt die Statusleiste. */
     @Override
-    public void prepareExport(String sourceId, List<String> spaceKeys) {
-        show(AppContext.Section.EXPORTS);
-        exports.prepare(sourceId, spaceKeys);
+    public void download(String sourceId, List<String> spaceKeys) {
+        notice("Download wird gestartet …", Comic.MUTED);
+        Downloads.start(context, sourceId, spaceKeys, started -> {
+            if (started.failed().isEmpty()) {
+                notice(started.jobs().isEmpty() ? "Kein Space zum Herunterladen"
+                        : Texts.count(started.jobs().size(), "Download", "Downloads") + " gestartet", Comic.MUTED);
+            } else {
+                notice(Texts.count(started.failed().size(), "Download ließ", "Downloads ließen")
+                        + " sich nicht starten: " + String.join("; ", started.failed()), Comic.ORANGE);
+            }
+            if (!started.jobs().isEmpty()) {
+                showJob(started.jobs().get(0).id());
+            }
+        }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
+    }
+
+    /** Eine kurze Meldung in der Statusleiste, bis sich der Stand der Laufzeit ändert. */
+    private void notice(String text, java.awt.Color color) {
+        updateStatus();
+        status.setText(status.getText() + " · " + text);
+        status.setForeground(color);
     }
 
     @Override
@@ -329,6 +345,7 @@ public final class MainWindow implements AppContext.Navigator {
             state = "Startet …";
         }
         status.setText("Space Harvester " + context.version() + " · " + state);
+        status.setForeground(Comic.MUTED);
     }
 
     private boolean confirmClose(JFrame frame) {
@@ -353,7 +370,6 @@ public final class MainWindow implements AppContext.Navigator {
             case SOURCES -> database();
             case CONTENT -> ComposerIcons.openBook();
             case ACTIVITIES -> ComposerIcons.refresh();
-            case EXPORTS -> ComposerIcons.download();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();
         };

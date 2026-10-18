@@ -62,7 +62,7 @@ class ExportCardTest {
         Workspace workspace = context.runtime().workspace();
         await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
         String space = workspace.spaces("handbuch").get(0).key();
-        String job = workspace.startExport("handbuch", space, List.of(ExportsView.DEFAULT_FORMAT)).id();
+        String job = workspace.startExport("handbuch", space, List.of(Downloads.FORMAT)).id();
 
         ActivitiesView[] view = new ActivitiesView[1];
         SwingUtilities.invokeAndWait(() -> {
