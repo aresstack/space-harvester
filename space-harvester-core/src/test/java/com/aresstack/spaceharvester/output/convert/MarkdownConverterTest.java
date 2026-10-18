@@ -63,13 +63,53 @@ class MarkdownConverterTest {
     }
 
     @Test
+    void theRootChapterCarriesTheSpaceNameLikeTheSource() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Input input = new Input(List.of(storagePage("100", null, 0, "<p>Start</p>")));
+        new MarkdownConverter().convert(new ConversionInput() {
+            @Override
+            public String sourceId() {
+                return input.sourceId();
+            }
+
+            @Override
+            public String spaceKey() {
+                return input.spaceKey();
+            }
+
+            @Override
+            public String spaceName() {
+                return "Entwicklung";
+            }
+
+            @Override
+            public PageTree tree() {
+                return input.tree();
+            }
+
+            @Override
+            public List<PageHeader> headers() {
+                return input.headers();
+            }
+
+            @Override
+            public void forEachPage(Consumer<ConvertiblePage> action) {
+                input.forEachPage(action);
+            }
+        }, out);
+
+        assertThat(out.toString(StandardCharsets.UTF_8))
+                .startsWith("# Entwicklung\n\n*1 Seiten des Space DEV der Quelle wiki,");
+    }
+
+    @Test
     void writesPagesLinearlyWithHeadingLevelsFromTheTree() throws Exception {
         String markdown = convert(storagePage("100", null, 0, "<p>Start</p>"),
                 storagePage("101", "100", 1, "<h1>Abschnitt</h1><p>Text</p>"),
                 storagePage("102", "101", 7, "<p>tief</p>"));
 
         // Kapitelmodell wie Word und PDF: der Space ist # , Wurzelseiten ##, tiefer als sechs Ebenen fett
-        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten der Quelle wiki, erzeugt mit markdown/6")
+        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten des Space DEV der Quelle wiki, erzeugt mit markdown/6")
                 .contains("<a id=\"page-100\"></a>\n\n## Seite 100\n\n*Seite 100 · Version 3")
                 .contains("<a id=\"page-101\"></a>\n\n### Seite 101\n")
                 .contains("#### Abschnitt\n\nText\n")

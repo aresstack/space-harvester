@@ -34,14 +34,20 @@ final class ExportChapters {
     private ExportChapters() {
     }
 
-    /** Titel des Wurzelkapitels und des Dokuments. */
+    /**
+     * Titel des Wurzelkapitels und des Dokuments: der Name des Space wie in der Quelle (so auch der Enterprise AI
+     * Client); ohne Namen {@code Space <Schlüssel> (<Quelle>)}.
+     */
     static String title(ConversionInput input) {
-        return "Space " + input.spaceKey() + " (" + input.sourceId() + ")";
+        String name = input.spaceName();
+        return name == null || name.isBlank() || name.equals(input.spaceKey())
+                ? "Space " + input.spaceKey() + " (" + input.sourceId() + ")" : name;
     }
 
     /** Text des Wurzelkapitels: Seitenzahl, Quelle und Konverterversion. */
     static String rootText(ConversionInput input, String version) {
-        return "*" + MarkdownConverter.escape(input.headers().size() + " Seiten der Quelle " + input.sourceId()
+        return "*" + MarkdownConverter.escape(input.headers().size() + " Seiten des Space " + input.spaceKey()
+                + " der Quelle " + input.sourceId()
                 + ", erzeugt mit " + version + " aus dem Confluence-Storage-Format.") + "*";
     }
 

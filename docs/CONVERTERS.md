@@ -36,7 +36,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 
-Markdown, Word und PDF folgen demselben Kapitelmodell (`ExportChapters`): Kapitel 1 ist der Space, jede Seite ein
+Markdown, Word und PDF folgen demselben Kapitelmodell (`ExportChapters`): Kapitel 1 ist der Space, betitelt mit seinem
+Namen aus der Quelle (ohne Namen „Space <Schlüssel> (<Quelle>)“), jede Seite ein
 Unterkapitel nach ihrer Tiefe im Baum (Markdown: `#` Space, `##` Wurzelseiten …, tiefer als sechs Ebenen eine fette
 Zeile; Abschnitte „Word“ und „PDF“); jede Seite mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten desselben Exports springen innerhalb der Datei
 zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`, PDF: Sprungziel).
