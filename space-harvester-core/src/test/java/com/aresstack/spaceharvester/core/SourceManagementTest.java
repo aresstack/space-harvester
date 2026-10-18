@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -124,6 +125,30 @@ class SourceManagementTest {
     }
 
     @Test
+    void sourcesTheProgramHasNotOpenedCountForIdAndTarget() {
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            SourceManagement sources = harvester.sourceManagement();
+            SourceSettingsConfig waiting = new SourceSettingsConfig("wartet", "confluence", null, SERVER.baseUrl(),
+                    null, Map.of());
+
+            assertThat(sources.validate(wiki(SERVER.baseUrl()), false)).isEmpty();
+            assertThat(sources.validate(wiki(SERVER.baseUrl()), false, List.of(waiting)))
+                    .containsExactly("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie 'wartet')");
+            assertThat(sources.validate(new SourceSettingsConfig("wartet", "confluence", null,
+                    URI.create("http://127.0.0.1:1/anders"), null, Map.of()), false, List.of(waiting)))
+                    .contains("id ist doppelt vergeben");
+            // Auch ein eingerichteter Eintrag, dessen ID schon vergeben ist, belegt sein Ziel.
+            SourceSettingsConfig sameId = new SourceSettingsConfig("wartet", "confluence", null,
+                    URI.create("http://127.0.0.1:1/zweites"), null, Map.of());
+            assertThat(sources.validate(new SourceSettingsConfig("neu", "confluence", null,
+                    URI.create("http://127.0.0.1:1/zweites"), null, Map.of()), false, List.of(waiting, sameId)))
+                    .containsExactly("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie 'wartet')");
+            // Beim Ändern derselben ID zählt ihr eigener Eintrag nicht.
+            assertThat(sources.validate(waiting, true, List.of(waiting))).isEmpty();
+        }
+    }
+
+    @Test
     void aDisabledSourceKeepsItsDataButTakesPartInNothing() throws Exception {
         try (Harvester harvester = Harvester.builder().source(wiki(SERVER.baseUrl())).dataDirectory(data).build()) {
             SourceManagement sources = harvester.sourceManagement();
@@ -137,6 +162,9 @@ class SourceManagementTest {
             assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
                     .isInstanceOf(UnknownSourceException.class);
             assertThatThrownBy(() -> harvester.sync("wiki", "DEV")).isInstanceOf(UnknownSourceException.class);
+            // Auch nicht aus dem schon eingelesenen Stand.
+            assertThatThrownBy(() -> harvester.export("wiki", "DEV", List.of()))
+                    .isInstanceOf(UnknownSourceException.class);
             // Auch abgeschaltet belegt sie ihr Ziel.
             assertThat(sources.validate(new SourceSettingsConfig("zweites", "confluence", null, SERVER.baseUrl(),
                     null, Map.of()), false)).isNotEmpty();
