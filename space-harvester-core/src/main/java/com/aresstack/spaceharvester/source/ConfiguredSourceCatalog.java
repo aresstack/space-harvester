@@ -323,18 +323,19 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                                  Collection<SourceSettingsConfig> alsoConfigured) {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(alsoConfigured, "alsoConfigured");
-        Map<String, SourceSettingsConfig> known = new LinkedHashMap<>();
-        opened.values().forEach(source -> known.put(source.config().id(), source.config()));
-        alsoConfigured.stream().filter(Objects::nonNull).filter(other -> other.id() != null)
-                .forEach(other -> known.putIfAbsent(other.id(), other));
-        Set<String> taken = new HashSet<>(known.keySet());
+        // IDs und Ziele getrennt sammeln: Auch ein eingerichteter Eintrag mit schon vergebener ID belegt sein Ziel.
+        List<SourceSettingsConfig> known = new ArrayList<>();
+        opened.values().forEach(source -> known.add(source.config()));
+        alsoConfigured.stream().filter(Objects::nonNull).filter(other -> other.id() != null).forEach(known::add);
+        Set<String> taken = new HashSet<>();
+        known.forEach(other -> taken.add(other.id()));
         if (replacing) {
             taken.remove(config.id());
         }
         List<String> problems = new ArrayList<>(check(config, taken, adapters, secrets.external()));
         // Wie im Enterprise AI Client ist eine Quelle durch Typ und Ziel bestimmt: dasselbe Ziel zweimal wäre derselbe
         // Datenbestand unter zwei IDs.
-        target(config).flatMap(target -> known.values().stream()
+        target(config).flatMap(target -> known.stream()
                         .filter(other -> !other.id().equals(config.id()))
                         .filter(other -> target(other).filter(target::equals).isPresent())
                         .findFirst())

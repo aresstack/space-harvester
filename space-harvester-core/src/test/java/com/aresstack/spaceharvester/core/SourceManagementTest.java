@@ -137,6 +137,12 @@ class SourceManagementTest {
             assertThat(sources.validate(new SourceSettingsConfig("wartet", "confluence", null,
                     URI.create("http://127.0.0.1:1/anders"), null, Map.of()), false, List.of(waiting)))
                     .contains("id ist doppelt vergeben");
+            // Auch ein eingerichteter Eintrag, dessen ID schon vergeben ist, belegt sein Ziel.
+            SourceSettingsConfig sameId = new SourceSettingsConfig("wartet", "confluence", null,
+                    URI.create("http://127.0.0.1:1/zweites"), null, Map.of());
+            assertThat(sources.validate(new SourceSettingsConfig("neu", "confluence", null,
+                    URI.create("http://127.0.0.1:1/zweites"), null, Map.of()), false, List.of(waiting, sameId)))
+                    .containsExactly("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie 'wartet')");
             // Beim Ändern derselben ID zählt ihr eigener Eintrag nicht.
             assertThat(sources.validate(waiting, true, List.of(waiting))).isEmpty();
         }
