@@ -104,6 +104,15 @@ class KnowledgeSourceHarvestSourceTest {
                 e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNSUPPORTED));
     }
 
+    @Test
+    void withoutPageMetadataThereIsNoReadingView() {
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
+                new Files());
+
+        assertThatThrownBy(() -> source.readingPage("101")).isInstanceOfSatisfying(SourceAccessException.class,
+                e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.UNSUPPORTED));
+    }
+
     private static PageMetadata only(Listing port) {
         return new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port)
                 .pageMetadata("DEV", null, 10).pages().get(0);

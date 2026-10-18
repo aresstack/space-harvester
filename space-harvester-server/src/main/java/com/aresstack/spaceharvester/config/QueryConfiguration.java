@@ -7,13 +7,17 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.query.PageQueries;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import java.time.Clock;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -35,6 +39,14 @@ class QueryConfiguration {
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
         return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
                 fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes);
+    }
+
+    /** Lese-Ansicht (#176); abgelegt neben dem Snapshot in der Ablage der Anreicherungen. */
+    @Bean
+    ReadingViews readingViews(SourceCatalog catalog, PageQueries pages, AccessGuard access,
+                              ObjectProvider<EnrichmentStore> store) {
+        return new ReadingViews(catalog, pages, access, new ReadingViewStore(store.getIfAvailable(
+                InMemoryEnrichmentStore::new)), Clock.systemUTC());
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */
