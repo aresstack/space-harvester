@@ -252,6 +252,11 @@ public final class PageDetailPanel extends JPanel {
         cards.show(deck, EMPTY);
     }
 
+    /** Für UI-Tests: angezeigte Ansicht der aktuellen Seite. */
+    String selectedTab() {
+        return tabs.selected();
+    }
+
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
     public boolean isEmpty() {
         return pageId == null;
