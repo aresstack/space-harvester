@@ -44,6 +44,7 @@ import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
+import com.aresstack.spaceharvester.application.ranking.ReciprocalRankFusion;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
@@ -68,6 +69,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
@@ -196,9 +198,10 @@ public final class Harvester implements AutoCloseable {
                 AiServiceSettings ai = builder.ai;
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
-                                builder.embeddingSources)
+                                KnowledgeTextSegmentation.defaults(), builder.embeddingSources)
                         : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
-                                .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
+                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.defaults(),
+                                ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -261,7 +264,7 @@ public final class Harvester implements AutoCloseable {
                         builder.userAgent).reranker(), builder.ai::mayProcessExternally);
             }
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex);
+                    renewal, reranker, textIndex).withFusion(builder.rankFusion);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
@@ -626,6 +629,7 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
+        private ReciprocalRankFusion rankFusion = ReciprocalRankFusion.DEFAULT;
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
@@ -837,6 +841,15 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder prefetchSearchHits(boolean prefetchSearchHits) {
             this.prefetchSearchHits = prefetchSearchHits;
+            return this;
+        }
+
+        /**
+         * Gewichte und {@code k} der hybriden Relevanzsuche (#181, wie {@code retrieval.keywordWeight},
+         * {@code semanticWeight} und {@code rankConstant} im Enterprise AI Client); Standard gleiche Gewichte, k = 60.
+         */
+        public Builder rankFusion(ReciprocalRankFusion rankFusion) {
+            this.rankFusion = Objects.requireNonNull(rankFusion, "rankFusion");
             return this;
         }
 

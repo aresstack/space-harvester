@@ -29,6 +29,7 @@ import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -38,6 +39,7 @@ import org.springframework.context.annotation.Configuration;
  * {@code cache-unavailable}.
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(RelevanceProperties.class)
 class QueryConfiguration {
 
     @Bean
@@ -112,12 +114,13 @@ class QueryConfiguration {
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
                                     ObjectProvider<EmbeddingProcessor> embedding, PageQueries pages,
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
-                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker) {
+                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
+                                    RelevanceProperties relevance) {
         ExecutorService background = renewals.getIfAvailable();
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
                 store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique(),
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique());
+                texts.getIfUnique()).withFusion(relevance.fusion());
     }
 }

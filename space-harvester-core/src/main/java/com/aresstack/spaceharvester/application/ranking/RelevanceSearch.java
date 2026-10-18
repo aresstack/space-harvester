@@ -118,6 +118,7 @@ public class RelevanceSearch {
     private final Renewal renewal;
     private final SearchReranker reranker;
     private final PageTextIndex texts;
+    private final ReciprocalRankFusion fusion;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -163,6 +164,14 @@ public class RelevanceSearch {
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts,
+                ReciprocalRankFusion.DEFAULT);
+    }
+
+    private RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                            SearchReranker reranker, PageTextIndex texts, ReciprocalRankFusion fusion) {
+        this.fusion = Objects.requireNonNull(fusion, "fusion");
         this.texts = texts;
         this.renewal = renewal;
         this.reranker = Objects.requireNonNull(reranker, "reranker");
@@ -173,6 +182,12 @@ public class RelevanceSearch {
         this.store = semantic ? store : null;
         this.vectors = semantic ? vectors : null;
         this.embedding = semantic ? embedding : null;
+    }
+
+    /** Dieselbe Suche mit anderen Gewichten und anderem {@code k} der Fusion (#181, wie {@code retrieval.*} im EAC). */
+    public RelevanceSearch withFusion(ReciprocalRankFusion fusion) {
+        return new RelevanceSearch(catalog, index, access, store, vectors, embedding, renewal, reranker, texts,
+                fusion);
     }
 
     /** Ob ein Embedding-Dienst eingerichtet ist; ohne antwortet jede Suche mit einem Fehler. */
@@ -243,8 +258,8 @@ public class RelevanceSearch {
         if (!ranked.isEmpty()) {
             // #181: Rangfolgen von Volltext und Kosinus per RRF, Treffer ohne Rang dahinter.
             List<SearchHit> bySimilarity = ordered.stream().filter(scores::containsKey).toList();
-            ordered = ReciprocalRankFusion.fuse(ordered, List.of(ranked, bySimilarity));
-            rerankerId = "rrf(fulltext," + rerankerId + ")";
+            ordered = fusion.fuse(ordered, ranked, bySimilarity);
+            rerankerId = fusion.id() + "(fulltext," + rerankerId + ")";
         }
         Set<PageKey> contentRanked = new LinkedHashSet<>();
         ranked.forEach(hit -> contentRanked.add(hit.page().header().key()));

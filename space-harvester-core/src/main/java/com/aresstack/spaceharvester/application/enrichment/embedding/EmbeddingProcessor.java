@@ -12,29 +12,39 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
- * Embeddings als Anreicherung (ADR 0004): zerlegt die Textprojektion an Abschnittsgrenzen in Stücke von höchstens
- * {@link #maxChunkChars} Zeichen, bettet sie über den {@link EmbeddingProvider} ein und liefert
+ * Embeddings als Anreicherung (ADR 0004): zerlegt die Textprojektion in Stücke, bettet sie über den
+ * {@link EmbeddingProvider} ein und liefert
  * {@code {"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}}.
+ *
+ * <p>Zerlegung (#181, wie {@code KnowledgeChunker} im Enterprise AI Client): Abschnitte sind harte Grenzen. Innerhalb
+ * eines Abschnitts werden Sätze bis zum Token-Budget der {@link TextSegmentation} gepackt (Standard 350 Tokens,
+ * gezählt nach Wörtern und Symbolen); das nächste Stück
+ * beginnt mit dem letzten Satz des vorigen. Ein Satz über dem Budget wird an Wortgrenzen geteilt. Zusätzlich hat kein
+ * Stück mehr als {@link #maxChunkChars} Zeichen. Eingebettet wird jedes Stück mit der Überschriftenkette seines
+ * Abschnitts davor, wenn es nicht selbst mit der Überschrift beginnt; {@code charStart}/{@code charEnd} bleiben
+ * Stellen in der Textprojektion. Anders als dort entstehen die Stücke als Ausschnitte des Textes, damit Treffer auf
+ * ihre Stelle zeigen.
  *
  * <p>Die Version enthält Modell und Dimension: Ein Modellwechsel macht genau diese Ergebnisse veraltet, wie eine neue
  * Prozessorversion. Wie jeder Prozessor sieht er nur die sichere Projektion, nie Makroinhalte oder Anhänge.
  */
 public class EmbeddingProcessor implements EnrichmentProcessor {
 
-    /** Version der Zerlegung und des Ergebnisformats. */
-    static final String FORMAT = "1";
+    /** Version der Zerlegung und des Ergebnisformats; 2 seit der Zerlegung nach Sätzen und Token-Budget (#181). */
+    static final String FORMAT = "2";
     static final int MAX_CHUNKS = 200;
 
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._@/:-]{1,100}");
 
     private final EmbeddingProvider provider;
     private final int maxChunkChars;
+    private final TextSegmentation segmentation;
     private final Predicate<String> sources;
     private final boolean remote;
 
     /** Für alle Quellen, im aufrufenden Thread (Tests, eingebettete Modelle). */
-    public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars) {
-        this(provider, maxChunkChars, sourceId -> true, false);
+    public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation) {
+        this(provider, maxChunkChars, segmentation, sourceId -> true, false);
     }
 
     /**
@@ -43,12 +53,14 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      *
      * @param mayProcessExternally ob Inhalte der Quelle an den Dienst gehen dürfen
      */
-    public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, Predicate<String> mayProcessExternally) {
-        this(provider, maxChunkChars, mayProcessExternally, true);
+    public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation,
+                              Predicate<String> mayProcessExternally) {
+        this(provider, maxChunkChars, segmentation, mayProcessExternally, true);
     }
 
-    private EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, Predicate<String> sources,
-                               boolean remote) {
+    private EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation,
+                               Predicate<String> sources, boolean remote) {
+        this.segmentation = Objects.requireNonNull(segmentation, "segmentation");
         this.sources = Objects.requireNonNull(sources, "sources");
         this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
@@ -86,7 +98,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     @Override
     public String version() {
-        return FORMAT + "+" + provider.modelId() + "+" + provider.dimensions() + "+" + maxChunkChars;
+        return FORMAT + "+" + provider.modelId() + "+" + provider.dimensions() + "+" + maxChunkChars + "+"
+                + segmentation.id();
     }
 
     @Override
@@ -98,7 +111,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             chunks = chunks.subList(0, MAX_CHUNKS);
         }
         List<float[]> vectors = chunks.isEmpty() ? List.of()
-                : provider.embed(chunks.stream().map(chunk -> text.text().substring(chunk.start, chunk.end)).toList());
+                : provider.embed(chunks.stream().map(chunk -> chunk.input(text.text())).toList());
         if (vectors.size() != chunks.size()) {
             throw new IllegalStateException("Modell lieferte " + vectors.size() + " statt " + chunks.size()
                     + " Vektoren");
@@ -154,43 +167,138 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         json.append(']');
     }
 
-    /** Stücke an Abschnittsgrenzen; ein zu langer Abschnitt wird an Zeilen-, sonst an Leerzeichengrenzen geteilt. */
+    /** Stücke je Abschnitt, Sätze bis zum Budget gepackt, mit einem Satz Überlappung. */
     List<Chunk> chunks(PageText text) {
-        List<int[]> spans = new ArrayList<>();
+        List<Span> spans = new ArrayList<>();
+        List<PageText.Section> open = new ArrayList<>();
         int previous = 0;
         for (PageText.Section section : text.sections()) {
             if (section.start() > previous) {
-                spans.add(new int[] {previous, section.start()});
+                spans.add(new Span(previous, section.start(), null));
             }
-            spans.add(new int[] {section.start(), section.end()});
+            while (!open.isEmpty() && open.getLast().level() >= section.level()) {
+                open.removeLast();
+            }
+            open.add(section);
+            spans.add(new Span(section.start(), section.end(),
+                    String.join(" > ", open.stream().map(PageText.Section::heading).toList())));
             previous = section.end();
         }
         if (previous < text.text().length()) {
-            spans.add(new int[] {previous, text.text().length()});
+            spans.add(new Span(previous, text.text().length(), null));
         }
         List<Chunk> chunks = new ArrayList<>();
-        for (int[] span : spans) {
-            int start = span[0];
-            while (start < span[1]) {
-                int end = Math.min(span[1], start + maxChunkChars);
-                if (end < span[1]) {
-                    int cut = text.text().lastIndexOf('\n', end - 1);
-                    if (cut <= start) {
-                        cut = text.text().lastIndexOf(' ', end - 1);
-                    }
-                    if (cut > start) {
-                        end = cut + 1;
-                    }
-                }
-                if (!text.text().substring(start, end).isBlank()) {
-                    chunks.add(new Chunk(start, end));
-                }
-                start = end;
-            }
+        for (Span span : spans) {
+            chunk(text.text(), span, chunks);
         }
         return chunks;
     }
 
-    record Chunk(int start, int end) {
+    private void chunk(String text, Span span, List<Chunk> chunks) {
+        String heading = span.heading() == null || span.heading().isBlank() ? null : span.heading().strip();
+        if (heading != null && heading.length() > maxChunkChars / 4) {
+            heading = heading.substring(heading.length() - maxChunkChars / 4);
+        }
+        String prefix = heading == null ? "" : heading + "\n\n";
+        List<int[]> units = new ArrayList<>();
+        for (int[] sentence : sentences(text, span.start(), span.end())) {
+            units.addAll(fit(text, sentence, prefix));
+        }
+        List<int[]> previous = List.of();
+        int next = 0;
+        while (next < units.size()) {
+            int overlap = Math.min(segmentation.overlapSentences(), previous.size());
+            List<int[]> current = new ArrayList<>(previous.subList(previous.size() - overlap, previous.size()));
+            current.add(units.get(next++));
+            while (current.size() > 1 && !fits(text, prefix, current.getFirst()[0], current.getLast()[1])) {
+                // Die Überlappung weicht, der neue Satz bleibt.
+                current.removeFirst();
+            }
+            while (next < units.size() && fits(text, prefix, current.getFirst()[0], units.get(next)[1])) {
+                current.add(units.get(next++));
+            }
+            int start = current.getFirst()[0];
+            int end = current.getLast()[1];
+            // Beginnt das Stück mit der Überschrift selbst, braucht es sie nicht noch einmal davor.
+            boolean headed = heading != null && start > span.start();
+            chunks.add(new Chunk(start, end, headed ? prefix : ""));
+            previous = current;
+        }
+    }
+
+    /** Sätze als Stellen im Text, ohne Leerraum am Rand; Zeilen und Absätze sind eigene Grenzen. */
+    private List<int[]> sentences(String text, int start, int end) {
+        List<int[]> found = new ArrayList<>();
+        int line = start;
+        while (line < end) {
+            int stop = text.indexOf('\n', line);
+            stop = stop < 0 || stop >= end ? end : stop + 1;
+            String block = text.substring(line, stop);
+            int cursor = 0;
+            for (String sentence : segmentation.sentences(block)) {
+                int at = block.indexOf(sentence, cursor);
+                if (at < 0) {
+                    // Nicht wiedergefunden: die ganze Zeile als ein Satz.
+                    found.add(new int[] {line, stop});
+                    cursor = block.length();
+                    break;
+                }
+                found.add(new int[] {line + at, line + at + sentence.length()});
+                cursor = at + sentence.length();
+            }
+            line = stop;
+        }
+        return found;
+    }
+
+    /** Teilt einen Satz über dem Budget an Wortgrenzen; ein einzelnes zu langes Wort an der Zeichengrenze. */
+    private List<int[]> fit(String text, int[] sentence, String prefix) {
+        if (fits(text, prefix, sentence[0], sentence[1])) {
+            return List.of(sentence);
+        }
+        List<int[]> pieces = new ArrayList<>();
+        int start = sentence[0];
+        while (start < sentence[1]) {
+            int end = start;
+            int cursor = start;
+            while (cursor < sentence[1]) {
+                int space = text.indexOf(' ', cursor);
+                int wordEnd = space < 0 || space >= sentence[1] ? sentence[1] : space;
+                if (!fits(text, prefix, start, wordEnd)) {
+                    break;
+                }
+                end = wordEnd;
+                cursor = wordEnd + 1;
+            }
+            if (end == start) {
+                // Ein Wort allein ist zu lang: nach Zeichen schneiden.
+                end = Math.min(sentence[1], start + Math.max(1, maxChunkChars - prefix.length()));
+            }
+            pieces.add(new int[] {start, end});
+            start = end;
+            while (start < sentence[1] && text.charAt(start) == ' ') {
+                start++;
+            }
+        }
+        return pieces;
+    }
+
+    private boolean fits(String text, String prefix, int start, int end) {
+        return prefix.length() + end - start <= maxChunkChars
+                && segmentation.tokens(prefix + text.substring(start, end)) <= segmentation.maxTokens();
+    }
+
+    /** Ein Abschnitt oder Text zwischen Abschnitten mit seiner Überschriftenkette. */
+    private record Span(int start, int end, String heading) {
+    }
+
+    /**
+     * Ein Stück: Stelle in der Textprojektion und die Überschriftenkette, die beim Einbetten davor steht.
+     */
+    record Chunk(int start, int end, String prefix) {
+
+        String input(String text) {
+            return prefix + text.substring(start, end);
+        }
     }
 }

@@ -28,6 +28,10 @@ space-harvester:
     external-processing-sources: confluence,wiki2   # Standard: keine
     embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
     rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
+  relevance:                            # nur Server, optional (#181): Reciprocal Rank Fusion
+    keyword-weight: 1.0
+    semantic-weight: 1.0
+    rank-constant: 60
 ```
 
 Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf `embedding-chunk-chars`
@@ -44,6 +48,19 @@ Hintergrund (ein Thread, höchstens 1000 wartende Seiten); Abgleich, Lesen und E
 `POST …/pages/{pageId}/enrichments` rechnet eine Seite sofort. Ergebnis je Seite:
 `{"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}` unter `enrichments` in
 `view=extended`.
+
+Zerlegung (#181, wie `KnowledgeChunker` im Enterprise AI Client): Abschnitte der Textprojektion sind harte Grenzen.
+Innerhalb eines Abschnitts packt der Prozessor Sätze (`SentenceSplitter`) bis 350 Tokens (gezählt nach Wörtern und
+Symbolen, `KnowledgeChunkingPolicy.defaults()`); das nächste Stück beginnt mit dem letzten Satz des vorigen. Ein Satz
+über dem Budget wird an Wortgrenzen geteilt; zusätzlich hat kein Stück mehr als `embedding-chunk-chars` Zeichen.
+Eingebettet wird jedes Stück mit der Überschriftenkette seines Abschnitts davor (`Betrieb > Nachtlauf`), wenn es nicht
+selbst mit der Überschrift beginnt. `charStart`/`charEnd` bleiben Stellen in der Textprojektion, damit Treffer auf
+ihre Stelle zeigen. Seit dieser Zerlegung trägt die Prozessorversion Format `2`; ältere Vektoren zählen nicht mehr und
+werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet.
+
+Die Seiten kommen über die normale Beschaffung in den Cache: Jede gelesene Seite, auch ein vorgeladener Treffer der
+nativen Schlagwortsuche, landet im Volltextindex und bekommt ihre Embeddings im Hintergrund. Für `sort=relevance` ist
+also kein vollständiger Abgleich nötig (`HarvesterFullTextTest.aPageOpenedWithoutAnySyncIsFoundByTheHybridRelevanceSearch`).
 
 ## Ablage der Vektoren
 
@@ -87,9 +104,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   embedding-cosine@<Prozessorversion>`); Treffer ohne Ähnlichkeit folgen in ihrer Reihenfolge.
 - Hybrid (#181): Der Volltextindex über den Cache (#180, BM25 über Titel und Text) liefert weitere Kandidaten; sie
   brauchen `content`, denn ihr Rang stammt aus dem Inhalt. Gibt es Volltexttreffer im Fenster, entsteht die Reihenfolge
-  per Reciprocal Rank Fusion (k = 60, gleiche Gewichte, wie `ReciprocalRankFusion` im Enterprise AI Client) aus der
+  per Reciprocal Rank Fusion (wie `ReciprocalRankFusion` mit `RetrievalSettings` im Enterprise AI Client) aus der
   Volltext- und der Kosinus-Rangfolge (`reranker: rrf(fulltext,embedding-cosine@<Prozessorversion>)`); Treffer ohne
-  beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch.
+  beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch. Gewichte und `k` sind einstellbar,
+  im Server unter `space-harvester.relevance` (`keyword-weight`, `semantic-weight` je 0 bis 10, Standard 1;
+  `rank-constant` 1 bis 1000, Standard 60), im Core über `Harvester.builder().rankFusion(…)`; abweichende Werte stehen
+  in der Kennung (`rrf@k30,w2.0/1.0(…)`). Anders als dort fusioniert der Core je Seite, nicht je Stück: Der
+  Volltextindex kennt Seiten, und die Antwort listet Seiten; für die Kosinus-Rangfolge zählt das ähnlichste Stück.
 - Cross-Encoder (#181, wie `KipitzRerankAdapter` und `CrossEncoderRanking` im Enterprise AI Client): Mit
   `rerank-model` bewertet der Dienst über `POST <base-url>/rerank` jeden Treffer einzeln gegen den Anfragetext und
   ordnet die Treffer der Antwort danach um (`reranker: …+cross-encoder@<Modell>`). Er kommt erst nach der

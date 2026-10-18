@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -72,7 +73,7 @@ class GlobalRelevanceSearchTest {
             embeddedQueries.addAll(texts);
             return texts.stream().map(GlobalRelevanceSearchTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     private final SourceCatalog catalog = new SourceCatalog() {
         @Override

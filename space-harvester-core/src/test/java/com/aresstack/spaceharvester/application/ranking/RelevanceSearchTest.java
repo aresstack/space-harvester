@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -96,7 +97,7 @@ class RelevanceSearchTest {
             embeddedQueries.addAll(texts);
             return texts.stream().map(RelevanceSearchTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     @BeforeEach
     void publish() {
@@ -232,11 +233,29 @@ class RelevanceSearchTest {
     @Test
     void rankFusionSumsReciprocalRanksAndKeepsUnrankedCandidatesInOrder() {
         var hits = index.search(query(null), "i1", null, 10);
-        List<SearchHit> fused = ReciprocalRankFusion.fuse(hits, List.of(List.of(hits.get(3), hits.get(1)),
-                List.of(hits.get(1), hits.get(3), hits.get(1))));
+        List<SearchHit> fused = ReciprocalRankFusion.DEFAULT.fuse(hits, List.of(hits.get(3), hits.get(1)),
+                List.of(hits.get(1), hits.get(3), hits.get(1)));
 
         // 1 und 3 haben beide 1/61 + 1/62; Gleichstand behält die Reihenfolge der Kandidaten.
         assertThat(fused).containsExactly(hits.get(1), hits.get(3), hits.get(0), hits.get(2), hits.get(4));
+
+        // Mit doppeltem Volltextgewicht gewinnt der erste Volltextrang.
+        assertThat(new ReciprocalRankFusion(2, 1, 60).fuse(hits, List.of(hits.get(3), hits.get(1)),
+                List.of(hits.get(1), hits.get(3)))).startsWith(hits.get(3), hits.get(1));
+        assertThatThrownBy(() -> new ReciprocalRankFusion(1, 1, 0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ReciprocalRankFusion(-1, 1, 60)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void fusionWeightsAndKAreConfigurableAndNamedInTheResult() {
+        RelevanceSearch.RelevanceResults results = hybrid(ALLOW_ALL, List.of(match("OPS", "20"), match("DEV", "10")))
+                .withFusion(new ReciprocalRankFusion(0, 1, 60))
+                .search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        // Ohne Volltextgewicht bleibt die Kosinus-Reihenfolge; die reinen Volltexttreffer folgen in ihrer Reihenfolge.
+        assertThat(ids(results)).containsExactly("21", "11", "12", "20", "10");
+        assertThat(results.reranker()).isEqualTo("rrf@k60,w0.0/1.0(fulltext,embedding-cosine@" + processor.version()
+                + ")");
     }
 
     @Test

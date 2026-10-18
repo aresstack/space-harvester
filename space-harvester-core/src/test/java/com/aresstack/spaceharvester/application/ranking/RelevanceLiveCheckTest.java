@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -106,7 +107,7 @@ class RelevanceLiveCheckTest {
         public List<float[]> embedQueries(List<String> texts) {
             return texts.stream().map(RelevanceLiveCheckTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     @BeforeEach
     void publish() {
