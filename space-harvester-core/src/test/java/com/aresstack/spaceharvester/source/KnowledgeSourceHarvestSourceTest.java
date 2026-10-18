@@ -17,17 +17,24 @@ import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
 import com.aresstack.enterpriseai.source.api.RateLimitedException;
 import com.aresstack.enterpriseai.source.api.ResponseTooLargeException;
+import com.aresstack.enterpriseai.source.api.SearchableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourceLink;
+import com.aresstack.enterpriseai.source.api.SourcePartition;
+import com.aresstack.enterpriseai.source.api.SourceQuery;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.AttributesHash;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /** Abbildung der Quellressourcen auf {@link PageMetadata}, insbesondere stabil sortierte Labels. */
@@ -143,6 +150,81 @@ class KnowledgeSourceHarvestSourceTest {
         @Override
         public byte[] loadViewImage(String src) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SourceAddress sourceId() {
+            return SourceAddress.of("confluence-dc");
+        }
+
+        @Override
+        public List<KnowledgeResource> discover(SourceScope scope) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public KnowledgeDocument load(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<SourceLink> discoverLinks(KnowledgeResourceId resourceId) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @Test
+    void theSpaceSelectionBecomesAnExclusionOfAllOtherSpacesCountedWithoutDuplicates() {
+        List<String> keys = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            keys.add(String.format("S%03d", i));
+        }
+        keys.add("A");
+        Searchable port = new Searchable(keys, null);
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+
+        // 201 Spaces ohne A sind 200 Ausschlüsse, S000 zählt dabei nur einmal.
+        source.searchPages("x", 10, new SearchSpaces(Set.of("A"), Set.of("S000")));
+
+        assertThat(port.last.excludedPartitions()).hasSize(KnowledgeSourceHarvestSource.MAX_EXCLUDED_SPACES)
+                .doesNotContain("A").contains("S000", "S199");
+    }
+
+    @Test
+    void unreadableSpacesOnlyDropTheComplementNotTheSearch() {
+        Searchable port = new Searchable(List.of(), new KnowledgeSourceException(KnowledgeSourceException.Kind
+                .ACCESS_DENIED, "Spaces"));
+        KnowledgeSourceHarvestSource source = new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki", port);
+
+        source.searchPages("x", 10, new SearchSpaces(Set.of("A"), Set.of("B")));
+
+        assertThat(port.last.excludedPartitions()).containsExactly("B");
+    }
+
+    /** Sucht ohne Treffer und merkt sich die letzte Anfrage. */
+    private static final class Searchable implements SearchableKnowledgeSource {
+
+        private final List<String> partitions;
+        private final KnowledgeSourceException failure;
+        private SourceQuery last;
+
+        Searchable(List<String> partitions, KnowledgeSourceException failure) {
+            this.partitions = partitions;
+            this.failure = failure;
+        }
+
+        @Override
+        public List<SourceSearchHit> search(SourceQuery query) {
+            last = query;
+            return List.of();
+        }
+
+        @Override
+        public List<SourcePartition> partitions() throws KnowledgeSourceException {
+            if (failure != null) {
+                throw failure;
+            }
+            return partitions.stream().map(key -> new SourcePartition(key, key)).toList();
         }
 
         @Override

@@ -127,6 +127,9 @@ public class SearchController {
             @Parameter(description = "Nur diese Spaces (wiederholbar, höchstens " + PageSearchQuery.MAX_SPACE_KEYS
                     + "); ohne Angabe alle freigegebenen Spaces; global in jeder Quelle")
             @RequestParam(required = false) List<String> spaceKey,
+            @Parameter(description = "Nur mit text: ohne diese Spaces (wiederholbar, höchstens "
+                    + PageSearchQuery.MAX_SPACE_KEYS + "); geht wie spaceKey als Filter in die Anfrage der Quelle")
+            @RequestParam(required = false) List<String> excludeSpaceKey,
             @Parameter(description = "Wörter im Titel, höchstens " + PageSearchQuery.MAX_TITLE_TERMS + " Wörter und "
                     + PageSearchQuery.MAX_TITLE_LENGTH + " Zeichen", example = "Architektur Übersicht")
             @RequestParam(required = false) String title,
@@ -154,12 +157,16 @@ public class SearchController {
         if (text != null) {
             if (title != null || pageId != null || parentPageId != null || version != null || modifiedFrom != null
                     || modifiedBefore != null || sort != null || q != null) {
-                throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, cursor und "
-                        + "limit");
+                throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, excludeSpaceKey, "
+                        + "cursor und limit");
             }
             return KeywordResponse.of(keywords.search(caller, new KeywordSearch.Query(text, sourceId,
                     Set.copyOf(sourceIds == null ? List.of() : sourceIds),
-                    Set.copyOf(spaceKey == null ? List.of() : spaceKey)), cursor, limit));
+                    Set.copyOf(spaceKey == null ? List.of() : spaceKey),
+                    Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey)), cursor, limit));
+        }
+        if (excludeSpaceKey != null && !excludeSpaceKey.isEmpty()) {
+            throw new InvalidQueryException("excludeSpaceKey gibt es nur mit text");
         }
         if (sort == null) {
             sort = "title";

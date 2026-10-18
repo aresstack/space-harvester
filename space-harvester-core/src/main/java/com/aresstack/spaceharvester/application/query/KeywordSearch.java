@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -26,11 +27,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.ExecutionException;
 import java.util.regex.Pattern;
 
 /**
@@ -118,7 +119,7 @@ public class KeywordSearch {
             int offset = offsets == null ? 0 : offsets.get(sourceId);
             int wanted = Math.min(offset + limit + 1, MAX_DEPTH);
             try {
-                List<SourceSearchMatch> matches = source.searchPages(query.text(), wanted);
+                List<SourceSearchMatch> matches = source.searchPages(query.text(), wanted, query.spaces());
                 List<SourceSearchMatch> fresh = matches.size() <= offset ? List.of()
                         : matches.subList(offset, Math.min(matches.size(), offset + limit));
                 pending.put(sourceId, new ArrayList<>(fresh));
@@ -217,7 +218,7 @@ public class KeywordSearch {
                     candidate.sourceId(), e.reason());
             throw e;
         }
-        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(metadata.partitionKey())) {
+        if (!query.spaces().permits(metadata.partitionKey())) {
             return Optional.empty();
         }
         if (!access.permits(caller, ResourceScope.page(candidate.sourceId(), metadata.partitionKey(),
@@ -278,6 +279,10 @@ public class KeywordSearch {
         String canonical = String.join("\u0000", query.text(), String.valueOf(query.sourceId()),
                 String.join("\u0001", new TreeSet<>(query.sourceIds())),
                 String.join("\u0001", new TreeSet<>(query.spaceKeys())));
+        if (!query.excludedSpaceKeys().isEmpty()) {
+            // Nur mit Ausschluss, damit Cursor von Anfragen ohne ihn gültig bleiben.
+            canonical += "\u0000-" + String.join("\u0001", new TreeSet<>(query.excludedSpaceKeys()));
+        }
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest, 0, 12);
@@ -302,8 +307,10 @@ public class KeywordSearch {
      * @param sourceId  nur diese Quelle oder {@code null} für alle freigegebenen
      * @param sourceIds ohne {@code sourceId}: nur diese Quellen; leer für alle freigegebenen
      * @param spaceKeys nur Seiten dieser Spaces, global in jeder Quelle; leer für alle
+     * @param excludedSpaceKeys ohne Seiten dieser Spaces (#179, wie die abgehakten Spaces im Enterprise AI Client)
      */
-    public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys) {
+    public record Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys,
+                        Set<String> excludedSpaceKeys) {
 
         public Query {
             if (text == null || text.isBlank()) {
@@ -319,11 +326,22 @@ public class KeywordSearch {
             sourceId = checked.sourceId();
             sourceIds = checked.sourceIds();
             spaceKeys = checked.spaceKeys();
+            excludedSpaceKeys = PageSearchQuery.of(null, List.of(), List.copyOf(excludedSpaceKeys == null ? Set.of()
+                    : excludedSpaceKeys), null, null, null, null, null, null, SearchSort.TITLE).spaceKeys();
+        }
+
+        public Query(String text, String sourceId, Set<String> sourceIds, Set<String> spaceKeys) {
+            this(text, sourceId, sourceIds, spaceKeys, Set.of());
         }
 
         /** Alle freigegebenen Quellen. */
         public static Query of(String text) {
             return new Query(text, null, Set.of(), Set.of());
+        }
+
+        /** Der Space-Filter für die Quelle. */
+        public SearchSpaces spaces() {
+            return new SearchSpaces(spaceKeys, excludedSpaceKeys);
         }
 
         PageSearchQuery scope() {

@@ -12,6 +12,9 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -109,6 +112,36 @@ class HarvesterSearchTest {
 
             assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
         }
+    }
+
+    @Test
+    void spaceFiltersAndExclusionsGoIntoTheQueryOfTheSource() {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            KeywordSearch.Results only = harvester.keywordSearch().search(harvester.caller(),
+                    new KeywordSearch.Query("Nachtlauf", "wiki", Set.of(), Set.of("OPS")), null, 50);
+            String onlyCql = lastCql();
+            KeywordSearch.Results without = harvester.keywordSearch().search(harvester.caller(),
+                    new KeywordSearch.Query("Nachtlauf", "wiki", Set.of(), Set.of(), Set.of("DEV")), null, 50);
+            String withoutCql = lastCql();
+
+            // Wie im Enterprise AI Client: space not in (…) in der CQL, nicht erst nachträglich gefiltert.
+            assertThat(onlyCql).contains("space not in (\"DEV\")");
+            assertThat(withoutCql).contains("space not in (\"DEV\")");
+            assertThat(only.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+            assertThat(without.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+        }
+    }
+
+    private static String lastCql() {
+        URI search = CONFLUENCE.requests().reversed().stream()
+                .filter(uri -> uri.getPath().endsWith("/search")).findFirst().orElseThrow();
+        String query = search.getRawQuery();
+        for (String pair : query.split("&")) {
+            if (pair.startsWith("cql=")) {
+                return URLDecoder.decode(pair.substring(4), StandardCharsets.UTF_8);
+            }
+        }
+        throw new AssertionError("keine CQL in " + search);
     }
 
     @Test

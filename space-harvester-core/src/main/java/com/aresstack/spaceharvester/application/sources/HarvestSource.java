@@ -118,6 +118,16 @@ public interface HarvestSource {
     }
 
     /**
+     * Wie {@link #searchPages(String, int)}, mit Space-Filter (#179). Quellen, die ihn nicht in die eigene Anfrage
+     * setzen können, liefern ungefiltert; der Aufrufer filtert ohnehin an den Kopfdaten jedes Treffers.
+     *
+     * @throws SourceAccessException wie {@link #searchPages(String, int)}
+     */
+    default List<SourceSearchMatch> searchPages(String text, int limit, SearchSpaces spaces) {
+        return searchPages(text, limit);
+    }
+
+    /**
      * Ob die Eingabe eine Adresse dieser Quelle sein kann (Muster der Quelle, ohne Abfrage). Nur dann lohnt
      * {@link #resolveAddress}; eine passende Adresse kann trotzdem auf keine Seite zeigen, etwa eine andere Instanz.
      */
