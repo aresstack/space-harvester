@@ -32,6 +32,7 @@ import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -179,6 +180,15 @@ public final class Workspace {
     public List<String> sourceProblems(SourceSettingsConfig draft, boolean replacing,
                                        java.util.Collection<SourceSettingsConfig> configured) {
         return harvester.sourceManagement().validate(draft, replacing, configured);
+    }
+
+    /**
+     * Verbindungsdiagnose einer Quelle in Stufen (Proxy-Route, Namensauflösung, TCP, TLS, Anmeldung, API) vom Core
+     * ({@code SourceManagement.diagnose}, #189); leer, wenn der Core die Quelle nicht kennt (abgeschaltet oder
+     * wartet auf ihr Geheimnis). Blockiert, also nur im Hintergrund.
+     */
+    public Optional<SourceDiagnosis> diagnose(String sourceId) {
+        return harvester.sourceManagement().diagnose(sourceId);
     }
 
     /** Ob die Quelle im Core eingeschaltet ist ({@code SourceManagement.enabled}); {@code false} auch für unbekannte. */

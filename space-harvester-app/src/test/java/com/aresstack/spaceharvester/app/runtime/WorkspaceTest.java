@@ -245,6 +245,20 @@ class WorkspaceTest {
     }
 
     @Test
+    void theConnectionDiagnosisComesFromTheCoreStageByStage() throws Exception {
+        Workspace workspace = start().workspace();
+
+        var diagnosis = workspace.diagnose("wiki").orElseThrow();
+
+        assertThat(diagnosis.steps()).extracting(step -> step.stage())
+                .contains(com.aresstack.spaceharvester.application.sources.ConnectionStep.Stage.TLS,
+                        com.aresstack.spaceharvester.application.sources.ConnectionStep.Stage.API);
+        assertThat(diagnosis.successful()).as(diagnosis.summary()).isTrue();
+        assertThat(diagnosis.toString()).doesNotContain(TOKEN);
+        assertThat(workspace.diagnose("gibt-es-nicht")).isEmpty();
+    }
+
+    @Test
     void attachmentsAreListedStoredAndDeliveredByteForByte() throws Exception {
         Workspace workspace = start().workspace();
 
