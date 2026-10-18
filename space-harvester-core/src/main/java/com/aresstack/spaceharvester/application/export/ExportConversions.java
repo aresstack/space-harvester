@@ -87,7 +87,8 @@ public class ExportConversions {
         }
         return Optional.of(new ExportDatasetInfo(exportId, status.sourceId(), status.partitionKey(),
                 pageIds.get().size(), artifact.get().complete(),
-                images == null ? ExportDatasetInfo.Images.NOT_COLLECTED : images.images(exportId), formats()));
+                images == null ? ExportDatasetInfo.Images.NOT_COLLECTED : images.images(exportId), formats(),
+                writer.assets(exportId).map(ExportDatasetInfo.Media::of).orElse(ExportDatasetInfo.Media.NONE)));
     }
 
     /**
