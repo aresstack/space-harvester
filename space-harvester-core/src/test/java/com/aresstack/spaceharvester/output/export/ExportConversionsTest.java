@@ -130,8 +130,10 @@ class ExportConversionsTest {
         }
         ExportConversions conversions = new ExportConversions(jobs, writer, converters);
 
+        // Die Meldung nennt keine Seiten-ID; die Export-ID (UUID) kann zufällig „100“ enthalten und zählt nicht
         assertThatThrownBy(() -> conversions.convert(exportId, "client-a", "markdown", downloads))
-                .isInstanceOf(ExportDatasetDamagedException.class).hasMessageNotContaining("100");
+                .isInstanceOf(ExportDatasetDamagedException.class)
+                .satisfies(e -> assertThat(e.getMessage().replace(exportId, "")).doesNotContain("100"));
         try (Stream<Path> files = Files.list(downloads)) {
             assertThat(files).isEmpty();
         }
