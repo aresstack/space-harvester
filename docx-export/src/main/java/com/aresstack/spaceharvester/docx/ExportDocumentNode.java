@@ -1,50 +1,48 @@
 package com.aresstack.spaceharvester.docx;
 
-import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
  * One chapter of a page export (#115): the title of the page, its current content and its child pages in the order of
- * the source. The tree is complete when it leaves {@link KnowledgeExportUseCase}; every output format writes from it
- * and none loads anything itself. Immutable.
+ * the source. The tree is complete when it reaches a writer; every output format writes from it and none loads
+ * anything itself. Immutable.
  *
- * <p>Since #132 a chapter may carry export Markdown that differs from the indexable text of the document: the same
- * text with the figures of the page placed as Markdown images ({@code ![caption](<src>)}), and the figures themselves
- * ({@link #images()}) with their bytes or the reason they are missing. The document and its index semantics stay
- * untouched.</p>
+ * <p>Since #132 a chapter may carry export Markdown with the figures of the page placed as Markdown images
+ * ({@code ![caption](<src>)}), and the figures themselves ({@link #images()}) with their bytes or the reason they are
+ * missing.</p>
+ *
+ * <p>Space Harvester: without the {@code KnowledgeDocument} of the Enterprise AI Client; the content is the Markdown
+ * itself. A chapter may name an {@link #anchor()}: the Word writer sets it as a bookmark on the chapter heading, and
+ * Markdown links {@code #<anchor>} jump there.</p>
  */
 public final class ExportDocumentNode {
 
     private final String title;
-    private final KnowledgeDocument document;
+    private final String anchor;
     private final String markdown;
     private final List<ExportImage> images;
     private final List<ExportDocumentNode> children;
 
     /**
-     * @param title    the chapter heading; blank falls back to the title of the document
-     * @param document the content of the page; {@code null} for a node without own content (a space root)
+     * @param title    the chapter heading; blank becomes "Ohne Titel"
+     * @param markdown the text of the chapter; {@code null} for a node without own content (a space root)
      * @param children the child chapters in source order
      */
-    public ExportDocumentNode(String title, KnowledgeDocument document, List<ExportDocumentNode> children) {
-        this(title, document, null, null, children);
+    public ExportDocumentNode(String title, String markdown, List<ExportDocumentNode> children) {
+        this(title, null, markdown, null, children);
     }
 
     /**
-     * @param markdown the export Markdown; {@code null} means the text of {@code document}
+     * @param anchor   the jump target of the chapter, or {@code null}
      * @param images   the figures {@code markdown} refers to, in document order
      */
-    public ExportDocumentNode(String title, KnowledgeDocument document, String markdown, List<ExportImage> images,
+    public ExportDocumentNode(String title, String anchor, String markdown, List<ExportImage> images,
                               List<ExportDocumentNode> children) {
         String heading = title == null ? "" : title.trim();
-        if (heading.isEmpty() && document != null) {
-            heading = document.resource().title().trim();
-        }
-        this.title = heading.isEmpty() ? (document == null ? "Ohne Titel" : document.id().value()) : heading;
-        this.document = document;
+        this.title = heading.isEmpty() ? "Ohne Titel" : heading;
+        this.anchor = anchor == null || anchor.trim().isEmpty() ? null : anchor.trim();
         this.markdown = markdown;
         this.images = images == null ? Collections.<ExportImage>emptyList()
                 : Collections.unmodifiableList(new ArrayList<ExportImage>(images));
@@ -56,17 +54,14 @@ public final class ExportDocumentNode {
         return title;
     }
 
-    /** Return the page content; {@code null} for a node without own content. */
-    public KnowledgeDocument document() {
-        return document;
+    /** The jump target of the chapter; {@code null} if it has none. */
+    public String anchor() {
+        return anchor;
     }
 
     /** Return the text of the chapter in Markdown, with its figures placed; empty without content. */
     public String text() {
-        if (markdown != null) {
-            return markdown;
-        }
-        return document == null ? "" : document.text();
+        return markdown == null ? "" : markdown;
     }
 
     /** Return the figures of this chapter (not of its children) in document order. */

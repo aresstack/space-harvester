@@ -33,6 +33,8 @@ dependencies {
     implementation libs.jsoup
     // PDF-Ausgabe (#30), nur im Paket output.convert
     implementation libs.pdfbox
+    // Word-Ausgabe: Exporter des Enterprise AI Client mit Inhaltsverzeichnis (Kopie, docx-export/UPSTREAM.md)
+    implementation project(':docx-export')
 
     // Testversionen aus der Spring-Boot-BOM; nur Testklassenpfad, nicht in der veröffentlichten POM
     testImplementation platform(libs.spring.boot.dependencies)

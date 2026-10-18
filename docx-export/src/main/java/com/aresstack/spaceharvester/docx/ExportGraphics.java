@@ -1,11 +1,5 @@
 package com.aresstack.spaceharvester.docx;
 
-import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
-import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportImage;
-import com.aresstack.enterpriseai.proasteion.exedra.ui.markdown.CachingMermaidImageRenderer;
-import com.aresstack.enterpriseai.proasteion.exedra.ui.markdown.MermaidImageRenderer;
-import com.aresstack.enterpriseai.proasteion.exedra.ui.markdown.SvgImageRenderer;
-
 import javax.imageio.ImageIO;
 import java.awt.Color;
 import java.awt.Graphics2D;
@@ -34,6 +28,11 @@ import java.util.Set;
  *
  * <p>Whatever does not resolve is collected in {@link #problems()}, so the export can say which figures are missing;
  * the writers put a visible notice where the figure would be. One instance per export; not thread-safe.</p>
+ *
+ * <p>Space Harvester: Mermaid and SVG are drawn only by renderers handed in (the Enterprise AI Client uses mermaid-java
+ * and Batik from its Swing reader); without them a Mermaid fence stays code and an SVG figure is reported as not
+ * displayable. {@link #image(String, String)} remembers decoded pictures only until {@link #forget()}, so a long export
+ * keeps no more than one chapter of pictures in memory.</p>
  */
 public final class ExportGraphics {
 
@@ -41,7 +40,6 @@ public final class ExportGraphics {
     static final int MAX_PIXELS = 2000;
     static final int MERMAID_WIDTH = 1200;
     static final int SVG_WIDTH = 1200;
-    private static final SvgImageRenderer SVG = new SvgImageRenderer();
 
     /** A picture ready to embed: decoded once, with its PNG bytes. */
     public static final class Graphic {
@@ -71,18 +69,41 @@ public final class ExportGraphics {
     }
 
     private final MermaidImageRenderer mermaid;
+    private final MermaidImageRenderer svg;
     private final Map<String, ExportImage> known = new HashMap<String, ExportImage>();
     private final Map<String, Graphic> decoded = new HashMap<String, Graphic>();
     private final Set<String> problems = new LinkedHashSet<String>();
 
     /** @param mermaid draws Mermaid fences; {@code null}: fences stay code and are reported */
     public ExportGraphics(MermaidImageRenderer mermaid) {
-        this.mermaid = mermaid;
+        this(mermaid, null);
     }
 
-    /** The graphics of the application: Mermaid through the chat's renderer chain. */
+    /** @param svg rasterizes SVG figures offline; {@code null}: SVG figures are reported as not displayable */
+    public ExportGraphics(MermaidImageRenderer mermaid, MermaidImageRenderer svg) {
+        this.mermaid = mermaid;
+        this.svg = svg;
+    }
+
+    /** The graphics without Mermaid and SVG renderers: PNG, JPEG and GIF only. */
     public static ExportGraphics standard() {
-        return new ExportGraphics(CachingMermaidImageRenderer.forChat());
+        return new ExportGraphics(null, null);
+    }
+
+    /** Know {@code images} (the figures of one chapter) as well. */
+    public ExportGraphics with(List<ExportImage> images) {
+        if (images != null) {
+            for (ExportImage image : images) {
+                known.put(image.src(), image);
+            }
+        }
+        return this;
+    }
+
+    /** Drop the known figures and decoded pictures; the problems stay. */
+    public void forget() {
+        known.clear();
+        decoded.clear();
     }
 
     /** Know the figures of every chapter of {@code root}. */
@@ -125,7 +146,7 @@ public final class ExportGraphics {
             }
             bytes = image.bytes();
         }
-        Graphic graphic = decode(bytes);
+        Graphic graphic = decode(bytes, svg);
         if (graphic == null) {
             problems.add(name + ": Bildformat nicht darstellbar");
             return null;
@@ -178,14 +199,17 @@ public final class ExportGraphics {
 
     // ------------------------------------------------------------------ decoding
 
-    static Graphic decode(byte[] bytes) {
+    static Graphic decode(byte[] bytes, MermaidImageRenderer svg) {
         if (bytes == null || bytes.length == 0) {
             return null;
         }
         BufferedImage image = null;
         if (isSvg(bytes)) {
+            if (svg == null) {
+                return null;
+            }
             try {
-                image = SVG.render(new String(bytes, StandardCharsets.UTF_8), SVG_WIDTH);
+                image = svg.render(new String(bytes, StandardCharsets.UTF_8), SVG_WIDTH);
             } catch (RuntimeException | LinkageError e) {
                 image = null;
             }

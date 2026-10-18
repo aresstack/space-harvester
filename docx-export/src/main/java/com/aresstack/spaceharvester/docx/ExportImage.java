@@ -3,8 +3,7 @@ package com.aresstack.spaceharvester.docx;
 /**
  * One figure of an exported page (#132): where the page shows it ({@link #src()}, the address the export Markdown
  * refers to), its caption or alternative text, and either the bytes the source delivered through its own sign-in or the
- * reason they could not be loaded. Binary data lives here, never in the indexable
- * {@link com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument#text()}. Immutable.
+ * reason they could not be loaded. Binary data lives here, never in the text of a chapter. Immutable.
  */
 public final class ExportImage {
 

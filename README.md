@@ -513,7 +513,8 @@ jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischens
 `pages.json`. `?format=…` (wiederholbar, z. B. `format=markdown&format=pdf`) wählt die Formate selbst; sie entstehen
 am Ende des Exports als abgeleitete Dateien aus denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
 `rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum; `markdown` schreibt `pages.md` aus dem
-Storage-Format, `docx` `pages.docx` und `pdf` `pages.pdf`, Bilder und Anhänge jeweils nur als Verweise
+Storage-Format, `docx` `pages.docx` (Word-Exporter des Enterprise AI Client mit Inhaltsverzeichnis) und `pdf`
+`pages.pdf`, Bilder und Anhänge jeweils nur als Verweise
 ([Formate und Formatverluste](docs/CONVERTERS.md)). Converter lesen nur die exportierten
 Seiten aus dem Cache, nie Confluence, und ändern weder Cache noch Rohdaten. `manifest.json` nennt je Datei unter
 `conversions` Format, Converter-Version und den Input-Hash `conversion-input/v1`; gleicher Hash und gleiche Version

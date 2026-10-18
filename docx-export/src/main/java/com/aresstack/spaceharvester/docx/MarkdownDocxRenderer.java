@@ -10,6 +10,7 @@ import com.vladsch.flexmark.ast.HardLineBreak;
 import com.vladsch.flexmark.ast.Heading;
 import com.vladsch.flexmark.ast.HtmlBlock;
 import com.vladsch.flexmark.ast.HtmlCommentBlock;
+import com.vladsch.flexmark.ast.HtmlInline;
 import com.vladsch.flexmark.ast.HtmlInlineComment;
 import com.vladsch.flexmark.ast.Image;
 import com.vladsch.flexmark.ast.IndentedCodeBlock;
@@ -77,6 +78,11 @@ import java.util.Locale;
  * <p>Figures (#132): with {@link ExportGraphics} an image that resolves is embedded as a picture where it stands
  * (scaled to the text width), its caption below; a Mermaid fence becomes the drawn diagram. A figure that does not
  * resolve leaves a visible notice and is reported by the graphics. Without graphics images stay text.</p>
+ *
+ * <p>Space Harvester: a link {@code #<anchor>} becomes a jump to the bookmark of that chapter
+ * ({@link #bookmark(String)}), an inline {@code <br>} (the line break inside a table cell of a converted
+ * Confluence page) becomes a line break instead of text, and an empty header row (a Confluence table without header)
+ * is left out.</p>
  */
 public final class MarkdownDocxRenderer {
 
@@ -105,6 +111,9 @@ public final class MarkdownDocxRenderer {
     private static final double MAX_PICTURE_HEIGHT_POINTS = 620d;
     private static final double PIXELS_TO_POINTS = 0.75d;
     private static final String MISSING = "Abbildung nicht verfügbar";
+    private static final java.util.regex.Pattern BREAK = java.util.regex.Pattern.compile("(?i)<br\\s*/?>");
+    /** Word allows letters, digits and underscores in bookmark names, at most 40 characters. */
+    private static final int MAX_BOOKMARK = 40;
 
     private final XWPFDocument document;
     private final Parser parser;
@@ -196,7 +205,7 @@ public final class MarkdownDocxRenderer {
         }
         if (node instanceof FencedCodeBlock) {
             FencedCodeBlock fenced = (FencedCodeBlock) node;
-            if (graphics != null && PdfExportWriter.isMermaid(fenced.getInfo().toString())) {
+            if (graphics != null && isMermaid(fenced.getInfo().toString())) {
                 ExportGraphics.Graphic diagram = graphics.mermaid(fenced.getContentChars().toString());
                 if (diagram != null) {
                     XWPFParagraph paragraph = paragraph();
@@ -328,6 +337,9 @@ public final class MarkdownDocxRenderer {
                 continue; // die Zeile |---|:---:| trägt nur die Ausrichtung
             }
             for (Node row = section.getFirstChild(); row != null; row = row.getNext()) {
+                if (row instanceof TableRow && section instanceof TableHead && plain(row).isEmpty()) {
+                    continue; // Space Harvester: leere Kopfzeile einer Tabelle ohne Kopf (Confluence) entfällt
+                }
                 if (row instanceof TableRow) {
                     rows.add((TableRow) row);
                     header.add(section instanceof TableHead);
@@ -481,6 +493,8 @@ public final class MarkdownDocxRenderer {
             reference(paragraph, (RefNode) node, format, context);
         } else if (node instanceof HtmlInlineComment) {
             return;
+        } else if (node instanceof HtmlInline && BREAK.matcher(node.getChars()).matches()) {
+            paragraph.createRun().addBreak();
         } else if (node.hasChildren()) {
             inlines(paragraph, node, format, context);
         } else {
@@ -503,7 +517,10 @@ public final class MarkdownDocxRenderer {
 
     private void link(XWPFParagraph paragraph, String label, String url, Format format, Context context) {
         String shown = label.isEmpty() ? url : label;
-        if (isWebLink(url)) {
+        if (url.startsWith("#") && url.length() > 1) {
+            XWPFRun run = internalLink(paragraph, shown, url.substring(1), format.bold);
+            apply(run, format, context, false);
+        } else if (isWebLink(url)) {
             XWPFRun run = hyperlink(paragraph, shown, url, format.bold);
             apply(run, format, context, false);
         } else {
@@ -513,6 +530,18 @@ public final class MarkdownDocxRenderer {
 
     public XWPFRun hyperlink(XWPFParagraph paragraph, String label, String url, boolean bold) {
         XWPFRun run = paragraph.createHyperlinkRun(url.trim());
+        run.setText(clean(label));
+        run.setColor(LINK_COLOR);
+        run.setUnderline(org.apache.poi.xwpf.usermodel.UnderlinePatterns.SINGLE);
+        run.setBold(bold);
+        return run;
+    }
+
+    /** A jump to the bookmark of the chapter with {@code anchor}, styled like a hyperlink. */
+    public XWPFRun internalLink(XWPFParagraph paragraph, String label, String anchor, boolean bold) {
+        org.openxmlformats.schemas.wordprocessingml.x2006.main.CTHyperlink link = paragraph.getCTP().addNewHyperlink();
+        link.setAnchor(bookmark(anchor));
+        XWPFRun run = new org.apache.poi.xwpf.usermodel.XWPFHyperlinkRun(link, link.addNewR(), paragraph);
         run.setText(clean(label));
         run.setColor(LINK_COLOR);
         run.setUnderline(org.apache.poi.xwpf.usermodel.UnderlinePatterns.SINGLE);
@@ -812,6 +841,21 @@ public final class MarkdownDocxRenderer {
                 out.append(child.getChars().unescape());
             }
         }
+    }
+
+    /** The Word bookmark for {@code anchor}: other characters become underscores, a leading digit gets a prefix. */
+    public static String bookmark(String anchor) {
+        String name = (anchor == null ? "" : anchor).replaceAll("[^A-Za-z0-9_]", "_");
+        if (name.isEmpty() || !Character.isLetter(name.charAt(0))) {
+            name = "a_" + name;
+        }
+        return name.length() <= MAX_BOOKMARK ? name : name.substring(0, MAX_BOOKMARK);
+    }
+
+    /** Whether the info string of a fence names Mermaid (in the Enterprise AI Client: {@code PdfExportWriter}). */
+    static boolean isMermaid(String info) {
+        String language = info == null ? "" : info.trim().split("\\s+")[0];
+        return "mermaid".equalsIgnoreCase(language);
     }
 
     /** Nur http, https und mailto werden echte Hyperlinks (wie DesktopLinkOpener in der Oberfläche). */
