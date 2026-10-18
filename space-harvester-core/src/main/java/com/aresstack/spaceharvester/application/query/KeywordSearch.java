@@ -338,8 +338,11 @@ public class KeywordSearch {
                     AccessKind.CONTENT)) {
                 return Optional.empty();
             }
-            return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(),
-                    candidate.match().snippet(), known.url(), known.version(), known.modifiedAt(),
+            // Steht das Wort nur im Titel, hat der Cache kein Textfenster; dann bleibt der Auszug der Quelle.
+            String snippet = candidate.match().snippet() == null || candidate.match().snippet().isEmpty()
+                    ? known.snippet() : candidate.match().snippet();
+            return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
+                    known.url(), known.version(), known.modifiedAt(),
                     known.parentPageId()));
         }
         PageMetadata metadata;
