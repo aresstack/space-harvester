@@ -87,7 +87,7 @@ final class SourceWizard {
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
     private final JLabel heading = new JLabel(" ");
-    private final Feedback feedback = new Feedback();
+    final Feedback feedback = new Feedback();
 
     final JComboBox<String> kind = Comic.combo();
     final JTextField id = Comic.field(24);
@@ -496,6 +496,21 @@ final class SourceWizard {
                 AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
             }
             ConfigFileEditor.Draft written = write(source);
+            if (runtime != null) {
+                // Prüfung des Core (#188), u. a. dasselbe Ziel unter neuer ID; vor dem Schreiben, damit nichts landet.
+                // Ohne Geheimnis der Sitzung prüft erst der Neustart (dann fragt die App es ab).
+                SourceSettingsConfig config = null;
+                try {
+                    config = AppRuntime.config(written.settings(), source.id(), secrets);
+                } catch (IllegalStateException missingSecret) {
+                    // siehe oben
+                }
+                List<String> problems = config == null ? List.of()
+                        : runtime.workspace().sourceProblems(config, editing != null);
+                if (!problems.isEmpty()) {
+                    throw new IllegalArgumentException(String.join("\n", problems));
+                }
+            }
             SourceSaving.store(context, editor, editing, source, written, value);
             if (editing != null && runtime != null) {
                 // Zeigt die Quelle jetzt auf ein anderes Ziel, entfernt der Core ihre bisherigen Daten (#188).

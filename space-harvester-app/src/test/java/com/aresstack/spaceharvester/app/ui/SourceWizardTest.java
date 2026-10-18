@@ -110,6 +110,48 @@ class SourceWizardTest {
     }
 
     @Test
+    void theCoreRejectsTheSameTargetUnderANewIdBeforeAnythingIsWritten() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: wiki
+                      type: confluence
+                      title: Wiki
+                      base-url: https://wiki.example.invalid
+                """.formatted(home.resolve("data")));
+        context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
+        CountDownLatch started = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));
+        assertThat(started.await(30, TimeUnit.SECONDS)).isTrue();
+        String before = Files.readString(config);
+
+        SourceWizard[] wizard = new SourceWizard[1];
+        SwingUtilities.invokeAndWait(() -> {
+            SourceWizard w = new SourceWizard(context);
+            wizard[0] = w;
+            w.baseUrl.setText("https://WIKI.example.invalid/");
+            w.auth.setSelectedItem("Ohne Anmeldung");
+            w.id.setText("zweites");
+            while (w.step() != SourceWizard.Step.CHECK) {
+                assertThat(w.next()).as("Schritt %s", w.step()).isTrue();
+            }
+            w.save();
+        });
+        String text = "";
+        for (int i = 0; i < 300 && !text.contains("bereits vorhanden"); i++) {
+            Thread.sleep(50);
+            String[] shown = new String[1];
+            SwingUtilities.invokeAndWait(() -> shown[0] = wizard[0].feedback.text());
+            text = shown[0];
+        }
+        assertThat(text).contains("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie 'wiki')");
+        assertThat(Files.readString(config)).isEqualTo(before);
+    }
+
+    @Test
     void theOptionalAiStepSavesTheServiceWithTheSourceAndTheKeyOnlyInTheVault() throws Exception {
         Path notizen = Files.createDirectories(home.resolve("notizen"));
         Path config = home.resolve("app.yml");
