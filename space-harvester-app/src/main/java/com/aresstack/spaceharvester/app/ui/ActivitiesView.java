@@ -20,6 +20,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -63,6 +64,8 @@ public final class ActivitiesView implements View {
     private final JComponent cardPlate;
     private final JLabel cardTitle = new JLabel();
     private final JLabel cardLine = new JLabel();
+    /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
+    final JTextArea cardImages = Comic.note("");
     final JComboBox<Format> format = Comic.combo();
     final ComposerButton exportAs = Comic.primary("Exportieren", "Die Datei aus dem vorhandenen Datenbestand im "
             + "Ausgabeordner erzeugen, ohne die Quelle erneut zu lesen");
@@ -130,7 +133,8 @@ public final class ActivitiesView implements View {
         JPanel cardHead = new JPanel(new BorderLayout(0, 2));
         cardHead.setOpaque(false);
         cardHead.add(cardTitle, BorderLayout.NORTH);
-        cardHead.add(cardLine, BorderLayout.SOUTH);
+        cardHead.add(cardLine, BorderLayout.CENTER);
+        cardHead.add(cardImages, BorderLayout.SOUTH);
         card.setOpaque(false);
         card.add(cardHead, BorderLayout.NORTH);
         card.add(Comic.row(format, exportAs), BorderLayout.CENTER);
@@ -417,6 +421,8 @@ public final class ActivitiesView implements View {
         boolean sameFormats = shownDataset != null && shownDataset.formats().equals(dataset.formats());
         shownDataset = dataset;
         cardTitle.setText("Export · " + dataset.spaceKey());
+        cardImages.setText(cardImages(dataset.images()));
+        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
         cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
                 + (dataset.complete() ? "" : " · unvollständig"));
         if (!sameFormats) {
@@ -462,6 +468,17 @@ public final class ActivitiesView implements View {
     private static String name(Path directory) {
         Path name = directory.getFileName();
         return name == null ? directory.toString() : name.toString();
+    }
+
+    /** Zeile der Karte; Exportieren bleibt in jedem Stand möglich. */
+    static String cardImages(ExportDatasetInfo.Images images) {
+        return switch (images) {
+            case NOT_COLLECTED -> "Bilder: nicht beschafft, Dokumente enthalten nur Verweise";
+            case COLLECTING -> "Bilder: werden beschafft · Dokumente, die du jetzt exportierst, entstehen noch ohne "
+                    + "Bilder";
+            case COMPLETE -> "Bilder: vollständig";
+            case INCOMPLETE -> "Bilder: unvollständig · fehlende Bilder nennt das Dokument";
+        };
     }
 
     private static String images(ExportDatasetInfo.Images images) {
@@ -541,6 +558,10 @@ public final class ActivitiesView implements View {
                 return new Step((phase == null ? "Anreichern" : phase) + " · " + p.processed() + " von " + total
                         + " Schritten", p.processed(), total);
             }
+            if (type == JobType.ASSETS) {
+                return new Step("Bilder beschaffen · " + p.processed() + " von " + total + " Bildern geprüft, "
+                        + p.written() + " abgelegt", p.processed(), total);
+            }
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
                         p.written(), total);
@@ -563,6 +584,7 @@ public final class ActivitiesView implements View {
                 case EXPORT -> new Counters("Seiten (Inventur)", "Geladen oder geprüft", "Exportiert", "Fehlend");
                 case ENRICHMENT -> new Counters("Schritte (Seiten × Prozessoren)", "Erledigt", "Neu berechnet",
                         "Fehlgeschlagen");
+                case ASSETS -> new Counters("Bildverweise", "Geprüft", "Abgelegt", "Fehlend");
                 default -> new Counters("Gefunden", "Verarbeitet", "Geschrieben", "Fehlgeschlagen");
             };
         }
