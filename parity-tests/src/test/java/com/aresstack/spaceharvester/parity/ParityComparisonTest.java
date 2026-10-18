@@ -4,7 +4,9 @@ import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
 import com.aresstack.spaceharvester.parity.ParityComparison.Verdict;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,6 +64,18 @@ class ParityComparisonTest {
     private static Finding finding(DocumentOutline eac, DocumentOutline core, String check) {
         return ParityComparison.compare(eac, core).stream().filter(f -> f.check().equals(check)).findFirst()
                 .orElseThrow();
+    }
+
+    @Test
+    void everyOtherOutcomeOfASourceManagementStepIsAGap() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("add.listed", "true");
+        eac.put("disable", "ok");
+        List<Finding> findings = ParityComparison.sourceManagement(eac, Map.of("add.listed", "true"));
+
+        assertThat(findings).extracting(Finding::key).containsExactly("quellen.add.listed", "quellen.disable");
+        assertThat(findings).extracting(Finding::verdict).containsExactly(Verdict.GLEICH, Verdict.CORE_WENIGER);
+        assertThat(findings.get(1).core()).isEqualTo("fehlt");
     }
 
     private static DocumentOutline outline(String text, int images, int notes) {

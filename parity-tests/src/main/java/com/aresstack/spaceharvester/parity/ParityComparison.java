@@ -130,6 +130,38 @@ public final class ParityComparison {
         return findings;
     }
 
+    /** Titel der Prüfpunkte der Quellenverwaltung (#188), in der Reihenfolge des Berichts. */
+    private static final Map<String, String> MANAGEMENT = Map.ofEntries(
+            Map.entry("validate.complete", "Vollständige Einstellungen sind gültig"),
+            Map.entry("validate.missing-url", "Fehlende Basis-URL wird gemeldet"),
+            Map.entry("validate.same-target", "Dasselbe Ziel ein zweites Mal wird abgelehnt"),
+            Map.entry("test.reachable", "Verbindung testen: erreichbar"),
+            Map.entry("test.unreachable", "Verbindung testen: nicht erreichbar"),
+            Map.entry("test.incomplete", "Verbindung testen: unvollständige Einstellungen"),
+            Map.entry("add.listed", "Hinzugefügte Quelle ist gelistet"),
+            Map.entry("change.same-target.withdrawn", "Ändern ohne neues Ziel behält die Daten"),
+            Map.entry("change.other-target.withdrawn", "Ändern auf ein neues Ziel zieht die Daten zurück"),
+            Map.entry("disable", "Quelle abschalten, ohne sie zu entfernen"),
+            Map.entry("remove.listed", "Entfernte Quelle ist nicht mehr gelistet"),
+            Map.entry("remove.withdrawn", "Entfernen zieht die Daten zurück"));
+
+    /**
+     * Quellenverwaltung (#188): je Schritt des Szenarios das Ergebnis beider Seiten ({@code eac/management.properties}
+     * gegen {@code Harvester.sourceManagement()}). Jedes andere Ergebnis ist eine Lücke.
+     */
+    public static List<Finding> sourceManagement(Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(entry.getKey(), "fehlt");
+            boolean same = expected.equals(actual);
+            findings.add(new Finding("quellen", entry.getKey(),
+                    MANAGEMENT.getOrDefault(entry.getKey(), entry.getKey()), expected, actual,
+                    same ? Verdict.GLEICH : Verdict.CORE_WENIGER, same ? "" : "anderes Ergebnis im Core"));
+        }
+        return findings;
+    }
+
     private static Finding navigationLists(String format, String check, String title, Map<String, String> eac,
                                            Map<String, String> core, String suffix, boolean subset) {
         List<String> differing = new ArrayList<>();
