@@ -77,7 +77,7 @@ public final class PageDetailPanel extends JPanel {
     private final JLabel title = new JLabel(" ");
     private final java.awt.CardLayout cards = new java.awt.CardLayout();
     private final JPanel deck = new JPanel(cards);
-    private final JLabel empty = Comic.muted("Wähle links eine Seite aus, um ihren Inhalt zu lesen.");
+    private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
     private final JLabel path = Comic.muted(" ");
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();

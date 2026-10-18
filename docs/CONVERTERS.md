@@ -12,6 +12,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `format` | Datei | Inhalt |
 |---|---|---|
 | `json` | `pages.json` | JSON-Array, ein Objekt je Seite: `header`, `depth`, `revision`, `rawSha256`, `content` (native Payload) |
+| `json-package` | `export.zip` | `pages.json` wie `json`, dazu `assets.json` (Zuordnung Seite → Datei, Medientyp, `sha256`, Status, relativer Pfad) und `assets/<Seiten-ID>/` mit Bildern, draw.io-Originalen, gezeichneten Grafiken und `*.graph.json` (Knoten und Verbindungen); keine Base64-Einbettung ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)) |
 | `markdown` | `pages.md` | alle Seiten in einer Markdown-Datei (CommonMark mit GFM-Tabellen) |
 | `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
 | `pdf` | `pages.pdf` | PDF (A4) mit sichtbarem Inhaltsverzeichnis, Seitenzahlen und Lesezeichen; dasselbe Kapitelmodell wie Word (Abschnitt „PDF“) |
@@ -71,11 +72,14 @@ ihn nur aus. Keiner der drei interpretiert die Seiten selbst.
   Renderern wie der Enterprise AI Client: Mermaid aus dem Diagrammtext der Seite (mermaid-java; Markdown behält
   zusätzlich den Codeblock), draw.io aus den abgelegten `mxfile`-Quelldaten (JGraphX, auch `inc-drawio` von einer
   anderen Seite). Was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte PNG-Vorschau des Plugins.
+  Ist das Diagramm beim Beschaffen gezeichnet, wird die Vorschau gar nicht erst geladen (`REDUNDANT` in
+  `assets.json`, [ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)).
   PlantUML bleibt Codeblock, Gliffy ein Hinweis. Die textuelle Quelle bleibt für Suche und KI maßgeblich.
 - **Hinweise.** Jede Abbildung, die das Dokument als nicht verfügbar zeigt, und jedes Diagramm, das sich nicht
   zeichnen lässt, meldet der Converter einmal als `ConversionNotice` (Regel oben): `MISSING_IMAGE` mit Anhangname oder
   Adresse ohne Query und Benutzerangaben, `MISSING_DIAGRAM` mit Diagrammname oder `mermaid`; Grund `missing`,
-  `forbidden`, `too-large`, `unavailable`, `not-collected` oder `render-failed`.
+  `forbidden`, `too-large`, `unavailable`, `sign-in-required` (Einmalcode nicht eingegeben, ADR 0018),
+  `not-collected` oder `render-failed`.
 - **Parität.** Maßstab ist der Enterprise AI Client ([PARITY.md](PARITY.md)); `:parity-tests` vergleicht die drei
   Formate mit dessen Exporten, bekannte Lücken stehen in `parity-tests/src/test/resources/known-gaps.properties`.
 

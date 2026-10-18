@@ -28,6 +28,39 @@ class ReadingPaneTest {
             new TreeMap<>(Map.of())), T0);
 
     @Test
+    void movingTheMouseOverTextOrEmptySpaceKeepsTheDefaultCursor() throws Exception {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            ReadingPane reading = new ReadingPane();
+            reading.setSize(400, 300);
+            javax.swing.JEditorPane pane = find(reading);
+            pane.setSize(400, 300);
+            for (java.awt.Point at : List.of(new java.awt.Point(5, 5), new java.awt.Point(390, 290))) {
+                for (java.awt.event.MouseMotionListener listener : pane.getMouseMotionListeners()) {
+                    listener.mouseMoved(new java.awt.event.MouseEvent(pane, java.awt.event.MouseEvent.MOUSE_MOVED,
+                            0, 0, at.x, at.y, 0, false));
+                }
+            }
+            assertThat(pane.getCursor()).isEqualTo(java.awt.Cursor.getDefaultCursor());
+            assertThat(pane.getToolTipText()).isNull();
+        });
+    }
+
+    private static javax.swing.JEditorPane find(java.awt.Container container) {
+        for (java.awt.Component child : container.getComponents()) {
+            if (child instanceof javax.swing.JEditorPane pane) {
+                return pane;
+            }
+            if (child instanceof java.awt.Container inner) {
+                javax.swing.JEditorPane pane = find(inner);
+                if (pane != null) {
+                    return pane;
+                }
+            }
+        }
+        return null;
+    }
+
+    @Test
     void imagesComeFromTheCoreAndMissingOnesAreMarked() throws IOException {
         HarvestSource.ViewImage logo = new HarvestSource.ViewImage("/download/attachments/42/logo.png", "logo.png",
                 "att1", "image/png", "1");

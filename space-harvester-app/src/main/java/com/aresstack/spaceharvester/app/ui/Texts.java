@@ -110,6 +110,7 @@ public final class Texts {
             case ASYNC_STORED_PAGE -> "Originalseiten asynchron";
             case PAGE_ATTACHMENTS -> "Anhänge";
             case LIVE_SEARCH -> "Volltextsuche in der Quelle";
+            case TITLE_SEARCH -> "Seiten über den Titel finden";
             case NAVIGATION -> "Seitenbaum und Querverweise";
             case ADDRESSES -> "Adressen und Titel auflösen";
             case CHANGES -> "Änderungen und Papierkorb abfragen";

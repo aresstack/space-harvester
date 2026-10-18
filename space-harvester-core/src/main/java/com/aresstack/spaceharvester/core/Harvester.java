@@ -69,6 +69,7 @@ import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
@@ -80,6 +81,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
+import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
@@ -185,6 +187,7 @@ public final class Harvester implements AutoCloseable {
     private final Exports exports;
     private final ExportConversions conversions;
     private final Assets assets;
+    private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
     private final SourceManagement sourceManagement;
@@ -367,16 +370,18 @@ public final class Harvester implements AutoCloseable {
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
-                    new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
+                    new JsonPackageConverter(), new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, builder.imageDescriber);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
+            // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche.
+            this.signIns = new SignInRequests(builder.signInWait, clock);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
                     (owner, sourceId) -> OWNER.equals(owner)
-                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
+                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns);
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
@@ -696,6 +701,15 @@ public final class Harvester implements AutoCloseable {
     /** Anhänge und Bilder einer Seite, abgelegt unter dem Asset-Verzeichnis. */
     public Assets assets() {
         return assets;
+    }
+
+    /**
+     * Offene Anmeldungen (ADR 0018): verlangt eine Quelle beim Beschaffen von Bildern einen Einmalcode, wartet der
+     * Auftrag hier („Wartet auf Anmeldung“), sofern {@link Builder#signInWait} eine Wartezeit setzt. Die Oberfläche zeigt {@link SignInRequests#pending()}, sendet den Code
+     * mit {@link SignInRequests#submit} und kann ihn neu anfordern ({@link SignInRequests#resend}).
+     */
+    public SignInRequests signIns() {
+        return signIns;
     }
 
     /**
@@ -1079,6 +1093,7 @@ public final class Harvester implements AutoCloseable {
         private Path exportDirectory;
         private Path assetDirectory;
         private long maxAssetBytes = 50L * 1024 * 1024;
+        private Duration signInWait = Duration.ZERO;
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
@@ -1199,6 +1214,16 @@ public final class Harvester implements AutoCloseable {
         /** Abgelegte Anhänge und Bilder; Standard {@code <dataDirectory>/assets}. */
         public Builder assetDirectory(Path assetDirectory) {
             this.assetDirectory = assetDirectory;
+            return this;
+        }
+
+        /**
+         * Wie lange ein Auftrag auf einen Einmalcode wartet (ADR 0018). Standard {@link Duration#ZERO}: nie, denn ohne
+         * Eingabemaske könnte niemand antworten; eine Oberfläche, die {@link #signIns()} bedient, setzt etwa
+         * {@link SignInRequests#DEFAULT_WAIT}.
+         */
+        public Builder signInWait(Duration signInWait) {
+            this.signInWait = Objects.requireNonNull(signInWait, "signInWait");
             return this;
         }
 

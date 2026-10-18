@@ -91,6 +91,21 @@ public class ExportConversions {
     }
 
     /**
+     * Beschafft die Bilder eines eigenen, abgeschlossenen Exports erneut, etwa nachdem eine Anmeldung gefehlt hat
+     * (ADR 0018). Schon abgelegte Bilder kommen aus dem Speicher, nicht erneut von der Quelle.
+     *
+     * @return der Auftrag; leer ohne Datenbestand oder Bildbeschaffung oder wenn die Auftragsverwaltung nichts annimmt
+     * @throws UnknownJobException wenn es keinen Export mit dieser ID für diesen Client gibt
+     */
+    public Optional<JobStatus> collectImages(String exportId, String owner) {
+        JobStatus status = ownExport(exportId, owner);
+        if (images == null || status.state() != JobState.COMPLETED) {
+            return Optional.empty();
+        }
+        return images.start(exportId, owner);
+    }
+
+    /**
      * Schreibt die Datei in {@code directory}. Eine vorhandene Datei wird nie überschrieben; der Name bekommt dann
      * einen Zähler. Die Datei entsteht erst als {@code .part} und erscheint vollständig oder gar nicht.
      *

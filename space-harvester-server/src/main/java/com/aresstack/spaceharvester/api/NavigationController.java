@@ -10,6 +10,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,6 +46,34 @@ public class NavigationController {
                                       @Parameter(description = "nextCursor des vorigen Stapels")
                                       @RequestParam(required = false) String cursor) {
         return ChildrenResponse.of(navigation.children(caller, sourceId, spaceKey, null, cursor));
+    }
+
+    @GetMapping(path = "/{sourceId}/pages", params = "title")
+    @Operation(summary = "Seiten über ihren Titel live bei der Quelle finden, auch nie abgeglichene",
+            description = "Seiten, deren Titel den Text enthält (Groß- und Kleinschreibung egal), in der Reihenfolge "
+                    + "der Quelle, ohne Laden. Confluence sucht über die CQL-Wortsuche und behält Treffer mit passendem "
+                    + "Titel, lokale Dateien vergleichen den Dateinamen. Jede Seite mit spaceKey; Vorfahren über "
+                    + "…/pages/{pageId}/ancestors. Verlangt metadata auf die Quelle; Seiten ohne Freigabe fehlen, auch "
+                    + "in truncated. Quellen ohne TITLE_SEARCH finden nichts.")
+    @ApiResponse(responseCode = "200", description = "TitleMatchesResponse")
+    @ApiResponse(responseCode = "400", description = "title leer oder limit außerhalb 1 bis "
+            + PageNavigation.MAX_TITLE_LIMIT + " (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "403", description = "Keine metadata-Freigabe (access-denied)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public TitleMatchesResponse pagesByTitle(@Parameter(hidden = true) AccessContext caller,
+                                             @PathVariable String sourceId,
+                                             @Parameter(description = "Teil des Titels", required = true)
+                                             @RequestParam String title,
+                                             @Parameter(description = "nur diese Spaces, wiederholbar; ohne alle")
+                                             @RequestParam(required = false) List<String> spaceKey,
+                                             @Parameter(description = "höchstens so viele Seiten")
+                                             @RequestParam(defaultValue = "25") int limit) {
+        return TitleMatchesResponse.of(navigation.findByTitle(caller, sourceId,
+                spaceKey == null ? Set.of() : spaceKey.stream().map(String::trim).filter(key -> !key.isEmpty())
+                        .collect(Collectors.toSet()), title, limit));
     }
 
     @GetMapping("/{sourceId}/pages/{pageId}/children")
@@ -116,6 +146,14 @@ public class NavigationController {
         static PositionResponse of(PageNavigation.Position position) {
             return new PositionResponse(position.sourceId(), position.spaceKey(), position.spaceName(),
                     Node.of(position.ancestors()), Node.of(position.page()));
+        }
+    }
+
+    /** Treffer einer Titelsuche; {@code truncated}: es gibt mehr sichtbare Seiten. */
+    public record TitleMatchesResponse(String sourceId, List<Node> pages, boolean truncated) {
+
+        static TitleMatchesResponse of(PageNavigation.TitleMatches matches) {
+            return new TitleMatchesResponse(matches.sourceId(), Node.of(matches.pages()), matches.truncated());
         }
     }
 

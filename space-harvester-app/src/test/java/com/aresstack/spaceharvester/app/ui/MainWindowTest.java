@@ -83,8 +83,17 @@ class MainWindowTest {
             });
             assertThat(png).isNotEmptyFile();
         }
-        assertThat(buttonTexts(surface[0])).containsSubsequence("Suche", "Wissensquellen", "Inhalte",
-                "Herunterladen", "Aufträge", "Status", "Einstellungen");
+        // Oben nur Symbole; Name und Tastenkürzel stehen im Tooltip und für Bildschirmleser im Namen. Erst die
+        // Arbeitsbereiche, dann Verwaltung und Einstellungen.
+        assertThat(find(surface[0], AbstractButton.class).stream()
+                .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
+                .containsSubsequence("Suche", "Inhalte", "Aufträge", "Status", "Wissensquellen verwalten",
+                        "Einstellungen")
+                .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen");
+        assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
+                .contains("Inhalte (Strg+2)", "Wissensquellen verwalten (Strg+5)");
+        assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
+                .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
         assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
                 .doesNotContain(AboutDialog.TAGLINE);
@@ -96,13 +105,59 @@ class MainWindowTest {
         }
         String pageId = context.runtime().workspace().cachedPages("handbuch", space, null, 10).pages().get(0)
                 .header().key().pageId();
+
+        // Der Explorer links: Wissensquelle → Space → Seite, erst beim Aufklappen geladen.
+        javax.swing.JTree tree = window[0].explorer().tree();
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(tree.getRowCount()).isEqualTo(1);
+            assertThat(tree.getPathForRow(0).getLastPathComponent().toString()).isEqualTo("Betriebshandbuch");
+            tree.expandRow(0);
+        });
+        awaitRows(tree, 2);
+        SwingUtilities.invokeAndWait(() -> tree.expandRow(1));
+        awaitRows(tree, 3);
+        String[] page = new String[1];
+        SwingUtilities.invokeAndWait(() -> page[0] = tree.getPathForRow(2).getLastPathComponent().toString());
+        assertThat(page[0]).isNotEqualTo(Explorer.LOADING).containsIgnoringCase("betrieb");
+        SwingUtilities.invokeAndWait(() -> {
+            tree.setSelectionRow(1);
+            assertThat(window[0].explorer().scope()).isEqualTo(new Explorer.Scope("handbuch", space));
+            window[0].explorer().filter().setText("betr");
+        });
+        for (int i = 0; i < 100; i++) {
+            int[] found = new int[1];
+            SwingUtilities.invokeAndWait(() -> found[0] = window[0].explorer().matches().getModel().getSize());
+            if (found[0] > 0) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        SwingUtilities.invokeAndWait(() -> assertThat(window[0].explorer().matches().getModel().getSize())
+                .as("Titelfilter findet die Seite").isEqualTo(1));
+        SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("explorer.png")));
+
+        // Rechtsbündig am Space das Download-Symbol: ein Klick startet den Auftrag sofort, ohne Dialog.
+        int jobsBefore = context.runtime().workspace().jobs().size();
+        SwingUtilities.invokeAndWait(() -> {
+            window[0].explorer().filter().setText("");
+            java.awt.Rectangle row = tree.getRowBounds(1);
+            java.awt.Point icon = new java.awt.Point(row.x + row.width - 10, row.y + row.height / 2);
+            for (java.awt.event.MouseListener listener : tree.getMouseListeners()) {
+                listener.mouseClicked(new MouseEvent(tree, MouseEvent.MOUSE_CLICKED, 0, 0, icon.x, icon.y, 1, false,
+                        MouseEvent.BUTTON1));
+            }
+        });
+        for (int i = 0; i < 100 && context.runtime().workspace().jobs().size() == jobsBefore; i++) {
+            Thread.sleep(50);
+        }
+        assertThat(context.runtime().workspace().jobs()).hasSize(jobsBefore + 1)
+                .anyMatch(j -> j.type() == com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
             window[0].showDiagnosis(job);
             window[0].openSpace("handbuch", space);
             window[0].openPage("handbuch", pageId);
             window[0].search("betrieb");
-            window[0].prepareExport("handbuch", space);
         });
         Thread.sleep(500);
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("export.png")));
@@ -180,6 +235,19 @@ class MainWindowTest {
             assertThat(link.getForeground()).isEqualTo(grey);
         });
         assertThat(opened).containsExactly(URI.create("https://github.com/aresstack/space-harvester/releases"));
+    }
+
+    private static void awaitRows(javax.swing.JTree tree, int rows) throws Exception {
+        for (int i = 0; i < 200; i++) {
+            boolean[] ready = new boolean[1];
+            SwingUtilities.invokeAndWait(() -> ready[0] = tree.getRowCount() >= rows
+                    && !Explorer.LOADING.equals(tree.getPathForRow(rows - 1).getLastPathComponent().toString()));
+            if (ready[0]) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Explorer lädt nicht: " + tree.getRowCount() + " Zeilen");
     }
 
     private static void isSquare(Component button) {

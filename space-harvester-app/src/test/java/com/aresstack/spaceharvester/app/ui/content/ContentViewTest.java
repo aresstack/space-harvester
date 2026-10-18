@@ -21,9 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Der Ablauf der Inhalte-Ansicht wie ein Bediener ihn erlebt: Space einer neuen Quelle öffnen (Seiten live, ohne
- * Fehlermeldung), Seite wählen (lädt sofort, auch ohne Bestand), Quelle wechseln (nichts Altes bleibt stehen),
- * Seitenbaum ohne und mit Bestand.
+ * Die Leseansicht wie ein Bediener sie erlebt: Eine Seite aus dem Explorer lädt sofort (auch ohne Bestand) und nennt,
+ * wo sie liegt; ein anderer Space lässt nichts Altes stehen; „Seiten-ID oder Adresse“ öffnet in der aktuellen Quelle.
  */
 class ContentViewTest {
 
@@ -80,23 +79,10 @@ class ContentViewTest {
     }
 
     @Test
-    void aSpaceWithoutLocalCopyShowsItsPagesLiveWithoutAnError() throws Exception {
-        open("handbuch");
-
-        await(() -> view.pages().getRowCount() == 3);
-        assertThat(onEdt(view::origin)).isEqualTo(ContentView.Origin.LIVE);
-        assertThat(onEdt(() -> view.feedback().isVisible())).as("keine Meldung bei leerem Bestand").isFalse();
-        assertThat(onEdt(view::treeAvailable)).as("Seitenbaum auch ohne Bestand").isTrue();
-        assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
-    }
-
-    @Test
-    void choosingAPageLoadsItRightAwayEvenWithoutLocalCopy() throws Exception {
-        open("handbuch");
-        await(() -> view.pages().getRowCount() == 3);
-
+    void aPageLoadsRightAwayEvenWithoutLocalCopyAndNamesWhereItLies() throws Exception {
+        String space = space("handbuch");
         onEdt(() -> {
-            view.pages().setRowSelectionInterval(1, 1);
+            view.openPage("handbuch", firstPage("handbuch", space));
             return null;
         });
 
@@ -106,36 +92,38 @@ class ContentViewTest {
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
                 StandardCharsets.UTF_8)).contains("Text der Seite");
         assertThat(onEdt(() -> view.detail().feedback().isVisible())).as("keine Cache-Meldung").isFalse();
+        assertThat(onEdt(view::crumbs)).isEqualTo("handbuch › " + space);
     }
 
     @Test
-    void switchingTheSourceLeavesNothingOfTheOldOne() throws Exception {
-        open("handbuch");
-        await(() -> view.pages().getRowCount() == 3);
+    void openingASpaceShowsNoPageOfTheOldOne() throws Exception {
+        String space = space("handbuch");
         onEdt(() -> {
-            view.pages().setRowSelectionInterval(0, 0);
+            view.openPage("handbuch", firstPage("handbuch", space));
             return null;
         });
         await(() -> view.detail().shownPage() != null);
 
+        String other = space("notizen");
         onEdt(() -> {
-            view.chooseSource("notizen");
+            view.openSpace("notizen", other);
             return null;
         });
 
-        assertThat(onEdt(() -> view.pages().getRowCount())).isZero();
         assertThat(onEdt(() -> view.detail().isEmpty())).isTrue();
         assertThat(onEdt(() -> view.detail().shownPage())).isNull();
-        assertThat(onEdt(view::origin)).isNull();
+        assertThat(onEdt(view::chosenSource)).isEqualTo("notizen");
+        assertThat(onEdt(view::crumbs)).isEqualTo("notizen › " + other);
     }
 
     @Test
     void aPageStillLoadingFromTheOldSpaceNeverShowsUp() throws Exception {
-        open("handbuch");
-        await(() -> view.pages().getRowCount() == 3);
+        String space = space("handbuch");
+        String page = firstPage("handbuch", space);
+        String other = space("notizen");
         onEdt(() -> {
-            view.pages().setRowSelectionInterval(0, 0);
-            view.chooseSource("notizen");
+            view.openPage("handbuch", page);
+            view.openSpace("notizen", other);
             return null;
         });
 
@@ -145,83 +133,27 @@ class ContentViewTest {
     }
 
     @Test
-    void thePageTreeWorksWithoutLocalCopy() throws Exception {
-        open("handbuch");
-        await(() -> view.pages().getRowCount() == 3);
-        assertThat(onEdt(view::origin)).isEqualTo(ContentView.Origin.LIVE);
-        assertThat(onEdt(view::treeAvailable)).isTrue();
-
+    void aTypedPageIdOpensInTheCurrentSource() throws Exception {
+        String space = space("notizen");
+        String page = firstPage("notizen", space);
+        assertThat(onEdt(() -> view.openId().isEnabled())).as("ohne Wissensquelle kein Ziel").isFalse();
         onEdt(() -> {
-            view.showPageTree();
-            return null;
-        });
-
-        await(() -> view.treePageCount() == 3);
-        assertThat(onEdt(() -> view.feedback().isVisible())).isFalse();
-        onEdt(() -> {
-            view.tree().setSelectionRow(0);
-            return null;
-        });
-        await(() -> view.detail().shownPage() != null);
-    }
-
-    @Test
-    void aSpaceInTheLocalCopyShowsItsTreeFromThere() throws Exception {
-        String space = context.runtime().workspace().spaces("handbuch").get(0).key();
-        String job = context.runtime().workspace().startSync("handbuch", space).id();
-        for (int i = 0; i < 600 && !context.runtime().workspace().job(job).state().terminal(); i++) {
-            Thread.sleep(50);
-        }
-        open("handbuch");
-        await(() -> view.origin() == ContentView.Origin.STOCK && view.pages().getRowCount() == 3);
-
-        onEdt(() -> {
-            view.showPageTree();
-            return null;
-        });
-
-        await(() -> view.treePageCount() == 3);
-        assertThat(onEdt(() -> view.feedback().isVisible())).isFalse();
-    }
-
-    @Test
-    void openingASpaceKeepsItChosenWhileTheConnectionIsRechecked() throws Exception {
-        String space = context.runtime().workspace().spaces("notizen").get(0).key();
-        onEdt(() -> {
-            context.checkConnection("notizen", () -> { });
             view.openSpace("notizen", space);
+            view.openId().setText(page);
+            view.openId().postActionEvent();
             return null;
         });
-        await(() -> context.connection("notizen").state() != AppContext.Connection.State.CHECKING
-                && view.pages().getRowCount() == 3);
-        Thread.sleep(300);
 
-        assertThat(onEdt(view::chosenSource)).isEqualTo("notizen");
-        assertThat(onEdt(view::chosenSpace)).isEqualTo(space);
-        assertThat(onEdt(() -> view.pages().getRowCount())).isEqualTo(3);
+        await(() -> view.detail().shownPage() != null);
+        assertThat(onEdt(() -> view.detail().shownPage().header().key().pageId())).isEqualTo(page);
     }
 
-    @Test
-    void anUnreachableSpaceStaysChosenAndTheMessageNamesIt() throws Exception {
-        onEdt(() -> {
-            view.openSpace("wiki", "DOC");
-            return null;
-        });
-
-        await(() -> view.feedback().isVisible());
-        Thread.sleep(300);
-        assertThat(onEdt(view::chosenSource)).isEqualTo("wiki");
-        assertThat(onEdt(view::chosenSpace)).isEqualTo("DOC");
-        assertThat(onEdt(() -> view.feedback().text())).contains("Seitenliste nicht abrufbar (Space DOC)");
-        assertThat(onEdt(() -> view.pages().getRowCount())).isZero();
+    private String space(String sourceId) {
+        return context.runtime().workspace().spaces(sourceId).get(0).key();
     }
 
-    private void open(String sourceId) throws Exception {
-        String space = context.runtime().workspace().spaces(sourceId).get(0).key();
-        onEdt(() -> {
-            view.openSpace(sourceId, space);
-            return null;
-        });
+    private String firstPage(String sourceId, String spaceKey) {
+        return context.runtime().workspace().liveMetadata(sourceId, spaceKey, null, 10).entries().get(0).page().pageId();
     }
 
     private static void await(BooleanSupplier condition) throws Exception {

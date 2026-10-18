@@ -183,7 +183,7 @@ public final class DrawioDiagramRenderer {
     }
 
     /** Das {@code mxGraphModel} der ersten Seite; komprimierte Seiten (Base64, Deflate, URL-kodiert) entpackt. */
-    private static Element graphModel(Document doc) throws Unsupported {
+    static Element graphModel(Document doc) throws Unsupported {
         Element root = doc.getDocumentElement();
         if ("mxGraphModel".equals(root.getNodeName())) {
             return root;
