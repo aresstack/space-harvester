@@ -250,7 +250,7 @@ class SourcesViewTest {
         SwingUtilities.invokeAndWait(() -> {
             view[0].mark(key, true);
             assertThat(view[0].exportMarked.isEnabled()).isTrue();
-            assertThat(view[0].exportMarked.getText()).contains("(1)");
+            assertThat(view[0].exportMarked.getText()).isEqualTo("Ausgewählte herunterladen (1) …");
             view[0].exportMarked.doClick();
         });
         assertThat(prepared).containsExactly("lang", List.of(key), "lang", List.of(key));
