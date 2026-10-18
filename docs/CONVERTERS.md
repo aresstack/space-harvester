@@ -78,7 +78,9 @@ Swing-Anwendung.
   Auftrag „Bilder beschaffen“ nach dem Herunterladen): Anhänge und Bilder der Lese-Ansicht mit Status `STORED`. Alles
   andere (fehlend, keine Berechtigung, zu groß, nicht beschafft, fremde Adresse ohne abgelegte Kopie) gilt nicht als
   eingebettet: an seiner Stelle steht kursiv „[Abbildung nicht verfügbar: … – Grund]“, nie ein Platzhalter, der wie ein
-  Bild aussieht. Kein Konverter ruft die Quelle oder fremde Adressen ab. Mermaid wird aus seiner Textquelle gezeichnet
+  Bild aussieht. Jede solche Stelle meldet der Konverter zusätzlich einmal als `ConversionNotice` (Seite, Art
+  `MISSING_IMAGE`/`MISSING_DIAGRAM`, Anhangname oder Adresse ohne Query, Status wie `forbidden` oder `not-collected`)
+  ins Ergebnis der Konvertierung. Kein Konverter ruft die Quelle oder fremde Adressen ab. Mermaid wird aus seiner Textquelle gezeichnet
   (mermaid-java, offline), SVG-Anhänge über Batik gerastert; PlantUML bleibt Codeblock, Gliffy erscheint als Hinweis wie
   unten. draw.io zeichnet der Diagramm-Dienst des Core (`Diagrams`, #190) aus den abgelegten Quelldaten, mit derselben
   JGraphX-Anpassung wie der Enterprise AI Client; was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte

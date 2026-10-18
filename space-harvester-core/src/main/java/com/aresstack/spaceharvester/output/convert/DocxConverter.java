@@ -55,6 +55,7 @@ public final class DocxConverter implements ExportConverter {
             chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
             input.forEachPage(page -> {
                 ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                figures.notices().forEach(input::report);
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                         figures.markdown(), figures.images(), ExportChapters.depth(page));
             });

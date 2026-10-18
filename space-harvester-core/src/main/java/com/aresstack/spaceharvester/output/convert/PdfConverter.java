@@ -99,6 +99,7 @@ public final class PdfConverter implements ExportConverter {
                             .getBytes(StandardCharsets.UTF_8));
                     try {
                         ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                        figures.notices().forEach(input::report);
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                                 figures.markdown(), figures.images(), ExportChapters.depth(page));
                     } catch (IOException e) {

@@ -4,6 +4,8 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice.Kind;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry;
@@ -77,7 +79,13 @@ class ExportImagesTest {
             + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
             + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
 
-    private record Input(List<ConvertiblePage> pages, ExportAssets assets) implements ConversionInput {
+    private record Input(List<ConvertiblePage> pages, ExportAssets assets, List<ConversionNotice> reported)
+            implements ConversionInput {
+
+        @Override
+        public void report(ConversionNotice notice) {
+            reported.add(notice);
+        }
 
         @Override
         public String sourceId() {
@@ -142,12 +150,16 @@ class ExportImagesTest {
         byte[] payload = JSON.writeValueAsBytes(JSON.createObjectNode().put("id", "100").set("body",
                 JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", STORAGE))));
         PageSnapshot snapshot = page("wiki", "DEV", "100", null, payload);
-        return new Input(List.of(new ConvertiblePage(snapshot.header(), snapshot, 0)), assets);
+        return new Input(List.of(new ConvertiblePage(snapshot.header(), snapshot, 0)), assets, new ArrayList<>());
     }
 
     private static byte[] convert(ExportConverter converter, ExportAssets assets) throws IOException {
+        return convert(converter, input(assets));
+    }
+
+    private static byte[] convert(ExportConverter converter, Input input) throws IOException {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
-        converter.convert(input(assets), out);
+        converter.convert(input, out);
         return out.toByteArray();
     }
 
@@ -221,6 +233,26 @@ class ExportImagesTest {
                 "![Mermaid-Diagramm](data:image/png;base64,",
                 "*[Abbildung nicht verfügbar: Diagramm (draw.io) „ablauf“")
                 .doesNotContain("drawio:");
+    }
+
+    @Test
+    void everyFormatReportsWhatTheDocumentShowsAsNotAvailable() throws Exception {
+        for (ExportConverter converter : List.of(new DocxConverter(), new PdfConverter(), new MarkdownConverter())) {
+            Input stored = input(new Stored());
+            convert(converter, stored);
+            // geheim.png verboten, Zähler-Bild nie beschafft (Adresse ohne Query); draw.io alle drei dargestellt
+            assertThat(stored.reported()).as(converter.format()).containsExactlyInAnyOrder(
+                    new ConversionNotice("100", Kind.MISSING_IMAGE, "geheim.png", "forbidden"),
+                    new ConversionNotice("100", Kind.MISSING_IMAGE, UNKNOWN, "not-collected"));
+
+            Input none = input(ExportAssets.NONE);
+            convert(converter, none);
+            assertThat(none.reported()).as(converter.format()).contains(
+                    new ConversionNotice("100", Kind.MISSING_IMAGE, "system.png", "not-collected"),
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "ablauf", "not-collected"),
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "fremd", "not-collected"),
+                    new ConversionNotice("100", Kind.MISSING_IMAGE, EXTERNAL, "not-collected"));
+        }
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind;
@@ -11,8 +12,11 @@ import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -66,7 +70,7 @@ final class ExportChapters {
             "\\*\\\\\\[Abbildung nicht verfügbar: ((?:[^\\\\\\]]|\\\\.)*)\\\\\\]\\* \\(\\[Adresse\\]\\((<[^>]*>|[^)\\s]*)\\)\\)");
 
     /** Inhalt eines Kapitels: das Markdown der Seite und die Abbildungen, auf die es verweist. */
-    record Figures(String markdown, List<ExportImage> images) {
+    record Figures(String markdown, List<ExportImage> images, List<ConversionNotice> notices) {
     }
 
     /** Verweis auf ein draw.io-Diagramm im Markdown ({@link StorageParser}): {@code drawio:[<Seiten-ID>/]<Name>}. */
@@ -83,6 +87,7 @@ final class ExportChapters {
     static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets) {
         String markdown = markdown(page, parser);
         List<ExportImage> images = new ArrayList<>();
+        Map<String, String> codes = new HashMap<>();
         for (Entry entry : assets.forPage(page.pageId())) {
             String src = src(entry);
             if (src == null) {
@@ -92,6 +97,9 @@ final class ExportChapters {
             Optional<byte[]> bytes = entry.stored() ? assets.content(entry) : Optional.empty();
             images.add(bytes.isPresent() ? ExportImage.loaded(src, title, bytes.get())
                     : ExportImage.failed(src, title, reason(entry, entry.stored())));
+            if (bytes.isEmpty()) {
+                codes.put(src, code(entry));
+            }
         }
         Matcher drawio = DRAWIO.matcher(markdown);
         Set<String> drawn = new HashSet<>();
@@ -100,14 +108,84 @@ final class ExportChapters {
             String name = drawio.group(2);
             String src = "drawio:" + (pageId == null ? "" : pageId + "/") + name;
             if (drawn.add(src)) {
-                images.add(drawio(src, pageId == null ? page.pageId() : pageId, name, assets));
+                images.add(drawio(src, pageId == null ? page.pageId() : pageId, name, assets, codes));
             }
         }
-        return new Figures(images.isEmpty() ? markdown : withKnownExternalImages(markdown, images), images);
+        String content = images.isEmpty() ? markdown : withKnownExternalImages(markdown, images);
+        return new Figures(content, images, notices(page.pageId(), content, images, codes));
+    }
+
+    /** Markdown-Bildverweis {@code ![alt](ziel)}; Ziel mit oder ohne spitze Klammern. */
+    private static final Pattern IMAGE = Pattern.compile("!\\[(?:[^\\]\\\\]|\\\\.)*\\]\\((<[^>]*>|[^)\\s]*)\\)");
+
+    /**
+     * Die Hinweise einer Seite fürs Ergebnis der Konvertierung: jede Abbildung, die das Dokument als „nicht verfügbar“
+     * zeigt, einmal, mit dem Status aus dem Datenbestand. Verweise ohne Zugangsdaten: Anhangname, Diagrammname,
+     * Bildadresse ohne Query.
+     */
+    private static List<ConversionNotice> notices(String pageId, String markdown, List<ExportImage> images,
+                                                  Map<String, String> codes) {
+        Set<ConversionNotice> notices = new LinkedHashSet<>();
+        Matcher image = IMAGE.matcher(markdown);
+        while (image.find()) {
+            String destination = image.group(1);
+            String src = destination.startsWith("<") ? destination.substring(1, destination.length() - 1)
+                    .replace("%3C", "<").replace("%3E", ">") : destination;
+            if (src.startsWith("data:") || images.stream().anyMatch(i -> i.src().equals(src) && i.ok())) {
+                continue;
+            }
+            if (src.startsWith("drawio:")) {
+                notices.add(new ConversionNotice(pageId, ConversionNotice.Kind.MISSING_DIAGRAM,
+                        src.substring(src.lastIndexOf('/') + 1).replace("drawio:", ""),
+                        codes.getOrDefault(src, "not-collected")));
+            } else {
+                notices.add(new ConversionNotice(pageId, ConversionNotice.Kind.MISSING_IMAGE, reference(src),
+                        codes.getOrDefault(src, "not-collected")));
+            }
+        }
+        Matcher external = EXTERNAL_IMAGE.matcher(markdown);
+        while (external.find()) {
+            String destination = external.group(2);
+            String src = destination.startsWith("<") ? destination.substring(1, destination.length() - 1) : destination;
+            notices.add(new ConversionNotice(pageId, ConversionNotice.Kind.MISSING_IMAGE, reference(src),
+                    codes.getOrDefault(src, "not-collected")));
+        }
+        return List.copyOf(notices);
+    }
+
+    /** Bildverweis fürs Ergebnis: Anhangname oder Adresse ohne Query und Fragment (keine Zugangsdaten). */
+    private static String reference(String src) {
+        if (src.startsWith("attachment:")) {
+            return src.substring("attachment:".length());
+        }
+        int cut = src.length();
+        for (char c : new char[] {'?', '#'}) {
+            int at = src.indexOf(c);
+            if (at >= 0) {
+                cut = Math.min(cut, at);
+            }
+        }
+        String plain = src.substring(0, cut);
+        int scheme = plain.indexOf("://");
+        int at = plain.indexOf('@');
+        // Benutzerangaben in der Adresse (user:pass@host) gehören nicht ins Ergebnis
+        return scheme >= 0 && at > scheme ? plain.substring(0, scheme + 3) + plain.substring(at + 1) : plain;
+    }
+
+    /** Status aus {@code assets.json} klein geschrieben, wie {@link ConversionNotice} ihn erwartet. */
+    private static String code(Entry entry) {
+        return switch (entry.status()) {
+            case MISSING -> "missing";
+            case FORBIDDEN -> "forbidden";
+            case TOO_LARGE -> "too-large";
+            case UNAVAILABLE -> "unavailable";
+            case STORED -> "not-collected";
+        };
     }
 
     /** Ein draw.io-Diagramm aus dem Datenbestand: gezeichnet, sonst die Vorschau, sonst mit Grund als fehlend. */
-    private static ExportImage drawio(String src, String pageId, String name, ExportAssets assets) {
+    private static ExportImage drawio(String src, String pageId, String name, ExportAssets assets,
+                                      Map<String, String> codes) {
         String title = "Diagramm (draw.io) „" + name + "“";
         List<Entry> entries = assets.forPage(pageId);
         Entry source = entries.stream().filter(e -> e.reference().kind() == Kind.ATTACHMENT
@@ -115,8 +193,10 @@ final class ExportChapters {
                         && Diagrams.drawioName(e.reference().filename()).equals(name))
                 .findFirst().orElse(null);
         String problem;
+        String code;
         if (source == null) {
             problem = "Quelldaten nicht im Datenbestand";
+            code = "not-collected";
         } else {
             Optional<byte[]> mxfile = source.stored() ? assets.content(source) : Optional.empty();
             if (mxfile.isPresent()) {
@@ -125,8 +205,10 @@ final class ExportChapters {
                     return ExportImage.loaded(src, title, rendering.content());
                 }
                 problem = rendering.problem();
+                code = "render-failed";
             } else {
                 problem = reason(source, source.stored());
+                code = code(source);
             }
         }
         for (Entry preview : entries) {
@@ -138,6 +220,7 @@ final class ExportChapters {
                 }
             }
         }
+        codes.put(src, code);
         return ExportImage.failed(src, title, problem);
     }
 
