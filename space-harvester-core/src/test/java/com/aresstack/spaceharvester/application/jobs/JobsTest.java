@@ -106,6 +106,35 @@ class JobsTest {
     }
 
     @Test
+    void followUpsAreAcceptedWhileTheirTriggerStillHoldsTheOnlySlot() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 0, Duration.ofHours(1), Duration.ofDays(1), 1), clock);
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+
+        JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+
+        assertThatThrownBy(() -> jobs.submit(JobType.EXPORT, "confluence", "B", "client-a",
+                JobTask.blocking(context -> { }))).isInstanceOf(JobCapacityExceededException.class);
+        assertThatThrownBy(() -> jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }))).isInstanceOf(JobCapacityExceededException.class);
+        executor.runNext();
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
+    void followUpsOfOneClientCannotTakeTheWholeFollowUpPool() {
+        Jobs jobs = new Jobs(store, executor, new JobLimits(1, 4, Duration.ofHours(1), Duration.ofDays(1), 1), clock);
+        jobs.submit(JobType.EXPORT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        jobs.submit(JobType.ASSETS, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+
+        assertThatThrownBy(() -> jobs.submit(JobType.ASSETS, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }))).isInstanceOf(JobCapacityExceededException.class);
+        assertThat(jobs.submit(JobType.ASSETS, "confluence", "B", "client-b", JobTask.blocking(context -> { }))
+                .state()).isEqualTo(JobState.QUEUED);
+    }
+
+    @Test
     void asynchronousTaskHoldsItsSlotUntilItsStageCompletes() {
         Jobs jobs = jobs(1, 5);
         CompletableFuture<Void> transport = new CompletableFuture<>();
