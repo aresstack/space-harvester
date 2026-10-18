@@ -209,4 +209,37 @@ class AppSettingsLoaderTest {
         assertThat(wiki.catchUpOnStart()).isFalse();
         assertThat(wiki.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
     }
+
+    @Test
+    void theBackgroundFillIsOnByDefaultAndEachSourceCanSwitchItOffForItself() throws Exception {
+        AppSettings defaults = load("space-harvester:\n  sources: []\n", Map.of());
+        assertThat(defaults.sync().backgroundFill()).isTrue();
+        assertThat(defaults.sync().backgroundParallelism())
+                .isEqualTo(com.aresstack.spaceharvester.application.configuration.SyncSettings
+                        .DEFAULT_BACKGROUND_PARALLELISM);
+
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    background-parallelism: 4
+                    sources:
+                      wiki:
+                        background-fill: false
+                """, Map.of());
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sync().backgroundParallelism()).isEqualTo(4);
+        assertThat(settings.syncRule("wiki").backgroundFill()).isFalse();
+        assertThat(settings.effectiveSync("wiki").backgroundFill()).isFalse();
+        assertThat(settings.effectiveSync("docs").backgroundFill()).as("wie global").isTrue();
+
+        AppSettings wrong = load("""
+                space-harvester:
+                  sync:
+                    background-fill: vielleicht
+                    background-parallelism: 40
+                """, Map.of());
+        assertThat(wrong.problems()).anyMatch(p -> p.contains("sync.background-parallelism"))
+                .anyMatch(p -> p.contains("sync.background-fill"));
+        assertThat(wrong.sync().backgroundParallelism()).isEqualTo(2);
+    }
 }

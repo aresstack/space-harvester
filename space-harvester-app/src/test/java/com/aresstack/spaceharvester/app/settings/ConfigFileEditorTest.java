@@ -449,6 +449,27 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theBackgroundFillUsesTheCoreKeysGloballyAndPerSource() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");
+        editor.save(file, editor.withBackground(file, new ConfigFileEditor.Draft(Files.readString(file), null), false,
+                5));
+        var wiki = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(null, null, null, null,
+                null, null, null, null, null, true);
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null), "wiki",
+                wiki));
+
+        assertThat(Files.readString(file)).contains("withheld-retention: 14d   # bleibt", "    background-fill: false",
+                "    background-parallelism: 5", "        background-fill: true");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.sync().backgroundFill()).isFalse();
+        assertThat(settings.sync().backgroundParallelism()).isEqualTo(5);
+        assertThat(settings.effectiveSync("wiki").backgroundFill()).as("eigene Regel").isTrue();
+        assertThat(settings.effectiveSync("docs").backgroundFill()).as("wie global").isFalse();
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");

@@ -231,7 +231,7 @@ public final class AppRuntime implements AutoCloseable {
         SyncSettings sync = settings.sync();
         SyncSettings withRules = new SyncSettings(sync.events(), sync.interval(), sync.spaces(), sync.beforeSearch(),
                 settings.cache().withheldRetention(), sync.catchUpOnStart(), sync.mode(), sync.inventoryInterval(),
-                settings.syncRules());
+                settings.syncRules()).withBackground(sync.backgroundFill(), sync.backgroundParallelism());
         SearchSettings search = SearchSettings.DEFAULT.withCacheFreshness(
                 new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
