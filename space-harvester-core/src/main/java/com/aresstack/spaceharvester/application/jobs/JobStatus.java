@@ -19,10 +19,15 @@ import java.util.Objects;
  * @param createdAt       Annahme des Auftrags
  * @param startedAt       Beginn der Ausführung oder {@code null}
  * @param finishedAt      Erreichen eines Endzustands oder {@code null}
+ * @param rootPageId      Startseite, wenn der Auftrag nur eine Seite mit ihren Unterseiten betrifft (Export eines
+ *                        Teilbaums), sonst {@code null} für den ganzen Space; ältere abgelegte Aufträge kennen das Feld
+ *                        nicht und lesen sich mit {@code null}
+ * @param rootTitle       Titel der Startseite, sobald der Auftrag sie gelesen hat und der Auftraggeber sie lesen darf,
+ *                        sonst {@code null}; für die Anzeige „Space &gt; Seite“
  */
 public record JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
                         JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
-                        Instant startedAt, Instant finishedAt) {
+                        Instant startedAt, Instant finishedAt, String rootPageId, String rootTitle) {
 
     public JobStatus {
         Objects.requireNonNull(id, "id");
@@ -34,5 +39,16 @@ public record JobStatus(String id, JobType type, String sourceId, String partiti
         if ((state == JobState.FAILED) != (error != null)) {
             throw new IllegalArgumentException("error genau dann, wenn state FAILED ist");
         }
+        if (rootPageId == null && rootTitle != null) {
+            throw new IllegalArgumentException("rootTitle nur zusammen mit rootPageId");
+        }
+    }
+
+    /** Ein Auftrag ohne Startseite: ganzer Space oder ganze Quelle. */
+    public JobStatus(String id, JobType type, String sourceId, String partitionKey, String owner, JobState state,
+                     JobProgress progress, JobError error, boolean cancelRequested, Instant createdAt,
+                     Instant startedAt, Instant finishedAt) {
+        this(id, type, sourceId, partitionKey, owner, state, progress, error, cancelRequested, createdAt, startedAt,
+                finishedAt, null, null);
     }
 }
