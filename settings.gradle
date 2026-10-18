@@ -39,3 +39,7 @@ include 'comic-controls'
 
 // Eigenständige Swing-Desktop-App auf der Core-Bibliothek, ohne REST und ohne Spring-Kontext (#103).
 include 'space-harvester-app'
+
+// Vergleichstests gegen den Enterprise AI Client (ADR 0012, docs/PARITY.md, #193): neutrales Dokumentmodell für
+// DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
+include 'parity-tests'
