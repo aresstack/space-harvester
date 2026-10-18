@@ -8,11 +8,17 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Anwendungsfall Live-Navigation (#177), wie {@code PageNavigationUseCase} im Enterprise AI Client: Kindseiten eines
@@ -26,6 +32,11 @@ import java.util.Objects;
  * könnten. Querverweise lesen den Inhalt der Seite und verlangen daher {@code content} auf sie.
  */
 public class PageNavigation {
+
+    /** Größte Trefferzahl einer Titelsuche. */
+    public static final int MAX_TITLE_LIMIT = 100;
+    /** So tief fragt die Titelsuche die Quelle höchstens, wenn gesperrte Seiten Treffer verdrängen. */
+    static final int MAX_TITLE_DEPTH = 1000;
 
     private final SourceCatalog catalog;
     private final PageCacheReader cache;
@@ -81,6 +92,54 @@ public class PageNavigation {
     }
 
     /**
+     * Seiten einer Quelle über ihren Titel, auch nie abgeglichene: Treffer der Quelle ({@link HarvestSource#findByTitle})
+     * in ihrer Reihenfolge, ohne Katalog, ohne Umsortieren und ohne Laden. Jeder Treffer trägt seinen Space; kennt ihn
+     * die Quelle nicht, nennt ihn der Cache, sonst liest die Navigation die Kopfdaten der Seite. Vorfahren je Treffer
+     * liefert {@link #position}. Jeder Treffer geht wie die Kinder durch den {@link AccessGuard} ({@code metadata} auf
+     * die Seite); verdrängen gesperrte Seiten sichtbare, fragt die Navigation die Quelle tiefer, höchstens
+     * {@value #MAX_TITLE_DEPTH} Treffer. {@link TitleMatches#truncated()} zählt nur sichtbare Seiten: es gibt mehr als
+     * {@code limit} davon. Quellen ohne {@link com.aresstack.spaceharvester.application.sources.SourceCapability#TITLE_SEARCH}
+     * finden nichts.
+     *
+     * @param spaceKeys nur diese Spaces, leer für alle
+     * @param title     Suchtext, ohne Rücksicht auf Groß- und Kleinschreibung im Titel enthalten
+     * @param limit     1 bis {@value #MAX_TITLE_LIMIT}
+     * @throws InvalidQueryException ohne Suchtext oder mit ungültigem {@code limit}
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne {@code metadata} auf die
+     *                                                                              Quelle
+     */
+    public TitleMatches findByTitle(AccessContext caller, String sourceId, Set<String> spaceKeys, String title,
+                                    int limit) {
+        String term = title == null ? "" : title.trim();
+        if (term.isEmpty()) {
+            throw new InvalidQueryException("title fehlt");
+        }
+        if (limit < 1 || limit > MAX_TITLE_LIMIT) {
+            throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_TITLE_LIMIT + " liegen");
+        }
+        HarvestSource source = source(sourceId);
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
+        SearchSpaces spaces = new SearchSpaces(spaceKeys, Set.of());
+        // Jede Seite fragt höchstens einmal nach ihrem Space, auch wenn die Suche tiefer geht.
+        Map<String, Optional<PageNode>> located = new HashMap<>();
+        int wanted = limit + 1;
+        while (true) {
+            List<PageNode> found = source.findByTitle(term, spaces, wanted);
+            List<PageNode> visible = visible(caller, sourceId, found.stream()
+                    .map(node -> located.computeIfAbsent(node.pageId(), id -> Optional.ofNullable(
+                            located(source, node))))
+                    .flatMap(Optional::stream).filter(node -> spaces.permits(node.partitionKey())).toList());
+            if (visible.size() > limit) {
+                return new TitleMatches(sourceId, visible.subList(0, limit), true);
+            }
+            if (found.size() < wanted || wanted >= MAX_TITLE_DEPTH) {
+                return new TitleMatches(sourceId, visible, false);
+            }
+            wanted = Math.min(wanted * 2, MAX_TITLE_DEPTH);
+        }
+    }
+
+    /**
      * Querverweise einer Seite: ausgehend in Reihenfolge der Seite und, wenn die Quelle sie vollständig kennt,
      * eingehend. Ziele, die der Aufrufer nicht sehen darf, fehlen.
      *
@@ -107,6 +166,11 @@ public class PageNavigation {
                         ResourceScope.page(sourceId, null, node.pageId()), AccessKind.METADATA)
                         ? node : liveSpace(source, node))
                 .filter(Objects::nonNull).toList());
+    }
+
+    private PageNode located(HarvestSource source, PageNode node) {
+        PageNode known = withSpace(source.id(), node);
+        return known.partitionKey() != null ? known : liveSpace(source, known);
     }
 
     private static PageNode liveSpace(HarvestSource source, PageNode node) {
@@ -175,6 +239,18 @@ public class PageNavigation {
 
         public Position {
             ancestors = List.copyOf(ancestors);
+        }
+    }
+
+    /**
+     * Treffer einer Titelsuche in der Reihenfolge der Quelle.
+     *
+     * @param truncated ob es mehr sichtbare Treffer gibt, als geliefert sind
+     */
+    public record TitleMatches(String sourceId, List<PageNode> pages, boolean truncated) {
+
+        public TitleMatches {
+            pages = List.copyOf(pages);
         }
     }
 

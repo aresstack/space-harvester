@@ -425,8 +425,9 @@ public class KeywordSearch {
                 stillLoading = fill.pending().size() > MAX_LIMIT ? fill.pending().subList(0, MAX_LIMIT)
                         : fill.pending();
                 progress = fill.progress();
-                // Gescheitertes Laden ist eine Lücke; der Stapel ist dann nicht vollständig.
-                complete &= fill.failed() == 0 && fill.pending().size() <= MAX_LIMIT;
+                // Gescheitertes Laden ist eine Lücke; der Stapel ist dann nicht vollständig. Langsames Laden ist keine:
+                // Was über die verfolgten Abrufe hinaus noch lädt, steht schon als vorläufiger Treffer in der Liste.
+                complete &= fill.failed() == 0;
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Laden der Treffer nicht möglich ({0})", e.getClass().getName());
                 complete = false;
