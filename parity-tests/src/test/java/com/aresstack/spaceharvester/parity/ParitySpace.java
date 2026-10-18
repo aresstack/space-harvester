@@ -78,7 +78,7 @@ public final class ParitySpace {
                         + "System.out.println(&quot;Delta&quot;);</pre></div></div>"
                         + "<p>" + image("1002", "system.svg", "2001", "image/svg+xml", "Systembild") + "</p>");
         confluence.child(HOME, "1002");
-        confluence.attachment("2001", "1002", "system.svg", "image/svg+xml", SYSTEM_SVG);
+        confluence.attachment("att2001", "1002", "system.svg", "image/svg+xml", SYSTEM_SVG);
 
         page(confluence, "1003", "Komponenten",
                 "<p>Satz Echo zu den Komponenten. Weiter bei <ac:link><ri:page ri:content-title=\"Betrieb\"/>"
@@ -118,7 +118,7 @@ public final class ParitySpace {
                         + "<div class=\"drawio-macro\" data-diagramname=\"ablauf\" data-pageid=\"1004\""
                         + " data-revision=\"1\"></div>");
         confluence.child(HOME, "1004");
-        confluence.attachment("2002", "1004", "ablauf", "application/vnd.jgraph.mxfile", DRAWIO);
+        confluence.attachment("att2002", "1004", "ablauf", "application/vnd.jgraph.mxfile", DRAWIO);
         return confluence;
     }
 

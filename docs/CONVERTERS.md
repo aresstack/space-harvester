@@ -66,11 +66,13 @@ Swing-Anwendung.
   Liste beginnt bei 1), Tabellen als Word-Tabellen mit wiederholter Kopfzeile, Links als Hyperlinks (nur
   `http(s)`/`mailto`), Code als schattierter Block in Consolas, Infokästen als Zitat. Jede Seite trägt eine Textmarke
   `page_<id>`; Verweise auf Seiten desselben Exports springen dorthin.
-- **Bilder und Diagramme.** Eingebettet wird nur, was als Bytes vorliegt (`data:` oder vom Aufrufer mitgegebene
-  Abbildungen). Ein Bild, das nur als Anhang oder Adresse vorliegt, gilt nicht als eingebettet: an seiner Stelle steht
-  kursiv „[Abbildung nicht verfügbar: …]“, nie ein Platzhalter, der wie ein Bild aussieht. Fremde Adressen werden nie
-  abgerufen. Mermaid und PlantUML bleiben Codeblock mit ihrer Textquelle, weil der Server keinen Diagramm-Renderer
-  mitbringt; draw.io und Gliffy erscheinen als Hinweis wie unten.
+- **Bilder und Diagramme.** Eingebettet wird nur, was der Datenbestand abgelegt hat (`ExportAssets`, beschafft vom
+  Auftrag „Bilder beschaffen“ nach dem Herunterladen): Anhänge und Bilder der Lese-Ansicht mit Status `STORED`. Alles
+  andere (fehlend, keine Berechtigung, zu groß, nicht beschafft, fremde Adresse ohne abgelegte Kopie) gilt nicht als
+  eingebettet: an seiner Stelle steht kursiv „[Abbildung nicht verfügbar: … – Grund]“, nie ein Platzhalter, der wie ein
+  Bild aussieht. Kein Konverter ruft die Quelle oder fremde Adressen ab. Mermaid wird aus seiner Textquelle gezeichnet
+  (mermaid-java, offline), SVG-Anhänge über Batik gerastert; PlantUML bleibt Codeblock, draw.io und Gliffy erscheinen
+  als Hinweis wie unten, bis #190 sie als Core-Dienst zeichnet.
 - **Speicher.** Apache POI hält ein Dokument als XML-Objekte im Speicher, gemessen etwa 170 KiB je Seite mit 3 KB
   Markdown (2000 Seiten: 327 MiB). Deshalb verlässt der Inhalt jedes Kapitels das POI-Dokument direkt nach dem
   Kapitel als XML in eine temporäre Datei; beim Schreiben setzt der Exporter ihn an seine Stelle zurück. Im Speicher
@@ -112,8 +114,9 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | Makros `code`, `noformat` | Codeblock mit Sprache |
 | Makros `info`, `note`, `warning`, `tip`, `panel`, `expand` | Zitatblock mit Beschriftung |
 | `ac:link` auf eine Seite | Link auf deren Sprungmarke `#page-<id>`, wenn sie im Export liegt, sonst nur der Text |
-| `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: „[Abbildung nicht verfügbar: …]“ in allen Formaten, bis die Bilder aus dem Datenbestand eingebettet werden; ein externes Bild (`ri:url`) zusätzlich mit Link „Adresse“ |
-| PlantUML, Mermaid | Codeblock mit der Textquelle des Diagramms |
+| `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: eingebettet, wenn der Datenbestand es abgelegt hat (Markdown als `data:`-URI), sonst „[Abbildung nicht verfügbar: …]“ mit Grund; ein externes Bild (`ri:url`) ohne abgelegte Kopie zusätzlich mit Link „Adresse“ |
+| Mermaid | gezeichnetes Diagramm (Word, PDF, Markdown) und in Markdown zusätzlich der Codeblock mit der Textquelle |
+| PlantUML | Codeblock mit der Textquelle des Diagramms |
 | draw.io, Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include` | Hinweis auf die eingebundene Seite |
 | `toc`, `children` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
