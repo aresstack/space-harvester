@@ -19,6 +19,8 @@ public enum SourceCapability {
     PAGE_ATTACHMENTS,
     /** Volltextsuche in der Quelle selbst über Titel und Inhalt ({@link HarvestSource#searchPages}). */
     LIVE_SEARCH,
+    /** Seiten über ihren Titel finden, ohne sie zu laden ({@link HarvestSource#findByTitle}). */
+    TITLE_SEARCH,
     /** Seitenbaum live und Querverweise ({@link HarvestSource#children}, {@link HarvestSource#position}, #177). */
     NAVIGATION,
     /**

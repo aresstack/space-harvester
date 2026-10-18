@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.navigation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
@@ -12,11 +13,15 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.UserCredential;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -89,6 +94,48 @@ class PageNavigationTest {
         assertThat(references.incoming()).isNull();
     }
 
+    @Test
+    void titleMatchesComeInTheOrderOfTheSourceWithTheirSpaceAndWithoutLockedPages() {
+        PageNavigation.TitleMatches matches = navigation.findByTitle(CLIENT, "wiki", Set.of(), "plan", 10);
+
+        // 103 und 300 sind gesperrt, 200 liegt in HR ohne Freigabe; 101 nennt seinen Space erst in den Kopfdaten.
+        assertThat(matches.pages()).extracting(PageNode::pageId, PageNode::partitionKey)
+                .containsExactly(tuple("101", "DEV"), tuple("102", "DEV"), tuple("104", "DEV"));
+        assertThat(matches.truncated()).isFalse();
+        assertThat(navigation.findByTitle(CLIENT, "wiki", Set.of("OPS"), "plan", 10).pages()).isEmpty();
+        assertThat(source.titleSpaces).containsExactly(Set.of(), Set.of("OPS"));
+    }
+
+    @Test
+    void lockedPagesNeitherCrowdOutVisibleOnesNorCountAsMore() {
+        PageNavigation.TitleMatches two = navigation.findByTitle(CLIENT, "wiki", Set.of(), "Plan", 2);
+        assertThat(two.pages()).extracting(PageNode::pageId).containsExactly("101", "102");
+        assertThat(two.truncated()).isTrue();
+        // Die ersten drei Treffer waren fast nur gesperrt: die Navigation fragte tiefer.
+        assertThat(source.titleLimits).containsExactly(3, 6);
+
+        PageNavigation.TitleMatches three = navigation.findByTitle(CLIENT, "wiki", Set.of(), "Plan", 3);
+        assertThat(three.pages()).extracting(PageNode::pageId).containsExactly("101", "102", "104");
+        // Sechs Treffer der Quelle, aber nur drei sichtbar: nicht gekürzt.
+        assertThat(three.truncated()).isFalse();
+    }
+
+    @Test
+    void endUsersSeeTitleMatchesWithoutKnownChildren() {
+        assertThat(navigation.findByTitle(USER, "wiki", Set.of(), "plan b", 10).pages())
+                .extracting(PageNode::pageId, PageNode::hasChildren).containsExactly(tuple("102", null));
+    }
+
+    @Test
+    void titleSearchNeedsATextAndALimitInRange() {
+        assertThatThrownBy(() -> navigation.findByTitle(CLIENT, "wiki", Set.of(), " ", 10))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> navigation.findByTitle(CLIENT, "wiki", Set.of(), "plan", 0))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> navigation.findByTitle(CLIENT, "wiki", Set.of(), "plan",
+                PageNavigation.MAX_TITLE_LIMIT + 1)).isInstanceOf(InvalidQueryException.class);
+    }
+
     private static final class Source implements HarvestSource {
 
         @Override
@@ -136,6 +183,24 @@ class PageNavigationTest {
         public PagePosition position(String pageId) {
             return new PagePosition("DEV", "Entwicklung", List.of(new PageNode("100", "Start", "DEV", true),
                     new PageNode("103", "Gesperrt", "DEV", true)), new PageNode(pageId, "Tief", "DEV", false));
+        }
+
+        /** Titeltreffer in Rangfolge der Quelle; 101 ohne bekannten Space. */
+        private final List<PageNode> titled = List.of(new PageNode("103", "Plan geheim", "DEV", null),
+                new PageNode("300", "Plan Geheim", "DEV", null), new PageNode("101", "Plan A", null, null),
+                new PageNode("102", "Plan B", "DEV", true), new PageNode("200", "Plan HR", "HR", null),
+                new PageNode("104", "Plan C", "DEV", false), new PageNode("105", "Anderes", "DEV", null));
+        private final List<Integer> titleLimits = new ArrayList<>();
+        private final List<Set<String>> titleSpaces = new ArrayList<>();
+
+        @Override
+        public List<PageNode> findByTitle(String title, SearchSpaces spaces, int limit) {
+            titleLimits.add(limit);
+            titleSpaces.add(spaces.only());
+            String needle = title.toLowerCase(Locale.ROOT);
+            return titled.stream().filter(node -> node.title().toLowerCase(Locale.ROOT).contains(needle))
+                    .filter(node -> node.partitionKey() == null || spaces.permits(node.partitionKey()))
+                    .limit(limit).toList();
         }
 
         @Override

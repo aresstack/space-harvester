@@ -75,6 +75,8 @@ class SearchViewTest {
         await(() -> table.getRowCount() > 0);
         assertThat(view[0].statusText()).contains("Dateien: Volltext im Cache").doesNotContain("Bestand");
         loadAll(table, more, 2 * PAGES_PER_SOURCE);
+        // Vorläufige Treffer kennen ihren Space erst, wenn ihre Seite geladen ist: bis zum Ende des Ladens warten.
+        await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
 
         Set<String> keys = new HashSet<>();
         Set<String> sourcesSeen = new HashSet<>();
@@ -94,7 +96,6 @@ class SearchViewTest {
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
         assertThat(view[0].statusText()).doesNotContain("unvollständig");
-        await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
         assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
     }
