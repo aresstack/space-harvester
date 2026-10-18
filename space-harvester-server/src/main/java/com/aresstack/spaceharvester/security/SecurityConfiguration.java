@@ -23,9 +23,11 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
@@ -50,6 +52,9 @@ class SecurityConfiguration {
             "/v3/api-docs", "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**",
             "/error"
     };
+
+    /** Laufzeitkonfiguration (ADR 0015), nur für Clients mit {@code manage-configuration}. */
+    private static final String[] CONFIGURATION_PATHS = {"/api/v1/configuration", "/api/v1/configuration/**"};
 
     private static final Logger LOG = LoggerFactory.getLogger(SecurityConfiguration.class);
 
@@ -93,12 +98,39 @@ class SecurityConfiguration {
             http.anonymous(anonymous -> anonymous.principal(DEVELOPMENT_CONTEXT))
                     .authorizeHttpRequests(requests -> requests.anyRequest().permitAll());
         } else {
+            Set<String> administrators = configurationAdministrators(properties.clients());
             http.addFilterBefore(new ClientTokenAuthenticationFilter(provider, delegatedUsers), AnonymousAuthenticationFilter.class)
                     .authorizeHttpRequests(requests -> requests
                             .requestMatchers(PUBLIC_PATHS).permitAll()
+                            // Laufzeitkonfiguration (ADR 0015): nur Clients mit manage-configuration, nie Endnutzer.
+                            .requestMatchers(CONFIGURATION_PATHS).access((authentication, context) ->
+                                    new AuthorizationDecision(managesConfiguration(authentication.get(),
+                                            administrators)))
                             .anyRequest().authenticated());
         }
         return http.build();
+    }
+
+    /** IDs der Clients mit {@code manage-configuration: true}. */
+    static Set<String> configurationAdministrators(List<SecurityProperties.Client> clients) {
+        Set<String> ids = new HashSet<>();
+        for (SecurityProperties.Client client : clients) {
+            if (client.manageConfiguration() && client.id() != null) {
+                ids.add(client.id());
+            }
+        }
+        return Set.copyOf(ids);
+    }
+
+    /**
+     * Ob die Anmeldung die Laufzeitkonfiguration verwalten darf: nur ein technischer Client selbst, dessen ID unter
+     * den Administratoren steht. Ein durchgereichter Endnutzer erbt das Recht seines Clients nicht.
+     */
+    static boolean managesConfiguration(Authentication authentication, Set<String> administrators) {
+        return authentication != null && authentication.isAuthenticated()
+                && authentication.getPrincipal() instanceof AccessContext context
+                && context.kind() == AccessContext.PrincipalKind.TECHNICAL_CLIENT
+                && administrators.contains(context.principal());
     }
 
     @Bean
