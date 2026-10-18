@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.Inventory;
 import com.aresstack.spaceharvester.application.sync.SyncSummary;
 
 import javax.swing.BorderFactory;
@@ -348,18 +349,23 @@ public final class ActivitiesView implements View {
     private void renderSync(JobStatus status, SyncSummary summary) {
         result.add("Gelistet", String.valueOf(summary.listed()))
                 .add("Neu", String.valueOf(summary.added()))
+                .add("Nur im Katalog", String.valueOf(summary.notLoaded()))
+                .add("Veraltet", String.valueOf(summary.outdated()))
                 .add("Inhalt geändert", String.valueOf(summary.contentChanged()))
                 .add("Metadaten geändert", String.valueOf(summary.metadataChanged()))
                 .add("Attribute geändert", String.valueOf(summary.attributesChanged()))
+                .add("Verschoben", String.valueOf(summary.moved()))
                 .add("Unverändert", String.valueOf(summary.unchanged()))
                 .add("Entfernt", String.valueOf(summary.removed()))
-                .add("Verschoben", String.valueOf(summary.movedOut()))
+                .add("Zurückgehalten", String.valueOf(summary.withheld()))
+                .add("Endgültig bereinigt", String.valueOf(summary.purged()))
+                .add("In anderen Space verschoben", String.valueOf(summary.movedOut()))
                 .add("Nicht geprüft", String.valueOf(summary.unverified()))
                 .add("Fehlgeschlagen", String.valueOf(summary.failedPageIds().size()),
                         summary.failedPageIds().isEmpty() ? Comic.INK : Comic.RED)
                 .add("Fehlend", String.valueOf(summary.missingPageIds().size()),
                         summary.missingPageIds().isEmpty() ? Comic.INK : Comic.RED)
-                .add("Inventar", summary.inventory().name().toLowerCase())
+                .add("Abfrage", inventory(summary.inventory()))
                 .add("Vollständig", summary.complete() ? "ja" : "nein", summary.complete() ? Comic.GREEN : Comic.ORANGE)
                 .add("Generation", summary.generation() == null ? "keine bestätigt" : String.valueOf(summary.generation()))
                 .add("Space-Fingerabdruck", summary.spaceFingerprint());
@@ -380,6 +386,16 @@ public final class ActivitiesView implements View {
         } else {
             renderTerminal(status, false);
         }
+    }
+
+    /** Wie der Lauf die Seiten der Quelle gelesen hat. */
+    static String inventory(Inventory.Status status) {
+        return switch (status) {
+            case COMPLETE -> "Bestandsinventur, vollständig";
+            case INCOMPLETE -> "Bestandsinventur, abgebrochen";
+            case INCONSISTENT -> "Bestandsinventur, widersprüchlich";
+            case CHANGES -> "Änderungssuche seit dem letzten Lauf";
+        };
     }
 
     private void renderExport(ExportDetail export) {

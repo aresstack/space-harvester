@@ -25,6 +25,7 @@ import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
@@ -96,7 +97,8 @@ class WorkspaceTest {
         assertThat(workspace.spaces("wiki")).extracting(Partition::key).containsExactly("DEV");
         assertThat(workspace.liveMetadata("wiki", "DEV", null, 100).entries()).hasSize(2);
 
-        JobStatus sync = await(workspace, workspace.startSync("wiki", "DEV"));
+        // Der Kreispfeil (SYNC_CACHE) nähme unbekannte Seiten nur in den Katalog auf; Inhalte lädt FULL.
+        JobStatus sync = await(workspace, workspace.startSync("wiki", "DEV", SyncMode.FULL));
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         SpaceSyncJobs.SyncJob job = workspace.syncStatus(sync.id());
         assertThat(job.summary().complete()).isTrue();
