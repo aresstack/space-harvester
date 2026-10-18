@@ -107,7 +107,7 @@ public final class SearchView implements View {
         });
 
         JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Space"), picker.spaceBox(), byTitle,
-                byModified, run, semantic, Comic.muted("noch nicht verfügbar"));
+                byModified, run);
         JPanel lines = new JPanel(new BorderLayout(0, 6));
         lines.setOpaque(false);
         lines.add(bar, BorderLayout.NORTH);
@@ -115,7 +115,12 @@ public final class SearchView implements View {
         scope.setOpaque(false);
         scope.add(Comic.caption("Quellen"), BorderLayout.WEST);
         scope.add(sourcesRow, BorderLayout.CENTER);
-        lines.add(scope, BorderLayout.SOUTH);
+        lines.add(scope, BorderLayout.CENTER);
+        JPanel experimental = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        experimental.setOpaque(false);
+        experimental.add(semantic);
+        experimental.add(Comic.muted("noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten"));
+        lines.add(experimental, BorderLayout.SOUTH);
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
         head.add(lines, BorderLayout.NORTH);

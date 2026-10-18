@@ -271,6 +271,62 @@ public final class ConfigFileEditor {
         return String.join(newline, lines) + newline;
     }
 
+    /**
+     * Der Entwurf {@code base} mit neuen Einstellungen des KI-Dienstes unter {@code space-harvester.ai}; ein leerer
+     * Entwurf entfernt den Block. Nur dieser Block ändert sich; Kommentare und alles andere bleiben.
+     */
+    public Draft withAi(Path file, Draft base, AiDraft ai) {
+        List<String> problems = ai.problems();
+        if (!problems.isEmpty()) {
+            throw new IllegalArgumentException(String.join(" ", problems));
+        }
+        String text = ai(base.text(), ai);
+        AppSettings settings = loader.read(file, text);
+        if (!AiDraft.of(settings.ai()).equals(ai)) {
+            throw new IllegalArgumentException("Die KI-Einstellungen ließen sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.ai von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Ersetzt, ergänzt oder entfernt {@code space-harvester.ai}. */
+    static String ai(String text, AiDraft ai) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvester")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvester")) {
+                throw unsupported("space-harvester steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            if (!ai.empty()) {
+                lines.add("");
+                lines.add("space-harvester:");
+                add(lines, lines.size(), ai.yaml("  "));
+            }
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int block = child(lines, root, rootEnd, childIndent, "ai");
+        if (block >= 0) {
+            lines.subList(block, blockEnd(lines, block, childIndent)).clear();
+        }
+        if (!ai.empty()) {
+            add(lines, block >= 0 ? block : root + 1, ai.yaml(" ".repeat(childIndent)));
+        }
+        return String.join(newline, lines) + newline;
+    }
+
     /** Hinter der letzten Inhaltszeile des Blocks ab {@code start}; Kommentare danach bleiben außerhalb. */
     private static int blockEnd(List<String> lines, int start, int indent) {
         int last = start;
