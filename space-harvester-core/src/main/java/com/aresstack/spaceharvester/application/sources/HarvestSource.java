@@ -253,6 +253,28 @@ public interface HarvestSource {
     }
 
     /**
+     * Ob die Quelle Änderungsereignisse lesen kann, die sie selbst verschickt (Confluence-Webhooks, ADR 0014); dann
+     * liest {@link #changeEvents} den Rumpf eines Aufrufs.
+     */
+    default boolean readsChangeEvents() {
+        return false;
+    }
+
+    /**
+     * Liest den Rumpf eines Webhook-Aufrufs, dessen Signatur der Aufrufer schon geprüft hat. Meldungen, die keine Seite
+     * betreffen, fallen weg.
+     *
+     * @param body     Rumpf des Aufrufs
+     * @param eventKey Ereignisname aus dem Kopf des Aufrufs (Confluence: {@code X-Event-Key}) oder {@code null}
+     * @throws UnreadableChangeEventException wenn der Rumpf keine Meldung der Quelle ist
+     * @throws SourceAccessException          {@code UNSUPPORTED} ohne {@link #readsChangeEvents()}
+     */
+    default List<ChangeEvent> changeEvents(byte[] body, String eventKey) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle meldet keine Änderungsereignisse", null);
+    }
+
+    /**
      * Ein Stapel Metadaten der Seiten einer Partition, die innerhalb von {@code within} angelegt oder geändert wurden,
      * älteste Änderung zuerst, ohne Inhalte. Das Zeitfenster gilt relativ zur Uhr der Quelle.
      *

@@ -66,17 +66,18 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
   Version sofort: Aktualität vorhandener Inhalte und Frist für gesperrte Seiten je Quelle (`freshnessFor`,
   `syncFor`) beim nächsten Abruf bzw. Lauf, Embedding-Modell und Reranker für neue Suchen (alte Vektoren werden ohne
   neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht), der Zeitplan aus `sync.spaces` mit Abstand und
-  Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen. Noch nicht live: Bestandsinventur-Zeitplan,
-  Webhooks, `before-search` und `search.prefetch-hits` (nur beim Bauen).
+  Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen; Webhooks (`sync.events`) bei jedem Aufruf. Noch
+  nicht live: Bestandsinventur-Zeitplan, `before-search` und `search.prefetch-hits` (nur beim Bauen).
 - Im Server wirkt eine aktivierte Version ebenso sofort (`LiveConfiguration`): Aktualität (`cache.*`,
   `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
   beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
   Reranker, Reranker an, aus oder neues Modell (`ai.rerank-model`, `ai.base-url`, `search.rerank`) für neue Suchen,
   der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
-  einer Minute lehnt die Änderung ab) und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live
+  einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf und `catch-up-on-start` je Quelle
+  beim Start. Das Embedding-Modell wechselt live
   oder schaltet ab, wenn beim Start eines eingestellt war; **Embeddings erstmals einschalten braucht einen Neustart**
   (die Kette entsteht nur mit `ai.embedding-model` beim Start). Noch nicht live im Server: Bestandsinventur-Zeitplan,
-  Webhooks, `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
+  `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
   gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Reihenfolge der Quellen
@@ -158,6 +159,20 @@ Inhalt haben (`NOT_LOADED`) oder deren Inhalt veraltet ist (`OUTDATED`), zuletzt
 Seiten (`WITHHELD`) und nie, was die Zugriffspolicy oder die KI-Freigabe der Quelle ausschließt. Abschalten geht
 global mit `sync.background-fill=false` oder je Quelle mit `sync.sources.<Quelle>.background-fill=false`; ein
 eigener Wert je Quelle geht dem globalen vor.
+
+### Webhooks
+
+Ein Confluence-Administrator registriert je Quelle einen Webhook auf
+`https://<Dienst>/webhooks/v1/sources/<Quelle>/events` mit einem Geheimnis (Ereignisse für Seiten: angelegt,
+geändert, verschoben, wiederhergestellt, in den Papierkorb gelegt, entfernt, Berechtigungen). Der Dienst nimmt
+Aufrufe nur an, wenn für die Quelle `sync.events` gilt und das Geheimnis unter
+`space-harvester.webhooks.secrets.<Quelle>` steht (im Server aus Datei, Umgebung oder Config Server; nie in
+`GET /api/v1/configuration`, nie im Log). Die Route braucht keinen Client-Token; sie prüft die Signatur
+`X-Hub-Signature: sha256=<HMAC-SHA256 des Rumpfs>` und antwortet 202 (angenommen), 401 (Signatur fehlt oder falsch),
+404 (unbekannte Quelle, Ereignisse aus oder kein Geheimnis) oder 400 (keine lesbare Meldung). Ein Aufruf markiert nur
+den Katalog (ADR 0014): veraltet, nicht geladen, gelöscht oder gesperrt; Inhalte lädt die Suche. In der Bibliothek
+setzt `Harvester.builder().webhookSecret(quelle, geheimnis)` das Geheimnis, `Harvester.changeEvents().receive(…)`
+nimmt Aufrufe einer eigenen Empfangsstelle an.
 
 Dauern als ISO-8601 (`PT6H`, `P1D`) oder in Spring-Kurzform (`30s`, `10m`, `6h`, `1d`).
 

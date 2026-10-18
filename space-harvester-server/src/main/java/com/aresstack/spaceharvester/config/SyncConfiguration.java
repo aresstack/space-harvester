@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
@@ -27,7 +28,7 @@ import org.springframework.context.annotation.Configuration;
  * {@code sync-unavailable} ab und der Hintergrundabgleich startet nicht.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(SyncProperties.class)
+@EnableConfigurationProperties({SyncProperties.class, WebhookProperties.class})
 class SyncConfiguration {
 
     private static final Logger LOG = LoggerFactory.getLogger(SyncConfiguration.class);
@@ -39,6 +40,17 @@ class SyncConfiguration {
                                 LiveConfiguration live) {
         return new SpaceSyncJobs(jobs, queries, store.getIfAvailable(), fetcher.getIfAvailable(), Clock.systemUTC(),
                 afterCommit.orderedStream().toList(), live::withheldRetentionFor);
+    }
+
+    /**
+     * Änderungsquelle Webhooks (ADR 0014): nur für Quellen mit {@code sync.events} (global oder je Quelle, zur Laufzeit
+     * änderbar) und einem Geheimnis unter {@code space-harvester.webhooks.secrets.<Quelle>}; markiert nur den Katalog.
+     */
+    @Bean
+    ChangeEvents changeEvents(SpaceSyncJobs syncJobs, SourceQueries queries, LiveConfiguration live,
+                              WebhookProperties webhooks) {
+        return new ChangeEvents(syncJobs, queries, sourceId -> live.current().syncFor(sourceId).events(),
+                webhooks::secret);
     }
 
     /** Für {@code ?refresh=true} (#27); {@link PageFreshness#available()} erst mit angebundenem Inhaltsabruf. */
