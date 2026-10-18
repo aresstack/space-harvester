@@ -385,11 +385,9 @@ final class SourceForm {
                     throw new IllegalArgumentException(String.join("\n", problems));
                 }
             }
-            if (released != null) {
-                // Vor der Quelle: Scheitert die Quelle danach, schreibt ein zweiter Versuch denselben Block erneut.
-                AiSettingsPanel.store(context, released, new char[0]);
-            }
-            ConfigFileEditor.Draft written = write(source);
+            // Quelle und Freigabe in einem Text: Scheitert das Speichern, ändert sich keins von beiden.
+            ConfigFileEditor.Draft written = released == null ? write(source)
+                    : editor.withAi(context.configFile(), write(source), released);
             SourceSaving.store(context, editor, editing, source, written, value);
             if (editing != null && runtime != null) {
                 // Zeigt die Quelle jetzt auf ein anderes Ziel, entfernt der Core ihre bisherigen Daten (#188).

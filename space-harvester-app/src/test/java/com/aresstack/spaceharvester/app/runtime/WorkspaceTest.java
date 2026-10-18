@@ -251,18 +251,31 @@ class WorkspaceTest {
                 settings.cache(), settings.setupCompleted(), Map.of("handbuch", new SourceSyncOverride(null, null,
                 null, null, null, null, null, null, java.time.Duration.ofDays(3))), settings.sync());
         assertThat(AppRuntime.liveChange(settings, live)).isTrue();
-        assertThat(runtime.reconfigure(live, secrets, "test")).isTrue();
+        assertThat(runtime.reconfigure(live, secrets, "test")).isEqualTo(AppRuntime.Reconfiguration.APPLIED);
         assertThat(runtime.configurationVersion()).isGreaterThan(before);
         assertThat(runtime.settings()).isSameAs(live);
+        assertThat(runtime.lastRejection()).isEmpty();
+
+        // Lehnt der Core ab, bleibt die bisherige Version aktiv; kein Neustart, der genauso scheiterte.
+        long accepted = runtime.configurationVersion();
+        AppSettings rejected = new AppSettings(live.file(), live.sources(), live.proxy(), live.asyncTransport(),
+                live.trustStores(), live.storage(), live.jobLimits(), live.ai(), live.outputDirectory(),
+                live.problems(), live.disabledSources(), live.tls(), live.cache(), live.setupCompleted(),
+                Map.of("handbuch", new SourceSyncOverride(null, null, null, null, null, null, null, null,
+                        java.time.Duration.ofDays(-1))), live.sync());
+        assertThat(runtime.reconfigure(rejected, secrets, "test")).isEqualTo(AppRuntime.Reconfiguration.REJECTED);
+        assertThat(runtime.configurationVersion()).isEqualTo(accepted);
+        assertThat(runtime.settings()).isSameAs(live);
+        assertThat(runtime.lastRejection()).singleElement().asString().contains("handbuch");
 
         // Eine abgeschaltete Quelle, andere Zerlegung oder ein neues Token der Sitzung brauchen einen Neustart.
         AppSettings disabled = new AppSettings(live.file(), live.sources(), live.proxy(), live.asyncTransport(),
                 live.trustStores(), live.storage(), live.jobLimits(), live.ai(), live.outputDirectory(),
                 live.problems(), java.util.Set.of("handbuch"), live.tls(), live.cache(), live.setupCompleted(),
                 live.syncRules(), live.sync());
-        assertThat(runtime.reconfigure(disabled, secrets, "test")).isFalse();
+        assertThat(runtime.reconfigure(disabled, secrets, "test")).isEqualTo(AppRuntime.Reconfiguration.RESTART);
         secrets.put("wiki", "pat", "neues-token".toCharArray());
-        assertThat(runtime.reconfigure(live, secrets, "test")).isFalse();
+        assertThat(runtime.reconfigure(live, secrets, "test")).isEqualTo(AppRuntime.Reconfiguration.RESTART);
     }
 
     @Test

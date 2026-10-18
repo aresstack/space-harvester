@@ -181,8 +181,11 @@ final class AiSettingsPanel {
     }
 
     AiDraft draft() {
+        // Die Freigaben aus der Datei, nicht vom letzten render(): Das Quellenformular ändert sie unabhängig davon.
+        AppSettings settings = context.settings();
+        List<String> released = settings == null ? releasedIds : settings.ai().externalProcessingSources();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, releasedIds, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
+                timeout, released, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
     }
 
     /** „2 von 3 Quellen“ mit ihren Namen, oder „keine“. */

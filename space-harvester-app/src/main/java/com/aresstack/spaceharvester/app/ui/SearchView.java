@@ -96,6 +96,8 @@ public final class SearchView implements View {
     /** Zustand je Quelle aus dem ersten Stapel, ergänzt um spätere Ausfälle. */
     private final Map<String, KeywordSearch.SourceState> states = new LinkedHashMap<>();
     private String nextCursor;
+    /** Cursor des zuletzt angezeigten Stapels ({@code null} für den ersten); das Nachfragen wiederholt genau ihn. */
+    private String shownCursor;
     /** Zählt Suchen und „Weitere laden“; Ergebnisse einer überholten Anfrage werden verworfen. */
     private int request;
     /** Angehakte Quellen; leer für alle. */
@@ -264,6 +266,9 @@ public final class SearchView implements View {
      */
     private void open(AppRuntime runtime, String address) {
         int id = ++request;
+        // Ein ausstehendes Nachfragen der vorigen Suche darf die Adressauflösung nicht überholen.
+        follow.stop();
+        progressRow.setVisible(false);
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Adresse wird aufgelöst …");
@@ -347,6 +352,7 @@ public final class SearchView implements View {
             run.setEnabled(true);
             states.clear();
             incomplete = false;
+            shownCursor = null;
             model.set(hits(results));
             show(q, results);
             if (results.loading() > 0) {
@@ -441,7 +447,11 @@ public final class SearchView implements View {
         loadMore(false);
     }
 
-    /** Solange Seiten laden: dieselbe Suche erneut, ohne Meldung; die Treffer unter den geladenen Seiten rücken nach. */
+    /**
+     * Solange Seiten laden: derselbe Stapel erneut, ohne Meldung; die Treffer unter den geladenen Seiten rücken nach.
+     * Wiederholt wird der Cursor des angezeigten Stapels, nie der nächste: sonst holte jedes Nachfragen weitere Treffer
+     * bei den Quellen und lüde sie in den Cache, ohne dass jemand „Weitere laden“ drückt.
+     */
     private void follow() {
         follows++;
         loadMore(true);
@@ -451,8 +461,8 @@ public final class SearchView implements View {
     private void loadMore(boolean quiet) {
         AppRuntime runtime = context.runtime();
         KeywordSearch.Query q = lastQuery;
-        String cursor = nextCursor;
-        if (runtime == null || q == null || cursor == null) {
+        String cursor = quiet ? shownCursor : nextCursor;
+        if (runtime == null || q == null || !quiet && cursor == null) {
             return;
         }
         int id = ++request;
@@ -467,6 +477,9 @@ public final class SearchView implements View {
                 return;
             }
             run.setEnabled(true);
+            if (!quiet) {
+                shownCursor = cursor;
+            }
             model.add(hits(results));
             show(q, results);
             if (results.loading() > 0) {
@@ -492,6 +505,7 @@ public final class SearchView implements View {
     private void reset() {
         lastQuery = null;
         nextCursor = null;
+        shownCursor = null;
         follow.stop();
         progressRow.setVisible(false);
         more.setEnabled(false);
