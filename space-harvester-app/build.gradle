@@ -20,6 +20,7 @@ dependencies {
     implementation project(':space-harvester-core')
     implementation project(':comic-controls')
     implementation libs.snakeyaml
+    implementation libs.jsoup
     // Eingebautes trust-bundle 'windows': JVM-Truststore plus Windows Root/CA wie im Enterprise AI Client
     implementation libs.win.trust.java
     // Originaldaten lesbar einrücken und body.storage zeigen; dieselbe Jackson-3-Fassung wie im Core

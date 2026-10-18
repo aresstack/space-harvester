@@ -61,6 +61,7 @@ import java.util.Optional;
 public final class PageDetailPanel extends JPanel {
 
     private static final String READ = "Inhalt";
+    private static final String READING = "Leseansicht";
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String ADVANCED = "Erweitert";
@@ -112,6 +113,8 @@ public final class PageDetailPanel extends JPanel {
     private String pageId;
     private DeliveredPage page;
     private boolean assetsLoaded;
+    private boolean readingLoaded;
+    private final ReadingPane readingPane = new ReadingPane();
     private List<Enrichments.View> views = List.of();
     private ReaderDocument shown;
     /** Zählt Lade- und Neuberechnungsaufträge; nur das Ergebnis des letzten wird angezeigt. */
@@ -173,12 +176,16 @@ public final class PageDetailPanel extends JPanel {
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
         tabs.tab(READ, readerPanel)
+                .tab(READING, readingPane)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
                 loadAssets(false);
+            }
+            if (READING.equals(name)) {
+                loadReading();
             }
         });
 
@@ -226,6 +233,8 @@ public final class PageDetailPanel extends JPanel {
         pageId = null;
         page = null;
         assetsLoaded = false;
+        readingLoaded = false;
+        readingPane.clear(" ");
         views = List.of();
         showReader(null, false);
         acronymHint.setText(" ");
@@ -260,7 +269,9 @@ public final class PageDetailPanel extends JPanel {
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
+        this.readingLoaded = false;
         this.page = null;
+        readingPane.clear(" ");
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
@@ -290,6 +301,9 @@ public final class PageDetailPanel extends JPanel {
             show(loaded);
             if (ATTACHMENTS.equals(tabs.selected())) {
                 loadAssets(false);
+            }
+            if (READING.equals(tabs.selected())) {
+                loadReading();
             }
         }, error -> {
             if (current != request) {
@@ -488,6 +502,36 @@ public final class PageDetailPanel extends JPanel {
             assetsLoaded = false;
             assetsHint.setText("Anhänge nicht geladen: " + com.aresstack.spaceharvester.app.ui.Problems
                     .describe(error).title());
+        });
+    }
+
+    /**
+     * Lädt die Leseansicht (#192) über den Core: HTML aus dem Bestand oder live, Bilder aus dem AssetStore bzw. einmalig
+     * abgelegt. Wie die Anhänge gilt das Ergebnis nur für die Seite, für die es angefordert wurde.
+     */
+    private void loadReading() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || readingLoaded) {
+            return;
+        }
+        readingLoaded = true;
+        readingPane.clear("Leseansicht wird geladen …");
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        Background.run(() -> {
+            var view = runtime.workspace().readingView(source, id, false);
+            return ReadingPane.prepare(view, image -> runtime.workspace().viewImage(view, image).content());
+        }, prepared -> {
+            if (shown == page) {
+                readingPane.show(prepared);
+            }
+        }, error -> {
+            if (shown != page) {
+                return;
+            }
+            readingLoaded = false;
+            readingPane.clear("Leseansicht nicht geladen: " + Problems.describe(error).title());
         });
     }
 

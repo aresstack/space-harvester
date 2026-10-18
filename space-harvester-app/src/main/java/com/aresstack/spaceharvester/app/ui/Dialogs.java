@@ -190,6 +190,13 @@ public final class Dialogs {
         dialog.setVisible(true);
     }
 
+    /** Zeigt {@code body} in einem rahmenlosen Fenster ohne Knöpfe; Escape und ✕ schließen (z. B. ein vergrößertes Bild). */
+    public static void view(Component parent, String title, JComponent body) {
+        JDialog dialog = dialog(parent, title);
+        frame(dialog, title, body, dialog::dispose);
+        present(dialog, new Dimension(320, 240));
+    }
+
     static void show(JDialog dialog, String title, JComponent body, ComposerButton... buttons) {
         JPanel stack = new JPanel(new BorderLayout(0, 12));
         stack.setOpaque(false);
