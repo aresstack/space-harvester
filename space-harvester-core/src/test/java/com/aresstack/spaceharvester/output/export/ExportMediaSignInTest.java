@@ -89,8 +89,9 @@ class ExportMediaSignInTest {
         assertThat(manifest.complete()).isTrue();
         // Das Backup-PNG wurde weder als Anhang noch als Bild der Ansicht geladen.
         assertThat(source.loaded).containsExactlyInAnyOrder("att-drawio", "att-foto");
-        assertThat(setup.conversions.dataset(setup.export.id(), "client-a").orElseThrow().images())
-                .isEqualTo(ExportDatasetInfo.Images.COMPLETE);
+        ExportDatasetInfo info = setup.conversions.dataset(setup.export.id(), "client-a").orElseThrow();
+        assertThat(info.images()).isEqualTo(ExportDatasetInfo.Images.COMPLETE);
+        assertThat(info.media()).isEqualTo(new ExportDatasetInfo.Media(2, 0, 0, 1));
     }
 
     @Test
@@ -151,6 +152,9 @@ class ExportMediaSignInTest {
             assertThat(e.status()).isEqualTo(ExportAssetManifest.Status.SIGN_IN_REQUIRED);
             assertThat(e.reason()).isEqualTo("sign-in-required");
         });
+        ExportDatasetInfo.Media media = setup.conversions.dataset(setup.export.id(), "client-a").orElseThrow().media();
+        assertThat(media.signInRequired()).isPositive();
+        assertThat(media.total()).isEqualTo(manifest.assets().size());
     }
 
     @Test
