@@ -58,7 +58,7 @@ public class ChangeEvents implements AutoCloseable {
         UNKNOWN_SOURCE,
         /** Signatur fehlt oder passt nicht; nichts geschieht. */
         BAD_SIGNATURE,
-        /** Signatur gültig, aber der Rumpf ist keine Meldung der Quelle oder zu groß. */
+        /** Rumpf zu groß ({@link #MAX_BODY_BYTES}, vor der Signatur geprüft) oder keine Meldung der Quelle. */
         UNREADABLE
     }
 
@@ -97,14 +97,12 @@ public class ChangeEvents implements AutoCloseable {
      */
     public Receipt receive(String sourceId, byte[] body, String signature, String eventKey) {
         Objects.requireNonNull(body, "body");
-        boolean reads;
-        try {
-            reads = queries.readsChangeEvents(sourceId);
-        } catch (UnknownSourceException e) {
-            return Receipt.UNKNOWN_SOURCE;
+        Receipt open = receiving(sourceId);
+        if (open != Receipt.ACCEPTED) {
+            return open;
         }
-        if (!reads || !enabled.test(sourceId) || !syncs.available()) {
-            return Receipt.DISABLED;
+        if (body.length > MAX_BODY_BYTES) {
+            return Receipt.UNREADABLE;
         }
         char[] secret = secrets.apply(sourceId);
         if (secret == null) {
@@ -120,9 +118,6 @@ public class ChangeEvents implements AutoCloseable {
         } finally {
             Arrays.fill(secret, '\0');
         }
-        if (body.length > MAX_BODY_BYTES) {
-            return Receipt.UNREADABLE;
-        }
         List<ChangeEvent> events;
         try {
             events = queries.changeEvents(sourceId, body, eventKey);
@@ -131,6 +126,30 @@ public class ChangeEvents implements AutoCloseable {
         }
         enqueue(sourceId, events);
         return Receipt.ACCEPTED;
+    }
+
+    /**
+     * Ob die Quelle gerade Aufrufe annähme, ohne Rumpf und Signatur: {@link Receipt#ACCEPTED},
+     * {@link Receipt#UNKNOWN_SOURCE} oder {@link Receipt#DISABLED}. Eine Empfangsstelle fragt das, bevor sie den Rumpf
+     * liest, damit abgelehnte Aufrufe nichts kosten.
+     */
+    public Receipt receiving(String sourceId) {
+        boolean reads;
+        try {
+            reads = queries.readsChangeEvents(sourceId);
+        } catch (UnknownSourceException e) {
+            return Receipt.UNKNOWN_SOURCE;
+        }
+        if (!reads || !enabled.test(sourceId) || !syncs.available()) {
+            return Receipt.DISABLED;
+        }
+        char[] secret = secrets.apply(sourceId);
+        if (secret == null) {
+            return Receipt.DISABLED;
+        }
+        boolean empty = secret.length == 0;
+        Arrays.fill(secret, '\0');
+        return empty ? Receipt.DISABLED : Receipt.ACCEPTED;
     }
 
     /**

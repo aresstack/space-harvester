@@ -207,6 +207,21 @@ class ChangeEventsTest {
     }
 
     @Test
+    void aPageMovedBetweenTwoCataloguedSpacesLeavesTheOldOne() throws Exception {
+        source.put("5", "OPS", null, "1", null);
+        syncs.start("wiki", "OPS", "client:a");
+        runQueued();
+        fetched.clear();
+        source.put("2", "OPS", null, "2", null);
+
+        send("CHANGED:2::");
+
+        assertThat(fetched).isEmpty();
+        assertThat(baseline().pages()).doesNotContainKey("2");
+        assertThat(store.confirmed("wiki", "OPS").orElseThrow().missingPageIds()).containsExactly("2");
+    }
+
+    @Test
     void aSpaceWithoutCatalogIsLeftToTheSearch() {
         source.put("20", "NEU", null, "1", null);
 

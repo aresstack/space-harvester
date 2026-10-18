@@ -124,6 +124,17 @@ public class EventSync {
             Map<String, BaselineEntry> known = knownBySpace.computeIfAbsent(key, k -> known(sourceId, k,
                     baselines.get(k)));
             BaselineEntry previous = known.get(event.pageId());
+            if (current != null && reported != null && !reported.equals(key) && baselines.get(reported) != null) {
+                // Zwischen zwei erfassten Spaces verschoben: im alten Space entfernen, im neuen einordnen.
+                BaselineEntry before = knownBySpace.computeIfAbsent(reported,
+                        k -> known(sourceId, k, baselines.get(k))).get(event.pageId());
+                if (before != null) {
+                    put(changes, removals, eventsBySpace, reported,
+                            new PageChange(event.pageId(), PageChange.Kind.MISSING, before, null),
+                            new RemovalCheck.Result(event.pageId(), RemovalCheck.Verdict.MOVED_OUT, current, null),
+                            event);
+                }
+            }
             PageChange change;
             RemovalCheck.Result removal = null;
             if (current == null || !key.equals(current.page().partitionKey())) {
@@ -147,15 +158,7 @@ public class EventSync {
                 }
                 listed.computeIfAbsent(key, k -> new ArrayList<>()).add(current);
             }
-            List<PageChange> spaceChanges = changes.computeIfAbsent(key, k -> new ArrayList<>());
-            spaceChanges.removeIf(earlier -> earlier.pageId().equals(event.pageId()));
-            spaceChanges.add(change);
-            Map<String, RemovalCheck.Result> spaceRemovals = removals.computeIfAbsent(key, k -> new HashMap<>());
-            spaceRemovals.remove(event.pageId());
-            if (removal != null) {
-                spaceRemovals.put(event.pageId(), removal);
-            }
-            eventsBySpace.computeIfAbsent(key, k -> new ArrayList<>()).add(event);
+            put(changes, removals, eventsBySpace, key, change, removal, event);
         }
         if (dropped > 0) {
             LOG.log(System.Logger.Level.INFO, "Änderungsereignisse von {0}: {1} nicht nachprüfbar, verworfen",
@@ -172,6 +175,21 @@ public class EventSync {
                     removals.getOrDefault(spaceKey, Map.of())), baseline, eventsBySpace.get(spaceKey)));
         });
         return plans;
+    }
+
+    private static void put(Map<String, List<PageChange>> changes,
+                            Map<String, Map<String, RemovalCheck.Result>> removals,
+                            Map<String, List<ChangeEvent>> eventsBySpace, String spaceKey, PageChange change,
+                            RemovalCheck.Result removal, ChangeEvent event) {
+        List<PageChange> spaceChanges = changes.computeIfAbsent(spaceKey, k -> new ArrayList<>());
+        spaceChanges.removeIf(earlier -> earlier.pageId().equals(change.pageId()));
+        spaceChanges.add(change);
+        Map<String, RemovalCheck.Result> spaceRemovals = removals.computeIfAbsent(spaceKey, k -> new HashMap<>());
+        spaceRemovals.remove(change.pageId());
+        if (removal != null) {
+            spaceRemovals.put(change.pageId(), removal);
+        }
+        eventsBySpace.computeIfAbsent(spaceKey, k -> new ArrayList<>()).add(event);
     }
 
     /**

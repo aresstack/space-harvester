@@ -117,6 +117,10 @@ class ChangeEventsApiTest {
         assertThat(webhook("demo", "kein json", sign("kein json", SECRET), "page_updated").statusCode())
                 .isEqualTo(400);
 
+        String large = "x".repeat(2 * 1024 * 1024);
+        assertThat(webhook("demo", large, sign(large, SECRET), "page_updated").statusCode()).isEqualTo(413);
+        assertThat(webhook("ohne", large, null, "page_updated").statusCode()).isEqualTo(404);
+
         assertThat(CONFLUENCE.requests()).hasSize(requests);
     }
 
