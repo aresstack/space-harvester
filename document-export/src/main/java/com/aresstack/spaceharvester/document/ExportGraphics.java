@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.docx;
+package com.aresstack.spaceharvester.document;
 
 import javax.imageio.ImageIO;
 import java.awt.Color;

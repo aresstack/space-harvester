@@ -49,8 +49,8 @@ ihre Zeichen darstellt (fett und kursiv dann ohne eigenen Schnitt).
 ## Word
 
 `pages.docx` schreibt der Word-Exporter des Enterprise AI Client (`DocxExportWriter`, `MarkdownDocxRenderer`,
-`ExportGraphics` auf Apache POI), als angepasste Kopie im Modul `:docx-export` (Herkunft und Abweichungen in
-[docx-export/UPSTREAM.md](../docx-export/UPSTREAM.md)). Der Core hängt nur von diesem Modul ab, nie von der
+`ExportGraphics` auf Apache POI), als angepasste Kopie im Modul `:document-export` (Herkunft und Abweichungen in
+[document-export/UPSTREAM.md](../document-export/UPSTREAM.md)). Der Core hängt nur von diesem Modul ab, nie von der
 Swing-Anwendung.
 
 - **Kapitelmodell.** Kapitel 1 ist der Space (Formatvorlage Überschrift 1), jede Seite ein Unterkapitel nach ihrer

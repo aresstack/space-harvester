@@ -4,8 +4,8 @@ import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.docx.DocxExportWriter;
-import com.aresstack.spaceharvester.docx.ExportGraphics;
+import com.aresstack.spaceharvester.document.DocxExportWriter;
+import com.aresstack.spaceharvester.document.ExportGraphics;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
 import java.io.IOException;
@@ -14,7 +14,7 @@ import java.util.List;
 
 /**
  * Word (#30): alle Seiten eines Exports in einer Datei {@code pages.docx}, geschrieben mit dem Word-Exporter des
- * Enterprise AI Client (Modul {@code :docx-export}, Apache POI). Das Kapitelmodell: der Space ist Kapitel 1
+ * Enterprise AI Client (Modul {@code :document-export}, Apache POI). Das Kapitelmodell: der Space ist Kapitel 1
  * (Überschrift 1), jede Seite ein Unterkapitel nach ihrer Tiefe im Baum (Wurzelseiten Überschrift 2, deren Kinder
  * Überschrift 3 …), linear in Baumreihenfolge. Davor steht ein echtes Inhaltsverzeichnis-Feld über alle Ebenen, das
  * Word beim Öffnen aktualisiert; es gibt damit die Hierarchie von Space und Seiten wieder.

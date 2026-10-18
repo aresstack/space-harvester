@@ -1,4 +1,4 @@
-# docx-export
+# document-export
 
 Word-Ausgabe des [Enterprise AI Client](https://github.com/aresstack/enterprise-ai-client) als eigene Bibliothek für
 Space Harvester. Angelo wollte keinen zweiten, einfacheren Word-Writer: der Export von Space Harvester soll genauso
@@ -16,7 +16,7 @@ Anpassungen sind klein und unten einzeln aufgeführt. Der erste Commit dieses Mo
 Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` (letzte Änderung der Dateien
 `d027c95`), Lizenz MIT (`LICENSE`, mitkopiert).
 
-| Hier (`com.aresstack.spaceharvester.docx`) | Upstream |
+| Hier (`com.aresstack.spaceharvester.document`) | Upstream |
 | --- | --- |
 | `DocxExportWriter` | `proasteion/exedra/…/exedra/document/DocxExportWriter.java` |
 | `MarkdownDocxRenderer` | `proasteion/exedra/…/exedra/document/MarkdownDocxRenderer.java` |
@@ -49,4 +49,4 @@ Enterprise AI Client; dort ändert sie ein eigener PR, nicht dieses Modul.
 
 Apache POI `poi-ooxml` (hier 5.5.1, upstream 5.2.3 wegen der Tika-Bindung) und flexmark 0.62.2 mit Tabellen,
 Autolinks und Durchgestrichen, dieselbe Fassung wie upstream. Eigene Publikation
-`com.aresstack:space-harvester-docx-export`.
+`com.aresstack:space-harvester-document-export`.

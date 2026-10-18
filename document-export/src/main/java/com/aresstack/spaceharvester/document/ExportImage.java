@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.docx;
+package com.aresstack.spaceharvester.document;
 
 /**
  * One figure of an exported page (#132): where the page shows it ({@link #src()}, the address the export Markdown

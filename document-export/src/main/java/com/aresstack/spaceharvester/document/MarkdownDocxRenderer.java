@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.docx;
+package com.aresstack.spaceharvester.document;
 
 import com.vladsch.flexmark.ast.AutoLink;
 import com.vladsch.flexmark.ast.BlockQuote;

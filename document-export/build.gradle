@@ -42,5 +42,5 @@ tasks.named('test') {
 }
 
 // Eigene Publikation, damit die Core-POM keine unveröffentlichte Projektabhängigkeit nennt (docs/MODULES.md).
-ext.publishedArtifactId = 'space-harvester-docx-export'
+ext.publishedArtifactId = 'space-harvester-document-export'
 apply from: rootProject.file('gradle/publishing.gradle')
