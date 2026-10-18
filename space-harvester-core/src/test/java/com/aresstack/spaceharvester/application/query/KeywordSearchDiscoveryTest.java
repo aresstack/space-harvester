@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
@@ -215,6 +216,20 @@ class KeywordSearchDiscoveryTest {
         // Mit Space aus den live gelesenen Kopfdaten.
         assertThat(loads).containsExactly(List.of("a", "b"));
         assertThat(results.hits()).extracting(KeywordSearch.Hit::spaceKey).containsExactly("DEV", "DEV");
+    }
+
+    @Test
+    void withoutContentRightsProvisionalFindsComeWithoutTheSourceExcerpt() {
+        wiki.results("agil", "a");
+        // Kopfdaten ja, Inhalt nein, und keine quellweite Freigabe: der Auszug stammt aus dem Inhalt.
+        AccessGuard metadataOnly = new AccessGuard((context, scope, kind) -> kind == AccessKind.METADATA
+                && (scope.pageId() == null || scope.spaceKey() != null) ? AccessDecision.ALLOW : AccessDecision.DENY);
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, metadataOnly, texts, prefetch, 1,
+                ExcerptPriority.off(), 50).search(APP, KeywordSearch.Query.of("agil"), null, 50);
+
+        assertThat(results.found()).extracting(KeywordSearch.Hit::pageId).containsExactly("a");
+        assertThat(results.found()).extracting(KeywordSearch.Hit::snippet).containsExactly("");
     }
 
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {

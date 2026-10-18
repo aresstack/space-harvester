@@ -630,8 +630,10 @@ public class KeywordSearch {
             return Optional.empty();
         }
         SourceSearchMatch match = candidate.match();
+        // Auch der Auszug der Quelle stammt aus dem Inhalt: ohne Freigabe für den Inhalt kein Auszug.
+        String snippet = candidate.indexed() || access.permits(caller, page, AccessKind.CONTENT) ? match.snippet() : "";
         return Optional.of(new Hit(candidate.sourceId(), metadata.pageId(), metadata.partitionKey(),
-                metadata.title().isEmpty() ? match.title() : metadata.title(), match.snippet(),
+                metadata.title().isEmpty() ? match.title() : metadata.title(), snippet,
                 metadata.url() != null ? metadata.url() : match.url(),
                 metadata.version() != null ? metadata.version() : match.version(),
                 metadata.modifiedAt() != null ? metadata.modifiedAt() : match.modifiedAt(),
