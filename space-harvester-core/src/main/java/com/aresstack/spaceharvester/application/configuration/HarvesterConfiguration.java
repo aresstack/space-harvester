@@ -151,19 +151,27 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         CacheFreshness freshness = CacheFreshness.DEFAULT;
         Duration maxAge = read.duration(SearchSettings.CACHE_MAX_AGE);
         boolean versionCheck = read.bool(SearchSettings.CACHE_VERSION_CHECK, CacheFreshness.DEFAULT.versionCheck());
+        String strategyValue = read.value(SearchSettings.CACHE_REFRESH_STRATEGY);
+        RefreshStrategy strategy = strategyValue == null ? null : RefreshStrategy.parse(strategyValue);
+        if (strategyValue != null && strategy == null) {
+            problems.add(new ConfigurationProblem(SearchSettings.CACHE_REFRESH_STRATEGY, "Erwartet "
+                    + "always-check-version, time-based oder time-based-with-version-check"));
+        }
         try {
-            freshness = new CacheFreshness(maxAge == null ? CacheFreshness.DEFAULT.maxAge() : maxAge, versionCheck);
+            freshness = strategy != null ? strategy.freshness(maxAge)
+                    : new CacheFreshness(maxAge == null ? CacheFreshness.DEFAULT.maxAge() : maxAge, versionCheck);
         } catch (IllegalArgumentException e) {
-            problems.add(new ConfigurationProblem(SearchSettings.CACHE_MAX_AGE, "Die Frist muss zwischen 0 und 365 "
-                    + "Tagen liegen"));
+            problems.add(new ConfigurationProblem(SearchSettings.CACHE_MAX_AGE, strategy != null && maxAge == null
+                    ? "Die zeitbasierte Aktualisierung braucht ein Zeitfenster"
+                    : "Das Zeitfenster muss zwischen 0 und 365 Tagen liegen"));
         }
         SearchSettings search = new SearchSettings(read.bool(SearchSettings.SEMANTIC, SearchSettings.DEFAULT.semantic()),
                 read.bool(SearchSettings.RERANK, SearchSettings.DEFAULT.rerank()),
                 read.bool(SearchSettings.PREFETCH_HITS, SearchSettings.DEFAULT.prefetchHits()), freshness);
         SyncSettings sync = new SyncSettings(read.bool(SyncSettings.EVENTS, false), read.duration(SyncSettings.INTERVAL),
                 read.list(SyncSettings.SPACES), read.bool(SyncSettings.BEFORE_SEARCH, false),
-                read.duration(SyncSettings.WITHHELD_RETENTION), read.bool(SyncSettings.CATCH_UP_ON_START, true),
-                read.bool(SyncSettings.LOAD_UNKNOWN, true));
+                read.duration(SyncSettings.WITHHELD_RETENTION), read.bool(SyncSettings.CATCH_UP_ON_START, false),
+                read.bool(SyncSettings.LOAD_UNKNOWN, false));
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
                 storage);

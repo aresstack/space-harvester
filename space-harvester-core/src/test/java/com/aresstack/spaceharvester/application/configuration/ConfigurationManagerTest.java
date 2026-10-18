@@ -58,6 +58,19 @@ class ConfigurationManagerTest {
     }
 
     @Test
+    void refreshStrategiesMapToCacheFreshness() {
+        assertThat(SearchSettings.DEFAULT.refreshStrategy()).isEqualTo(RefreshStrategy.ALWAYS_CHECK_VERSION);
+        assertThat(RefreshStrategy.TIME_BASED.freshness(Duration.ofHours(6)).versionCheck()).isFalse();
+        assertThat(RefreshStrategy.of(RefreshStrategy.TIME_BASED.freshness(Duration.ofHours(6))))
+                .isEqualTo(RefreshStrategy.TIME_BASED);
+        assertThat(RefreshStrategy.parse("time-based-with-version-check"))
+                .isEqualTo(RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK);
+        assertThat(SyncSettings.DEFAULT.events() || SyncSettings.DEFAULT.catchUpOnStart()
+                || SyncSettings.DEFAULT.beforeSearch() || SyncSettings.DEFAULT.loadUnknown()
+                || SyncSettings.DEFAULT.interval() != null).isFalse();
+    }
+
+    @Test
     void sameConfigurationChangesNothing() {
         var activation = manager.apply(manager.current().configuration());
 
@@ -194,8 +207,9 @@ class ConfigurationManagerTest {
         assertThat(read.sync().interval()).isEqualTo(Duration.ofDays(1));
         assertThat(read.ai().timeout()).isEqualTo(Duration.ofSeconds(45));
         assertThat(read.sync().spaces()).containsExactly("wiki/DOC");
-        assertThat(read.sync().catchUpOnStart()).isTrue();
-        assertThat(read.sync().loadUnknown()).isTrue();
+        assertThat(read.sync().catchUpOnStart()).isFalse();
+        assertThat(read.sync().loadUnknown()).isFalse();
+        assertThat(read.search().refreshStrategy()).isEqualTo(RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK);
         assertThat(read.search().cacheFreshness().maxAge()).isEqualTo(Duration.ofHours(6));
 
         Properties broken = new Properties();
@@ -203,11 +217,13 @@ class ConfigurationManagerTest {
         broken.setProperty("search.semantic", "vielleicht");
         broken.setProperty("sync.spaces", "ohne-schraegstrich");
         broken.setProperty("sync.interval", "30s");
+        broken.setProperty("cache.refresh-strategy", "time-based");
 
         var parsed = HarvesterConfiguration.fromProperties(broken);
 
         assertThat(parsed.valid()).isFalse();
         assertThat(parsed.problems()).extracting(ConfigurationProblem::key)
-                .containsExactlyInAnyOrder("ai.timeout", "search.semantic", "sync.spaces", "sync.interval");
+                .containsExactlyInAnyOrder("ai.timeout", "search.semantic", "sync.spaces", "sync.interval",
+                        "cache.max-age");
     }
 }

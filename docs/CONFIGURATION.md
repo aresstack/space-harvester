@@ -73,16 +73,20 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Semantische Suche (Haken, Standard aus) | `search.semantic` | ja; ohne Embedding-Modell bleibt sie aus |
 | Reranking, wenn ein Modell eingestellt ist | `search.rerank` (Standard `true`) | ja |
 | Treffer der Quellensuche zuerst in den Cache | `search.prefetch-hits` (Standard `true`) | ja |
-| Cache-Frische | `cache.max-age`, `cache.version-check` | ja |
-| Änderungsereignisse (Webhooks) | `sync.events` (Standard `false`) | ja |
+| Aktualisierung je Seite: „Immer Version prüfen“ (Standard), „Zeitbasiert ohne Versionsprüfung“, „Zeitbasiert mit Versionsprüfung“ | `cache.refresh-strategy` (`always-check-version`, `time-based`, `time-based-with-version-check`) mit `cache.max-age`; alternativ `cache.max-age` und `cache.version-check` | ja |
+| Änderungsquelle Webhooks (braucht einen Confluence-Administrator) | `sync.events` (Standard `false`) | ja |
 | Zeitplan des Nachholabgleichs | `sync.interval` (z. B. `P1D`, mindestens `PT1M`, ohne: kein Zeitplan), `sync.spaces` | ja, Scheduler neu gesetzt |
 | Nachholen vor jeder Suche | `sync.before-search` (Standard `false`) | ja |
-| Nachholen beim Start | `sync.catch-up-on-start` (Standard `true`) | ja, ab dem nächsten Start |
-| Unbekannte Seiten mit Inhalt laden | `sync.load-unknown` (Standard `true`) | ja |
+| Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
+| Unbekannte Seiten mit Inhalt laden | `sync.load-unknown` (Standard `false`; sonst aktualisiert ein Abgleich nur bekannte Seiten) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
+
+Alle Änderungsquellen (`sync.*`) sind optional und standardmäßig aus. Ohne sie bleibt der Cache über die
+Aktualisierungsstrategie je Seite und die Beschaffung der Suchtreffer aktuell; Webhooks ergänzen das, wo ein
+Administrator sie registriert, sind aber nie Voraussetzung.
 
 Dauern als ISO-8601 (`PT6H`, `P1D`) oder in Spring-Kurzform (`30s`, `10m`, `6h`, `1d`).
 

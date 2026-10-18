@@ -23,8 +23,11 @@ Desktop und Server sollen dasselbe Modell benutzen, ohne dass der Core Spring ke
 
 1. **Ein typisierter, versionierter Schnappschuss.** `HarvesterConfiguration` fasst zusammen, was zur Laufzeit
    wechseln darf: KI-Dienst mit Adresse, API-Key und Modellen je Funktion (Chat, Embeddings, Reranker), Suche
-   (Haken „Semantische Suche“, Standard aus; Reranking; Beschaffung der Treffer; Cache-Frische), Synchronisierung
-   (Ereignisse, Zeitplan, vor jeder Suche, Sperrfrist), Netzwerk (Proxy, TLS) und Speicherort. Modelle gelten
+   (Haken „Semantische Suche“, Standard aus; Reranking; Beschaffung der Treffer; Aktualisierungsstrategie je Seite
+   `RefreshStrategy`: immer Version prüfen (Standard), zeitbasiert ohne bzw. mit Versionsprüfung), Änderungsquellen
+   der Synchronisierung (Webhooks, Nachholen beim Start, Zeitplan, vor jeder Suche; alle optional und standardmäßig
+   aus, Webhooks nie Voraussetzung, weil ihre Registrierung Administratorrechte braucht), Netzwerk (Proxy, TLS) und
+   Speicherort. Modelle gelten
    **global für alle Quellen**. `ConfigurationSnapshot` trägt dazu eine fortlaufende Version und den
    Aktivierungszeitpunkt.
 2. **Ein Dienst im Core, kein Spring.** `ConfigurationManager` liest den wirksamen Schnappschuss (`current()`),
