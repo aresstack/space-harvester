@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.export.ExportDatasetDamagedException;
+import com.aresstack.spaceharvester.application.export.ExportNotConvertibleException;
 import com.aresstack.spaceharvester.application.export.ExportStorageFullException;
 import com.aresstack.spaceharvester.application.jobs.JobCapacityExceededException;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
@@ -53,6 +55,19 @@ class JobErrorHandler {
     @ExceptionHandler(ExportStorageFullException.class)
     ProblemDetail exportStorageFull(ExportStorageFullException e) {
         return problem(HttpStatus.INSUFFICIENT_STORAGE, "export-storage-full", "Exportablage voll", e.getMessage());
+    }
+
+    @ExceptionHandler(ExportNotConvertibleException.class)
+    ProblemDetail notConvertible(ExportNotConvertibleException e) {
+        return problem(HttpStatus.CONFLICT, "export-not-convertible", "Export nicht konvertierbar",
+                "Der Export ist nicht abgeschlossen oder hat keinen Datenbestand (mehr); erst einen neuen Export "
+                        + "abschließen.");
+    }
+
+    @ExceptionHandler(ExportDatasetDamagedException.class)
+    ProblemDetail datasetDamaged(ExportDatasetDamagedException e) {
+        // Die Meldung nennt keine Seiten, nur den Befund.
+        return problem(HttpStatus.CONFLICT, "export-dataset-damaged", "Datenbestand beschädigt", e.getMessage());
     }
 
     private static ProblemDetail problem(HttpStatus status, String type, String title, String detail) {

@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
+import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.JobError;
@@ -22,7 +24,11 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import java.io.FilterInputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
@@ -53,11 +59,13 @@ public class ExportsController {
     static final String EXPORTS = ApiPaths.V1 + "/exports";
 
     private final Exports exports;
+    private final ExportConversions conversions;
     private final Jobs jobs;
     private final AccessGuard access;
 
-    public ExportsController(Exports exports, Jobs jobs, AccessGuard access) {
+    public ExportsController(Exports exports, ExportConversions conversions, Jobs jobs, AccessGuard access) {
         this.exports = exports;
+        this.conversions = conversions;
         this.jobs = jobs;
         this.access = access;
     }
@@ -250,6 +258,75 @@ public class ExportsController {
                 // Konvertierte Dateien (Markdown, PDF, Word) enthalten Seiteninhalt: im Browser nie ausführbar.
                 .header("Content-Security-Policy", "sandbox; default-src 'none'")
                 .body(new InputStreamResource(content));
+    }
+
+    @GetMapping(path = EXPORTS + "/{exportId}/dataset", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Operation(summary = "Datenbestand eines abgeschlossenen Exports",
+            description = "Seitenzahl, Space, Vollständigkeit, Stand der Bilder und die Formate, in die sich der "
+                    + "Datenbestand ohne neuen Abruf der Quelle konvertieren lässt.")
+    @ApiResponse(responseCode = "200", description = "Datenbestand vorhanden")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export oder (noch) kein Datenbestand "
+            + "(job-not-found, artifact-not-found)", content = @Content(mediaType =
+            MediaType.APPLICATION_PROBLEM_JSON_VALUE, schema = @Schema(implementation = ProblemDetail.class)))
+    public ExportDatasetInfo dataset(@Parameter(hidden = true) AccessContext caller, @PathVariable String exportId) {
+        JobStatus job = ownExport(caller, exportId);
+        return conversions.dataset(job.id(), owner(caller)).orElseThrow(() -> new ArtifactNotFoundException(exportId));
+    }
+
+    @GetMapping(path = EXPORTS + "/{exportId}/conversions/{format}")
+    @Operation(summary = "Datenbestand eines Exports in ein Format konvertieren und herunterladen",
+            description = "Einmal beschaffen, beliebig oft konvertieren: erzeugt die Datei aus dem gespeicherten "
+                    + "Datenbestand (Seiten, Rohdaten, Baum), ohne die Quelle erneut zu lesen und ohne neuen Export. "
+                    + "Formate wie beim Export (json, markdown, docx, pdf).")
+    @ApiResponse(responseCode = "200", description = "Die konvertierte Datei")
+    @ApiResponse(responseCode = "400", description = "Unbekanntes Format (invalid-request)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "404", description = "Kein eigener Export (job-not-found, artifact-not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "409", description = "Export nicht abgeschlossen oder Datenbestand beschädigt "
+            + "(export-not-convertible, export-dataset-damaged)", content = @Content(mediaType =
+            MediaType.APPLICATION_PROBLEM_JSON_VALUE, schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<InputStreamResource> convert(@Parameter(hidden = true) AccessContext caller,
+                                                       @PathVariable String exportId,
+                                                       @Parameter(description = "Zielformat", example = "docx")
+                                                       @PathVariable String format) throws IOException {
+        JobStatus job = ownExport(caller, exportId);
+        requirePagesReadable(caller, job);
+        // Erst ganz erzeugen, dann senden: ein Fehler mitten in der Konvertierung wird so eine Fehlerantwort.
+        Path directory = Files.createTempDirectory("space-harvester-conversion-");
+        ExportConversions.ConvertedFile file;
+        try {
+            file = conversions.convert(exportId, owner(caller), format, directory);
+        } catch (RuntimeException e) {
+            deleteQuietly(directory, null);
+            throw e;
+        }
+        InputStream content = new FilterInputStream(Files.newInputStream(file.path())) {
+            @Override
+            public void close() throws IOException {
+                super.close();
+                deleteQuietly(directory, file.path());
+            }
+        };
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.mediaType()))
+                .contentLength(file.bytes())
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + file.path().getFileName() + "\"")
+                .header("Content-Security-Policy", "sandbox; default-src 'none'")
+                .body(new InputStreamResource(content));
+    }
+
+    private static void deleteQuietly(Path directory, Path file) {
+        try {
+            if (file != null) {
+                Files.deleteIfExists(file);
+            }
+            Files.deleteIfExists(directory);
+        } catch (IOException e) {
+            // Temporäre Datei; das Betriebssystem räumt den Ordner auf.
+        }
     }
 
     private static MediaType mediaType(String name) {

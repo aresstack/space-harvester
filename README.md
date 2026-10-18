@@ -58,6 +58,10 @@ Der Build hat drei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006]
   ohne Spring-Kontext: `java -jar space-harvester-app/build/libs/space-harvester-app-<version>.jar`. Start unter
   Windows, Konfiguration und Funktionsumfang: [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md).
 
+Der Core wird die gemeinsame Wissensquellen- und Dokumentverarbeitungsbibliothek, die auch der Enterprise AI Client
+verwendet ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)). Er muss dessen Fähigkeiten mindestens
+funktionsgleich bereitstellen; Stand und Lücken: [docs/PARITY.md](docs/PARITY.md).
+
 Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
 Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,
 `exports()`, `assets()`, `enrichments()`, `jobs()`); Abgleich und Export laufen als Aufträge mit Fortschritt und
@@ -508,6 +512,14 @@ HTTP-Status, Proxy-Route, TLS-Befund und maskierter Ausnahmekette ([Auftragsdiag
 Artefakte liegen unter `space-harvester.export.directory` (Standard `data/exports`) und
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
+
+**Einmal beschaffen, beliebig oft konvertieren:** Aus dem gespeicherten Datenbestand eines abgeschlossenen Exports
+(`pages.ndjson`, `raw/`, `tree.json`) entsteht jedes Format später erneut, ohne die Quelle zu lesen und ohne neuen
+Export. `GET /api/v1/exports/{exportId}/dataset` nennt Seitenzahl, Space, Vollständigkeit, Stand der Bilder und die
+Formate; `GET /api/v1/exports/{exportId}/conversions/{format}` liefert die Datei (`json`, `markdown`, `docx`, `pdf`) mit
+denselben Rechten wie der Download. In der Bibliothek: `Harvester.conversions().convert(exportId, owner, format,
+ordner)` schreibt die Datei in den Ordner des Aufrufers und überschreibt nie. Der Datenbestand selbst bleibt im
+Datenverzeichnis; jede Payload wird vor dem Konvertieren gegen ihre SHA-256 geprüft (`export-dataset-damaged`, 409).
 
 **Ausgabeformate (#30):** Standardformat ist JSON: ohne `format` erzeugt ein Export neben dem Raw-First-Artefakt
 `pages.json`. `?format=…` (wiederholbar, z. B. `format=markdown&format=pdf`) wählt die Formate selbst; sie entstehen

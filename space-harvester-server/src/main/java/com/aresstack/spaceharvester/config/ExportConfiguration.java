@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.config;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
@@ -75,5 +76,10 @@ class ExportConfiguration {
                     ExportConverters converters, SpaceSyncJobs syncs) {
         return new Exports(jobs, cache.getIfAvailable(PageCacheReader::unavailable), writer, converters, syncs,
                 Clock.systemUTC());
+    }
+
+    @Bean
+    ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters) {
+        return new ExportConversions(jobs, writer, converters);
     }
 }

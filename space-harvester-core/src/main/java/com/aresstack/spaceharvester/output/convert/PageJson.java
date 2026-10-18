@@ -1,12 +1,17 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.net.URI;
 import java.time.Instant;
 import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
 import tools.jackson.core.JsonParser;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Gemeinsame JSON-Darstellung einer Seite in Exportdateien: Kopfdaten und eingebettete native Payload. */
@@ -40,6 +45,29 @@ public final class PageJson {
         generator.writeStringProperty("attributesHash", header.attributesHash());
         generator.writeStringProperty("observedAt", text(header.observedAt()));
         generator.writeEndObject();
+    }
+
+    /** Liest die Kopfdaten zurück, die {@link #writeHeader} geschrieben hat (Inhalt der Eigenschaft {@code header}). */
+    public static PageHeader readHeader(JsonNode header) {
+        SortedMap<String, String> attributes = new TreeMap<>();
+        for (Map.Entry<String, JsonNode> attribute : header.path("attributes").properties()) {
+            attributes.put(attribute.getKey(), attribute.getValue().asString());
+        }
+        String pageId = header.path("pageId").asString();
+        PageMetadata metadata = new PageMetadata(pageId, pageId, string(header, "title"), string(header, "spaceKey"),
+                string(header, "parentPageId"), string(header, "version"), instant(header, "modifiedAt"),
+                header.hasNonNull("url") ? URI.create(header.path("url").asString()) : null, attributes);
+        return new PageHeader(new PageKey(header.path("sourceId").asString(), pageId), metadata,
+                header.path("metadataHash").asString(), header.path("attributesHash").asString(),
+                instant(header, "observedAt"));
+    }
+
+    private static String string(JsonNode node, String name) {
+        return node.hasNonNull(name) ? node.path(name).asString() : null;
+    }
+
+    private static Instant instant(JsonNode node, String name) {
+        return node.hasNonNull(name) ? Instant.parse(node.path(name).asString()) : null;
     }
 
     /**

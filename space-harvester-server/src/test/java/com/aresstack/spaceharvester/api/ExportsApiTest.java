@@ -216,6 +216,31 @@ class ExportsApiTest {
     }
 
     @Test
+    void aFinishedJsonExportIsConvertedLaterWithoutANewExport() throws Exception {
+        String id = body(send("POST", "/api/v1/sources/wiki/spaces/DEV/exports", null)).path("id").asString();
+        awaitFinished(id);
+
+        JsonNode dataset = body(send("GET", "/api/v1/exports/" + id + "/dataset", null));
+        assertThat(dataset.path("pages").asInt()).isEqualTo(3);
+        assertThat(dataset.path("spaceKey").asString()).isEqualTo("DEV");
+        assertThat(dataset.path("images").asString()).isEqualTo("NOT_COLLECTED");
+        HttpResponse<byte[]> markdown = send("GET", "/api/v1/exports/" + id + "/conversions/markdown", null);
+        assertThat(markdown.statusCode()).isEqualTo(200);
+        assertThat(markdown.headers().firstValue("Content-Type")).hasValueSatisfying(
+                type -> assertThat(type).startsWith("text/markdown"));
+        assertThat(markdown.headers().firstValue("Content-Disposition")).hasValueSatisfying(
+                value -> assertThat(value).startsWith("attachment").contains(".md"));
+        assertThat(new String(markdown.body(), StandardCharsets.UTF_8)).contains("<a id=\"page-101\"></a>");
+        HttpResponse<byte[]> docx = send("GET", "/api/v1/exports/" + id + "/conversions/docx", null);
+        assertThat(docx.body()).startsWith((byte) 'P', (byte) 'K');
+        // Unbekanntes Format, fremder Client: wie beim Export.
+        assertThat(send("GET", "/api/v1/exports/" + id + "/conversions/pptx", null).statusCode()).isEqualTo(400);
+        assertThat(send("GET", "/api/v1/exports/" + id + "/conversions/markdown", OTHER_TOKEN).statusCode())
+                .isEqualTo(404);
+        assertThat(send("GET", "/api/v1/exports/" + id + "/dataset", OTHER_TOKEN).statusCode()).isEqualTo(404);
+    }
+
+    @Test
     void unknownFormatIsRejected() throws Exception {
         HttpResponse<byte[]> response = send("POST", "/api/v1/sources/wiki/spaces/DEV/exports?format=pptx", null);
 

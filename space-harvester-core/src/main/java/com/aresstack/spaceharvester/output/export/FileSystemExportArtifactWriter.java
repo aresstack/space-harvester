@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.output.export;
 
+import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.export.Conversion;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
@@ -206,6 +207,18 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         } catch (IOException e) {
             throw new UncheckedIOException("Datei des Exports " + exportId + " nicht lesbar", e);
         }
+    }
+
+    @Override
+    public Optional<ConversionInput> dataset(String exportId) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return Optional.empty();
+        }
+        Path dir = root.resolve(exportId);
+        if (!Files.isRegularFile(dir.resolve(MANIFEST))) {
+            return Optional.empty();
+        }
+        return Optional.of(ExportDataset.open(exportId, dir, json));
     }
 
     @Override
