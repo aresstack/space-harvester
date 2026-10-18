@@ -283,6 +283,67 @@ class ExportImagesTest {
         }
     }
 
+    /** Datenbestand mit Diagrammbildern aus der Beschaffung: draw.io „kaputt“ und das Mermaid-Diagramm. */
+    private static class Drawn extends Stored {
+        private final ExportAssetManifest.Rendition rendition;
+
+        Drawn(ExportAssetManifest.Rendition rendition) {
+            this.rendition = rendition;
+        }
+
+        @Override
+        public Optional<ExportAssetManifest> manifest() {
+            List<Entry> entries = new ArrayList<>(ENTRIES.stream()
+                    .filter(e -> !"kaputt.png".equals(e.reference().filename()))
+                    .map(e -> "kaputt.drawio".equals(e.reference().filename()) ? e.withRendition(rendition) : e)
+                    .toList());
+            entries.add(new Entry("100", Reference.mermaid(0, BROKEN_MERMAID), null, "1", "Mermaid", "text/plain",
+                    10, null, Status.STORED, null).withRendition(rendition));
+            return Optional.of(new ExportAssetManifest(false, entries));
+        }
+
+        @Override
+        public Optional<byte[]> rendition(Entry entry) {
+            return entry.rendition() != null && entry.rendition().drawn() ? Optional.of(PNG) : Optional.empty();
+        }
+    }
+
+    private static final String DIAGRAMS = "<ac:structured-macro ac:name=\"drawio\"><ac:parameter "
+            + "ac:name=\"diagramName\">kaputt</ac:parameter></ac:structured-macro>"
+            + "<ac:structured-macro ac:name=\"mermaid\"><ac:plain-text-body><![CDATA[" + BROKEN_MERMAID
+            + "]]></ac:plain-text-body></ac:structured-macro>";
+
+    @Test
+    void diagramsDrawnWhileCollectingAreTakenFromTheDataset() throws Exception {
+        for (ExportConverter converter : List.of(new DocxConverter(), new PdfConverter(), new MarkdownConverter())) {
+            Drawn drawn = new Drawn(ExportAssetManifest.Rendition.drawn("image/png", PNG.length, "sha256:ff"));
+            Input input = input(DIAGRAMS, drawn);
+            convert(converter, input);
+            // beide Quellen sind nicht zeichenbar; ohne Hinweis kam das Bild also aus dem Datenbestand
+            assertThat(input.reported()).as(converter.format()).isEmpty();
+        }
+        Drawn drawn = new Drawn(ExportAssetManifest.Rendition.drawn("image/png", PNG.length, "sha256:ff"));
+        try (XWPFDocument document = new XWPFDocument(new ByteArrayInputStream(
+                convert(new DocxConverter(), input(DIAGRAMS, drawn))))) {
+            // beide Diagramme zeigen dasselbe Bild; Word legt es einmal ab und verweist zweimal darauf
+            assertThat(document.getAllPictures()).hasSize(1);
+            assertThat(document.getParagraphs().stream().flatMap(p -> p.getRuns().stream())
+                    .mapToInt(r -> r.getEmbeddedPictures().size()).sum()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void aDiagramTheCollectionCouldNotDrawIsReportedWithoutDrawingAgain() throws Exception {
+        for (ExportConverter converter : List.of(new DocxConverter(), new PdfConverter(), new MarkdownConverter())) {
+            Drawn drawn = new Drawn(ExportAssetManifest.Rendition.notDrawn("kein mxfile"));
+            Input input = input(DIAGRAMS, drawn);
+            convert(converter, input);
+            assertThat(input.reported()).as(converter.format()).containsExactlyInAnyOrder(
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "kaputt", "render-failed"),
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "mermaid", "render-failed"));
+        }
+    }
+
     @Test
     void sameInputGivesTheSameBytesWithPictures() throws Exception {
         assertThat(convert(new DocxConverter(), new Stored())).isEqualTo(convert(new DocxConverter(), new Stored()));
