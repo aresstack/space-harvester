@@ -215,9 +215,19 @@ public final class ParityComparison {
     }
 
     private static Finding text(String format, DocumentOutline eac, DocumentOutline core) {
-        // Vorkommen zählen, nicht nur verschiedene Wörter: sonst fielen wiederholte Absätze nicht auf
-        Map<String, Integer> eacWords = bodyWords(eac);
-        Map<String, Integer> coreWords = bodyWords(core);
+        // Vorkommen zählen, nicht nur verschiedene Wörter: sonst fielen wiederholte Absätze nicht auf.
+        // Wörter aus Überschriften zählen nur einmal: Überschriften prüft „kapitel“, und wie oft ein Exporter
+        // einen Titel wiederholt (Kapitelinhalt, Kopfzeile), ist Layout (gewollte Abweichung, PARITY.md).
+        Set<String> titleWords = new LinkedHashSet<>();
+        for (DocumentOutline outline : List.of(eac, core)) {
+            outline.headings().forEach(heading -> titleWords.addAll(words(heading.text())));
+        }
+        Map<String, Integer> eacWords = counts(words(eac.text()));
+        Map<String, Integer> coreWords = counts(words(core.text()));
+        titleWords.forEach(word -> {
+            eacWords.computeIfPresent(word, (key, count) -> 1);
+            coreWords.computeIfPresent(word, (key, count) -> 1);
+        });
         int total = 0;
         int found = 0;
         Set<String> missing = new LinkedHashSet<>();
@@ -237,17 +247,6 @@ public final class ParityComparison {
         String percent = String.format(Locale.ROOT, "%.1f %%", recall * 100);
         return new Finding(format, "text", "Text (Wörter des Maßstabs im Core)", total + " Wörter",
                 percent, verdict, missing.isEmpty() ? "" : "fehlt oder seltener im Core: " + listed(List.copyOf(missing)));
-    }
-
-    /** Wörter des Fließtexts; Überschriften prüft {@code kapitel}, ihre Wiederholung ist Layout des Exporters. */
-    private static Map<String, Integer> bodyWords(DocumentOutline outline) {
-        Map<String, Integer> words = counts(words(outline.text()));
-        for (Heading heading : outline.headings()) {
-            for (String word : words(heading.text())) {
-                words.computeIfPresent(word, (key, count) -> count > 1 ? count - 1 : null);
-            }
-        }
-        return words;
     }
 
     static List<String> words(String text) {
