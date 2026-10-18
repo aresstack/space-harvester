@@ -217,6 +217,8 @@ final class ExportChapters {
             case FORBIDDEN -> "forbidden";
             case TOO_LARGE -> "too-large";
             case UNAVAILABLE -> "unavailable";
+            case SIGN_IN_REQUIRED -> "sign-in-required";
+            case REDUNDANT -> "redundant";
             case STORED -> "not-collected";
         };
     }
@@ -287,6 +289,8 @@ final class ExportChapters {
             case FORBIDDEN -> "keine Berechtigung";
             case TOO_LARGE -> "zu groß";
             case UNAVAILABLE -> "nicht beschafft";
+            case SIGN_IN_REQUIRED -> "Anmeldung mit Einmalcode erforderlich";
+            case REDUNDANT -> "Vorschau eines Diagramms, Quelldaten verwendet";
             case STORED -> "nicht beschafft";
         };
         return entry.reason() == null || entry.reason().isBlank() ? status : status + " (" + entry.reason() + ")";
