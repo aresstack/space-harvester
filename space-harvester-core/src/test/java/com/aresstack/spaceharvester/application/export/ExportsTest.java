@@ -79,6 +79,91 @@ class ExportsTest {
                 .isEqualTo(true);
     }
 
+    /** 100 mit 101 (darunter 102) und 103; daneben 200 mit 201. */
+    private void publishTwoBranches() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null),
+                page("confluence", "DEV", "101", "100"), page("confluence", "DEV", "102", "101"),
+                page("confluence", "DEV", "103", "100"), page("confluence", "DEV", "200", null),
+                page("confluence", "DEV", "201", "200")));
+    }
+
+    @Test
+    void subtreeExportContainsOnlyTheStartPageAndItsDescendants() {
+        publishTwoBranches();
+
+        JobStatus job = exports(cache).start("confluence", "DEV", "101", "client-a", List.of());
+
+        JobStatus status = jobs.status(job.id());
+        assertThat(status.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(status.type()).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
+        assertThat(job.rootPageId()).isEqualTo("101");
+        assertThat(status.rootPageId()).isEqualTo("101");
+        assertThat(status.rootTitle()).isEqualTo("Seite 101");
+        assertThat(status.progress()).isEqualTo(new JobProgress(2, 2, 2, 0));
+        RecordingExportArtifactWriter.Published artifact = writer.published.get(job.id());
+        assertThat(artifact.pageIds()).containsExactly("101", "102");
+        // Die Startseite ist Wurzel; dass ihre Elternseite fehlt, ist kein Mangel.
+        assertThat(artifact.tree().roots()).containsExactly(
+                new PageTree.Node("101", List.of(new PageTree.Node("102", List.of()))));
+        assertThat(artifact.summary().warnings()).isEmpty();
+        assertThat(artifact.summary().complete()).isTrue();
+        assertThat(artifact.summary().pagesWritten()).isEqualTo(2);
+    }
+
+    @Test
+    void withoutStartPageTheWholeSpaceIsExportedAsBefore() {
+        publishTwoBranches();
+
+        JobStatus job = exports(cache).start("confluence", "DEV", null, "client-a", List.of());
+
+        assertThat(jobs.status(job.id()).rootPageId()).isNull();
+        assertThat(jobs.status(job.id()).rootTitle()).isNull();
+        assertThat(writer.published.get(job.id()).pageIds())
+                .containsExactly("100", "101", "102", "103", "200", "201");
+        assertThat(ExportRequest.of("confluence", "DEV", "client-a", List.of()).rootPageId()).isNull();
+        assertThat(ExportRequest.of("confluence", "DEV", "client-a", List.of()).withRoot("100").withRoot(null))
+                .extracting(ExportRequest::rootPageId).isNull();
+    }
+
+    @Test
+    void unreadableDescendantIsNeitherExportedNorCounted() {
+        publishTwoBranches();
+
+        JobStatus job = exports(cache).start(ExportRequest.of("confluence", "DEV", "client-a", List.of())
+                .withRoot("100").withVisible(header -> !header.key().pageId().equals("101")));
+
+        JobStatus status = jobs.status(job.id());
+        assertThat(status.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(status.progress()).isEqualTo(new JobProgress(3, 3, 3, 0));
+        RecordingExportArtifactWriter.Published artifact = writer.published.get(job.id());
+        // 102 liegt unter der gesperrten 101 und gehört weiter zum Teilbaum; 101 erscheint nirgends.
+        assertThat(artifact.pageIds()).containsExactly("100", "102", "103");
+        assertThat(artifact.summary().warnings()).noneMatch(w -> w.contains("101") || w.contains("102"));
+        assertThat(artifact.summary().complete()).isTrue();
+    }
+
+    @Test
+    void unknownOrUnreadableStartPageFailsWithoutNamingIt() {
+        publishTwoBranches();
+
+        JobStatus unknown = exports(cache).start("confluence", "DEV", "999", "client-a", List.of());
+        JobStatus otherSpace = exports(cache).start("confluence", "OPS", "100", "client-a", List.of());
+        JobStatus hidden = exports(cache).start(ExportRequest.of("confluence", "DEV", "client-a", List.of())
+                .withRoot("200").withVisible(header -> !header.key().pageId().equals("200")));
+
+        for (JobStatus job : List.of(unknown, hidden)) {
+            JobStatus status = jobs.status(job.id());
+            assertThat(status.state()).isEqualTo(JobState.FAILED);
+            assertThat(status.error().code()).isEqualTo("ROOT_NOT_FOUND");
+            assertThat(status.error().message()).contains("Startseite").doesNotContain("999").doesNotContain("200");
+            assertThat(status.rootTitle()).isNull();
+            assertThat(writer.published).doesNotContainKey(job.id());
+        }
+        // Ohne Bestand und ohne Einlesen scheitert der Export wie bisher schon vor der Startseite.
+        assertThat(jobs.status(otherSpace.id()).state()).isEqualTo(JobState.FAILED);
+        assertThat(writer.published).doesNotContainKey(otherSpace.id());
+    }
+
     @Test
     void artifactOfAnotherClientIsUnknown() {
         cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "1", null)));
