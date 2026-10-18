@@ -102,6 +102,7 @@ public final class ContentView implements View {
     public ContentView(AppContext context) {
         this.context = context;
         this.detail = new PageDetailPanel(context);
+        detail.onShown(this::pageShown);
         root.setBackground(Comic.SURFACE);
 
         source.addActionListener(e -> {
@@ -266,6 +267,19 @@ public final class ContentView implements View {
         detail.load(sourceId, pageId, false);
     }
 
+    /**
+     * Eine geöffnete Seite aus einem anderen Space (aus der Suche, über eine Adresse): Auswahl und Seitenliste folgen
+     * ihrem Space, die Seite selbst bleibt offen.
+     */
+    private void pageShown(String sourceId, String spaceKey) {
+        if (spaceKey == null || spaceKey.isBlank() || !Objects.equals(sourceId, selectedSource())
+                || spaceKey.equals(pagesModel.spaceKey)) {
+            return;
+        }
+        showSpace(spaceKey);
+        reload(false);
+    }
+
     private void refreshSources() {
         String selected = selectedSource();
         AppRuntime runtime = context.runtime();
@@ -346,6 +360,12 @@ public final class ContentView implements View {
 
     /** Leert Liste, Baum und Seitenansicht und verwirft laufende Ladevorgänge. */
     private void reset(String hint) {
+        resetList(hint);
+        detail.clear();
+    }
+
+    /** Leert Liste und Baum und verwirft laufende Ladevorgänge; die angezeigte Seite bleibt. */
+    private void resetList(String hint) {
         epoch++;
         loading = null;
         cursor = null;
@@ -355,16 +375,23 @@ public final class ContentView implements View {
         pagesModel.clear(null);
         tree.setModel(new DefaultTreeModel(new DefaultMutableTreeNode("Seiten")));
         feedback.clear();
-        detail.clear();
         asList.setSelected(true);
         listCards.show(listDeck, LIST);
         status.setText(hint);
     }
 
     private void reload() {
+        reload(true);
+    }
+
+    private void reload(boolean clearPage) {
         String sourceId = selectedSource();
         String spaceKey = spaceKey();
-        reset(" ");
+        if (clearPage) {
+            reset(" ");
+        } else {
+            resetList(" ");
+        }
         if (sourceId == null || spaceKey.isEmpty()) {
             status.setText("Space wählen.");
             return;

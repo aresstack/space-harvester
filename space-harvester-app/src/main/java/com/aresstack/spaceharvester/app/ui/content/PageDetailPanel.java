@@ -61,8 +61,9 @@ import java.util.Optional;
  */
 public final class PageDetailPanel extends JPanel {
 
-    private static final String READ = "Inhalt";
+    private static final String READ = "Text";
     private static final String READING = "Leseansicht";
+    private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String ADVANCED = "Erweitert";
@@ -178,8 +179,9 @@ public final class PageDetailPanel extends JPanel {
         advanced.add(Comic.row(refresh, saveRaw), BorderLayout.NORTH);
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
-        tabs.tab(READ, readerPanel)
-                .tab(READING, readingPane)
+        // Leseansicht zuerst und damit Standard; ein gewählter Reiter bleibt beim Laden der nächsten Seite.
+        tabs.tab(READING, readingPane)
+                .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ADVANCED, advanced);
@@ -334,11 +336,17 @@ public final class PageDetailPanel extends JPanel {
                         e -> feedback.problem(e, Problems.Step.PAGE)));
     }
 
+    /** Meldet nach dem Laden Quelle und Space der angezeigten Seite. */
+    public void onShown(java.util.function.BiConsumer<String, String> listener) {
+        this.pageShown = listener;
+    }
+
     private void show(Loaded loaded) {
         page = loaded.page();
         views = loaded.enrichments();
         PageSnapshot snapshot = page.snapshot();
         PageMetadata metadata = page.header().metadata();
+        pageShown.accept(sourceId, metadata.partitionKey());
         title.setText(metadata.title());
         path.setText(sourceId + " · Space " + metadata.partitionKey() + " · Seite " + metadata.pageId()
                 + (metadata.version() == null ? "" : " · Version " + metadata.version()));
