@@ -56,24 +56,33 @@ class AiConfiguration {
                     + "embedding-dimensions");
         }
         String userAgent = userAgent(build);
-        Swappable<Optional<EmbeddingProvider>> model = Swappable.of(embeddingModel(live.current().ai(), catalog,
-                trust, userAgent));
+        AiServiceSettings initial = live.current().ai();
+        Swappable<EmbeddingGeneration> model = Swappable.of(new EmbeddingGeneration(embeddingModel(initial, catalog,
+                trust, userAgent), initial));
         live.listen(change -> {
             if (!change.embeddingChanged()) {
                 return ConfigurationListener.Preparation.NOTHING;
             }
-            Optional<EmbeddingProvider> next;
+            EmbeddingGeneration next;
             try {
-                next = embeddingModel(change.next().ai(), catalog, trust, userAgent);
+                next = new EmbeddingGeneration(embeddingModel(change.next().ai(), catalog, trust, userAgent),
+                        change.next().ai());
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.EMBEDDING_MODEL,
                         "Das Embedding-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
             }
             return () -> model.swap(next);
         });
-        return new EmbeddingProcessor(() -> model.get().orElse(null), properties.embeddingChunkChars(),
+        // Freigabe aus denselben Einstellungen wie das Modell: Eine geänderte Freigabe baut ohnehin eine neue
+        // Generation, und neu freigegebene Inhalte gehen nie an den Endpunkt einer früheren.
+        return new EmbeddingProcessor(() -> model.get().provider().orElse(null), properties.embeddingChunkChars(),
                 KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
-                        properties.embeddingChunkOverlapSentences()), live::mayProcessExternally);
+                        properties.embeddingChunkOverlapSentences()),
+                sourceId -> model.get().ai().mayProcessExternally(sourceId));
+    }
+
+    /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
+    private record EmbeddingGeneration(Optional<EmbeddingProvider> provider, AiServiceSettings ai) {
     }
 
     /**
@@ -88,15 +97,14 @@ class AiConfiguration {
             throw new IllegalStateException("space-harvester.ai.rerank-model braucht base-url");
         }
         String userAgent = userAgent(build);
-        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent,
-                live));
+        SwappableReranker reranker = new SwappableReranker(modelReranker(live.current(), catalog, trust, userAgent));
         live.listen(change -> {
             if (!change.rerankerChanged()) {
                 return ConfigurationListener.Preparation.NOTHING;
             }
             SearchReranker next;
             try {
-                next = modelReranker(change.next(), catalog, trust, userAgent, live);
+                next = modelReranker(change.next(), catalog, trust, userAgent);
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -117,15 +125,18 @@ class AiConfiguration {
         return Optional.of(provider);
     }
 
-    /** Der Cross-Encoder, wenn die Konfiguration umordnen lässt; die Freigabe je Quelle gilt live. */
+    /**
+     * Der Cross-Encoder, wenn die Konfiguration umordnen lässt. Die Freigabe je Quelle stammt aus denselben
+     * Einstellungen wie Endpunkt und Modell; eine geänderte Freigabe baut einen neuen Reranker.
+     */
     private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
-                                                TrustBundles trust, String userAgent, LiveConfiguration live) {
+                                                TrustBundles trust, String userAgent) {
         if (!configuration.reranking()) {
             return SearchReranker.NONE;
         }
         AiServiceSettings ai = configuration.ai();
         return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trust, userAgent).reranker(),
-                live::mayProcessExternally);
+                ai::mayProcessExternally);
     }
 
     private static String userAgent(ObjectProvider<BuildProperties> build) {

@@ -181,7 +181,7 @@ public final class Harvester implements AutoCloseable {
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
     /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
-    private final Swappable<Optional<EmbeddingProvider>> embeddingModel;
+    private final Swappable<EmbeddingGeneration> embeddingModel;
     /** Austauschbarer Reranker; {@code null}, wenn er fest eingestellt ist. */
     private final SwappableReranker liveReranker;
     /** Die aus der Konfiguration eingeplanten Abgleiche je Space; eigene über {@link #reconcile} gehören nicht dazu. */
@@ -228,15 +228,18 @@ public final class Harvester implements AutoCloseable {
             opened.add(enrichmentStore);
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
-            Swappable<Optional<EmbeddingProvider>> model = null;
+            Swappable<EmbeddingGeneration> model = null;
             if (builder.embeddingProvider == null && liveAi) {
                 // ADR 0015: die Kette steht immer, das Modell wechselt mit der Konfiguration oder fehlt (aus).
-                Swappable<Optional<EmbeddingProvider>> current = Swappable.of(embeddingModel(builder.ai, catalog,
-                        trustBundles, builder.userAgent));
+                Swappable<EmbeddingGeneration> current = Swappable.of(new EmbeddingGeneration(
+                        embeddingModel(builder.ai, catalog, trustBundles, builder.userAgent), builder.ai));
                 model = current;
-                embedding = new EmbeddingProcessor(() -> current.get().orElse(null), builder.maxChunkChars,
+                // Freigabe aus denselben Einstellungen wie das Modell: Neu freigegebene Inhalte gehen nie an den
+                // Endpunkt einer früheren Generation.
+                embedding = new EmbeddingProcessor(() -> current.get().provider().orElse(null),
+                        builder.maxChunkChars,
                         KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
-                        sourceId -> this.settings.ai().mayProcessExternally(sourceId));
+                        sourceId -> current.get().ai().mayProcessExternally(sourceId));
             } else if (builder.embeddingProvider != null || builder.ai.embeddings()) {
                 // ADR 0011: über den externen Dienst oder das Modell des Programms (#188), im Hintergrund, nur für
                 // freigegebene Quellen.
@@ -375,6 +378,10 @@ public final class Harvester implements AutoCloseable {
         return sourceId -> settings.syncFor(sourceId).withheldRetention();
     }
 
+    /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
+    private record EmbeddingGeneration(Optional<EmbeddingProvider> provider, AiServiceSettings ai) {
+    }
+
     /**
      * Das Embedding-Modell des Dienstes oder leer ohne Embeddings.
      *
@@ -409,10 +416,11 @@ public final class Harvester implements AutoCloseable {
     private ConfigurationListener.Preparation prepare(ConfigurationChange change) {
         HarvesterConfiguration next = change.next();
         List<ConfiguredSchedule> planned = change.syncChanged() ? plannedSchedules(next, true) : null;
-        Optional<EmbeddingProvider> model = null;
+        EmbeddingGeneration model = null;
         if (embeddingModel != null && change.embeddingChanged()) {
             try {
-                model = embeddingModel(next.ai(), catalog, trustBundles, userAgent);
+                model = new EmbeddingGeneration(embeddingModel(next.ai(), catalog, trustBundles, userAgent),
+                        next.ai());
             } catch (RuntimeException e) {
                 throw new ConfigurationRejectedException("ai." + AiServiceSettings.EMBEDDING_MODEL,
                         "Das Embedding-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
@@ -427,7 +435,7 @@ public final class Harvester implements AutoCloseable {
                         "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
             }
         }
-        Optional<EmbeddingProvider> nextModel = model;
+        EmbeddingGeneration nextModel = model;
         SearchReranker nextReranker = reranker;
         return () -> {
             settings = next;
