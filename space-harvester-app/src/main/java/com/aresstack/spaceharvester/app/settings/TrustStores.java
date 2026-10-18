@@ -1,62 +1,47 @@
 package com.aresstack.spaceharvester.app.settings;
 
 import com.aresstack.spaceharvester.source.TrustBundles;
-import com.aresstack.wintrust.CertificateTrustConfiguration;
-import com.aresstack.wintrust.SystemTrustSslSocketFactory;
 
-import javax.net.ssl.SSLEngine;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509ExtendedTrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.Socket;
 import java.nio.file.Files;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
-import java.security.cert.X509Certificate;
 import java.util.Locale;
 import java.util.Map;
-import java.util.function.Supplier;
 
 /**
  * Vertrauensquellen für {@code trust-bundle} einer Quelle, gelesen wie {@code spring.ssl.bundle.*} beim Dienst: nur
  * der Truststore zählt, ein Keystore darin bleibt unbeachtet (das Client-Zertifikat steht unter
  * {@code client-certificate}).
  *
- * <p>Dazu kommt das eingebaute Bundle {@value #WINDOWS}: Serverzertifikate gelten, wenn der Java-Truststore oder der
- * Windows-Zertifikatspeicher (Root und CA, wie Browser und PowerShell) sie akzeptiert. Die Quellen liefert
- * win-trust-java wie im Enterprise AI Client ({@code TrustPolicy}); außerhalb von Windows bleibt nur der
- * Java-Truststore. Der Export der Windows-Speicher dauert Sekunden und läuft deshalb erst bei der ersten Prüfung
- * eines Serverzertifikats, nie beim Start. Ein gleichnamiges Bundle unter {@code spring.ssl.bundle} hat Vorrang.
+ * <p>Windows- und JVM-Zertifikatspeicher verwaltet die App nicht selbst: Quellen ohne Bundle nutzen das Vertrauen des
+ * Core aus {@code space-harvester.network.tls} ({@code TrustSettings}/{@code TrustPolicy}, #189). Das frühere
+ * eingebaute Bundle {@value #WINDOWS} meint dasselbe; die App schreibt es nicht mehr und reicht dafür
+ * {@code legacyWindows} durch. Ein gleichnamiges Bundle unter {@code spring.ssl.bundle} hat Vorrang.
  */
 public final class TrustStores {
 
-    /** Name des eingebauten Bundles für {@code trust-bundle}. */
+    /** Name des früheren eingebauten Bundles; gilt als „wie alle Quellen“ ({@code network.tls}). */
     public static final String WINDOWS = "windows";
 
     private TrustStores() {
     }
 
-    public static TrustBundles of(Map<String, AppSettings.TrustStoreSettings> stores) {
-        return of(stores, windows());
-    }
-
-    static TrustBundles of(Map<String, AppSettings.TrustStoreSettings> stores, boolean windows) {
-        return of(stores, () -> system(windows));
-    }
-
-    static TrustBundles of(Map<String, AppSettings.TrustStoreSettings> stores, Supplier<X509TrustManager> system) {
-        // Ein Trust-Manager für alle Quellen mit "windows": Der Export der Windows-Speicher läuft einmal, nicht je Quelle.
-        Deferred shared = new Deferred(system);
+    /**
+     * @param legacyWindows Trust-Manager für Quellen, deren Datei noch {@code trust-bundle: windows} nennt, gebaut vom
+     *                      Core aus {@code network.tls}
+     */
+    public static TrustBundles of(Map<String, AppSettings.TrustStoreSettings> stores, X509TrustManager legacyWindows) {
         return name -> {
             AppSettings.TrustStoreSettings settings = stores.get(name);
             if (settings == null && WINDOWS.equals(name)) {
-                return shared;
+                return legacyWindows;
             }
             if (settings == null) {
                 throw new IllegalArgumentException("SSL-Bundle '" + name + "' ist nicht konfiguriert");
@@ -68,6 +53,11 @@ public final class TrustStores {
                         + e.getClass().getSimpleName() + ")", e);
             }
         };
+    }
+
+    /** Ob {@code bundle} für die Oberfläche „wie alle Quellen“ heißt: keins oder das frühere {@value #WINDOWS}. */
+    public static boolean followsNetwork(String bundle, Map<String, AppSettings.TrustStoreSettings> stores) {
+        return bundle == null || WINDOWS.equals(bundle) && !stores.containsKey(WINDOWS);
     }
 
     private static KeyStore load(AppSettings.TrustStoreSettings settings) throws IOException, GeneralSecurityException {
@@ -103,125 +93,5 @@ public final class TrustStores {
             }
         }
         throw new GeneralSecurityException("kein X.509-Trust-Manager");
-    }
-
-    /** JVM-Truststore plus Windows Root und CA (unter Windows), aufgebaut von win-trust-java. */
-    static X509TrustManager system(boolean windows) {
-        CertificateTrustConfiguration configuration = CertificateTrustConfiguration.builder()
-                .useJvmDefault(true)
-                .useWindowsRoot(windows)
-                .useWindowsCaStores(windows)
-                .build();
-        X509TrustManager manager = SystemTrustSslSocketFactory.build(configuration).getTrustManager();
-        if (manager == null) {
-            throw new IllegalStateException("Windows-Zertifikatspeicher nicht nutzbar");
-        }
-        return manager;
-    }
-
-    /**
-     * Ein Trust-Manager mit Endpunktprüfung. Weil {@link Deferred} selbst „extended“ ist, wickelt das JDK ihn nicht
-     * mehr ein; ein schlichter {@link X509TrustManager} darunter (wie der Verbund aus win-trust-java) prüfte über
-     * {@code SSLEngine} (WebClient) sonst den Hostnamen nicht. Daher werden seine Vertrauensanker in einen
-     * PKIX-Trust-Manager der Java-Laufzeit übernommen, der Kette, Gültigkeit und Hostnamen prüft.
-     */
-    static X509ExtendedTrustManager extended(X509TrustManager manager) throws GeneralSecurityException {
-        if (manager instanceof X509ExtendedTrustManager extended) {
-            return extended;
-        }
-        KeyStore anchors = KeyStore.getInstance(KeyStore.getDefaultType());
-        try {
-            anchors.load(null, null);
-        } catch (IOException e) {
-            throw new GeneralSecurityException("leerer Truststore nicht anlegbar", e);
-        }
-        int index = 0;
-        for (X509Certificate issuer : manager.getAcceptedIssuers()) {
-            anchors.setCertificateEntry("anchor-" + index++, issuer);
-        }
-        if (trustManager(anchors) instanceof X509ExtendedTrustManager extended) {
-            return extended;
-        }
-        throw new GeneralSecurityException("kein X.509-Trust-Manager mit Endpunktprüfung");
-    }
-
-    static boolean windows() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
-    }
-
-    /**
-     * Baut den eigentlichen Trust-Manager erst bei der ersten Prüfung und behält ihn; scheitert der Aufbau, scheitert
-     * nur diese Prüfung, die nächste versucht es erneut.
-     */
-    static final class Deferred extends X509ExtendedTrustManager {
-
-        private final Supplier<X509TrustManager> factory;
-        private volatile X509ExtendedTrustManager delegate;
-
-        Deferred(Supplier<X509TrustManager> factory) {
-            this.factory = factory;
-        }
-
-        private X509ExtendedTrustManager delegate() throws CertificateException {
-            X509ExtendedTrustManager current = delegate;
-            if (current == null) {
-                synchronized (this) {
-                    current = delegate;
-                    if (current == null) {
-                        try {
-                            current = extended(factory.get());
-                        } catch (RuntimeException | GeneralSecurityException e) {
-                            throw new CertificateException("Vertrauensquellen nicht nutzbar ("
-                                    + e.getClass().getSimpleName() + ")", e);
-                        }
-                        delegate = current;
-                    }
-                }
-            }
-            return current;
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            delegate().checkServerTrusted(chain, authType);
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket)
-                throws CertificateException {
-            delegate().checkServerTrusted(chain, authType, socket);
-        }
-
-        @Override
-        public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
-                throws CertificateException {
-            delegate().checkServerTrusted(chain, authType, engine);
-        }
-
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-            delegate().checkClientTrusted(chain, authType);
-        }
-
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket)
-                throws CertificateException {
-            delegate().checkClientTrusted(chain, authType, socket);
-        }
-
-        @Override
-        public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine)
-                throws CertificateException {
-            delegate().checkClientTrusted(chain, authType, engine);
-        }
-
-        @Override
-        public X509Certificate[] getAcceptedIssuers() {
-            try {
-                return delegate().getAcceptedIssuers();
-            } catch (CertificateException e) {
-                return new X509Certificate[0];
-            }
-        }
     }
 }

@@ -17,6 +17,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JPasswordField;
 import javax.swing.JRadioButton;
@@ -127,15 +128,28 @@ class SettingDialogsTest {
             assertThat(shell[0].title()).startsWith("Serverzertifikate prüfen");
             assertThat(texts(shell[0].body())).anyMatch(text -> text.contains("unabhängig vom Client-Zertifikat"));
             List<JRadioButton> options = find(shell[0].body(), JRadioButton.class);
-            assertThat(options.get(0).getText()).startsWith("Windows und Java");
-            // Die bisherige Einstellung (ohne trust-bundle: nur Java) bleibt gewählt, auch unter Windows.
-            assertThat(options.get(1).getText()).startsWith("Nur Java");
-            assertThat(options.get(1).isSelected()).isTrue();
-            options.get(0).setSelected(true);
+            // Ohne trust-bundle gilt das Vertrauen aller Quellen (network.tls); es bleibt gewählt.
+            assertThat(options.get(0).getText()).startsWith("Wie für alle Quellen").contains("JVM-Truststore");
+            assertThat(options.get(0).isSelected()).isTrue();
+        });
+        assertThat(Files.readString(config)).doesNotContain("trust-bundle");
+    }
+
+    @Test
+    void serverCertificatesForAllSourcesGoToNetworkTls() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.tls(null, context, done::countDown);
+            List<JCheckBox> boxes = find(shell[0].body(), JCheckBox.class);
+            assertThat(boxes).hasSize(3);
+            assertThat(boxes.get(0).isSelected()).as("JVM-Truststore").isTrue();
+            boxes.get(1).setSelected(true);
             shell[0].save();
         });
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
-        assertThat(Files.readString(config)).contains("trust-bundle: \"windows\"");
+        assertThat(Files.readString(config)).contains("  tls:", "use-jvm-default: true", "use-windows-root: true",
+                "use-windows-ca-stores: false");
     }
 
     @Test

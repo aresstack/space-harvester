@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -357,6 +358,28 @@ class ConfigFileEditorTest {
                 null, null, null, "", script);
         assertThat(manual.settings().authentication()).as("ohne Benutzer keine Anmeldung").isNull();
         assertThat(manual.settings().pacDiscoveryScript()).as("Skript nur für PowerShell/VBScript").isNull();
+    }
+
+    @Test
+    void tlsSwitchesAndCaFileGoUnderNetworkNextToTheProxy() throws Exception {
+        Path file = home.resolve("app.yml");
+        Path ca = home.resolve("proxy-ca.pem");
+        Files.writeString(ca, "-----BEGIN CERTIFICATE-----\nkein Zertifikat\n-----END CERTIFICATE-----\n");
+        Files.writeString(file, "space-harvester:\n  network:\n    proxy:\n      mode: disabled\n");
+        TrustSettings broken = new TrustSettings(false, true, false, ca);
+        assertThatThrownBy(() -> editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                broken)).as("eine unbrauchbare CA-Datei kommt nicht in die Datei")
+                .isInstanceOf(IllegalArgumentException.class);
+
+        TrustSettings tls = new TrustSettings(true, true, true, null);
+        editor.save(file, editor.withTls(file, new ConfigFileEditor.Draft(Files.readString(file), null), tls));
+
+        assertThat(Files.readString(file)).contains("    proxy:\n      mode: disabled\n", "    tls:\n",
+                "use-jvm-default: true", "use-windows-root: true", "use-windows-ca-stores: true");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.tls()).isEqualTo(tls);
+        assertThat(settings.proxy().mode()).isEqualTo(ProxySettings.Mode.DISABLED);
     }
 
     @Test

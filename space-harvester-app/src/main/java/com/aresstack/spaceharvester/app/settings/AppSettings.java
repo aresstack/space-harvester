@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -24,13 +25,17 @@ import java.util.Set;
  * @param outputDirectory Ausgabeordner für Dateien, die der Benutzer aus einem Export erzeugt
  *                        ({@code space-harvester-app.output-directory}, Vorgabe der Ordner Downloads)
  * @param problems    verständliche Hinweise auf Fehler der Datei; Quellen mit Fehlern fehlen in {@code sources}
+ * @param tls         Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle}
+ *                    ({@code space-harvester.network.tls}, #189); ohne Angabe unter Windows JVM-Truststore und
+ *                    Windows-Speicher wie im Enterprise AI Client, sonst nur der JVM-Truststore
  * @param disabledSources abgeschaltete Quellen ({@code space-harvester-app.disabled-sources}): bleiben eingerichtet
  *                        samt Bestand, der Core kennt sie aber nicht ({@code SourceManagement.setEnabled})
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
-                          AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources) {
+                          AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                          TrustSettings tls) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -43,12 +48,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         outputDirectory = outputDirectory == null ? defaultOutputDirectory() : outputDirectory;
         problems = List.copyOf(problems);
         disabledSources = disabledSources == null ? Set.of() : Set.copyOf(disabledSources);
+        tls = tls == null ? TrustSettings.jvm() : tls;
     }
 
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources);
+                problems, disabledSources, tls);
     }
 
     /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */

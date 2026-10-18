@@ -441,7 +441,7 @@ public final class SourcesView implements View {
                         Comic.INK, "Client-Zertifikat wählen",
                         () -> setting(entry, SettingDialogs::certificate)));
                 row(EditableProperty.action(SettingDialogs.TRUST_TITLE,
-                        SettingDialogs.trustLabel(config.trustBundle()), Comic.INK,
+                        SettingDialogs.trustLabel(config.trustBundle(), context.settings()), Comic.INK,
                         "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
                         () -> setting(entry, SettingDialogs::trust)));
                 row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())

@@ -13,9 +13,12 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStore
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
@@ -58,8 +61,7 @@ import java.util.function.Supplier;
 final class SettingDialogs {
 
     static final String TRUST_TITLE = "Serverzertifikate prüfen";
-    static final String TRUST_WINDOWS = "Windows und Java";
-    static final String TRUST_JAVA = "Nur Java";
+    static final String TRUST_NETWORK = "Wie für alle Quellen";
     static final String TRUST_NOTE = "Damit prüft die App, ob sie wirklich mit dem richtigen Server spricht (HTTPS). "
             + "Das ist unabhängig vom Client-Zertifikat, mit dem sich die App beim Server ausweist.";
 
@@ -74,9 +76,9 @@ final class SettingDialogs {
     }
 
     /** Beschriftung der Einstellung „Serverzertifikate prüfen“ für ein SSL-Bundle der Quelle. */
-    static String trustLabel(String bundle) {
-        return bundle == null ? TRUST_JAVA : TrustStores.WINDOWS.equals(bundle) ? TRUST_WINDOWS
-                : "Konfiguriertes Bundle „" + bundle + "“";
+    static String trustLabel(String bundle, AppSettings settings) {
+        return TrustStores.followsNetwork(bundle, settings == null ? Map.of() : settings.trustStores())
+                ? TRUST_NETWORK : "Konfiguriertes Bundle „" + bundle + "“";
     }
 
     // ------------------------------------------------------------------ Anmeldung
@@ -274,21 +276,20 @@ final class SettingDialogs {
     // ------------------------------------------------------------------ Serverzertifikate prüfen
 
     /**
-     * Wem die App bei Serverzertifikaten glaubt: Windows und Java (Vorgabe unter Windows), nur Java oder ein
-     * konfiguriertes Bundle. Die bisherige Einstellung bleibt gewählt.
+     * Wem die App bei Serverzertifikaten dieser Quelle glaubt: wie alle Quellen ({@code space-harvester.network.tls},
+     * #189) oder ein konfiguriertes Bundle. Die bisherige Einstellung bleibt gewählt; das frühere Bundle „windows“
+     * gilt als „wie alle Quellen“.
      */
     static Shell trust(Component parent, AppContext context, SourceDraft.Editable editing, Consumer<String> saved) {
         SourceDraft current = editing.draft();
-        List<String> bundles = new ArrayList<>();
-        bundles.add(TrustStores.WINDOWS);
-        bundles.add(null);
         AppSettings settings = context.settings();
-        if (settings != null) {
-            settings.trustStores().keySet().stream().sorted()
-                    .filter(name -> !TrustStores.WINDOWS.equals(name)).forEach(bundles::add);
-        }
-        if (!bundles.contains(current.trustBundle())) {
-            bundles.add(current.trustBundle());
+        Map<String, AppSettings.TrustStoreSettings> stores = settings == null ? Map.of() : settings.trustStores();
+        String selected = TrustStores.followsNetwork(current.trustBundle(), stores) ? null : current.trustBundle();
+        List<String> bundles = new ArrayList<>();
+        bundles.add(null);
+        stores.keySet().stream().sorted().forEach(bundles::add);
+        if (!bundles.contains(selected)) {
+            bundles.add(selected);
         }
         Map<JRadioButton, String> choices = new LinkedHashMap<>();
         ButtonGroup group = new ButtonGroup();
@@ -296,14 +297,12 @@ final class SettingDialogs {
         options.setOpaque(false);
         options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
         for (String bundle : bundles) {
-            JRadioButton button = new JRadioButton(trustLabel(bundle) + switch (bundle == null ? "" : bundle) {
-                case "" -> " · nur die Zertifizierungsstellen der Java-Laufzeit";
-                case TrustStores.WINDOWS -> " · Firmen-CAs aus Windows wie im Browser, dazu die der Java-Laufzeit";
-                default -> " · Truststore aus spring.ssl.bundle";
-            });
+            JRadioButton button = new JRadioButton(trustLabel(bundle, settings) + (bundle == null
+                    ? " · " + (settings == null ? context.loader().defaultTls() : settings.tls()).describe()
+                    + " (Einstellungen › Serverzertifikate)" : " · Truststore aus spring.ssl.bundle"));
             button.setOpaque(false);
             button.setFont(Comic.regular(13f));
-            button.setSelected(Objects.equals(bundle, current.trustBundle()));
+            button.setSelected(Objects.equals(bundle, selected));
             group.add(button);
             options.add(button);
             choices.put(button, bundle);
@@ -314,14 +313,84 @@ final class SettingDialogs {
         body.add(options, BorderLayout.CENTER);
         Shell shell = new Shell(parent, TRUST_TITLE + " · " + title(current), body);
         shell.onSave(() -> {
-            String bundle = choices.entrySet().stream().filter(entry -> entry.getKey().isSelected())
-                    .map(Map.Entry::getValue).findFirst().orElse(current.trustBundle());
+            // Kein Stream: „wie alle Quellen“ ist null, und findFirst verträgt kein null.
+            String bundle = selected;
+            for (Map.Entry<JRadioButton, String> entry : choices.entrySet()) {
+                if (entry.getKey().isSelected()) {
+                    bundle = entry.getValue();
+                }
+            }
             SourceDraft source = copy(current, current.authType(), current.username(), current.secretVariable(),
                     current.certificateType(), current.certificatePath(), current.certificatePasswordVariable(),
                     current.certificateAlias(), current.thumbprint(), bundle);
             return new Change(source, new char[0]);
         }, context, editing, saved);
         return shell;
+    }
+
+    static final String TLS_TITLE = "Serverzertifikate für alle Quellen";
+
+    /**
+     * Vertrauen für alle Quellen und den KI-Dienst ohne eigenes Bundle ({@code space-harvester.network.tls}, #189),
+     * wie {@code network.tls} im Enterprise AI Client: drei Schalter und eine CA-Datei. Geprüft und angewandt vom Core
+     * ({@code TrustPolicy}); die App liest keinen Zertifikatspeicher selbst.
+     */
+    static Shell tls(Component parent, AppContext context, Runnable saved) {
+        TrustSettings current = context.settings() != null ? context.settings().tls() : context.loader().defaultTls();
+        JCheckBox jvm = checkbox("Zertifizierungsstellen der Java-Laufzeit", current.useJvmDefault());
+        JCheckBox root = checkbox("Windows-Stammzertifikate (wie im Browser)", current.useWindowsRoot());
+        JCheckBox stores = checkbox("Windows-Speicher Root und CA samt Zwischenzertifikaten",
+                current.useWindowsCaStores());
+        JTextField file = Comic.field(32);
+        file.setText(current.caCertificatesFile() == null ? "" : current.caCertificatesFile().toString());
+        JPanel switches = new JPanel();
+        switches.setOpaque(false);
+        switches.setLayout(new BoxLayout(switches, BoxLayout.Y_AXIS));
+        switches.add(jvm);
+        switches.add(root);
+        switches.add(stores);
+        Rows rows = new Rows();
+        rows.add("Vertrauen", switches, "Ein Zertifikat gilt, sobald eine eingeschaltete Quelle es akzeptiert. "
+                + "Die Windows-Speicher gibt es nur unter Windows.");
+        rows.add("CA-Datei", row(file, browse(file)), "PEM oder DER, z. B. die CA eines TLS-prüfenden Firmen-Proxys; "
+                + "leer ohne");
+        Supplier<TrustSettings> draft = () -> new TrustSettings(jvm.isSelected(), root.isSelected(),
+                stores.isSelected(), file.getText().isBlank() ? null : java.nio.file.Path.of(file.getText().strip()));
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(wrapped(TRUST_NOTE + " Diese Einstellung gilt für alle Quellen ohne eigenes Bundle und den "
+                + "KI-Dienst (space-harvester.network.tls)."), BorderLayout.NORTH);
+        body.add(rows, BorderLayout.CENTER);
+        Shell shell = new Shell(parent, TLS_TITLE, body);
+        shell.onSaveFile(() -> {
+            try {
+                return TrustPolicy.problems(draft.get());
+            } catch (java.nio.file.InvalidPathException e) {
+                return List.of("Der Pfad der CA-Datei ist ungültig.");
+            }
+        }, () -> {
+            ConfigFileEditor editor = new ConfigFileEditor(context.loader());
+            String text = Files.isRegularFile(context.configFile())
+                    ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
+            ConfigFileEditor.Draft written = editor.withTls(context.configFile(),
+                    new ConfigFileEditor.Draft(text, null), draft.get());
+            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
+        }, () -> {
+            try {
+                return draft.get().equals(current);
+            } catch (java.nio.file.InvalidPathException e) {
+                return false;
+            }
+        }, context, saved);
+        return shell;
+    }
+
+    private static JCheckBox checkbox(String text, boolean selected) {
+        JCheckBox box = new JCheckBox(text, selected);
+        box.setOpaque(false);
+        box.setFont(Comic.regular(13f));
+        box.setForeground(Comic.INK);
+        return box;
     }
 
     // ------------------------------------------------------------------ Proxy
@@ -560,6 +629,7 @@ final class SettingDialogs {
                     select(windows.body(), WINDOWS_MY);
                     shells.put("client-zertifikat-windows", windows);
                     shells.put("serverzertifikate", trust(null, context, editable, id -> { }));
+                    shells.put("serverzertifikate-alle", tls(null, context, () -> { }));
                     shells.put("proxy", proxy(null, context, entry.config().baseUrl().toString(), () -> { }));
                     int n = 1;
                     for (Map.Entry<String, Shell> shell : shells.entrySet()) {

@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TrustPolicy;
 
 import java.io.IOException;
 import java.net.URI;
@@ -180,7 +181,9 @@ public final class AppRuntime implements AutoCloseable {
                 .maxAssetBytes(storage.maxAssetBytes())
                 .userAgent("space-harvester-app/" + version)
                 .proxy(proxy(settings.proxy(), secrets))
-                .trustBundles(TrustStores.of(settings.trustStores()))
+                // Vertrauen ohne Bundle regelt der Core (network.tls, #189); das frühere Bundle „windows“ meint dasselbe.
+                .trust(settings.tls())
+                .trustBundles(TrustStores.of(settings.trustStores(), TrustPolicy.deferred(settings.tls())))
                 .asyncTransport(settings.asyncTransport())
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
