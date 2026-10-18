@@ -4,7 +4,6 @@ import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.document.DocxExportWriter;
 import com.aresstack.spaceharvester.document.ExportGraphics;
-import com.aresstack.spaceharvester.document.ExportImage;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
@@ -25,7 +24,7 @@ import java.util.List;
 public final class DocxConverter implements ExportConverter {
 
     public static final String FORMAT = "docx";
-    public static final String VERSION = "docx/4";
+    public static final String VERSION = "docx/5";
 
     @Override
     public String format() {
@@ -55,9 +54,9 @@ public final class DocxConverter implements ExportConverter {
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
             chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
             input.forEachPage(page -> {
-                List<ExportImage> images = ExportChapters.images(page, input.assets());
+                ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                        ExportChapters.markdown(page, parser, images), images, ExportChapters.depth(page));
+                        figures.markdown(), figures.images(), ExportChapters.depth(page));
             });
             chapters.finish(out);
         }

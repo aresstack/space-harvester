@@ -56,12 +56,26 @@ class ExportImagesTest {
             + "<p><ac:image ac:alt=\"Zähler\"><ri:url ri:value=\"" + UNKNOWN + "\" /></ac:image></p>"
             + "<ac:structured-macro ac:name=\"mermaid\"><ac:plain-text-body><![CDATA[graph TD\n  A[Start] --> B[Ende]]]>"
             + "</ac:plain-text-body></ac:structured-macro>"
+            + "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">ablauf</ac:parameter>"
+            + "</ac:structured-macro>"
+            + "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">kaputt</ac:parameter>"
+            + "</ac:structured-macro>"
+            + "<ac:structured-macro ac:name=\"inc-drawio\"><ac:parameter ac:name=\"diagramName\">fremd</ac:parameter>"
+            + "<ac:parameter ac:name=\"pageId\">200</ac:parameter></ac:structured-macro>"
             + "<p>Nachher</p>";
 
     private static final List<Entry> ENTRIES = List.of(
             entry(Reference.attachment("att1", "system.png"), "system.png", Status.STORED, "sha256:aa", null),
             entry(Reference.attachment("att2", "geheim.png"), "geheim.png", Status.FORBIDDEN, null, null),
-            entry(Reference.viewImage(EXTERNAL), "logo.png", Status.STORED, "sha256:bb", null));
+            entry(Reference.viewImage(EXTERNAL), "logo.png", Status.STORED, "sha256:bb", null),
+            diagram("100", "att3", "ablauf", "application/vnd.jgraph.mxfile", "sha256:cc"),
+            diagram("100", "att4", "kaputt.drawio", "application/octet-stream", "sha256:dd"),
+            diagram("100", "att5", "kaputt.png", "image/png", "sha256:ee"),
+            diagram("200", "att6", "fremd", "application/vnd.jgraph.mxfile", "sha256:cc"));
+    private static final byte[] MXFILE = ("<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+            + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+            + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+            + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
 
     private record Input(List<ConvertiblePage> pages, ExportAssets assets) implements ConversionInput {
 
@@ -103,13 +117,25 @@ class ExportImagesTest {
         @Override
         public Optional<byte[]> content(Entry entry) {
             read.add(entry.sha256());
-            return entry.stored() ? Optional.of(PNG) : Optional.empty();
+            if (!entry.stored()) {
+                return Optional.empty();
+            }
+            return switch (entry.sha256()) {
+                case "sha256:cc" -> Optional.of(MXFILE);
+                case "sha256:dd" -> Optional.of("kein Diagramm".getBytes(StandardCharsets.UTF_8));
+                default -> Optional.of(PNG);
+            };
         }
     }
 
     private static Entry entry(Reference reference, String title, Status status, String sha256, String reason) {
         return new Entry("100", reference, reference.attachmentId(), "1", title, "image/png", PNG.length, sha256,
                 status, reason);
+    }
+
+    private static Entry diagram(String pageId, String attachmentId, String file, String mediaType, String sha256) {
+        return new Entry(pageId, Reference.attachment(attachmentId, file), attachmentId, "1", file, mediaType, 10,
+                sha256, Status.STORED, null);
     }
 
     private static Input input(ExportAssets assets) {
@@ -148,12 +174,13 @@ class ExportImagesTest {
 
             // Anhang, Bild der Lese-Ansicht und gezeichnetes Mermaid-Diagramm
             assertThat(docx.getAllPictures()).hasSizeGreaterThanOrEqualTo(2);
+            // dazu draw.io: gezeichnet, Vorschau für das nicht darstellbare, eingebunden von einer anderen Seite
             assertThat(docx.getParagraphs().stream().flatMap(p -> p.getRuns().stream())
-                    .mapToInt(run -> run.getEmbeddedPictures().size()).sum()).isEqualTo(3);
+                    .mapToInt(run -> run.getEmbeddedPictures().size()).sum()).isEqualTo(6);
             assertThat(text).contains("Systembild", "Abbildung nicht verfügbar: Geheim",
                     "Abbildung nicht verfügbar: Zähler").doesNotContain("attachment:");
         }
-        assertThat(assets.read).containsOnly("sha256:aa", "sha256:bb");
+        assertThat(assets.read).doesNotContainNull().doesNotContain("sha256:ff");
     }
 
     @Test
@@ -167,7 +194,7 @@ class ExportImagesTest {
                     }
                 }
             }
-            assertThat(pictures).isEqualTo(3);
+            assertThat(pictures).isEqualTo(6);
             assertThat(new PDFTextStripper().getText(pdf)).contains("Abbildung nicht verfügbar: Geheim",
                     "Abbildung nicht verfügbar: Zähler").doesNotContain("[Bild:");
         }
@@ -181,7 +208,8 @@ class ExportImagesTest {
                 .contains("```mermaid\ngraph TD", "![Mermaid-Diagramm](data:image/png;base64,")
                 .contains("*[Abbildung nicht verfügbar: Geheim]*")
                 .contains("*\\[Abbildung nicht verfügbar: Zähler\\]* ([Adresse](" + UNKNOWN + "))")
-                .doesNotContain("attachment:", "](" + EXTERNAL + ")");
+                .doesNotContain("attachment:", "drawio:", "](" + EXTERNAL + ")", "Seitenanhang");
+        assertThat(markdown.split("!\\[Diagramm \\(draw.io\\)", -1)).hasSize(4);
     }
 
     @Test
@@ -190,7 +218,9 @@ class ExportImagesTest {
 
         assertThat(markdown).contains("*[Abbildung nicht verfügbar: Systembild]*",
                 "*\\[Abbildung nicht verfügbar: Logo\\]* ([Adresse](" + EXTERNAL + "))",
-                "![Mermaid-Diagramm](data:image/png;base64,");
+                "![Mermaid-Diagramm](data:image/png;base64,",
+                "*[Abbildung nicht verfügbar: Diagramm (draw.io) „ablauf“")
+                .doesNotContain("drawio:");
     }
 
     @Test

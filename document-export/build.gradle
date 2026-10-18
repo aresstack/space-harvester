@@ -21,6 +21,8 @@ dependencies {
     implementation libs.flexmark
     // Mermaid-Diagramme und SVG-Bilder offline als PNG (GraalJS + Batik, ohne Browser und Netz)
     implementation libs.mermaid.java
+    // draw.io → SVG wie im Enterprise AI Client (DrawioDiagramRenderer, #190)
+    implementation libs.jgraphx
     implementation libs.flexmark.ext.tables
     implementation libs.flexmark.ext.autolink
     implementation libs.flexmark.ext.gfm.strikethrough
