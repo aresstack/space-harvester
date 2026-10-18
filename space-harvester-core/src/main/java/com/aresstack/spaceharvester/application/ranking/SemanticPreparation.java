@@ -63,7 +63,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         long deadline = System.nanoTime() + wait.toNanos();
         KeywordSearch.Results found = keywords.search(caller, new KeywordSearch.Query(shortened(text),
                 query.sourceId(), query.sourceIds(), query.spaceKeys()), null, MAX_PAGES);
-        int pending = found.loading();
+        int pending = found.loading() + (lostCandidates(found) ? 1 : 0);
         List<PageSnapshot> missing = new ArrayList<>();
         for (KeywordSearch.Hit hit : found.hits()) {
             snapshots.apply(new PageKey(hit.sourceId(), hit.pageId())).filter(this::withoutCurrentEmbedding)
@@ -73,22 +73,25 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             return pending;
         }
         Semaphore slots = new Semaphore(PARALLEL);
-        List<Future<?>> runs = new ArrayList<>(missing.size());
+        List<Future<Enrichments.Run>> runs = new ArrayList<>(missing.size());
         ExecutorService runner = Executors.newVirtualThreadPerTaskExecutor();
         try {
             for (PageSnapshot snapshot : missing) {
                 runs.add(runner.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
-                        enrichments.recompute(snapshot, processorId);
+                        return enrichments.recompute(snapshot, processorId);
                     } finally {
                         slots.release();
                     }
                 }));
             }
-            for (Future<?> run : runs) {
+            for (Future<Enrichments.Run> run : runs) {
                 try {
-                    run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                    if (run.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS).failed() > 0) {
+                        // Der Dienst hat abgelehnt oder war nicht erreichbar; die nächste Suche versucht es wieder.
+                        pending++;
+                    }
                 } catch (TimeoutException e) {
                     // Rechnet weiter und zählt beim nächsten Mal; diese Suche ist unvollständig.
                     pending++;
@@ -113,10 +116,22 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
         return pending;
     }
 
+    /** Nur ein aktuelles, gelungenes Embedding gilt als vorbereitet; ein gescheitertes wird neu versucht. */
     private boolean withoutCurrentEmbedding(PageSnapshot snapshot) {
         return enrichments.view(snapshot).stream()
                 .noneMatch(view -> processorId.equals(view.enrichment().processorId())
-                        && view.freshness() == Enrichment.Freshness.CURRENT);
+                        && view.freshness() == Enrichment.Freshness.CURRENT
+                        && view.enrichment().status() == Enrichment.Status.OK);
+    }
+
+    /**
+     * Ob die Schlagwortsuche Kandidaten verlor: eine Quelle nicht erreichbar, oder unvollständig ohne volle Seite
+     * mit Fortsetzung. Dass hinter den ersten {@link #MAX_PAGES} weitere Treffer folgen, ist gewollt und keine Lücke.
+     */
+    private static boolean lostCandidates(KeywordSearch.Results found) {
+        boolean unavailable = found.sources().stream()
+                .anyMatch(state -> state.status() == KeywordSearch.SourceState.Status.UNAVAILABLE);
+        return unavailable || !found.complete() && (found.nextCursor() == null || found.hits().size() < MAX_PAGES);
     }
 
     /** Die Schlagwortsuche nimmt höchstens {@value KeywordSearch#MAX_TEXT_LENGTH} Zeichen, an einer Wortgrenze. */
