@@ -18,7 +18,10 @@ Zwei Grenzen bleiben getrennt:
 | `development` | Keine Anmeldung, alles frei. Startet **nur** mit aktivem Spring-Profil `local`; sonst bricht der Start ab. Der Dienst warnt beim Start im Log. |
 
 Ohne Anmeldung erreichbar sind nur `/actuator/health/**`, `/actuator/info`, `/v3/api-docs/**` und die Swagger UI:
-Probes, Build-Info und die API-Beschreibung, keine Daten aus Quellen.
+Probes, Build-Info und die API-Beschreibung, keine Daten aus Quellen. Dazu kommt die Empfangsstelle für Webhooks
+`POST /webhooks/v1/sources/{id}/events` (ADR 0014): Statt eines Client-Tokens verlangt sie die HMAC-SHA256-Signatur
+mit dem Geheimnis der Quelle (`space-harvester.webhooks.secrets.<Quelle>`), gibt keine Daten heraus und ist ohne
+`sync.events` und Geheimnis für jede Quelle 404 ([CONFIGURATION.md](CONFIGURATION.md#webhooks)).
 
 ## Technische Clients und Korpusfreigabe
 

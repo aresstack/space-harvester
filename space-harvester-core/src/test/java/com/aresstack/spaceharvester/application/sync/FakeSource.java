@@ -33,6 +33,10 @@ class FakeSource implements HarvestSource {
     private boolean confirmsDeletion;
     private final java.util.Set<String> trash = new java.util.LinkedHashSet<>();
     private boolean listsChanges;
+    /** Liest Änderungsereignisse als Zeilen {@code ART:Seite:Space:Version}. */
+    boolean readsChangeEvents;
+    /** Anzahl der Einzelabfragen. */
+    int singlePageCalls;
     /** Fenster der letzten Änderungssuche. */
     java.time.Duration lastWithin;
 
@@ -72,6 +76,7 @@ class FakeSource implements HarvestSource {
 
     @Override
     public PageMetadata pageMetadata(String pageId) {
+        singlePageCalls++;
         SourceAccessException.Reason failure = singlePageFailures.get(pageId);
         if (failure != null) {
             throw new SourceAccessException(id(), failure, "Einzelabfrage fehlgeschlagen", null);
@@ -82,6 +87,28 @@ class FakeSource implements HarvestSource {
                     null);
         }
         return page;
+    }
+
+    @Override
+    public boolean readsChangeEvents() {
+        return readsChangeEvents;
+    }
+
+    @Override
+    public List<com.aresstack.spaceharvester.application.sources.ChangeEvent> changeEvents(byte[] body,
+                                                                                         String eventKey) {
+        String text = new String(body, java.nio.charset.StandardCharsets.UTF_8);
+        if (!text.contains(":")) {
+            throw new com.aresstack.spaceharvester.application.sources.UnreadableChangeEventException("kein Ereignis");
+        }
+        List<com.aresstack.spaceharvester.application.sources.ChangeEvent> events = new ArrayList<>();
+        for (String line : text.split("\n")) {
+            String[] parts = line.split(":", -1);
+            events.add(new com.aresstack.spaceharvester.application.sources.ChangeEvent(
+                    com.aresstack.spaceharvester.application.sources.ChangeEvent.Kind.valueOf(parts[0]), parts[1],
+                    parts[2].isEmpty() ? null : parts[2], parts[3].isEmpty() ? null : parts[3]));
+        }
+        return events;
     }
 
     @Override
