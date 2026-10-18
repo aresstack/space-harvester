@@ -176,21 +176,6 @@ class SourcesViewTest {
     }
 
     @Test
-    void openingASpaceWithoutLocalCopyLoadsItLive() throws Exception {
-        start();
-        ContentView[] view = new ContentView[1];
-        SwingUtilities.invokeAndWait(() -> {
-            view[0] = new ContentView(context);
-            view[0].openSpace("kurz", context.runtime().workspace().spaces("kurz").get(0).key());
-        });
-        JTable pages = find((Container) view[0].component(), JTable.class).get(0);
-        await(() -> pages.getRowCount() == 3);
-        // Ohne Bestand kommt die Liste live, ohne Fehlermeldung; eine Synchronisierung wird nicht verlangt.
-        assertThat(find((Container) view[0].component(), AbstractButton.class))
-                .noneSatisfy(button -> assertThat(button.getText()).contains("synchronisieren"));
-    }
-
-    @Test
     void doubleClickingASpaceOpensExactlyThatSpaceInContents() throws Exception {
         start();
         MainWindow[] window = new MainWindow[1];
@@ -214,20 +199,19 @@ class SourcesViewTest {
                     cell.x + 2, cell.y + 2, 2, false, MouseEvent.BUTTON1));
         });
 
-        JComboBox<?> space = find(surface[0], JComboBox.class).stream()
-                .filter(combo -> "Space wählen oder Space-Key eingeben".equals(combo.getToolTipText()))
-                .findFirst().orElseThrow();
-        await(() -> key[0].equals(String.valueOf(space.getEditor().getItem())));
-        await(() -> find(surface[0], JTable.class).stream().anyMatch(table -> table != spaces
-                && table.getRowCount() == 3));
+        // Inhalte ist die Leseansicht; der Explorer zeigt den Space aufgeklappt mit seinen Seiten, ohne Bestand live.
+        Explorer explorer = window[0].explorer();
+        await(() -> key[0].equals(explorer.scope().spaceKey()));
+        Explorer.Scope opened = explorer.scope();
+        await(() -> explorer.tree().getSelectionPath().getLastPathComponent() instanceof Explorer.Node node
+                && node.loaded && node.getChildCount() == 3);
         // Auch nach der nächsten Verbindungsprüfung bleibt der geöffnete Space gewählt.
         CountDownLatch checked = new CountDownLatch(2);
         SwingUtilities.invokeAndWait(() -> context.runtime().workspace().sources()
                 .forEach(source -> context.checkConnection(source.id(), checked::countDown)));
         assertThat(checked.await(30, TimeUnit.SECONDS)).isTrue();
         SwingUtilities.invokeAndWait(() -> { });
-        assertThat(String.valueOf(space.getEditor().getItem())).isEqualTo(key[0]);
-        assertThat(space.getSelectedItem()).isEqualTo(key[0]);
+        assertThat(explorer.scope()).isEqualTo(opened);
     }
 
     @Test

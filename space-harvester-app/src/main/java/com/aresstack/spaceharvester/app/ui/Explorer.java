@@ -131,6 +131,8 @@ public final class Explorer {
     static final class Node extends DefaultMutableTreeNode {
         boolean loaded;
         boolean loading;
+        /** Läuft einmal, sobald die Kinder geladen sind (siehe {@link #reveal}). */
+        Runnable then;
 
         Node(Item item) {
             super(item);
@@ -320,6 +322,37 @@ public final class Explorer {
         tree.clearSelection();
     }
 
+    /** Zeigt einen Space im Baum: Quelle aufklappen, Space wählen und aufklappen; unbekannte bleiben ohne Wirkung. */
+    public void reveal(String sourceId, String spaceKey) {
+        Node source = child(top, item -> item instanceof SourceItem s && s.sourceId().equals(sourceId));
+        if (source == null) {
+            return;
+        }
+        Runnable select = () -> {
+            Node space = child(source, item -> item instanceof SpaceItem s && s.spaceKey().equals(spaceKey));
+            TreePath path = new TreePath((space == null ? source : space).getPath());
+            tree.setSelectionPath(path);
+            tree.expandPath(path);
+            tree.scrollPathToVisible(path);
+        };
+        if (source.loaded) {
+            tree.expandPath(new TreePath(source.getPath()));
+            select.run();
+        } else {
+            source.then = select;
+            tree.expandPath(new TreePath(source.getPath()));
+        }
+    }
+
+    private static Node child(Node parent, java.util.function.Predicate<Item> match) {
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            if (parent.getChildAt(i) instanceof Node node && match.test(node.item())) {
+                return node;
+            }
+        }
+        return null;
+    }
+
     /** Umfang der ersten gewählten Zeile: Quelle, Space oder der Space einer Seite; ohne Auswahl alle. */
     public Scope scope() {
         List<Scope> scopes = scopes();
@@ -391,8 +424,14 @@ public final class Explorer {
             node.removeAllChildren();
             append(node, batch);
             model.nodeStructureChanged(node);
+            Runnable then = node.then;
+            node.then = null;
+            if (then != null) {
+                then.run();
+            }
         }, error -> {
             node.loading = false;
+            node.then = null;
             node.removeAllChildren();
             node.add(new Node(new Note("Nicht geladen: " + Problems.describe(error).title())));
             model.nodeStructureChanged(node);

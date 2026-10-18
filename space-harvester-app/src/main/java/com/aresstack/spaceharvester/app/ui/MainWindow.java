@@ -283,6 +283,7 @@ public final class MainWindow implements AppContext.Navigator {
     public void openSpace(String sourceId, String spaceKey) {
         show(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
+        explorer.reveal(sourceId, spaceKey);
     }
 
     @Override
