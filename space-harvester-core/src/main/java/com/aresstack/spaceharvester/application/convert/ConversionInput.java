@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.convert;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /** Was ein Converter lesen darf: genau die exportierten Seiten einer Cache-Generation und ihren ID-Baum. */
@@ -41,6 +42,16 @@ public interface ConversionInput {
      */
     default ExportAssets assets() {
         return ExportAssets.NONE;
+    }
+
+    /**
+     * Die beim Herunterladen abgelegte Lese-Ansicht einer Seite ({@link ExportReadingView}, #218), mit dem Inhalt
+     * ausgeführter Makros. Leer, solange keine abgelegt ist (ältere Datenbestände, Beschaffung läuft noch). Ohne
+     * verfügbare Ansicht melden Converter eingebundene Inhalte als {@link ConversionNotice.Kind#OMITTED_CONTENT}.
+     * Converter lesen sie nur hier, nie von der Quelle.
+     */
+    default Optional<ExportReadingView> readingView(String pageId) {
+        return Optional.empty();
     }
 
     /**

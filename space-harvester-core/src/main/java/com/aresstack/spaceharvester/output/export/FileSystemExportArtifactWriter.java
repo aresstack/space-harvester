@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.output.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.export.Conversion;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
@@ -63,6 +64,8 @@ import tools.jackson.databind.json.JsonMapper;
  *       Herkunft konvertierter Dateien ({@code conversions})</li>
  *   <li>{@code assets.json}: die Bilder des Datenbestands ({@link ExportAssetManifest}), sobald sie beschafft sind;
  *       die Bytes liegen im Asset-Speicher</li>
+ *   <li>{@code views/}: die Lese-Ansicht jeder Seite ({@link ExportReadingView}, #218), sobald beschafft; Dateiname
+ *       wie unter {@code raw/}</li>
  *   <li>konvertierte Dateien der angefragten Formate (#30), etwa {@code pages.json} oder {@code pages.md}</li>
  * </ul>
  *
@@ -79,6 +82,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String MANIFEST = "manifest.json";
     static final String ASSETS = "assets.json";
     static final String RAW = "raw";
+    static final String VIEWS = "views";
     static final String INCOMPLETE = ".incomplete";
 
     private static final Pattern SAFE_EXPORT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9-]{0,99}");
@@ -249,6 +253,59 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     }
 
     @Override
+    public void putReadingView(String exportId, ExportReadingView view) {
+        requireSafe(exportId);
+        Path dir = root.resolve(exportId);
+        if (!Files.isRegularFile(dir.resolve(MANIFEST))) {
+            throw new IllegalStateException("Export " + exportId + " ist nicht veröffentlicht");
+        }
+        Path file = dir.resolve(viewFileName(view.pageId()));
+        Path part = file.resolveSibling(file.getFileName() + ".part");
+        try {
+            Files.createDirectories(file.getParent());
+            try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
+                generator.writeStartObject();
+                generator.writeStringProperty("format", ExportReadingView.FORMAT);
+                generator.writeStringProperty("pageId", view.pageId());
+                generator.writeStringProperty("version", view.version());
+                generator.writeStringProperty("status", view.status().name());
+                generator.writeStringProperty("reason", view.reason());
+                generator.writeStringProperty("html", view.html());
+                generator.writeStringProperty("baseUri", view.baseUri());
+                generator.writeStringProperty("text", view.text());
+                generator.writeEndObject();
+            }
+            try {
+                Files.move(part, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(part, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Lese-Ansicht des Exports " + exportId + " nicht schreibbar", e);
+        }
+    }
+
+    /** Liest eine abgelegte Lese-Ansicht; leer, wenn keine da ist oder sie nicht zu dieser Seite gehört. */
+    static Optional<ExportReadingView> readReadingView(Path dir, String pageId, JsonMapper json) {
+        Path file = dir.resolve(viewFileName(pageId));
+        if (!Files.isRegularFile(file)) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode node = json.readTree(file.toFile());
+            if (!ExportReadingView.FORMAT.equals(node.path("format").asString())
+                    || !pageId.equals(node.path("pageId").asString())) {
+                return Optional.empty();
+            }
+            return Optional.of(new ExportReadingView(pageId, optional(node, "version"),
+                    ExportReadingView.Status.valueOf(node.path("status").asString()), optional(node, "reason"),
+                    node.path("html").asString(), node.path("baseUri").asString(), node.path("text").asString()));
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
     public Optional<ExportAssetManifest> assets(String exportId) {
         if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
             return Optional.empty();
@@ -397,6 +454,11 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
                 ? pageId
                 : "id-" + sha256Hex(pageId.getBytes(StandardCharsets.UTF_8)).substring(0, 40);
         return base + ("application/json".equals(mediaType) ? ".json" : ".bin");
+    }
+
+    /** Datei der Lese-Ansicht einer Seite innerhalb von {@code views/}; eindeutig je Seiten-ID. */
+    static String viewFileName(String pageId) {
+        return VIEWS + "/" + rawFileName(pageId, "application/json");
     }
 
     private static void requireSafe(String exportId) {

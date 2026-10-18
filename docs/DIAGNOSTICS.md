@@ -107,4 +107,7 @@ Bild-, Vektor- und Diagramm-Anhänge, Bilder der Lese-Ansicht, die kein Anhang s
 `discovered` zählt gefundene Bilder, `processed` geprüfte, `written` abgelegte (auch bereits vorhandene), `failed`
 fehlende. Das Ergebnis steht in `assets.json` des Exports (Format `space-harvester/export-assets/v1`, je Eintrag Seite,
 Referenz, Version, Größe, `sha256`, Status `STORED`/`MISSING`/`FORBIDDEN`/`TOO_LARGE`/`UNAVAILABLE` und Grund); die Bytes
-liegen im Asset-Speicher. Der Export wartet nicht darauf.
+liegen im Asset-Speicher. Diagramme (draw.io, Mermaid) werden dabei einmal gezeichnet (`rendition`, #190). Derselbe
+Auftrag legt die Lese-Ansicht jeder Seite unter `views/` ab (#218, Format `space-harvester/export-reading-view/v1`,
+Status `AVAILABLE`/`RESTRICTED`/`UNSUPPORTED`/`UNAVAILABLE`); nur zur exportierten Version, und bei eingebundenen
+fremden Inhalten nur mit Freigabe der ganzen Quelle. Der Export wartet nicht darauf.

@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.output.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.convert.SpaceNames;
 import com.aresstack.spaceharvester.application.export.ExportDatasetDamagedException;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
@@ -25,6 +26,8 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
 import tools.jackson.databind.JsonNode;
@@ -44,19 +47,21 @@ final class ExportDataset implements ConversionInput {
     private final String spaceKey;
     private final PageTree tree;
     private final Map<String, Entry> pages;
+    private final JsonMapper json;
 
     private record Entry(PageHeader header, String file, String mediaType, String nativeFormat, String sha256,
                          String revision, Instant retrievedAt) {
     }
 
     private ExportDataset(String exportId, Path directory, String sourceId, String spaceKey, PageTree tree,
-                          Map<String, Entry> pages) {
+                          Map<String, Entry> pages, JsonMapper json) {
         this.exportId = exportId;
         this.directory = directory;
         this.sourceId = sourceId;
         this.spaceKey = spaceKey;
         this.tree = tree;
         this.pages = pages;
+        this.json = json;
     }
 
     static ExportDataset open(String exportId, Path directory, JsonMapper json) {
@@ -89,7 +94,7 @@ final class ExportDataset implements ConversionInput {
             String sourceId = manifest.path("sourceId").asString();
             String spaceKey = manifest.path("spaceKey").asString();
             return new ExportDataset(exportId, directory, sourceId, spaceKey,
-                    new PageTree(roots, List.of(), stats[0], stats[1]), pages);
+                    new PageTree(roots, List.of(), stats[0], stats[1]), pages, json);
         } catch (IOException | UncheckedIOException e) {
             // Eine Datei des Datenbestands fehlt oder ist nicht lesbar.
             throw new ExportDatasetDamagedException(exportId, "Datei des Datenbestands fehlt oder ist nicht lesbar");
@@ -166,6 +171,17 @@ final class ExportDataset implements ConversionInput {
     public void forEachPage(Consumer<ConvertiblePage> action) {
         walk(tree.roots(), 0, (pageId, depth) -> action.accept(new ConvertiblePage(pages.get(pageId).header(),
                 snapshot(pages.get(pageId)), depth)));
+    }
+
+    @Override
+    public Optional<ExportReadingView> readingView(String pageId) {
+        Entry entry = pages.get(pageId);
+        if (entry == null) {
+            return Optional.empty();
+        }
+        // Nur die Ansicht zur exportierten Version; eine ältere oder neuere fehlt.
+        return FileSystemExportArtifactWriter.readReadingView(directory, pageId, json)
+                .filter(view -> Objects.equals(view.version(), entry.revision()));
     }
 
     private PageSnapshot snapshot(Entry entry) {

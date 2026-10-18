@@ -5,9 +5,11 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
+import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
@@ -153,6 +155,21 @@ class ExportAssetCollectionTest {
                 PNG[2], PNG[3]));
         assertThat(stored.content(manifest.forPage("101").get(0))).isEmpty();
         assertThat(source.downloads).isEqualTo(downloads);
+
+        // Die Lese-Ansicht liegt im Datenbestand, nur zur exportierten Version (#218).
+        ConversionInput dataset = writer.dataset(export.id()).orElseThrow();
+        assertThat(dataset.readingView("100")).hasValueSatisfying(reading -> {
+            assertThat(reading.available()).isTrue();
+            assertThat(reading.version()).isEqualTo("3");
+            assertThat(reading.html()).contains("Eingebunden");
+            assertThat(reading.text()).isEqualTo("Bild Eingebunden");
+        });
+        assertThat(dataset.readingView("101")).hasValueSatisfying(reading -> {
+            assertThat(reading.status()).isEqualTo(ExportReadingView.Status.UNAVAILABLE);
+            assertThat(reading.reason()).isEqualTo("page-changed");
+            assertThat(reading.text()).isEmpty();
+        });
+        assertThat(dataset.readingView("999")).isEmpty();
     }
 
     @Test
@@ -162,9 +179,17 @@ class ExportAssetCollectionTest {
             assertThat(entry.reason()).isEqualTo("foreign-content");
         }).hasSize(2);
         assertThat(source.downloads).isZero();
+        // Ohne Freigabe der ganzen Quelle bleibt auch die Ansicht ohne Inhalt.
+        assertThat(foreignView).hasValueSatisfying(view -> {
+            assertThat(view.status()).isEqualTo(ExportReadingView.Status.RESTRICTED);
+            assertThat(view.html()).isEmpty();
+        });
 
         assertThat(foreignImages(true)).allSatisfy(entry -> assertThat(entry.stored()).isTrue()).hasSize(2);
+        assertThat(foreignView).hasValueSatisfying(view -> assertThat(view.text()).isEqualTo("Geheimer Text"));
     }
+
+    private Optional<ExportReadingView> foreignView;
 
     /** Seite 102 bindet eine andere Seite ein; ihre Ansicht zeigt einen fremden Anhang und ein gerendertes Bild. */
     private List<ExportAssetManifest.Entry> foreignImages(boolean sourceWide) {
@@ -194,6 +219,7 @@ class ExportAssetCollectionTest {
                 page("confluence", "DEV", "102", null, include.getBytes(StandardCharsets.UTF_8))));
         JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
         drain();
+        foreignView = writer.dataset(export.id()).orElseThrow().readingView("102");
         return writer.assets(export.id()).orElseThrow().forPage("102");
     }
 
@@ -273,6 +299,17 @@ class ExportAssetCollectionTest {
             return List.of(new ViewImage("https://wiki.example.org/download/attachments/100/bild.png", "bild.png",
                     "att1", "image/png", "1"), new ViewImage("https://wiki.example.org/plugins/servlet/mermaid/1.png",
                     "Diagramm", null, null, null));
+        }
+
+        /** 100: Ansicht mit eingebundenem Inhalt; 101 hat sich seit dem Export geändert. */
+        @Override
+        public ReadingPage readingPage(String pageId) {
+            return switch (pageId) {
+                case "100" -> new ReadingPage("3", "<p>Bild</p><div>Eingebunden</div>", "https://wiki.example.org",
+                        "Bild Eingebunden", viewImages(pageId));
+                case "101" -> new ReadingPage("4", "<p>neu</p>", "", "neu", viewImages(pageId));
+                default -> new ReadingPage("3", "<div>Geheimer Text</div>", "", "Geheimer Text", viewImages(pageId));
+            };
         }
 
         @Override
