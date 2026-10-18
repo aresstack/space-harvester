@@ -88,7 +88,7 @@ class ConfigurationManagerConfiguration {
     /** Schlüssel, die {@link SyncProperties} nicht kennt und der Core selbst liest. */
     private static final List<String> SYNC_KEYS = List.of(SyncSettings.EVENTS, SyncSettings.BEFORE_SEARCH,
             SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE, SyncSettings.INVENTORY_INTERVAL,
-            SearchSettings.CACHE_REFRESH_STRATEGY);
+            SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM, SearchSettings.CACHE_REFRESH_STRATEGY);
 
     /**
      * Ergänzt Änderungsquellen, Betriebsart, Bestandsinventur, Aktualisierungsstrategie und die Regeln je Quelle
