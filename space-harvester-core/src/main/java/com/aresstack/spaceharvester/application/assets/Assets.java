@@ -202,6 +202,71 @@ public class Assets {
         return new AssetContent(asset, content);
     }
 
+    /**
+     * Das draw.io-Diagramm hinter einem Bild der Lese-Ansicht als PNG (#190): Ist {@code image} die Vorschau, die das
+     * Plugin neben einem Diagramm-Anhang der Seite ablegt ({@link Diagrams#isDrawioPreview}), wird das Diagramm aus
+     * seinen Quelldaten gezeichnet ({@link #DRAWIO_PNG_RENDITION}, einmal je Quelldaten abgelegt). Die Quelldaten
+     * kommen aus der Ablage oder wie bei {@link #viewImage} über die Quelle.
+     *
+     * @param pageVersion wie bei {@link #viewImage}; die Grafik hängt nur an den Quelldaten
+     * @return leer, wenn das Bild keine solche Vorschau ist oder das Diagramm nicht darstellbar; dann gilt das Bild selbst
+     * @throws SourceAccessException  beim Laden der Anhangsliste oder der Quelldaten, wie {@link #viewImage}
+     * @throws AssetTooLargeException wenn die Quelldaten die Grenze überschreiten
+     */
+    public Optional<AssetContent> viewDiagram(String sourceId, String pageId, String pageVersion,
+                                              HarvestSource.ViewImage image) {
+        String filename = viewFileName(image);
+        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png")) {
+            return Optional.empty();
+        }
+        HarvestSource source = source(sourceId);
+        PageAttachment diagram = null;
+        for (PageAttachment attachment : source.attachments(pageId).attachments()) {
+            if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
+                    && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
+                diagram = attachment;
+                break;
+            }
+        }
+        if (diagram == null) {
+            return Optional.empty();
+        }
+        PageAttachment found = diagram;
+        byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+                .orElseGet(() -> download(source, pageId, found).content());
+        Rendered rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
+        if (rendered.asset() == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new AssetContent(rendered.asset(), store.read(rendered.asset())));
+    }
+
+    /**
+     * Der Dateiname eines Bildes der Lese-Ansicht: der letzte Pfadteil der Adresse (Confluence setzt als Titel die
+     * Beschriftung des Diagramms, die Adresse endet auf {@code <Name>.png}), sonst sein Titel.
+     */
+    public static String viewFileName(HarvestSource.ViewImage image) {
+        String src = image.src() == null ? "" : image.src();
+        int end = src.length();
+        for (char c : new char[] {'?', '#'}) {
+            int at = src.indexOf(c);
+            if (at >= 0) {
+                end = Math.min(end, at);
+            }
+        }
+        String path = src.substring(0, end);
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        try {
+            name = java.net.URLDecoder.decode(name.replace("+", "%2B"), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            // unvollständige Kodierung: der Name bleibt, wie er ist
+        }
+        if (!name.isBlank()) {
+            return name;
+        }
+        return image.title() == null ? "" : image.title();
+    }
+
     /** Die Lese-Ansicht einer Seite mit Lesetext und Bildern ({@link HarvestSource#readingPage}); lädt keine Bytes. */
     public HarvestSource.ReadingPage readingPage(String sourceId, String pageId) {
         return source(sourceId).readingPage(pageId);
@@ -236,6 +301,8 @@ public class Assets {
 
     /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
     public static final String DRAWIO_RENDITION = "drawio-svg-1";
+    /** Version der draw.io-Grafik als PNG für die Lese-Ansicht ({@link #viewDiagram}). */
+    public static final String DRAWIO_PNG_RENDITION = "drawio-png-1";
     /** Version der Mermaid-Grafik im Speicher. */
     public static final String MERMAID_RENDITION = "mermaid-png-1";
 
@@ -244,7 +311,7 @@ public class Assets {
      * {@link #renditionId} seiner Quelldaten abgelegt; dieselben Quelldaten werden nie erneut gezeichnet. Ruft nie die
      * Quelle.
      *
-     * @param renderer     {@link #DRAWIO_RENDITION} oder {@link #MERMAID_RENDITION}
+     * @param renderer     {@link #DRAWIO_RENDITION}, {@link #DRAWIO_PNG_RENDITION} oder {@link #MERMAID_RENDITION}
      * @param source       Quelldaten ({@code mxfile} oder Mermaid-Text in UTF-8)
      * @return die abgelegte Grafik oder warum es keine gibt
      */
@@ -257,6 +324,7 @@ public class Assets {
         }
         Diagrams.Rendering rendering = switch (renderer) {
             case DRAWIO_RENDITION -> Diagrams.drawio(source);
+            case DRAWIO_PNG_RENDITION -> Diagrams.drawioPng(source);
             case MERMAID_RENDITION -> Diagrams.mermaid(new String(source, java.nio.charset.StandardCharsets.UTF_8));
             default -> throw new IllegalArgumentException("Unbekannter Renderer " + renderer);
         };

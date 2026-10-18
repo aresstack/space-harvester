@@ -320,6 +320,47 @@ class AssetsTest {
         }
     }
 
+    @Test
+    void theDrawioPreviewOfTheReadingViewBecomesThePngOfTheDiagram() {
+        Assets assets = assets(100_000);
+        String mxfile = "<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+                + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+                + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+                + "</root></mxGraphModel></diagram></mxfile>";
+        source.file("att-d", "2", mxfile);
+        source.listed.add(attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "2"));
+        source.listed.add(attachment("att-p", "ablauf.png", "image/png", "2"));
+        // Confluence setzt als Titel die Beschriftung, die Adresse endet auf den Dateinamen der Vorschau.
+        HarvestSource.ViewImage preview = new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png?version=2", "Ablauf (Übersicht)", null,
+                "image/png", null);
+
+        Assets.AssetContent png = assets.viewDiagram("wiki", "101", "7", preview).orElseThrow();
+
+        assertThat(png.asset().mediaType()).isEqualTo("image/png");
+        assertThat(png.asset().version()).isEqualTo(Assets.DRAWIO_PNG_RENDITION);
+        assertThat(png.content()).startsWith((byte) 0x89, (byte) 'P', (byte) 'N', (byte) 'G');
+        // Einmal gezeichnet und abgelegt: kein zweiter Download der Quelldaten, dieselbe Grafik.
+        assertThat(assets.viewDiagram("wiki", "101", "7", preview).orElseThrow().asset().sha256())
+                .isEqualTo(png.asset().sha256());
+        assertThat(source.downloads).isEqualTo(1);
+        // Ein anderes Bild der Ansicht ist keine Vorschau: die App zeigt es selbst.
+        assertThat(assets.viewDiagram("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/foto.png", "Foto", null, "image/png", null)))
+                .isEmpty();
+    }
+
+    @Test
+    void anUndrawableDiagramLeavesThePreview() {
+        Assets assets = assets(100_000);
+        source.file("att-d", "1", "kein xml");
+        source.listed.add(attachment("att-d", "ablauf.drawio", "application/vnd.jgraph.mxfile", "1"));
+
+        assertThat(assets.viewDiagram("wiki", "101", "7", new HarvestSource.ViewImage(
+                "https://wiki.example.org/download/attachments/101/ablauf.png", "Ablauf", null, "image/png", null)))
+                .isEmpty();
+    }
+
     private static PageAttachment attachment(String id, String title, String mediaType, String version) {
         return new PageAttachment(id, "test:wiki/attachment/" + id, title, mediaType, null, version, null, null);
     }
@@ -334,6 +375,13 @@ class AssetsTest {
         private final Map<String, Object> files = new HashMap<>();
         int downloads;
         final List<Long> limits = new ArrayList<>();
+        final List<PageAttachment> listed = new ArrayList<>();
+
+        @Override
+        public PageAttachments attachments(String pageId) {
+            return new PageAttachments(pageId, List.copyOf(listed), List.of(), "application/json", "test", List.of(),
+                    NOW);
+        }
 
         void file(String id, String version, String content) {
             files.put(id + "#content", content);
