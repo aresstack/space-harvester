@@ -83,6 +83,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   heißt bis dahin `stale`. Ein nicht prüfbarer Kandidat fehlt, und die Antwort trägt `complete: false`.
 - Reihenfolge: Kosinusähnlichkeit der Anfrage zum ähnlichsten Abschnitt jeder Seite (`reranker:
   embedding-cosine@<Prozessorversion>`); Treffer ohne Ähnlichkeit folgen in ihrer Reihenfolge.
+- Hybrid (#181): Der Volltextindex über den Cache (#180, BM25 über Titel und Text) liefert weitere Kandidaten; sie
+  brauchen `content`, denn ihr Rang stammt aus dem Inhalt. Gibt es Volltexttreffer im Fenster, entsteht die Reihenfolge
+  per Reciprocal Rank Fusion (k = 60, gleiche Gewichte, wie `ReciprocalRankFusion` im Enterprise AI Client) aus der
+  Volltext- und der Kosinus-Rangfolge (`reranker: rrf(fulltext,embedding-cosine@<Prozessorversion>)`); Treffer ohne
+  beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch.
 - Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
   Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
   Kopfdaten; es wird beim nächsten Abgleich neu berechnet.

@@ -11,17 +11,19 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
-import com.aresstack.spaceharvester.application.query.SearchScope;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
+import com.aresstack.spaceharvester.application.query.SearchScope;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.util.ArrayList;
@@ -56,6 +58,12 @@ import java.util.concurrent.Semaphore;
  * <p>Suche nach Relevanz ({@code sort=relevance}, #89, ADR 0004): ein Fenster von höchstens {@value Reranking#MAX_WINDOW}
  * freigegebenen Kandidaten aus Vektorsuche und Titelsuche, umgeordnet nach der Kosinusähnlichkeit der Anfrage zu den
  * gespeicherten Embeddings.
+ *
+ * <p>Hybride Suche (#181): Mit dem Volltextindex über den Cache (#180) kommen dessen Treffer (BM25 über Titel und
+ * Text) als weitere Kandidaten hinzu, und die Reihenfolge entsteht per {@link ReciprocalRankFusion} aus der
+ * Rangfolge des Volltexts und der nach Kosinusähnlichkeit, wie im Enterprise AI Client. Ein Volltexttreffer braucht
+ * {@link AccessKind#CONTENT}, denn sein Rang stammt aus dem Inhalt. Ohne Volltexttreffer bleibt es bei der
+ * Kosinus-Reihenfolge. Ein Ausfall des Volltextindex lässt die Suche nicht scheitern, sie ist dann rein semantisch.
  *
  * <p>Umfang (#114): mit {@code sourceId} eine Quelle, ohne alle Quellen, die der Aufrufer sehen darf
  * ({@link SearchScope}), mit derselben Fehlersemantik wie {@code PageSearch}. Global gibt es genau eine Einbettung der
@@ -106,6 +114,7 @@ public class RelevanceSearch {
     private final EmbeddingProcessor embedding;
     private final Renewal renewal;
     private final SearchReranker reranker;
+    private final PageTextIndex texts;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -140,6 +149,18 @@ public class RelevanceSearch {
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, null);
+    }
+
+    /**
+     * Hybrid (#181): zusätzlich mit dem Volltextindex über den Cache.
+     *
+     * @param texts Volltextindex oder {@code null}, dann nur Titel- und Vektorkandidaten
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts) {
+        this.texts = texts;
         this.renewal = renewal;
         this.reranker = Objects.requireNonNull(reranker, "reranker");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -195,7 +216,8 @@ public class RelevanceSearch {
         List<SearchHit> semantic = semanticCandidates(caller, query, scope, state, vector);
         List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of()
                 : lexicalCandidates(caller, query, scope, state);
-        List<SearchHit> window = interleave(semantic, lexical);
+        List<SearchHit> fullText = fullTextCandidates(caller, query, scope, state, queryText);
+        List<SearchHit> window = interleave(interleave(semantic, fullText), lexical);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
@@ -211,6 +233,16 @@ public class RelevanceSearch {
         Reranking reranking = new Reranking(reranker);
         List<SearchHit> ordered = reranking.apply(query, window);
         String rerankerId = reranking.rerankerId();
+        Set<PageKey> inWindow = new LinkedHashSet<>();
+        window.forEach(hit -> inWindow.add(hit.page().header().key()));
+        List<SearchHit> ranked = fullText.stream().filter(hit -> inWindow.contains(hit.page().header().key()))
+                .toList();
+        if (!ranked.isEmpty()) {
+            // #181: Rangfolgen von Volltext und Kosinus per RRF, Treffer ohne Rang dahinter.
+            List<SearchHit> bySimilarity = ordered.stream().filter(scores::containsKey).toList();
+            ordered = ReciprocalRankFusion.fuse(ordered, List.of(ranked, bySimilarity));
+            rerankerId = "rrf(fulltext," + rerankerId + ")";
+        }
         if (this.reranker != SearchReranker.NONE) {
             Reranking custom = new Reranking(this.reranker);
             ordered = custom.apply(query, ordered);
@@ -379,6 +411,42 @@ public class RelevanceSearch {
                 continue;
             }
             PageSearchQuery single = query.with(page.sourceId(), page.pageId(), SearchSort.PAGE_ID);
+            for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
+                if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
+                    found.add(hit);
+                }
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Seiten des Volltextindex in BM25-Reihenfolge, gefiltert nach Anfrage und Rechten ({@code content}, denn der Rang
+     * stammt aus dem Inhalt). Ein Ausfall des Index liefert keine Kandidaten statt eines Fehlers.
+     */
+    private List<SearchHit> fullTextCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
+                                               SearchIndexState state, String text) {
+        if (texts == null) {
+            return List.of();
+        }
+        List<PageTextIndex.Match> matches;
+        try {
+            matches = texts.search(text, scope.sourceIds(), new SearchSpaces(query.spaceKeys(), Set.of()),
+                    Reranking.MAX_WINDOW);
+        } catch (RuntimeException e) {
+            // Kein Anfragetext im Log.
+            LOG.log(System.Logger.Level.INFO, "Volltextindex für die Relevanzsuche nicht lesbar ({0})",
+                    e.getClass().getName());
+            return List.of();
+        }
+        List<SearchHit> found = new ArrayList<>();
+        for (PageTextIndex.Match match : matches) {
+            if (!scope.sourceIds().contains(match.sourceId())
+                    || query.sourceId() != null && !query.sourceId().equals(match.sourceId())
+                    || query.pageId() != null && !query.pageId().equals(match.pageId())) {
+                continue;
+            }
+            PageSearchQuery single = query.with(match.sourceId(), match.pageId(), SearchSort.PAGE_ID);
             for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
                 if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
                     found.add(hit);

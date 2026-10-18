@@ -254,7 +254,7 @@ public final class Harvester implements AutoCloseable {
                 renewal = new PageRenewal(pages, renewals);
             }
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, builder.reranker);
+                    renewal, builder.reranker, textIndex);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
