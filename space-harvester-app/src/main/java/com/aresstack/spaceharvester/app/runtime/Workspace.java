@@ -176,6 +176,15 @@ public final class Workspace {
     }
 
     /**
+     * Der Stand der Hintergrundbefüllung (ADR 0016); leer, solange der Core keinen Beschaffungsplaner meldet.
+     * Blockiert nicht, darf aber nicht auf dem EDT gerufen werden.
+     */
+    public java.util.Optional<Acquisition> acquisition() {
+        // Der Beschaffungsplaner des Core (harvester.acquisitionStatus()) ist noch nicht auf main.
+        return java.util.Optional.empty();
+    }
+
+    /**
      * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
      * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
      */
