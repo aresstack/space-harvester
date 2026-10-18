@@ -175,13 +175,9 @@ public final class Workspace {
         return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
-    /**
-     * Der Stand der Hintergrundbefüllung (ADR 0016); leer, solange der Core keinen Beschaffungsplaner meldet.
-     * Blockiert nicht, darf aber nicht auf dem EDT gerufen werden.
-     */
+    /** Der Stand der Hintergrundbefüllung (ADR 0016, {@code Harvester.acquisitionStatus}); nicht auf dem EDT. */
     public java.util.Optional<Acquisition> acquisition() {
-        // Der Beschaffungsplaner des Core (harvester.acquisitionStatus()) ist noch nicht auf main.
-        return java.util.Optional.empty();
+        return java.util.Optional.of(Acquisition.of(harvester.acquisitionStatus()));
     }
 
     /**
