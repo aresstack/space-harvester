@@ -28,11 +28,15 @@ import java.awt.Component;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Aufträge: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
@@ -67,8 +71,9 @@ public final class ActivitiesView implements View {
     /** Datenbestand, den die Karte gerade zeigt; die Formatwahl bleibt beim Auffrischen erhalten. */
     private ExportDatasetInfo shownDataset;
     /** Letzte Rückmeldung von „Exportieren“ je Download; sie bleibt stehen, während die Ansicht auffrischt. */
-    private String convertedFor;
-    private java.util.function.Consumer<Feedback> converted;
+    private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
+    /** Downloads, deren Konvertierung gerade läuft; ihr Knopf bleibt gesperrt. */
+    private final Set<String> converting = new HashSet<>();
     private final ComposerButton content = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
     private final ComposerButton diagnosis = Comic.button("Diagnose ansehen", "Unter Status: Phasen, Fehlercode, "
             + "HTTP-Status, Proxy-Route, TLS-Befund und Ausnahmekette dieses Auftrags");
@@ -211,9 +216,12 @@ public final class ActivitiesView implements View {
             model.set(jobs);
             deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
             reselect();
-            detail = data[1];
-            phase = (String) data[2];
-            render();
+            // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
+            if (java.util.Objects.equals(id, selectedId)) {
+                detail = data[1];
+                phase = (String) data[2];
+                render();
+            }
             boolean active = jobs.stream().anyMatch(j -> !j.state().terminal());
             if (!active && !root.isShowing()) {
                 timer.stop();
@@ -228,6 +236,8 @@ public final class ActivitiesView implements View {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
+            // Die Karte gehört zum bisherigen Auftrag: sofort ausblenden, nicht erst nach dem nächsten Abruf.
+            renderCard();
             feedback.clear();
             poll();
         }
@@ -364,8 +374,9 @@ public final class ActivitiesView implements View {
                     .add("Bilder", images(dataset.images()), dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
                             ? Comic.RED : Comic.INK);
         }
-        if (converted != null && export.status().id().equals(convertedFor)) {
-            converted.accept(feedback);
+        Consumer<Feedback> conversion = converted.get(export.status().id());
+        if (conversion != null) {
+            conversion.accept(feedback);
         } else if (artifact.complete()) {
             feedback.success("Download vollständig");
         } else {
@@ -412,31 +423,39 @@ public final class ActivitiesView implements View {
             format.removeAllItems();
             Format.ordered(dataset.formats()).forEach(format::addItem);
         }
-        exportAs.setEnabled(format.getItemCount() > 0);
+        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(dataset.exportId()));
     }
 
     private void exportAs() {
         AppRuntime runtime = context.runtime();
         Format chosen = (Format) format.getSelectedItem();
-        if (runtime == null || chosen == null || shownDataset == null || context.settings() == null) {
+        if (runtime == null || chosen == null || shownDataset == null || context.settings() == null
+                || !shownDataset.exportId().equals(selectedId)) {
             return;
         }
         String exportId = shownDataset.exportId();
+        if (!converting.add(exportId)) {
+            return;
+        }
         Path directory = context.settings().outputDirectory();
         exportAs.setEnabled(false);
         showConverted(exportId, f -> f.working(chosen.title() + " wird erzeugt …"));
         Background.run(() -> runtime.workspace().convertExport(exportId, chosen.id(), directory), file -> {
-            exportAs.setEnabled(true);
+            converting.remove(exportId);
             showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)));
         }, error -> {
-            exportAs.setEnabled(true);
+            converting.remove(exportId);
             showConverted(exportId, f -> f.problem(error));
         });
     }
 
-    private void showConverted(String exportId, java.util.function.Consumer<Feedback> show) {
-        convertedFor = exportId;
-        converted = show;
+    /** Merkt die Rückmeldung für ihren Download und zeigt sie nur, wenn die Karte gerade diesen Download zeigt. */
+    private void showConverted(String exportId, Consumer<Feedback> show) {
+        converted.put(exportId, show);
+        if (shownDataset == null || !shownDataset.exportId().equals(exportId)) {
+            return;
+        }
+        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(exportId));
         show.accept(feedback);
     }
 
