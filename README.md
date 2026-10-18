@@ -472,11 +472,16 @@ diese Einstellungen ändert sich nichts ([docs/EMBEDDINGS.md](docs/EMBEDDINGS.md
 
 **Schlagwortsuche ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 9):** Mit `text` sucht
 der Harvester in jeder Quelle, die selbst suchen kann (Confluence: CQL `siteSearch` über `/rest/api/search` wie die
-Websuche, also Titel und Inhalt), und führt die Treffer reihum zusammen (`origin: source`). Er lädt keine Seiten und
-legt nichts ab; den Inhalt beschafft erst das Öffnen einer Seite. Jeder Treffer trägt Titel, Textauszug (`snippet`),
+Websuche, also Titel und Inhalt), und führt die Treffer reihum zusammen (`origin: source`). Die Suche selbst lädt
+keine Seiten; sichtbare Treffer, deren Version nicht im Cache liegt (höchstens 10 je Stapel), lädt danach ein begrenzter
+Hintergrund mit den Rechten des Aufrufers in den Cache (#180, nicht für delegierte Benutzer; im Core abschaltbar mit
+`Harvester.builder().prefetchSearchHits(false)`). Quellen ohne eigene Suche (lokale Dateien) sucht der Volltextindex
+über ihre Seiten im Cache (BM25 über Titel und Lesetext, Auszug als Textfenster, Verzeichnis `text/` neben dem
+Cache); sie stehen dann als `indexed` in `sources`, ohne Cache als `not-supported`. Solche Treffer verlangen zusätzlich
+`content` für die Seite, weil Fundstelle und Auszug aus dem Inhalt stammen. Jeder Treffer trägt Titel, Textauszug (`snippet`),
 `url`, Version, Quelle und Space; vorher liest der Harvester die Kopfdaten der Seite live und prüft an ihnen
 `metadata` für genau diese Seite. `nextCursor` lädt weitere Treffer (höchstens 1000 je Quelle). `sources` nennt je
-Quelle `searched`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
+Quelle `searched`, `indexed`, `not-supported` oder `unavailable`; eine nicht erreichbare Quelle verwirft die anderen nicht, und
 `complete` ist dann `false`. Keine semantische Suche. `spaceKey` (nur diese Spaces) und `excludeSpaceKey` (ohne diese,
 wiederholbar) gehen wie im Enterprise AI Client als `space not in (…)` in die CQL (#179), damit Treffer anderer Spaces
 die gesuchten nicht verdrängen. Eine Auswahl wird als Ausschluss aller übrigen Spaces gesetzt (Spaceliste 60 s gemerkt),

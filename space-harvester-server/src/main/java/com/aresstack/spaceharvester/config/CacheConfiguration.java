@@ -4,13 +4,18 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.jobs.JobStore;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -38,6 +43,8 @@ class CacheConfiguration {
     static final String JOB_EVENTS = "job-events";
     /** Unterverzeichnis der Anreicherungen (#29). */
     static final String ENRICHMENTS = "enrichments";
+    /** Unterverzeichnis des Volltextindex (#180). */
+    static final String TEXT = "text";
 
     @Bean(destroyMethod = "close")
     LucenePageCache pageCache(CacheProperties properties) {
@@ -60,10 +67,24 @@ class CacheConfiguration {
      * Abgleich.
      */
     @Bean
-    PageCacheFill pageCacheFill(LucenePageCache pageCache, ObjectProvider<Enrichments> enrichments) {
+    PageCacheFill pageCacheFill(LucenePageCache pageCache, ObjectProvider<Enrichments> enrichments,
+                                PageTextIndexing texts) {
         PageCacheFill store = PageCacheFill.of(pageCache::state, pageCache::trySave);
         Enrichments available = enrichments.getIfAvailable();
-        return available == null ? store : new EnrichingCacheFill(store, available);
+        return available == null ? store : new EnrichingCacheFill(store, available, texts);
+    }
+
+    /** Volltextindex über den Cache (#180), abgeleitet und neu aufbaubar. */
+    @Bean(destroyMethod = "close")
+    LucenePageTextIndex pageTextIndex(CacheProperties properties) {
+        return LucenePageTextIndex.open(properties.directory().resolve(TEXT));
+    }
+
+    /** Hält den Volltextindex beim Ablegen und nach jedem Abgleich nach. */
+    @Bean
+    PageTextIndexing pageTextIndexing(LucenePageTextIndex index) {
+        return new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(), new LocalFilesTextProjector()),
+                index);
     }
 
     /** Titel- und Metadatensuche (#28) auf demselben Index. */

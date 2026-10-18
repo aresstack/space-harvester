@@ -73,7 +73,7 @@ class SearchViewTest {
         AbstractButton more = button(view[0].component(), "Weitere laden");
         await(() -> table.getRowCount() == 100);
         await(more::isEnabled);
-        assertThat(view[0].statusText()).contains("100 Treffer", "weitere vorhanden", "Dateien: keine eigene Suche")
+        assertThat(view[0].statusText()).contains("100 Treffer", "weitere vorhanden", "Dateien: Volltext im Cache")
                 .doesNotContain("unvollständig", "Bestand");
 
         SwingUtilities.invokeAndWait(more::doClick);

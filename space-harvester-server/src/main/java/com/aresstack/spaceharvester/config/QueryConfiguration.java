@@ -2,23 +2,27 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
-import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import java.time.Clock;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -69,10 +73,30 @@ class QueryConfiguration {
         return new PageSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access);
     }
 
-    /** Die Schlagwortsuche über die Suche der Quellen, ohne Nachladen (ADR 0010). */
+    /**
+     * Die Schlagwortsuche über die Suche der Quellen (ADR 0010); mit Cache sucht der Volltextindex für Quellen ohne
+     * eigene Suche, und sichtbare Live-Treffer werden im Hintergrund vorgeladen (#180).
+     */
     @Bean
-    KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access) {
-        return new KeywordSearch(catalog, access);
+    KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
+                                SearchHitPrefetch prefetch) {
+        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch);
+    }
+
+    /**
+     * Lädt sichtbare Live-Treffer der Schlagwortsuche begrenzt in den Cache (#180): ein Abruf zugleich, höchstens 100
+     * wartende; ohne Cache nichts. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
+     * verdrängt.
+     */
+    @Bean(destroyMethod = "close")
+    SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache, PageQueries pages) {
+        LucenePageCache available = cache.getIfAvailable();
+        if (available == null) {
+            return SearchHitPrefetch.disabled();
+        }
+        ExecutorService background = Enrichments.background(100);
+        return new SearchHitPrefetch(key -> available.findHeader(key).map(header -> header.metadata().version()),
+                new PageRenewal(pages, background)::renew, SearchHitPrefetch.stopping(background));
     }
 
     /**

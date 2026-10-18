@@ -61,7 +61,8 @@ class HarvesterSearchTest {
 
     @Test
     void findsContentInANeverSyncedSourceWithoutLoadingOrStoringPages() {
-        try (Harvester harvester = harvester(Harvester.builder())) {
+        // Ohne Vorladen (#180), das sichtbare Treffer sonst im Hintergrund in den Cache legt.
+        try (Harvester harvester = harvester(Harvester.builder().prefetchSearchHits(false))) {
             assertThat(harvester.sources().sources().getFirst().capabilities()).contains(SourceCapability.LIVE_SEARCH);
 
             KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),

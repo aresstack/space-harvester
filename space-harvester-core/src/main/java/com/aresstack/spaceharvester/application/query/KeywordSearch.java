@@ -19,6 +19,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,9 +38,9 @@ import java.util.regex.Pattern;
 /**
  * Die globale Schlagwortsuche: jede Quelle des Umfangs sucht selbst über Titel und Inhalt (Confluence: CQL
  * {@code siteSearch} über {@code /rest/api/search}, wie die Websuche), die Treffer werden zusammengeführt. Der Bestand
- * ist dafür weder Voraussetzung noch Ergebnis: die Suche lädt keine Seiteninhalte und legt nichts ab; den Inhalt
- * beschafft erst das Öffnen einer Seite ({@link PageQueries#page}). REST und Desktop-App nutzen genau diesen
- * Anwendungsfall.
+ * ist dafür nie Voraussetzung: die Suche selbst lädt keine Seiteninhalte und legt nichts ab; den Inhalt beschafft das
+ * Öffnen einer Seite ({@link PageQueries#page}) oder danach das Vorladen ({@link Prefetch}). REST und Desktop-App
+ * nutzen genau diesen Anwendungsfall.
  *
  * <p>Jeder Treffer trägt Titel, Textauszug der Quelle, Adresse, Version, Quelle und Space. Bevor er erscheint, liest
  * die Suche die Kopfdaten der Seite live bei der Quelle und prüft an ihnen die Freigabe {@link AccessKind#METADATA}
@@ -50,8 +51,16 @@ import java.util.regex.Pattern;
  * <p>Ein Stapel nimmt reihum Treffer aus jeder Quelle in deren Rangfolge, bis {@code limit} erreicht ist; der Cursor
  * merkt sich je Quelle, wie weit sie gelesen ist („Weitere laden“). Eine Quelle, die nicht antwortet, verwirft die
  * anderen nicht: sie steht mit {@link SourceState.Status#UNAVAILABLE} in {@link Results#sources()}, und das Ergebnis
- * ist nicht {@code complete}, auch in allen Folgestapeln desselben Cursors. Quellen ohne eigene Suche stehen dort als {@link SourceState.Status#NOT_SUPPORTED},
- * statt still „keine Treffer“ zu melden. Je Quelle reicht die Suche höchstens {@value #MAX_DEPTH} Treffer tief.
+ * ist nicht {@code complete}, auch in allen Folgestapeln desselben Cursors. Je Quelle reicht die Suche höchstens
+ * {@value #MAX_DEPTH} Treffer tief.
+ *
+ * <p>Quellen ohne eigene Suche (lokale Dateien, #180) sucht der {@link PageTextIndex} über ihre Seiten im Cache, wie
+ * der Index-Rückfall von {@code SearchKnowledgeSourcesUseCase} im Enterprise AI Client; sie stehen dann als
+ * {@link SourceState.Status#INDEXED} in {@link Results#sources()}, ohne Index als
+ * {@link SourceState.Status#NOT_SUPPORTED}, statt still „keine Treffer“ zu melden. Ihre Treffer prüft die Suche live
+ * wie alle anderen und verlangt zusätzlich {@link AccessKind#CONTENT}, weil Fundstelle und Auszug aus dem Inhalt
+ * stammen. Sichtbare Treffer der Live-Suche, deren Version noch nicht im Cache liegt, lädt ein begrenzter Hintergrund
+ * über den Beschaffungs-Use-Case nach ({@link Prefetch}), damit sie danach auch im Cache und im Index stehen.
  *
  * <p>Nur Schlagworte; die experimentelle semantische Suche ist
  * {@link com.aresstack.spaceharvester.application.ranking.RelevanceSearch}.
@@ -75,10 +84,22 @@ public class KeywordSearch {
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
+    private final PageTextIndex texts;
+    private final Prefetch prefetch;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
+        this(catalog, access, null, null);
+    }
+
+    /**
+     * @param texts    Volltextindex für Quellen ohne eigene Suche oder {@code null}
+     * @param prefetch Vorladen sichtbarer Live-Treffer oder {@code null}
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
+        this.texts = texts;
+        this.prefetch = prefetch;
     }
 
     /**
@@ -105,6 +126,7 @@ public class KeywordSearch {
         Map<String, List<SourceSearchMatch>> pending = new LinkedHashMap<>();
         Map<String, Boolean> more = new LinkedHashMap<>();
         Map<String, Integer> start = new LinkedHashMap<>();
+        Set<String> indexed = new HashSet<>();
         // Was ein früherer Stapel nicht prüfen konnte, bleibt bis zum Ende offen.
         boolean complete = position == null || !position.incomplete();
         for (HarvestSource source : catalog.all()) {
@@ -112,20 +134,31 @@ public class KeywordSearch {
             if (!scope.sourceIds().contains(sourceId) || (offsets != null && !offsets.containsKey(sourceId))) {
                 continue;
             }
-            if (!source.capabilities().contains(SourceCapability.LIVE_SEARCH)) {
+            boolean live = source.capabilities().contains(SourceCapability.LIVE_SEARCH);
+            if (!live && texts == null) {
                 states.add(new SourceState(sourceId, SourceState.Status.NOT_SUPPORTED, null));
                 continue;
             }
             int offset = offsets == null ? 0 : offsets.get(sourceId);
             int wanted = Math.min(offset + limit + 1, MAX_DEPTH);
             try {
-                List<SourceSearchMatch> matches = source.searchPages(query.text(), wanted, query.spaces());
+                List<SourceSearchMatch> matches = live ? source.searchPages(query.text(), wanted, query.spaces())
+                        : indexed(sourceId, query, wanted);
                 List<SourceSearchMatch> fresh = matches.size() <= offset ? List.of()
                         : matches.subList(offset, Math.min(matches.size(), offset + limit));
                 pending.put(sourceId, new ArrayList<>(fresh));
                 more.put(sourceId, matches.size() > offset + fresh.size() && offset + fresh.size() < MAX_DEPTH);
                 start.put(sourceId, offset);
-                states.add(new SourceState(sourceId, SourceState.Status.SEARCHED, null));
+                if (!live) {
+                    indexed.add(sourceId);
+                }
+                states.add(new SourceState(sourceId, live ? SourceState.Status.SEARCHED : SourceState.Status.INDEXED,
+                        null));
+            } catch (CacheUnavailableException e) {
+                LOG.log(System.Logger.Level.INFO, "Volltextindex für Quelle {0} nicht lesbar", sourceId);
+                states.add(new SourceState(sourceId, SourceState.Status.UNAVAILABLE,
+                        SourceAccessException.Reason.UNAVAILABLE.name()));
+                complete = false;
             } catch (SourceAccessException e) {
                 // Ohne Meldung: Texte des Transports können Hosts und Routen nennen.
                 LOG.log(System.Logger.Level.INFO, "Suche in Quelle {0} nicht möglich ({1})", sourceId, e.reason());
@@ -144,7 +177,8 @@ public class KeywordSearch {
             for (Map.Entry<String, List<SourceSearchMatch>> entry : pending.entrySet()) {
                 int index = taken.get(entry.getKey());
                 if (index < entry.getValue().size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index)));
+                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index),
+                            indexed.contains(entry.getKey())));
                     taken.put(entry.getKey(), index + 1);
                     added = true;
                 }
@@ -159,9 +193,33 @@ public class KeywordSearch {
             }
         }
         Checked checked = check(caller, query, candidates);
+        if (prefetch != null) {
+            List<Hit> live = checked.hits().stream().filter(hit -> !indexed.contains(hit.sourceId())).toList();
+            if (!live.isEmpty()) {
+                try {
+                    prefetch.prefetch(caller, live);
+                } catch (RuntimeException e) {
+                    // Vorladen ist Beiwerk; die Treffer gehen trotzdem hinaus.
+                    LOG.log(System.Logger.Level.INFO, "Vorladen der Treffer nicht eingeplant ({0})",
+                            e.getClass().getName());
+                }
+            }
+        }
         boolean checkedAll = complete && checked.complete();
         return new Results(scope.sourceId(), checked.hits(), states,
                 next.isEmpty() ? null : encode(fingerprint(query), !checkedAll, next), checkedAll && next.isEmpty());
+    }
+
+    /** Treffer des Volltextindex für eine Quelle ohne eigene Suche, in seiner Rangfolge. */
+    private List<SourceSearchMatch> indexed(String sourceId, Query query, int wanted) {
+        try {
+            return texts.search(query.text(), Set.of(sourceId), query.spaces(), wanted).stream()
+                    .map(match -> new SourceSearchMatch(match.pageId(), match.title(), match.snippet(), null, null,
+                            null))
+                    .toList();
+        } catch (RuntimeException e) {
+            throw new CacheUnavailableException("Volltextindex nicht lesbar", e);
+        }
     }
 
     /** Kopfdaten live und Freigabe je Treffer; parallel, Reihenfolge der Kandidaten bleibt. */
@@ -221,8 +279,12 @@ public class KeywordSearch {
         if (!query.spaces().permits(metadata.partitionKey())) {
             return Optional.empty();
         }
-        if (!access.permits(caller, ResourceScope.page(candidate.sourceId(), metadata.partitionKey(),
-                metadata.pageId()), AccessKind.METADATA)) {
+        ResourceScope page = ResourceScope.page(candidate.sourceId(), metadata.partitionKey(), metadata.pageId());
+        if (!access.permits(caller, page, AccessKind.METADATA)) {
+            return Optional.empty();
+        }
+        // Fundstelle und Auszug aus dem Index stammen aus dem Inhalt.
+        if (candidate.indexed() && !access.permits(caller, page, AccessKind.CONTENT)) {
             return Optional.empty();
         }
         SourceSearchMatch match = candidate.match();
@@ -294,7 +356,18 @@ public class KeywordSearch {
     private record Position(Map<String, Integer> offsets, boolean incomplete) {
     }
 
-    private record Candidate(String sourceId, SourceSearchMatch match) {
+    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed) {
+    }
+
+    /**
+     * Vorladen sichtbarer Treffer der Live-Suche (#180, wie {@code KnowledgePrefetchService} im Enterprise AI Client).
+     * Umsetzungen kehren sofort zurück und arbeiten begrenzt im Hintergrund.
+     */
+    @FunctionalInterface
+    public interface Prefetch {
+
+        /** @param hits geprüfte, für {@code caller} sichtbare Treffer in Rangfolge */
+        void prefetch(AccessContext caller, List<Hit> hits);
     }
 
     private record Checked(List<Hit> hits, boolean complete) {
@@ -390,7 +463,9 @@ public class KeywordSearch {
         public enum Status {
             /** Die Quelle hat gesucht. */
             SEARCHED,
-            /** Die Quelle kann nicht selbst suchen; ihre Seiten fehlen in der Schlagwortsuche. */
+            /** Die Quelle kann nicht selbst suchen; der Volltextindex des Caches hat für sie gesucht (#180). */
+            INDEXED,
+            /** Die Quelle kann nicht selbst suchen, und es gibt keinen Index; ihre Seiten fehlen. */
             NOT_SUPPORTED,
             /** Die Quelle hat nicht oder fehlerhaft geantwortet. */
             UNAVAILABLE
