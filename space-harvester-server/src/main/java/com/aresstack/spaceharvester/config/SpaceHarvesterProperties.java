@@ -36,7 +36,7 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
 
         public Network {
             tls = tls == null ? new Tls(null, null, null, null) : tls;
-            proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null, null) : proxy;
+            proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null, null, null) : proxy;
             asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT : asyncTransport;
         }
     }
@@ -55,14 +55,16 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      * @param cacheTtl       Gültigkeit einer gefundenen Route (Standard 10 min)
      * @param failureTtl     Gültigkeit einer gescheiterten Auflösung (Standard 1 min)
      * @param auth           Anmeldung am Proxy mit BASIC (optional, #189)
+     * @param pacDiscoveryScript eigenes Skript, das die PAC-Adresse ausgibt: PowerShell bei {@code pac-url-powershell},
+     *                       VBScript bei {@code pac-url-wscript} (optional, #189)
      */
     public record Proxy(ProxySettings.Mode mode, URI pacUrl, String proxyHost, Integer proxyPort,
                         List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl,
-                        ProxyAuth auth) {
+                        ProxyAuth auth, String pacDiscoveryScript) {
 
         ProxySettings toSettings() {
             return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
-                    failureTtl, auth == null ? null : auth.toAuthentication());
+                    failureTtl, auth == null ? null : auth.toAuthentication(), pacDiscoveryScript);
         }
     }
 

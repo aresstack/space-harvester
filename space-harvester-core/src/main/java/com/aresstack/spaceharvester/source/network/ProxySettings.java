@@ -16,10 +16,14 @@ import java.util.List;
  * @param cacheTtl       wie lange eine gefundene Route gilt
  * @param failureTtl     wie lange eine gescheiterte Auflösung gilt, bevor erneut aufgelöst wird
  * @param authentication Anmeldung am Proxy (#189); {@code null} ohne
+ * @param pacDiscoveryScript eigenes Skript, das die PAC-Adresse ausgibt (#189), wie
+ *                       {@code network.proxy.pacDiscoveryScript} im Enterprise AI Client: PowerShell bei
+ *                       {@link Mode#PAC_URL_POWERSHELL}, VBScript bei {@link Mode#PAC_URL_WSCRIPT}; {@code null}
+ *                       (oder leer) für das eingebaute Skript
  */
 public record ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer proxyPort, List<String> nonProxyHosts,
                             Duration resolveTimeout, Duration cacheTtl, Duration failureTtl,
-                            Authentication authentication) {
+                            Authentication authentication, String pacDiscoveryScript) {
 
     /** Verweis, unter dem der Core das Proxy-Passwort beim Anbieter des Programms erfragt ({@code SourceSecrets}). */
     public static final String SECRET_REF = "network:proxy";
@@ -34,6 +38,7 @@ public record ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer pro
         resolveTimeout = resolveTimeout == null ? DEFAULT_RESOLVE_TIMEOUT : resolveTimeout;
         cacheTtl = cacheTtl == null ? DEFAULT_CACHE_TTL : cacheTtl;
         failureTtl = failureTtl == null ? DEFAULT_FAILURE_TTL : failureTtl;
+        pacDiscoveryScript = pacDiscoveryScript == null || pacDiscoveryScript.isBlank() ? null : pacDiscoveryScript;
     }
 
     /** Ohne Anmeldung am Proxy. */
@@ -42,10 +47,24 @@ public record ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer pro
         this(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl, null);
     }
 
+    /** Mit dem eingebauten Skript zur PAC-Ermittlung. */
+    public ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer proxyPort, List<String> nonProxyHosts,
+                         Duration resolveTimeout, Duration cacheTtl, Duration failureTtl,
+                         Authentication authentication) {
+        this(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl, authentication,
+                null);
+    }
+
     /** Dieselben Einstellungen mit dieser Anmeldung am Proxy ({@code null} ohne). */
     public ProxySettings withAuthentication(Authentication value) {
         return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
-                failureTtl, value);
+                failureTtl, value, pacDiscoveryScript);
+    }
+
+    /** Dieselben Einstellungen mit diesem Skript zur PAC-Ermittlung ({@code null} für das eingebaute). */
+    public ProxySettings withPacDiscoveryScript(String script) {
+        return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
+                failureTtl, authentication, script);
     }
 
     /** Ohne Proxy: jede Verbindung geht direkt (Standard ohne Konfiguration). */

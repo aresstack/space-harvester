@@ -249,6 +249,9 @@ space-harvester:
           username: proxy-nutzer
           password: ${PROXY_PASSWORD}
   ```
+- **Eigenes Skript zur PAC-Ermittlung** (#189): `pac-discovery-script` ersetzt bei `pac-url-powershell` das
+  eingebaute PowerShell-Skript und bei `pac-url-wscript` das VBScript; es gibt die PAC-Adresse aus, wie
+  `network.proxy.pacDiscoveryScript` im Enterprise AI Client.
 - **TLS-Vertrauen** ([#189](https://github.com/aresstack/space-harvester/issues/189)) für Quellen und KI-Dienst
   ohne eigenes `trust-bundle`, wie `network.tls` im Enterprise AI Client: JVM-Truststore (`use-jvm-default`,
   Standard an), Windows-Stammzertifikate (`use-windows-root`), Windows-Speicher Root und CA samt
