@@ -29,15 +29,30 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
      * @param attachmentId ID im Asset-Speicher: die des Anhangs, sonst eine aus der Adresse; {@code null} bei Mermaid
      * @param sha256       {@code sha256:<hex>} der abgelegten Bytes; {@code null}, wenn nichts abgelegt ist
      * @param reason       warum nicht abgelegt, sonst {@code null}; nennt keine Seiten-IDs oder Titel
+     * @param rendition    bei Diagrammen (draw.io-Quelldaten, Mermaid) die beim Beschaffen gezeichnete Grafik oder
+     *                     warum es keine gibt; sonst {@code null}
      */
     public record Entry(String pageId, Reference reference, String attachmentId, String version, String title,
-                        String mediaType, long size, String sha256, Status status, String reason) {
+                        String mediaType, long size, String sha256, Status status, String reason,
+                        Rendition rendition) {
 
         public Entry {
             Objects.requireNonNull(pageId, "pageId");
             Objects.requireNonNull(reference, "reference");
             Objects.requireNonNull(status, "status");
             title = title == null ? "" : title;
+        }
+
+        /** Ohne gezeichnete Grafik. */
+        public Entry(String pageId, Reference reference, String attachmentId, String version, String title,
+                     String mediaType, long size, String sha256, Status status, String reason) {
+            this(pageId, reference, attachmentId, version, title, mediaType, size, sha256, status, reason, null);
+        }
+
+        /** Derselbe Eintrag mit gezeichneter Grafik. */
+        public Entry withRendition(Rendition rendition) {
+            return new Entry(pageId, reference, attachmentId, version, title, mediaType, size, sha256, status, reason,
+                    rendition);
         }
 
         public boolean stored() {
@@ -71,6 +86,31 @@ public record ExportAssetManifest(boolean complete, List<Entry> assets) {
 
         public static Reference mermaid(int index, String source) {
             return new Reference(Kind.MERMAID, null, null, null, index, source);
+        }
+    }
+
+    /**
+     * Die gezeichnete Grafik eines Diagramms (#190), mit dem Diagrammdienst des Core einmal beim Beschaffen erzeugt und
+     * wie jedes Bild SHA-256-adressiert im Asset-Speicher abgelegt; Leseansicht und Converter nutzen sie ohne erneutes
+     * Zeichnen. Die Quelldaten bleiben maßgeblich.
+     *
+     * @param mediaType {@code image/svg+xml} (draw.io) oder {@code image/png} (Mermaid); {@code null} ohne Grafik
+     * @param sha256    {@code sha256:<hex>} der Grafik; {@code null} ohne Grafik
+     * @param problem   warum es keine Grafik gibt (ohne Inhalte des Diagramms), sonst {@code null}
+     */
+    public record Rendition(String mediaType, long size, String sha256, String problem) {
+
+        public static Rendition drawn(String mediaType, long size, String sha256) {
+            return new Rendition(Objects.requireNonNull(mediaType, "mediaType"), size,
+                    Objects.requireNonNull(sha256, "sha256"), null);
+        }
+
+        public static Rendition notDrawn(String problem) {
+            return new Rendition(null, 0, null, Objects.requireNonNull(problem, "problem"));
+        }
+
+        public boolean drawn() {
+            return sha256 != null;
         }
     }
 

@@ -271,9 +271,19 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             entries.add(new ExportAssetManifest.Entry(entry.path("pageId").asString(), reference,
                     optional(entry, "attachmentId"), optional(entry, "version"), optional(entry, "title"),
                     optional(entry, "mediaType"), entry.path("size").asLong(), optional(entry, "sha256"),
-                    ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason")));
+                    ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason"),
+                    rendition(entry.path("rendition"))));
         }
         return Optional.of(new ExportAssetManifest(node.path("complete").asBoolean(false), entries));
+    }
+
+    private static ExportAssetManifest.Rendition rendition(JsonNode node) {
+        if (!node.isObject()) {
+            return null;
+        }
+        return node.hasNonNull("sha256") ? ExportAssetManifest.Rendition.drawn(node.path("mediaType").asString(),
+                node.path("size").asLong(), node.path("sha256").asString())
+                : ExportAssetManifest.Rendition.notDrawn(node.path("problem").asString());
     }
 
     private static String optional(JsonNode node, String name) {
@@ -317,6 +327,18 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             generator.writeStringProperty("sha256", entry.sha256());
             generator.writeStringProperty("status", entry.status().name());
             generator.writeStringProperty("reason", entry.reason());
+            if (entry.rendition() != null) {
+                generator.writeName("rendition");
+                generator.writeStartObject();
+                if (entry.rendition().drawn()) {
+                    generator.writeStringProperty("mediaType", entry.rendition().mediaType());
+                    generator.writeNumberProperty("size", entry.rendition().size());
+                    generator.writeStringProperty("sha256", entry.rendition().sha256());
+                } else {
+                    generator.writeStringProperty("problem", entry.rendition().problem());
+                }
+                generator.writeEndObject();
+            }
             generator.writeEndObject();
         }
         generator.writeEndArray();
