@@ -37,8 +37,10 @@ import java.util.TreeSet;
 /**
  * Globale Suche als reine Schlagwortsuche über den Cache ({@code KeywordSearch} des Core, ADR 0013): Die native Suche
  * jeder angehakten Quelle entdeckt passende Seiten, der Core legt sie mit den Rechten des Aufrufers in den Cache, und
- * die Treffer kommen aus dessen Volltextindex, mit Textauszug aus dem Cache. Seiten, die beim Antworten noch laden,
- * nennt die Zeile unter der Liste; „Weitere laden“ holt sie nach. Eine Synchronisierung ist nie Voraussetzung. Unter der Liste steht je Quelle, ob sie keine eigene Suche kennt oder nicht erreichbar war, statt
+ * die Treffer kommen aus dessen Volltextindex, mit Textauszug aus dem Cache. Die Funde der Quellen stehen sofort als
+ * vorläufige Treffer da ({@code Results.ranked()}, ADR 0016); während der Core lädt, zeigt die Ansicht seinen
+ * Ladestand und ordnet geladene Treffer nach vorn, ohne dass einer verschwindet. Die Suchlogik bleibt im Core, die
+ * Ansicht stellt nur dar. Eine Synchronisierung ist nie Voraussetzung. Unter der Liste steht je Quelle, ob sie keine eigene Suche kennt oder nicht erreichbar war, statt
  * still „keine Treffer“ zu melden; ein unvollständiges Ergebnis ist so gekennzeichnet.
  * Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine einzelne Quelle
  * mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces der angehakten
@@ -57,8 +59,8 @@ public final class SearchView implements View {
     static final int LIMIT = 25;
     /** Schluss der Fortschrittszeile, wenn nichts mehr nachlädt. */
     static final String DONE = "Die Suche ist abgeschlossen";
-    /** Pause zwischen zwei Nachfragen, solange gefundene Seiten noch in den Cache laden. */
-    private static final int FOLLOW_MILLIS = 1000;
+    /** Abstand der Abfragen des Ladestands ({@code KeywordSearch.progress}), solange Seiten in den Cache laden. */
+    private static final int POLL_MILLIS = 400;
     static final String UNAVAILABLE = "noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten";
 
     private final AppContext context;
@@ -82,13 +84,20 @@ public final class SearchView implements View {
     final JProgressBar progress = new JProgressBar();
     final JLabel progressText = Comic.muted(" ");
     private final JPanel progressRow = new JPanel(new BorderLayout(10, 0));
-    /** Fragt dieselbe Suche erneut ab, bis nichts mehr lädt; neue Treffer rücken dabei von selbst nach. */
-    private final Timer follow = new Timer(FOLLOW_MILLIS, e -> follow());
-    /** Höchste Zahl gleichzeitig ladender Seiten dieser Suche; Grundlage des Zählers. */
-    private int peak;
-    /** Nachfragen dieser Suche; nach {@link #MAX_FOLLOWS} übernimmt „Weitere laden“. */
-    private int follows;
-    private static final int MAX_FOLLOWS = 120;
+    final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
+            + "bleibt im Cache");
+    /** Fragt den Ladestand ab; steigt er, wird derselbe Stapel neu geordnet ({@link #refresh}). */
+    private final Timer poll = new Timer(POLL_MILLIS, e -> poll());
+    /** Kennung des ladenden Stapels für {@code progress} und {@code cancel}; {@code null}, wenn nichts lädt. */
+    private String progressId;
+    /** Zuletzt gemeldete geladene Seiten; steigt die Zahl, sucht die Ansicht denselben Stapel erneut. */
+    private int lastLoaded;
+    /** Ob ein erneutes Suchen desselben Stapels läuft; nie zwei zugleich. */
+    private boolean refreshing;
+    /** Ob das Laden abgebrochen wurde; dann sucht die Ansicht nicht erneut, denn das stieße das Laden wieder an. */
+    private boolean cancelled;
+    /** Zeile, ab der der angezeigte Stapel in der Liste steht; nur er wird neu geordnet. */
+    private int batchStart;
     /** Anfrage und Cursor der zuletzt angezeigten Suche, für „Weitere laden“; der Cursor gilt nur für sie. */
     private KeywordSearch.Query lastQuery;
     /** Ob ein Stapel derselben Suche unvollständig war; bleibt bis zur nächsten Suche. */
@@ -113,11 +122,13 @@ public final class SearchView implements View {
         run.addActionListener(e -> search());
         more.addActionListener(e -> loadMore());
         more.setEnabled(false);
-        follow.setRepeats(false);
+        poll.setRepeats(false);
+        cancel.addActionListener(e -> cancelLoading());
         progress.setPreferredSize(new java.awt.Dimension(160, 8));
         progressRow.setOpaque(false);
         progressRow.add(progress, BorderLayout.WEST);
         progressRow.add(progressText, BorderLayout.CENTER);
+        progressRow.add(cancel, BorderLayout.EAST);
         progressRow.setVisible(false);
         semantic.setSelected(false);
         semantic.setEnabled(false);
@@ -266,9 +277,8 @@ public final class SearchView implements View {
      */
     private void open(AppRuntime runtime, String address) {
         int id = ++request;
-        // Ein ausstehendes Nachfragen der vorigen Suche darf die Adressauflösung nicht überholen.
-        follow.stop();
-        progressRow.setVisible(false);
+        // Das Laden der vorigen Suche endet; ihr Nachfragen darf die Adressauflösung nicht überholen.
+        stopLoading();
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Adresse wird aufgelöst …");
@@ -338,10 +348,8 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        stopLoading();
         int id = ++request;
-        follow.stop();
-        peak = 0;
-        follows = 0;
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Suche läuft …");
@@ -353,22 +361,22 @@ public final class SearchView implements View {
             states.clear();
             incomplete = false;
             shownCursor = null;
+            batchStart = 0;
             model.set(hits(results));
             show(q, results);
-            if (results.loading() > 0) {
+            track(results.progress());
+            if (!results.ranked().isEmpty()) {
                 feedback.clear();
-            } else if (results.hits().isEmpty() && results.nextCursor() != null) {
+            } else if (results.nextCursor() != null) {
                 // Dieser Stapel war leer, weitere Kandidaten folgen noch: kein endgültiges „Keine Treffer“.
                 feedback.info("Noch keine Treffer", "Im ersten Stapel war nichts Passendes; „Weitere laden“ sucht weiter.");
-            } else if (results.hits().isEmpty() && !results.complete()) {
+            } else if (!results.complete()) {
                 feedback.warning("Keine Treffer, Suche unvollständig",
                         "Nicht jede Quelle konnte vollständig suchen; siehe Zeile unter der Liste.");
-            } else if (results.hits().isEmpty()) {
+            } else {
                 feedback.info("Keine Treffer", searched()
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
                         : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
-            } else {
-                feedback.clear();
             }
         }, error -> {
             if (id != request) {
@@ -401,9 +409,8 @@ public final class SearchView implements View {
             feedback.warning("Suche so nicht möglich", invalid.getMessage());
             return;
         }
+        stopLoading();
         int id = ++request;
-        follow.stop();
-        progressRow.setVisible(false);
         run.setEnabled(false);
         more.setEnabled(false);
         feedback.working("Semantische Suche läuft …");
@@ -444,47 +451,30 @@ public final class SearchView implements View {
 
     /** Der nächste Stapel derselben Suche, angehängt an die bisherigen Treffer. */
     private void loadMore() {
-        loadMore(false);
-    }
-
-    /**
-     * Solange Seiten laden: derselbe Stapel erneut, ohne Meldung; die Treffer unter den geladenen Seiten rücken nach.
-     * Wiederholt wird der Cursor des angezeigten Stapels, nie der nächste: sonst holte jedes Nachfragen weitere Treffer
-     * bei den Quellen und lüde sie in den Cache, ohne dass jemand „Weitere laden“ drückt.
-     */
-    private void follow() {
-        follows++;
-        loadMore(true);
-    }
-
-    /** @param quiet automatisches Nachfragen beim Laden; ohne Meldung, das Suchfeld bleibt frei */
-    private void loadMore(boolean quiet) {
         AppRuntime runtime = context.runtime();
         KeywordSearch.Query q = lastQuery;
-        String cursor = quiet ? shownCursor : nextCursor;
-        if (runtime == null || q == null || !quiet && cursor == null) {
+        String cursor = nextCursor;
+        if (runtime == null || q == null || cursor == null) {
             return;
         }
+        // Das Laden des vorigen Stapels läuft im Core weiter; die Ansicht folgt ab jetzt dem neuen.
+        poll.stop();
+        progressId = null;
         int id = ++request;
-        follow.stop();
         more.setEnabled(false);
-        if (!quiet) {
-            run.setEnabled(false);
-            feedback.working("Weitere Treffer werden geladen …");
-        }
+        run.setEnabled(false);
+        feedback.working("Weitere Treffer werden geladen …");
         Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
             if (id != request) {
                 return;
             }
             run.setEnabled(true);
-            if (!quiet) {
-                shownCursor = cursor;
-            }
+            shownCursor = cursor;
+            batchStart = model.rows.size();
             model.add(hits(results));
             show(q, results);
-            if (results.loading() > 0) {
-                feedback.clear();
-            } else if (model.rows.isEmpty() && results.nextCursor() != null) {
+            track(results.progress());
+            if (model.rows.isEmpty() && results.nextCursor() != null) {
                 feedback.info("Noch keine Treffer", "Auch dieser Stapel war leer; „Weitere laden“ sucht weiter.");
             } else if (model.rows.isEmpty()) {
                 feedback.info("Keine Treffer", "Keine Quelle kennt eine passende Seite, die du lesen darfst.");
@@ -502,12 +492,129 @@ public final class SearchView implements View {
         });
     }
 
+    /**
+     * Folgt dem Laden eines Stapels ({@code Results.progress()}): zeigt „x von y“ und fragt den Stand ab, bis der Core
+     * {@code done} meldet. Ohne zu ladende Seiten ist die Suche sofort abgeschlossen.
+     */
+    private void track(KeywordSearch.Progress progress) {
+        poll.stop();
+        cancelled = false;
+        if (progress == null) {
+            progressId = null;
+            finished(false);
+            return;
+        }
+        progressId = progress.id();
+        lastLoaded = progress.loaded();
+        progress(progress);
+    }
+
+    /** Ein Takt: Ladestand holen; ist mehr geladen, denselben Stapel neu einsortieren. */
+    private void poll() {
+        AppRuntime runtime = context.runtime();
+        String id = progressId;
+        if (runtime == null || id == null) {
+            return;
+        }
+        Background.run(() -> runtime.workspace().keywordSearchProgress(id), current -> {
+            if (!id.equals(progressId)) {
+                return;
+            }
+            if (current.isEmpty()) {
+                // Der Core kennt den Stapel nicht mehr: nichts lädt mehr.
+                progressId = null;
+                refresh();
+                finished(false);
+                return;
+            }
+            KeywordSearch.Progress state = current.get();
+            if (state.loaded() > lastLoaded) {
+                lastLoaded = state.loaded();
+                refresh();
+            }
+            progress(state);
+        }, error -> {
+            if (id.equals(progressId)) {
+                poll.restart();
+            }
+        });
+    }
+
+    /**
+     * Stellt den angezeigten Stapel erneut und ordnet ihn nach der Rangfolge des Core neu ({@code ranked()}): geladene
+     * Seiten rücken nach vorn, kein Treffer verschwindet, die Auswahl bleibt. Nie den nächsten Cursor: Neue Funde holt
+     * nur „Weitere laden“.
+     */
+    private void refresh() {
+        AppRuntime runtime = context.runtime();
+        KeywordSearch.Query q = lastQuery;
+        if (runtime == null || q == null || refreshing) {
+            return;
+        }
+        refreshing = true;
+        int id = request;
+        String cursor = shownCursor;
+        int start = batchStart;
+        Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
+            refreshing = false;
+            if (id != request) {
+                return;
+            }
+            Hit selected = selectedHit();
+            model.reorder(start, hits(results));
+            select(selected);
+            show(q, results);
+            if (progressId == null && !cancelled) {
+                finished(false);
+            }
+        }, error -> refreshing = false);
+    }
+
+    /** Bricht das Laden ab; die Treffer bleiben, die Zeile meldet den Abbruch. */
+    private void cancelLoading() {
+        AppRuntime runtime = context.runtime();
+        String id = progressId;
+        if (runtime == null || id == null) {
+            return;
+        }
+        poll.stop();
+        progressId = null;
+        cancelled = true;
+        // Kein erneutes Suchen danach: Es lüde die abgebrochenen Seiten wieder in den Cache.
+        Background.run(() -> runtime.workspace().cancelKeywordSearch(id), ignored -> finished(true),
+                error -> finished(true));
+    }
+
+    /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
+    private void stopLoading() {
+        AppRuntime runtime = context.runtime();
+        String id = progressId;
+        poll.stop();
+        progressId = null;
+        progressRow.setVisible(false);
+        if (runtime != null && id != null) {
+            Background.run(() -> runtime.workspace().cancelKeywordSearch(id), ignored -> { }, ignored -> { });
+        }
+    }
+
+    private Hit selectedHit() {
+        int row = table.getSelectedRow();
+        return row < 0 ? null : model.rows.get(table.convertRowIndexToModel(row));
+    }
+
+    private void select(Hit hit) {
+        int at = hit == null ? -1 : model.indexOf(hit);
+        if (at >= 0) {
+            int view = table.convertRowIndexToView(at);
+            table.getSelectionModel().setSelectionInterval(view, view);
+        }
+    }
+
     private void reset() {
         lastQuery = null;
         nextCursor = null;
         shownCursor = null;
-        follow.stop();
-        progressRow.setVisible(false);
+        stopLoading();
         more.setEnabled(false);
         status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer"));
         status.setForeground(Comic.MUTED);
@@ -523,11 +630,10 @@ public final class SearchView implements View {
                 == KeywordSearch.SourceState.Status.UNAVAILABLE);
         // Folgestapel nennen nur noch offene Quellen; ein späterer Ausfall ersetzt den früheren Zustand.
         results.sources().forEach(state -> states.put(state.sourceId(), state));
-        more.setEnabled(nextCursor != null && (results.loading() == 0 || follows >= MAX_FOLLOWS));
-        progress(results.loading());
+        more.setEnabled(nextCursor != null);
         StringBuilder line = new StringBuilder(Texts.count(model.rows.size(), "Treffer", "Treffer"));
-        if (results.loading() > 0) {
-            line.append(" · Seiten laden noch in den Cache, Treffer rücken nach");
+        if (results.progress() != null && !results.progress().done()) {
+            line.append(" · Seiten laden in den Cache, geladene rücken nach vorn");
         } else if (nextCursor != null) {
             line.append(" · weitere vorhanden");
         }
@@ -551,33 +657,33 @@ public final class SearchView implements View {
         status.setForeground(incomplete ? Comic.ORANGE : Comic.MUTED);
     }
 
-    /**
-     * Zeigt den Ladestand der gefundenen Seiten als schmale Zeile unter dem Suchfeld und fragt nach einer Pause
-     * dieselbe Suche wieder ab; ohne ladende Seiten verschwindet die Zeile, das Ende steht in der Zeile unter der Liste.
-     */
-    private void progress(int loading) {
-        if (loading <= 0 || nextCursor == null) {
-            follow.stop();
-            // Ende sichtbar machen: nach dem Nachladen oder wenn diese Suche nichts mehr zu holen hat.
-            boolean done = nextCursor == null || peak > 0 && loading <= 0;
-            if (done) {
-                progress.setMaximum(1);
-                progress.setValue(1);
-                progressText.setText(DONE + " · " + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+    /** Die schmale Zeile unter dem Suchfeld: Balken und „x von y“, bis der Core meldet, dass nichts mehr lädt. */
+    private void progress(KeywordSearch.Progress state) {
+        if (state.done()) {
+            progressId = null;
+            poll.stop();
+            if (!state.cancelled()) {
+                refresh();
             }
-            progressRow.setVisible(done);
+            finished(state.cancelled());
             return;
         }
-        peak = Math.max(peak, loading);
-        progress.setMaximum(peak);
-        progress.setValue(peak - loading);
-        progressText.setText(progressLine(peak - loading, peak, model.rows.size()));
+        progress.setMaximum(Math.max(1, state.total()));
+        progress.setValue(state.loaded() + state.failed());
+        progressText.setText(progressLine(state.loaded(), state.total(), model.rows.size()));
+        cancel.setVisible(true);
         progressRow.setVisible(true);
-        if (follows < MAX_FOLLOWS) {
-            follow.restart();
-        } else {
-            progressText.setText(progressText.getText() + " · lädt im Hintergrund weiter, „Weitere laden“ holt den Rest");
-        }
+        poll.restart();
+    }
+
+    /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
+    private void finished(boolean cancelled) {
+        progress.setMaximum(1);
+        progress.setValue(1);
+        progressText.setText((cancelled ? "Laden abgebrochen" : DONE) + " · "
+                + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+        cancel.setVisible(false);
+        progressRow.setVisible(true);
     }
 
     /** „12 von 25 Seiten im Cache · 7 Treffer“: geladene gegen gefundene Seiten dieser Suche. */
@@ -620,8 +726,9 @@ public final class SearchView implements View {
         return status.getText();
     }
 
+    /** Die ganze Liste des Stapels: geladene Treffer zuerst, dann die vorläufigen ({@code ranked()}). */
     private static List<Hit> hits(KeywordSearch.Results results) {
-        return results.hits().stream().map(Hit::of).toList();
+        return results.ranked().stream().map(Hit::of).toList();
     }
 
     /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */
@@ -650,10 +757,10 @@ public final class SearchView implements View {
         }
     }
 
-    private static final class HitsModel extends AbstractTableModel {
+    static final class HitsModel extends AbstractTableModel {
 
         private static final String[] COLUMNS = {"Titel", "Quelle", "Space", "Auszug", "Geändert"};
-        private List<Hit> rows = new ArrayList<>();
+        List<Hit> rows = new ArrayList<>();
 
         void set(List<Hit> hits) {
             rows = new ArrayList<>(hits);
@@ -685,7 +792,45 @@ public final class SearchView implements View {
             }
         }
 
-        private int indexOf(Hit hit) {
+        /**
+         * Ordnet die Zeilen ab {@code start} nach {@code ranked} neu: dessen Treffer zuerst in seiner Reihenfolge,
+         * danach die übrigen bisherigen in ihrer Reihenfolge. Keine Zeile verschwindet; frühere Stapel bleiben oben.
+         */
+        void reorder(int start, List<Hit> ranked) {
+            int from = Math.min(start, rows.size());
+            List<Hit> next = new ArrayList<>(rows.subList(0, from));
+            List<Hit> rest = new ArrayList<>(rows.subList(from, rows.size()));
+            for (Hit hit : ranked) {
+                int fixed = indexIn(next, hit);
+                if (fixed >= 0) {
+                    if (fixed < from) {
+                        next.set(fixed, hit);
+                    }
+                    continue;
+                }
+                next.add(hit);
+            }
+            for (Hit hit : rest) {
+                if (indexIn(next, hit) < 0) {
+                    next.add(hit);
+                }
+            }
+            if (!next.equals(rows)) {
+                rows = next;
+                fireTableDataChanged();
+            }
+        }
+
+        private static int indexIn(List<Hit> list, Hit hit) {
+            for (int i = 0; i < list.size(); i++) {
+                if (same(list.get(i), hit)) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        int indexOf(Hit hit) {
             for (int i = 0; i < rows.size(); i++) {
                 if (same(rows.get(i), hit)) {
                     return i;
