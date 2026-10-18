@@ -1,0 +1,154 @@
+package com.aresstack.spaceharvester.parity;
+
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.core.Harvester;
+import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
+import com.aresstack.spaceharvester.parity.ParityComparison.Verdict;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Derselbe Paritäts-Space durch den Core wie durch den Enterprise AI Client (Referenzen in
+ * {@code src/test/resources/eac}, erzeugt von {@code eac/generate.sh}); ADR 0012, docs/PARITY.md, #193.
+ *
+ * <p>Jede Prüfung, bei der der Core weniger kann, muss in {@code known-gaps.properties} mit ihrem Issue stehen.
+ * Eine neue Lücke (Rückschritt) lässt den Test scheitern. Eine geschlossene Lücke meldet der Bericht
+ * ({@code build/reports/parity/parity-report.md}); dann wird ihre Zeile entfernt.</p>
+ */
+class CoreParityTest {
+
+    private static final String[] FORMATS = {"docx", "pdf", "markdown"};
+
+    private static FakeConfluenceServer server;
+    @TempDir
+    static Path data;
+    private static final Map<String, Path> CORE = new LinkedHashMap<>();
+
+    @BeforeAll
+    static void exportThroughTheCore() throws Exception {
+        server = new FakeConfluenceServer(ParitySpace.install(new FakeConfluence()));
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", server.baseUrl(),
+                        SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
+                .dataDirectory(data)
+                .build()) {
+            JobStatus export = harvester.await(harvester.export("wiki", ParitySpace.SPACE, List.of(FORMATS)).id(),
+                    Duration.ofSeconds(60));
+            assertThat(export.state()).isEqualTo(JobState.COMPLETED);
+            ExportArtifact artifact = harvester.exportArtifact(export.id()).orElseThrow();
+            // Neben dem Bericht ablegen, damit man die Core-Exporte öffnen und mit den Referenzen vergleichen kann
+            Path exports = reportFile().getParent().resolve("core");
+            Files.createDirectories(exports);
+            for (ExportArtifact.File file : artifact.files()) {
+                String extension = extension(file.name());
+                if (!List.of("docx", "pdf", "md").contains(extension) || CORE.containsKey(extension)) {
+                    continue;
+                }
+                Path target = exports.resolve("core." + extension);
+                try (InputStream in = harvester.exports().artifactFile(export.id(), Harvester.OWNER, file.name())
+                        .orElseThrow()) {
+                    Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                CORE.put(extension, target);
+            }
+        }
+        assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
+    }
+
+    @AfterAll
+    static void stopServer() {
+        if (server != null) {
+            server.close();
+        }
+    }
+
+    @Test
+    void theCoreFallsBehindOnlyWhereAGapIsKnown() throws Exception {
+        Map<String, String> gaps = knownGaps();
+        StringBuilder report = new StringBuilder("# Paritätsbericht Paritäts-Space (Fake)\n\nEnterprise AI Client ")
+                .append(Files.readString(reference("COMMIT")).strip()).append(" gegen Core.\n");
+        List<String> regressions = new ArrayList<>();
+        for (String extension : List.of("docx", "pdf", "md")) {
+            DocumentOutline eac = ParityReport.read(reference("parity." + extension));
+            DocumentOutline core = ParityReport.read(CORE.get(extension));
+            List<Finding> findings = ParityComparison.compare(eac, core);
+            report.append('\n').append(ParityReport.section(extension.toUpperCase(), findings, gaps));
+            for (Finding finding : findings) {
+                if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                    regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                            + finding.core() + "; " + finding.detail() + ")");
+                }
+            }
+        }
+        Path file = reportFile();
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, report, StandardCharsets.UTF_8);
+        assertThat(regressions).as("Neue Paritätslücken (ADR 0012); Bericht:%n%s", report).isEmpty();
+    }
+
+    @Test
+    void everySentenceOfTheSpaceReachesEveryCoreExport() throws IOException {
+        for (Path file : CORE.values()) {
+            String text = ParityReport.read(file).text().replaceAll("\\s+", " ");
+            for (String sentence : ParitySpace.SENTENCES) {
+                assertThat(text).as(file.getFileName().toString()).contains(sentence);
+            }
+        }
+    }
+
+    /** Bericht unter {@code build/reports/parity/} (Gradle setzt {@code parity.report}), sonst im Arbeitsordner. */
+    private static Path reportFile() {
+        return Path.of(System.getProperty("parity.report", "build/reports/parity/parity-report.md"))
+                .toAbsolutePath();
+    }
+
+    static Map<String, String> knownGaps() throws IOException {
+        Properties properties = new Properties();
+        try (InputStream in = CoreParityTest.class.getResourceAsStream("/known-gaps.properties")) {
+            properties.load(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
+        }
+        Map<String, String> gaps = new LinkedHashMap<>();
+        for (String key : properties.stringPropertyNames()) {
+            gaps.put(key, properties.getProperty(key).strip());
+        }
+        return gaps;
+    }
+
+    static Path reference(String name) {
+        try {
+            return Path.of(CoreParityTest.class.getResource("/eac/" + name).toURI());
+        } catch (URISyntaxException e) {
+            throw new IllegalStateException(e);
+        } catch (NullPointerException e) {
+            throw new UncheckedIOException(new IOException("Referenz fehlt: eac/" + name + " (eac/generate.sh)"));
+        }
+    }
+
+    private static String extension(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1);
+    }
+}

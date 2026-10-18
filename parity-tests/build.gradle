@@ -1,0 +1,51 @@
+// Vergleichstests Enterprise AI Client gegen Space Harvester Core (ADR 0012, docs/PARITY.md, #193).
+// main: neutrales Dokumentmodell (DOCX, PDF, Markdown), Vergleich und ParityReport für den Live-Lauf.
+// test: Paritäts-Space im Fake, Export über den Core, Vergleich mit den Referenzexporten des Enterprise AI Client
+// (src/test/resources/eac, erzeugt von eac/generate.sh).
+plugins {
+    id 'java'
+    id 'application'
+}
+
+description = 'Space Harvester Paritätstests – Exporte des Enterprise AI Client und des Core vergleichen.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'com.aresstack.spaceharvester.parity.ParityReport'
+    applicationName = 'parity-report'
+}
+
+dependencies {
+    implementation libs.pdfbox
+    implementation libs.jsoup
+
+    testImplementation project(':space-harvester-core')
+    testImplementation testFixtures(project(':enterprise-ai-sources'))
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'ch.qos.logback:logback-classic'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-parameters'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    systemProperty 'java.awt.headless', 'true'
+    // Bericht des Vergleichs Core gegen Enterprise AI Client, auch wenn alles grün ist
+    systemProperty 'parity.report', layout.buildDirectory.file('reports/parity/parity-report.md').get().asFile.path
+}
+
+// Relative Pfade in --args gelten ab der Repository-Wurzel (dort liegt gradlew)
+tasks.named('run') {
+    workingDir = rootProject.projectDir
+}

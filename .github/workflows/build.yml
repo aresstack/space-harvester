@@ -29,9 +29,13 @@ jobs:
       # Kopien in enterprise-ai-sources und comic-controls gegen den festgehaltenen Upstream-Commit prüfen (siehe UPSTREAM.md)
       - run: enterprise-ai-sources/sync-from-upstream.sh verify
       - run: comic-controls/sync-from-upstream.sh verify
+      # Paritätsbericht Core gegen Enterprise AI Client (ADR 0012, docs/PARITY.md)
+      - name: Paritätsbericht
+        if: always()
+        run: cat parity-tests/build/reports/parity/parity-report.md >> "$GITHUB_STEP_SUMMARY" || true
       - name: Testübersicht
         if: always()
-        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/test-summary.py space-harvester-*/build/test-results parity-tests/build/test-results enterprise-ai-sources/build/test-results nlp-parser/build/test-results nlp-model-training/build/test-results >> "$GITHUB_STEP_SUMMARY"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -46,4 +50,6 @@ jobs:
             nlp-model-training/build/reports/tests/
             nlp-model-training/build/test-results/
             space-harvester-app/build/app-jar-check/screenshots/
+            parity-tests/build/test-results/
+            parity-tests/build/reports/parity/
           if-no-files-found: ignore
