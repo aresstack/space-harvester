@@ -255,8 +255,7 @@ public final class Harvester implements AutoCloseable {
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
-                    started.shutdownNow();
-                    started.awaitTermination(10, TimeUnit.SECONDS);
+                    Enrichments.stop(started, Duration.ofSeconds(10));
                 });
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
@@ -329,8 +328,7 @@ public final class Harvester implements AutoCloseable {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
                 ExecutorService renewals = Enrichments.background(100);
                 opened.add(() -> {
-                    renewals.shutdownNow();
-                    renewals.awaitTermination(10, TimeUnit.SECONDS);
+                    Enrichments.stop(renewals, Duration.ofSeconds(10));
                 });
                 renewal = new PageRenewal(pages, renewals);
             }
