@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
@@ -798,10 +799,35 @@ public final class SourcesView implements View {
             return;
         }
         feedback.working("Abgleich wird gestartet …");
-        Background.run(() -> keys.stream().map(key -> runtime.workspace().startSync(id, key)).toList(), started -> {
-            feedback.success(keys.size() == 1 ? "Abgleich von " + keys.get(0) + " gestartet"
-                    : Texts.count(keys.size(), "Abgleich", "Abgleiche") + " gestartet");
-            if (started.size() == 1) {
+        // Jeder Space für sich: Scheitert ein späterer Start (Auftragsgrenze, läuft schon), laufen die früheren weiter
+        // und die Meldung nennt beides.
+        Background.run(() -> {
+            List<JobStatus> started = new ArrayList<>();
+            Map<String, Exception> failed = new LinkedHashMap<>();
+            for (String key : keys) {
+                try {
+                    started.add(runtime.workspace().startSync(id, key));
+                } catch (RuntimeException e) {
+                    failed.put(key, e);
+                }
+            }
+            if (started.isEmpty() && !failed.isEmpty()) {
+                throw failed.values().iterator().next();
+            }
+            return new java.util.AbstractMap.SimpleEntry<>(started, failed);
+        }, result -> {
+            List<JobStatus> started = result.getKey();
+            Map<String, Exception> failed = result.getValue();
+            String done = started.size() == 1 && failed.isEmpty() ? "Abgleich von " + keys.get(0) + " gestartet"
+                    : Texts.count(started.size(), "Abgleich", "Abgleiche") + " gestartet";
+            if (failed.isEmpty()) {
+                feedback.success(done);
+            } else {
+                feedback.warning(done + ", " + Texts.count(failed.size(), "Space", "Spaces") + " nicht",
+                        failed.entrySet().stream().map(f -> f.getKey() + ": " + f.getValue().getMessage())
+                                .collect(java.util.stream.Collectors.joining("\n")));
+            }
+            if (started.size() == 1 && failed.isEmpty()) {
                 context.navigator().showJob(started.get(0).id());
             } else {
                 context.navigator().show(AppContext.Section.ACTIVITIES);
