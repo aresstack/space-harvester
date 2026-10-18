@@ -101,6 +101,9 @@ public final class SearchView implements View {
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
+                    if (hit.spaceKey() != null && !hit.spaceKey().isBlank()) {
+                        context.navigator().openSpace(hit.sourceId(), hit.spaceKey());
+                    }
                     context.navigator().openPage(hit.sourceId(), hit.pageId());
                 }
             }
