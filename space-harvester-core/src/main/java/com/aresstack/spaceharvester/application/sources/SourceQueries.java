@@ -89,6 +89,25 @@ public class SourceQueries {
         return source(sourceId).listsChanges();
     }
 
+    /**
+     * Ob die Quelle Änderungsereignisse lesen kann ({@link HarvestSource#readsChangeEvents()}).
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public boolean readsChangeEvents(String sourceId) {
+        return source(sourceId).readsChangeEvents();
+    }
+
+    /**
+     * Liest einen Webhook-Aufruf der Quelle ({@link HarvestSource#changeEvents}).
+     *
+     * @throws UnknownSourceException         wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws UnreadableChangeEventException wenn der Rumpf keine Meldung der Quelle ist
+     */
+    public List<ChangeEvent> changeEvents(String sourceId, byte[] body, String eventKey) {
+        return source(sourceId).changeEvents(body, eventKey);
+    }
+
     private static void requireLimit(int limit) {
         if (limit < 1 || limit > MAX_PAGE_METADATA_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_PAGE_METADATA_LIMIT + " liegen");

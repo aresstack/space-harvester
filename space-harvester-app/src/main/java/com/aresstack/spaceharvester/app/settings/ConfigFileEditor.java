@@ -351,6 +351,26 @@ public final class ConfigFileEditor {
     }
 
     /**
+     * Der Entwurf {@code base} mit neuer Hintergrundfüllung für alle Quellen ({@code space-harvester.sync.background-fill},
+     * {@code background-parallelism}, ADR 0016); nur diese beiden Werte ändern sich.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withBackground(Path file, Draft base, boolean fill, int parallelism) {
+        String text = nested(base.text(), "sync", "background-fill", indent -> indent + "background-fill: " + fill
+                + "\n");
+        text = nested(text, "sync", "background-parallelism", indent -> indent + "background-parallelism: "
+                + parallelism + "\n");
+        AppSettings settings = loader.read(file, text);
+        if (settings.sync().backgroundFill() != fill || settings.sync().backgroundParallelism() != parallelism) {
+            throw new IllegalArgumentException("Die Hintergrundfüllung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester.sync von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /**
      * Setzt die Regeln einer Quelle unter {@code space-harvester.sync.sources.<Quelle>}; {@link SourceSyncOverride#NONE}
      * entfernt ihren Eintrag, dann gilt für sie alles global. Die Regeln der anderen Quellen bleiben.
      *
@@ -393,6 +413,7 @@ public final class ConfigFileEditor {
                     rule.refreshStrategy() == null ? null : rule.refreshStrategy().key());
             line(yaml, field, SourceSyncOverride.MAX_AGE, rule.maxAge());
             line(yaml, field, SourceSyncOverride.WITHHELD_RETENTION, rule.withheldRetention());
+            line(yaml, field, SourceSyncOverride.BACKGROUND_FILL, rule.backgroundFill());
         });
         return yaml.toString();
     }

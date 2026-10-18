@@ -392,6 +392,9 @@ public final class SourcesView implements View {
                 .add("Webhooks", onOff(effective.events()) + origin(rule.events())
                         + " · nur im Server, Einrichtung in Confluence", tone(rule.events()))
                 .add("Von Hand", "Kreispfeil „Bestand abgleichen“ am Space unter Spaces")
+                .add(SettingDialogs.BACKGROUND_TITLE, onOff(effective.backgroundFill())
+                        + (effective.backgroundFill() ? " · lädt fehlende und veraltete Seiten, wenn nichts anderes "
+                        + "läuft" : "") + origin(rule.backgroundFill()), tone(rule.backgroundFill()))
                 .add("Aktualisierung", "Wann prüft die App gespeicherte Seiten?", Comic.MUTED);
         java.time.Duration maxAge = rule.maxAge() != null ? rule.maxAge() : cache.maxAge();
         String strategyText = rule.refreshStrategy() != null ? SettingDialogs.strategyLabel(rule.refreshStrategy()) + OWN

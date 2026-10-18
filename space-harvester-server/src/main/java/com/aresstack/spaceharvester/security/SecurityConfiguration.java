@@ -54,6 +54,12 @@ class SecurityConfiguration {
     };
 
     /**
+     * Webhooks der Quellen (ADR 0014): ohne Client-Token, weil Confluence keinen schickt; die Empfangsstelle prüft
+     * stattdessen die Signatur mit dem Geheimnis der Quelle und gibt keine Daten heraus.
+     */
+    private static final String[] WEBHOOK_PATHS = {"/webhooks/v1/sources/*/events"};
+
+    /**
      * Laufzeitkonfiguration (ADR 0015) und Stand der Beschaffung (ADR 0016), nur für Clients mit
      * {@code manage-configuration}.
      */
@@ -106,6 +112,7 @@ class SecurityConfiguration {
             http.addFilterBefore(new ClientTokenAuthenticationFilter(provider, delegatedUsers), AnonymousAuthenticationFilter.class)
                     .authorizeHttpRequests(requests -> requests
                             .requestMatchers(PUBLIC_PATHS).permitAll()
+                            .requestMatchers(WEBHOOK_PATHS).permitAll()
                             // Laufzeitkonfiguration (ADR 0015): nur Clients mit manage-configuration, nie Endnutzer.
                             .requestMatchers(CONFIGURATION_PATHS).access((authentication, context) ->
                                     new AuthorizationDecision(managesConfiguration(authentication.get(),

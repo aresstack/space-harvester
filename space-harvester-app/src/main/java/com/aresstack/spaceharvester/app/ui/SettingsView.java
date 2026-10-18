@@ -305,6 +305,8 @@ public final class SettingsView implements View {
             java.time.Duration kept = c.withheldRetention();
             cache.add(SettingDialogs.WITHHELD_RETENTION, kept.equals(java.time.Duration.ofDays(kept.toDays()))
                     ? Texts.count(kept.toDays(), "Tag", "Tagen") : ConfigFileEditor.duration(kept));
+            cache.add(SettingDialogs.BACKGROUND_TITLE, settings.sync().backgroundFill()
+                    ? "an · " + settings.sync().backgroundParallelism() + " gleichzeitig" : "aus");
         }
         runtime.reset();
         AppRuntime current = context.runtime();
