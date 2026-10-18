@@ -17,6 +17,9 @@ class JobStepTest {
         assertThat(ActivitiesView.Step.of(JobType.EXPORT, "Seiten exportieren", progress))
                 .isEqualTo(new ActivitiesView.Step("Seiten exportieren · 40 von 127 exportiert", 40, 127));
         assertThat(ActivitiesView.Counters.of(JobType.EXPORT).written()).isEqualTo("Exportiert");
+        assertThat(ActivitiesView.Step.of(JobType.EXPORT, "Konvertieren (pdf)", progress))
+                .isEqualTo(new ActivitiesView.Step("Konvertieren (pdf)", 0, 0));
+        assertThat(ActivitiesView.Step.of(JobType.EXPORT, "Ablegen", progress).total()).isZero();
     }
 
     @Test

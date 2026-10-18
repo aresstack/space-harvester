@@ -382,7 +382,8 @@ public final class ActivitiesView implements View {
 
     /**
      * Fortschritt eines laufenden Auftrags in seiner Phase: beim Abrufen zählen abgerufene oder geprüfte Seiten, beim
-     * Exportieren die exportierten; eine Anreicherung zählt Schritte (Seiten × Prozessoren). Kein Zähler zählt doppelt,
+     * Exportieren die exportierten; eine Anreicherung zählt Schritte (Seiten × Prozessoren). Phasen ohne Seitenzählung
+     * (Inventur, Konvertieren, Ablegen) haben kein Ziel und laufen unbestimmt. Kein Zähler zählt doppelt,
      * das regelt der Kern (docs/DIAGNOSTICS.md).
      */
     record Step(String text, long done, long total) {
@@ -396,6 +397,10 @@ public final class ActivitiesView implements View {
             if (type == JobType.EXPORT && phase != null && phase.startsWith("Seiten exportieren")) {
                 return new Step("Seiten exportieren · " + p.written() + " von " + total + " exportiert",
                         p.written(), total);
+            }
+            if (phase != null && !phase.equals("Einlesen") && !phase.equals("Seiten abrufen")) {
+                // Bestand prüfen, Inventur, Konvertieren, Ablegen: keine Seitenzählung, nur die Phase
+                return new Step(phase, 0, 0);
             }
             String prefix = phase == null ? "" : phase + " · ";
             return new Step(prefix + p.processed() + " von " + total + " Seiten geladen oder geprüft",
