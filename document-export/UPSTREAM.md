@@ -4,7 +4,8 @@ Word- und PDF-Ausgabe des [Enterprise AI Client](https://github.com/aresstack/en
 Space Harvester. Angelo wollte keinen zweiten, einfacheren Word-Writer: der Export von Space Harvester soll genauso
 aussehen wie der des Enterprise AI Client, mit echtem Inhaltsverzeichnis, Word-Überschriften, Listen, Tabellen,
 Links, Codeblöcken und Abbildungen. Diese Klassen hängen dort an der Swing-Anwendung; hier stehen sie ohne Swing.
-Mermaid zeichnet mermaid-java (GraalJS, offline), SVG rastert Batik, wie im Enterprise AI Client. Der Core
+Mermaid zeichnet mermaid-java (GraalJS, offline), SVG rastert Batik, draw.io zeichnet JGraphX, wie im Enterprise AI
+Client. Der Core
 (`DocxConverter`, `PdfConverter`, `MarkdownConverter`) hängt nur von diesem Modul ab.
 
 Anders als `enterprise-ai-sources` und `comic-controls` ist das **keine unveränderte Kopie**: die Klassen hängen
@@ -24,6 +25,7 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
 | `ExportGraphics` | `proasteion/exedra/…/exedra/document/ExportGraphics.java` |
 | `MermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/MermaidImageRenderer.java` |
 | `AresStackMermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/AresStackMermaidImageRenderer.java` (nur Paketzeile) |
+| `DrawioDiagramRenderer` | `proasteion/emporion/holkas/source-confluence/…/confluence/DrawioDiagramRenderer.java` (Stand wie `enterprise-ai-sources/UPSTREAM.sha256`; Klasse, `toSvg` und `Unsupported` öffentlich, damit der Core sie ohne die Quellenkopie nutzt) |
 | `SvgImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/SvgImageRenderer.java` (nur Paketzeile) |
 | `ExportDocumentNode` | `astu/acropolis/…/acropolis/knowledge/ExportDocumentNode.java` |
 | `ExportImage` | `astu/acropolis/…/acropolis/knowledge/ExportImage.java` (nur Javadoc) |

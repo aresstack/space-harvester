@@ -32,8 +32,9 @@ import org.jsoup.parser.Parser;
  * {@link StorageDocument}. Die Payload bleibt unverändert; der Parser erzeugt nur ein neues Abbild.
  *
  * <p>Diagramme: Makros mit Textquelle im Storage (PlantUML, Mermaid) werden als Codeblock mit dieser Quelle
- * übernommen. draw.io und Gliffy halten ihre Quelle in einem Seitenanhang, der nicht zur Payload gehört; dafür steht ein
- * {@link Note} mit dem Diagrammnamen. Bilder bleiben {@link ImageRef}. Was sich nicht abbilden lässt, wird als
+ * übernommen. draw.io und Gliffy halten ihre Quelle in einem Seitenanhang, der nicht zur Payload gehört: draw.io wird ein
+ * {@link ImageRef} {@code drawio:[<Seiten-ID>/]<Name>}, das die Konverter aus dem Datenbestand zeichnen; für Gliffy
+ * steht ein {@link Note} mit dem Diagrammnamen. Bilder bleiben {@link ImageRef}. Was sich nicht abbilden lässt, wird als
  * {@link Note} sichtbar, nie still verworfen.
  *
  * <p>Verschachtelung ist auf {@link #MAX_NESTING} Ebenen begrenzt (#90): Tiefer liegender Inhalt wird als reiner Text
@@ -46,6 +47,7 @@ public final class StorageParser {
             "tip", "Tipp", "panel", "Kasten", "expand", "Aufklappbar");
     private static final Set<String> TEXT_DIAGRAMS = Set.of("plantuml", "plantumlrender", "mermaid", "mermaid-cloud",
             "mermaid-macro");
+    private static final Set<String> DRAWIO = Set.of("drawio", "drawio-sketch", "inc-drawio");
     private static final Set<String> ATTACHMENT_DIAGRAMS = Set.of("drawio", "drawio-sketch", "inc-drawio", "gliffy");
     private static final Set<String> CONTAINERS = Set.of("div", "section", "article", "body", "ac:layout",
             "ac:layout-section", "ac:layout-cell", "ac:rich-text-body", "center");
@@ -198,6 +200,22 @@ public final class StorageParser {
         }
     }
 
+    /**
+     * Verweis auf ein draw.io-Diagramm: {@code drawio:<Name>} auf dieser Seite, {@code drawio:<Seiten-ID>/<Name>} für
+     * {@code inc-drawio} von einer anderen Seite; {@code null} ohne Diagrammnamen.
+     */
+    private String drawioReference(Element macro, String name) {
+        String diagram = parameter(macro, "diagramName", "");
+        if (diagram.isBlank() || diagram.contains("/")) {
+            return null;
+        }
+        String page = parameter(macro, "pageId", "");
+        if (name.equals("inc-drawio") && !page.matches("\\d+")) {
+            return null;
+        }
+        return "drawio:" + (page.matches("\\d+") ? page + "/" : "") + diagram;
+    }
+
     private void macro(Element macro, List<Block> blocks) {
         String name = macroName(macro);
         Element richBody = child(macro, "ac:rich-text-body");
@@ -207,6 +225,11 @@ public final class StorageParser {
         } else if (TEXT_DIAGRAMS.contains(name)) {
             String language = name.startsWith("mermaid") ? "mermaid" : "plantuml";
             blocks.add(new CodeBlock(language, plainText(plainBody)));
+        } else if (DRAWIO.contains(name) && drawioReference(macro, name) != null) {
+            // Gezeichnet wird aus dem Anhang im Datenbestand (#190); fehlt er, meldet der Writer die Abbildung
+            String diagram = parameter(macro, "diagramName", "");
+            blocks.add(new Paragraph(List.of(new ImageRef("Diagramm (draw.io) „" + diagram + "“",
+                    drawioReference(macro, name)))));
         } else if (ATTACHMENT_DIAGRAMS.contains(name)) {
             String diagram = parameter(macro, "diagramName", parameter(macro, "name", "ohne Namen"));
             blocks.add(new Note("Diagramm (" + (name.equals("gliffy") ? "Gliffy" : "draw.io") + ") „" + diagram

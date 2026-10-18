@@ -78,8 +78,10 @@ Swing-Anwendung.
   andere (fehlend, keine Berechtigung, zu groß, nicht beschafft, fremde Adresse ohne abgelegte Kopie) gilt nicht als
   eingebettet: an seiner Stelle steht kursiv „[Abbildung nicht verfügbar: … – Grund]“, nie ein Platzhalter, der wie ein
   Bild aussieht. Kein Konverter ruft die Quelle oder fremde Adressen ab. Mermaid wird aus seiner Textquelle gezeichnet
-  (mermaid-java, offline), SVG-Anhänge über Batik gerastert; PlantUML bleibt Codeblock, draw.io und Gliffy erscheinen
-  als Hinweis wie unten, bis #190 sie als Core-Dienst zeichnet.
+  (mermaid-java, offline), SVG-Anhänge über Batik gerastert; PlantUML bleibt Codeblock, Gliffy erscheint als Hinweis wie
+  unten. draw.io zeichnet der Diagramm-Dienst des Core (`Diagrams`, #190) aus den abgelegten Quelldaten, mit derselben
+  JGraphX-Anpassung wie der Enterprise AI Client; was JGraphX nicht vollständig darstellen kann, ersetzt die abgelegte
+  PNG-Vorschau des Plugins.
 - **Speicher.** Apache POI hält ein Dokument als XML-Objekte im Speicher, gemessen etwa 170 KiB je Seite mit 3 KB
   Markdown (2000 Seiten: 327 MiB). Deshalb verlässt der Inhalt jedes Kapitels das POI-Dokument direkt nach dem
   Kapitel als XML in eine temporäre Datei; beim Schreiben setzt der Exporter ihn an seine Stelle zurück. Im Speicher
@@ -124,7 +126,8 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: eingebettet, wenn der Datenbestand es abgelegt hat (Markdown als `data:`-URI), sonst „[Abbildung nicht verfügbar: …]“ mit Grund; ein externes Bild (`ri:url`) ohne abgelegte Kopie zusätzlich mit Link „Adresse“ |
 | Mermaid | gezeichnetes Diagramm (Word, PDF, Markdown) und in Markdown zusätzlich der Codeblock mit der Textquelle |
 | PlantUML | Codeblock mit der Textquelle des Diagramms |
-| draw.io, Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
+| draw.io (auch `inc-drawio`) | gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
+| Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
 | `include`, `excerpt-include` | Hinweis auf die eingebundene Seite |
 | `toc`, `children` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
 | andere Makros | Hinweis mit Makronamen; vorhandener Text- oder Rich-Text-Inhalt folgt |

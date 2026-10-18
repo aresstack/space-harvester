@@ -3,14 +3,18 @@ package com.aresstack.spaceharvester.output.convert;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Entry;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest.Kind;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
+import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,7 +26,8 @@ import java.util.regex.Pattern;
  *
  * <p>Bilder kommen nur aus dem Datenbestand ({@link ConversionInput#assets()}): ein abgelegtes Bild wird eingebettet,
  * jedes andere erscheint als „Abbildung nicht verfügbar“ mit seinem Grund. Kein Converter fragt die Quelle an.
- * Mermaid-Diagramme zeichnet der Writer aus dem Diagrammtext der Seite.</p>
+ * Mermaid-Diagramme zeichnet der Writer aus dem Diagrammtext der Seite, draw.io-Diagramme der Diagramm-Dienst des
+ * Core aus ihren abgelegten Quelldaten.</p>
  */
 final class ExportChapters {
 
@@ -54,12 +59,23 @@ final class ExportChapters {
     private static final Pattern EXTERNAL_IMAGE = Pattern.compile(
             "\\*\\\\\\[Abbildung nicht verfügbar: ((?:[^\\\\\\]]|\\\\.)*)\\\\\\]\\* \\(\\[Adresse\\]\\((<[^>]*>|[^)\\s]*)\\)\\)");
 
+    /** Inhalt eines Kapitels: das Markdown der Seite und die Abbildungen, auf die es verweist. */
+    record Figures(String markdown, List<ExportImage> images) {
+    }
+
+    /** Verweis auf ein draw.io-Diagramm im Markdown ({@link StorageParser}): {@code drawio:[<Seiten-ID>/]<Name>}. */
+    private static final Pattern DRAWIO = Pattern.compile("\\]\\((?:<)?drawio:(?:(\\d+)/)?([^)>]*)(?:>)?\\)");
+
     /**
-     * Die Bilder einer Seite aus dem Datenbestand, adressiert wie im Markdown der Seite: Anhänge als
-     * {@code attachment:<Datei>}, Bilder der Lese-Ansicht mit ihrer Adresse. Mermaid fehlt hier; der Writer zeichnet es
-     * aus dem Diagrammtext.
+     * Markdown und Abbildungen einer Seite. Die Bilder kommen nur aus dem Datenbestand, adressiert wie im Markdown:
+     * Anhänge als {@code attachment:<Datei>}, Bilder der Lese-Ansicht mit ihrer Adresse, draw.io-Diagramme als
+     * {@code drawio:[<Seiten-ID>/]<Name>}, gezeichnet aus ihren abgelegten Quelldaten ({@link Diagrams#drawio}), sonst
+     * die abgelegte Vorschau des Plugins. Mermaid fehlt hier; der Writer zeichnet es aus dem Diagrammtext. Ein externes
+     * Bild, das der Datenbestand kennt, wird ein Bildverweis, damit der Writer es einbettet oder als fehlend meldet; die
+     * übrigen bleiben Hinweis mit Link.
      */
-    static List<ExportImage> images(ConvertiblePage page, ExportAssets assets) {
+    static Figures figures(ConvertiblePage page, StorageParser parser, ExportAssets assets) {
+        String markdown = markdown(page, parser);
         List<ExportImage> images = new ArrayList<>();
         for (Entry entry : assets.forPage(page.pageId())) {
             String src = src(entry);
@@ -71,7 +87,52 @@ final class ExportChapters {
             images.add(bytes.isPresent() ? ExportImage.loaded(src, title, bytes.get())
                     : ExportImage.failed(src, title, reason(entry, entry.stored())));
         }
-        return images;
+        Matcher drawio = DRAWIO.matcher(markdown);
+        Set<String> drawn = new HashSet<>();
+        while (drawio.find()) {
+            String pageId = drawio.group(1);
+            String name = drawio.group(2);
+            String src = "drawio:" + (pageId == null ? "" : pageId + "/") + name;
+            if (drawn.add(src)) {
+                images.add(drawio(src, pageId == null ? page.pageId() : pageId, name, assets));
+            }
+        }
+        return new Figures(images.isEmpty() ? markdown : withKnownExternalImages(markdown, images), images);
+    }
+
+    /** Ein draw.io-Diagramm aus dem Datenbestand: gezeichnet, sonst die Vorschau, sonst mit Grund als fehlend. */
+    private static ExportImage drawio(String src, String pageId, String name, ExportAssets assets) {
+        String title = "Diagramm (draw.io) „" + name + "“";
+        List<Entry> entries = assets.forPage(pageId);
+        Entry source = entries.stream().filter(e -> e.reference().kind() == Kind.ATTACHMENT
+                        && e.reference().filename() != null && Diagrams.isDrawio(e.mediaType(), e.reference().filename())
+                        && Diagrams.drawioName(e.reference().filename()).equals(name))
+                .findFirst().orElse(null);
+        String problem;
+        if (source == null) {
+            problem = "Quelldaten nicht im Datenbestand";
+        } else {
+            Optional<byte[]> mxfile = source.stored() ? assets.content(source) : Optional.empty();
+            if (mxfile.isPresent()) {
+                Diagrams.Rendering rendering = Diagrams.drawio(mxfile.get());
+                if (rendering.drawn()) {
+                    return ExportImage.loaded(src, title, rendering.content());
+                }
+                problem = rendering.problem();
+            } else {
+                problem = reason(source, source.stored());
+            }
+        }
+        for (Entry preview : entries) {
+            if (preview.reference().kind() == Kind.ATTACHMENT && preview.reference().filename() != null
+                    && Diagrams.isDrawioPreview(preview.reference().filename(), name) && preview.stored()) {
+                Optional<byte[]> png = assets.content(preview);
+                if (png.isPresent()) {
+                    return ExportImage.loaded(src, title, png.get());
+                }
+            }
+        }
+        return ExportImage.failed(src, title, problem);
     }
 
     private static String src(Entry entry) {
@@ -96,16 +157,7 @@ final class ExportChapters {
         return entry.reason() == null || entry.reason().isBlank() ? status : status + " (" + entry.reason() + ")";
     }
 
-    /**
-     * Seiten-ID, Version und Link in Confluence, darunter der Inhalt; Überschriften ab Ebene 1 (verschiebt der Writer).
-     * Ein externes Bild, das der Datenbestand kennt ({@code images}), wird ein Bildverweis, damit der Writer es
-     * einbettet oder als fehlend meldet; die übrigen bleiben Hinweis mit Link.
-     */
-    static String markdown(ConvertiblePage page, StorageParser parser, List<ExportImage> images) {
-        String markdown = markdown(page, parser);
-        if (images.isEmpty()) {
-            return markdown;
-        }
+    private static String withKnownExternalImages(String markdown, List<ExportImage> images) {
         Matcher matcher = EXTERNAL_IMAGE.matcher(markdown);
         StringBuilder out = new StringBuilder();
         while (matcher.find()) {

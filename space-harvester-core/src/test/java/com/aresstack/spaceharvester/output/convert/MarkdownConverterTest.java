@@ -69,7 +69,7 @@ class MarkdownConverterTest {
                 storagePage("102", "101", 7, "<p>tief</p>"));
 
         // Kapitelmodell wie Word und PDF: der Space ist # , Wurzelseiten ##, tiefer als sechs Ebenen fett
-        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten der Quelle wiki, erzeugt mit markdown/5")
+        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten der Quelle wiki, erzeugt mit markdown/6")
                 .contains("<a id=\"page-100\"></a>\n\n## Seite 100\n\n*Seite 100 · Version 3")
                 .contains("<a id=\"page-101\"></a>\n\n### Seite 101\n")
                 .contains("#### Abschnitt\n\nText\n")
@@ -124,7 +124,7 @@ class MarkdownConverterTest {
                 // Nur als Anhang vorhanden: nicht eingebettet, sichtbar gemeldet
                 .contains("*[Abbildung nicht verfügbar: diagramm.png]*")
                 .doesNotContain("attachment:")
-                .contains("draw.io) „architektur“: die Quelle ist der Seitenanhang „architektur“")
+                .contains("*[Abbildung nicht verfügbar: Diagramm (draw.io) „architektur“]*")
                 .contains("```plantuml\n@startuml\nA -> B\n@enduml\n```")
                 .contains("Siehe [Seite 101](#page-101) und anderswo.")
                 .contains("Makro „toc“ wird in Confluence berechnet")

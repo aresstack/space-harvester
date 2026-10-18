@@ -5,7 +5,6 @@ import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededE
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.document.ExportGraphics;
-import com.aresstack.spaceharvester.document.ExportImage;
 import com.aresstack.spaceharvester.document.PdfExportWriter;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -35,7 +34,7 @@ import java.util.Set;
 public final class PdfConverter implements ExportConverter {
 
     public static final String FORMAT = "pdf";
-    public static final String VERSION = "pdf/4";
+    public static final String VERSION = "pdf/5";
 
     /**
      * Höchste Seitenzahl einer PDF-Datei (#90): Seitenbaum, Gliederung und Verweise wachsen im Speicher, bevor
@@ -99,9 +98,9 @@ public final class PdfConverter implements ExportConverter {
                     identity.update((page.pageId() + "\t" + page.snapshot().payload().rawSha256() + "\n")
                             .getBytes(StandardCharsets.UTF_8));
                     try {
-                        List<ExportImage> images = ExportChapters.images(page, input.assets());
+                        ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                                ExportChapters.markdown(page, parser, images), images, ExportChapters.depth(page));
+                                figures.markdown(), figures.images(), ExportChapters.depth(page));
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }
