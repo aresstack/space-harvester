@@ -210,6 +210,20 @@ public class RelevanceSearch {
      *                                              es gibt keinen Rückfall auf die Titelsuche (ADR 0011)
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, int limit) {
+        return search(caller, query, text, null, limit);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, int)}, aber die {@link Preparation} findet mit einem
+     * anderen Text, etwa einer Variante der progressiven Suche (ADR 0017). Er bestimmt nur, welche Seiten in den Cache
+     * geladen und eingebettet werden; Kandidaten und Reihenfolge kommen weiter allein aus der Vektorsuche mit
+     * {@code text}.
+     *
+     * @param discovery Text zum Finden in den Quellen oder {@code null}, dann der Anfragetext
+     * @throws InvalidQueryException auch bei zu langem {@code discovery}
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   int limit) {
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + Reranking.MAX_WINDOW + " liegen");
@@ -221,6 +235,10 @@ public class RelevanceSearch {
         if (queryText.length() > MAX_TEXT_LENGTH) {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
+        String findText = discovery == null || discovery.isBlank() ? queryText : discovery.strip();
+        if (findText.length() > MAX_TEXT_LENGTH) {
+            throw new InvalidQueryException("Suchtext hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
+        }
         scope.requireKnown(catalog);
         if (!semantic()) {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
@@ -229,7 +247,7 @@ public class RelevanceSearch {
         int preparing = 0;
         if (preparation != null) {
             try {
-                preparing = preparation.prepare(caller, query, queryText);
+                preparing = preparation.prepare(caller, query, findText);
             } catch (RuntimeException e) {
                 // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
                 LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",

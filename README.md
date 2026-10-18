@@ -518,7 +518,9 @@ die ursprüngliche Anfrage sofort und erzeugt gleichzeitig Varianten (zuerst mit
 weniger). Die Varianten laufen in Wellen, und jeder Fund wird gegen die ursprüngliche Anfrage bewertet. Die Suche
 endet am Qualitätsziel des `SearchProfile` oder an Zeit- und Abfragebudget. `searchAsync` liefert die sortierte
 Liste mit Abschlussgrund, ein `ProgressiveSearchListener` meldet unterwegs Varianten und die neu geordnete Liste.
-Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
+Mit `SearchProfile.Ranking.SEMANTIC` (Standard von `Harvester.searchProfile()`, sobald ein Embedding-Modell da ist)
+finden die Varianten nur; die Treffer kommen aus der Vektorsuche mit der ursprünglichen
+Anfrage, bewertet nach Kosinusähnlichkeit (ADR 0013, ohne Fusion). Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 [ADR 0016](docs/adr/0016-auswahl-beschaffung-hintergrund.md).
 
 Über REST startet `POST /api/v1/search/progressive` dieselbe Suche, mit einem JSON-Körper: `q` (Pflicht, höchstens

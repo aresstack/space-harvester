@@ -62,6 +62,7 @@ import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
 import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.SearchExecutionPolicy;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
@@ -70,6 +71,7 @@ import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
@@ -167,6 +169,9 @@ public final class Harvester implements AutoCloseable {
 
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
+
+    /** Zeitbudget der semantischen progressiven Suche: Jede Suchanfrage lädt und bettet erst ein, bevor sie sucht. */
+    public static final Duration SEMANTIC_TIME_BUDGET = Duration.ofSeconds(60);
 
     private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
     private static final Duration POLL = Duration.ofMillis(50);
@@ -376,12 +381,6 @@ public final class Harvester implements AutoCloseable {
             AiServiceSettings fixedAi = builder.ai;
             this.variantModels = new VariantModels(() -> liveAi ? this.settings.ai() : fixedAi, catalog,
                     trustBundles, builder.userAgent);
-            RuleBasedExpansion rules = new RuleBasedExpansion();
-            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
-                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts));
-            opened.add(orchestrator);
-            this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -397,6 +396,14 @@ public final class Harvester implements AutoCloseable {
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, reranker, textIndex, preparation);
+            // ADR 0017 mit ADR 0013: semantisch findet jede Variante nur, Treffer kommen aus den Vektoren.
+            RuleBasedExpansion rules = new RuleBasedExpansion();
+            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
+                    new SemanticVariantSearch(relevance, textIndex),
+                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
+                    HitScorer.of(excerpts));
+            opened.add(orchestrator);
+            this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
@@ -768,10 +775,25 @@ public final class Harvester implements AutoCloseable {
     /**
      * Das Standardprofil der progressiven Suche: Varianten vom Chat-Modell ({@link SearchProfile.Expansion#AI}), wenn
      * die wirksame Konfiguration eines hat, sonst nach Regeln.
+     *
+     * <p>Dieses Profil ist der Haken „Semantische Suche“ (ADR 0013): semantisch
+     * ({@link SearchProfile.Ranking#SEMANTIC}), wenn ein Embedding-Modell verfügbar ist, sonst wie bei den Varianten die
+     * wirksame Wahl, also die Schlagwortsuche. Semantisch finden die Varianten nur, und die Treffer kommen aus der
+     * Vektorsuche mit der ursprünglichen Anfrage; jede Suchanfrage hat dafür {@link SemanticVariantSearch#VARIANT_TIMEOUT}
+     * und die Suche {@link #SEMANTIC_TIME_BUDGET}. Eine ausdrücklich semantische Suche ohne Modell scheitert mit
+     * {@link com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException}.
      */
     public SearchProfile searchProfile() {
-        return SearchProfile.defaults().withExpansion(variantModels.get().isPresent() ? SearchProfile.Expansion.AI
-                : SearchProfile.Expansion.RULES);
+        SearchProfile profile = SearchProfile.defaults().withExpansion(variantModels.get().isPresent()
+                ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES);
+        if (!relevance.semantic()) {
+            return profile;
+        }
+        SearchExecutionPolicy execution = profile.execution();
+        return profile.withRanking(SearchProfile.Ranking.SEMANTIC)
+                .withExecution(new SearchExecutionPolicy(execution.waveSize(), execution.parallelism(),
+                        SemanticVariantSearch.VARIANT_TIMEOUT, execution.retries()))
+                .withBudget(SEMANTIC_TIME_BUDGET, profile.searchBudget());
     }
 
     /**
