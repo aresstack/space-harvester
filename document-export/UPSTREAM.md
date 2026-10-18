@@ -46,6 +46,8 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
   (Speicher, siehe `docs/CONVERTERS.md › Word`). Kapitel mit Sprungmarke bekommen eine Textmarke auf der Überschrift.
   Autor ist „Space Harvester“ statt „Enterprise AI Client“. Ausgabe deterministisch: kein Erstelldatum, feste
   Zeitstempel der Archiveinträge. Kein `ExportWriter`-Interface (es gibt nur das Word-Format).
+- **MarkdownExportWriter**: wohin eine Abbildung geht, entscheidet `FigureLinks` (Standard `EMBEDDED` wie upstream als
+  `data:`-URI; das Format `markdown-package` legt sie als Datei ab und verlinkt relativ, ADR 0018).
 - **MarkdownDocxRenderer**: `isMermaid` liegt hier statt in `PdfExportWriter`. Links `#<anker>` springen zur
   Textmarke des Kapitels (`bookmark(…)`); inline `<br>` (Zeilenumbruch in Tabellenzellen konvertierter
   Confluence-Seiten) wird ein Zeilenumbruch statt Text; eine leere Kopfzeile (Confluence-Tabelle ohne Kopf) entfällt.
