@@ -42,6 +42,11 @@ public final class SettingsView implements View {
     private final ComposerButton openFile = Comic.button("Datei öffnen", "Konfiguration im Standardeditor öffnen");
     private final ComposerButton openFolder = Comic.button("Ordner öffnen", "Ordner der Konfiguration öffnen");
     private final ComposerButton openData = Comic.button("Datenordner öffnen", "Ordner des lokalen Bestands öffnen");
+    final ComposerButton chooseOutput = Comic.button("Ausgabeordner ändern …",
+            "Ordner, in den „Exportieren“ unter Aufträge die Dateien legt");
+    final ComposerButton openOutput = Comic.button("Ausgabeordner öffnen", "Den Ausgabeordner anzeigen");
+    final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
+    private final Facts output = new Facts();
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
 
@@ -59,6 +64,13 @@ public final class SettingsView implements View {
                 open(context.settings().storage().dataDirectory());
             }
         });
+        chooseOutput.addActionListener(e -> chooseOutput());
+        openOutput.addActionListener(e -> {
+            if (context.settings() != null) {
+                open(context.settings().outputDirectory());
+            }
+        });
+        resetOutput.addActionListener(e -> saveOutput(null));
         about.addActionListener(e -> AboutDialog.open(root, context));
         proxy.addActionListener(e -> SettingDialogs.proxy(root, context, null,
                 () -> feedback.success("Proxy übernommen")).open());
@@ -75,12 +87,17 @@ public final class SettingsView implements View {
         data.setOpaque(false);
         data.add(storage, BorderLayout.CENTER);
         data.add(Comic.row(openData), BorderLayout.SOUTH);
+        JPanel outputPanel = new JPanel(new BorderLayout(0, 8));
+        outputPanel.setOpaque(false);
+        outputPanel.add(output, BorderLayout.CENTER);
+        outputPanel.add(Comic.row(chooseOutput, openOutput, resetOutput), BorderLayout.SOUTH);
         JPanel diagnosis = new JPanel(new BorderLayout(0, 8));
         diagnosis.setOpaque(false);
         diagnosis.add(runtime, BorderLayout.CENTER);
         diagnosis.add(Comic.row(about), BorderLayout.SOUTH);
         tabs.tab(GENERAL, Comic.column(
                 Comic.plate("Konfiguration", Comic.BLUE, config),
+                Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
                 Comic.plate("Netz und Zertifikate", Comic.ORANGE, withButtons(network, proxy)),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)));
@@ -149,7 +166,13 @@ public final class SettingsView implements View {
 
         storage.reset();
         network.reset();
+        output.reset();
+        resetOutput.setVisible(settings != null
+                && !settings.outputDirectory().equals(AppSettings.defaultOutputDirectory()));
         if (settings != null) {
+            output.add("Ordner", settings.outputDirectory().toString())
+                    .add("Inhalt", "Dateien, die du unter Aufträge aus einem Download exportierst; ohne technische "
+                            + "Zwischendateien");
             AppSettings.Storage s = settings.storage();
             storage.add("Daten (Cache, Aufträge, Analysen)", s.dataDirectory().toString())
                     .add("Exporte", s.exportDirectory().toString())
@@ -256,6 +279,25 @@ public final class SettingsView implements View {
             render();
             open(target);
         }, feedback::problem);
+    }
+
+    /** Ein Ordnerdialog genau hier, einmalig; „Exportieren“ unter Aufträge fragt nie nach einem Ordner. */
+    private void chooseOutput() {
+        AppSettings settings = context.settings();
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(
+                settings == null ? null : settings.outputDirectory().toFile());
+        chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
+        chooser.setDialogTitle("Ausgabeordner wählen");
+        if (chooser.showDialog(root, "Übernehmen") == javax.swing.JFileChooser.APPROVE_OPTION) {
+            saveOutput(chooser.getSelectedFile().toPath());
+        }
+    }
+
+    /** @param directory neuer Ordner oder {@code null} für Downloads */
+    void saveOutput(Path directory) {
+        feedback.working("Ausgabeordner wird gespeichert …");
+        context.outputDirectory(directory, () -> feedback.success("Ausgabeordner: "
+                + context.settings().outputDirectory()), feedback::problem);
     }
 
     private void open(Path path) {

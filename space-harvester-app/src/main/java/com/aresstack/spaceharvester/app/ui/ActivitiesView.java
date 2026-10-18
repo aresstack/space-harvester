@@ -79,7 +79,7 @@ public final class ActivitiesView implements View {
         JPanel leftSouth = new JPanel(new BorderLayout(0, 6));
         leftSouth.setOpaque(false);
         leftSouth.add(Comic.row(deleteFinished), BorderLayout.NORTH);
-        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exportieren. "
+        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Downloads unter Herunterladen. "
                 + "Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist endet oder sie gelöscht werden."),
                 BorderLayout.SOUTH);
         left.add(leftSouth, BorderLayout.SOUTH);
