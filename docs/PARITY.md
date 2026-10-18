@@ -151,7 +151,7 @@ Nicht angebunden sind:
 
 Maßstab: `doc/DocxExportWriter`, `doc/MarkdownDocxRenderer`, `doc/ExportGraphics` über `know/KnowledgeExportUseCase`.
 Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R ersetzt ihn durch das Modul
-`:docx-export` mit dem Exporter des EAC (PR #175), Strang Q liefert das Asset-Manifest.
+`:document-export` mit dem Exporter des EAC (Word #175, PDF #202), Strang Q liefert das Asset-Manifest.
 
 | Fähigkeit | EAC | Core (main) | Bewertung |
 |---|---|---|---|
@@ -161,7 +161,7 @@ Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R e
 | Bilder eingebettet, skaliert, Bildunterschrift, Meldung fehlender Bilder | `run.addPicture`, `ExportGraphics#problems` | Platzhalter `[Bild: …]` | in Arbeit (R mit Manifest von Q) |
 | Mermaid und draw.io als Grafik | ja (draw.io über Renderer) | Code bzw. Hinweis | in Arbeit (R); Renderer im Core → #190 |
 | Hyperlinks, Codeblöcke, Listen | ja | ja | gleich |
-| Interne Seitenlinks innerhalb des Dokuments | — | Lesezeichen `page_<id>` | SH+ (in `:docx-export` erhalten) |
+| Interne Seitenlinks innerhalb des Dokuments | — | Lesezeichen `page_<id>` | SH+ (in `:document-export` erhalten) |
 | Durchgestrichen, Dokumenteigenschaften (Titel, Autor) | ja | nein | in Arbeit (R, #175) |
 
 ## 10. Weitere Formate und Datenbestand
@@ -259,7 +259,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:docx-export`, #175),
+- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:document-export`, #175),
 - Auftragskarte und Ausgabeordner (L).
 
 ## Vergleichstests
@@ -309,7 +309,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 
-Stand nach #175 (Word über `:docx-export`): Der Enterprise AI Client verliert die Ziele externer Links in allen
+Stand nach #175 (Word über `:document-export`): Der Enterprise AI Client verliert die Ziele externer Links in allen
 Formaten, der Core behält sie. Tabellen, Text, Inhaltsverzeichnis und Felder in Word sind gleich. Offen (in
 `known-gaps.properties`): Space-Name als oberstes Kapitel (wartet auf den Space-Namen im Konvertier-Eingang),
 Inhaltsverzeichnisseite, Seitenzahlen und Lesezeichen im PDF (#202), eingebettete Bilder in allen Formaten (Strang R,
