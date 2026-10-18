@@ -50,6 +50,10 @@ import org.junit.jupiter.api.io.TempDir;
 class ExportAssetCollectionTest {
 
     private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10, 1, 2, 3};
+    private static final byte[] MXFILE = ("<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
+            + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
+            + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
+            + "</root></mxGraphModel></diagram></mxfile>").getBytes(StandardCharsets.UTF_8);
     private static final String STORAGE = "{\"body\":{\"storage\":{\"value\":\"<p>Bild</p>"
             + "<ac:structured-macro ac:name=\\\"mermaid-cloud\\\"><ac:plain-text-body><![CDATA[graph TD; A-->B]]>"
             + "</ac:plain-text-body></ac:structured-macro>\"}}}";
@@ -86,7 +90,7 @@ class ExportAssetCollectionTest {
                 return "confluence".equals(sourceId) ? Optional.of(source) : Optional.empty();
             }
         };
-        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1000, clock);
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1_000_000, clock);
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
                 (owner, sourceId) -> true);
         Exports exports = new Exports(jobs, cache, writer, converters, clock);
@@ -106,18 +110,29 @@ class ExportAssetCollectionTest {
 
         JobStatus collection = jobs.list("client-a", JobType.ASSETS).get(0);
         assertThat(collection.state()).isEqualTo(JobState.COMPLETED);
-        // 100: Anhang bild.png und ein Bild der Lese-Ansicht, das kein Anhang ist; 101: ein fehlender Anhang.
-        assertThat(collection.progress().discovered()).isEqualTo(3);
-        assertThat(collection.progress().written()).isEqualTo(2);
+        // 100: Anhänge bild.png und ablauf.drawio, ein Bild der Lese-Ansicht, das kein Anhang ist; 101: ein fehlender
+        // Anhang.
+        assertThat(collection.progress().discovered()).isEqualTo(4);
+        assertThat(collection.progress().written()).isEqualTo(3);
         assertThat(collection.progress().failed()).isEqualTo(1);
         ExportDatasetInfo info = conversions.dataset(export.id(), "client-a").orElseThrow();
         assertThat(info.images()).isEqualTo(ExportDatasetInfo.Images.INCOMPLETE);
         ExportAssetManifest manifest = writer.assets(export.id()).orElseThrow();
         assertThat(manifest.complete()).isFalse();
         assertThat(manifest.forPage("100")).extracting(entry -> entry.reference().kind())
-                .containsExactly(ExportAssetManifest.Kind.ATTACHMENT, ExportAssetManifest.Kind.VIEW_IMAGE,
-                        ExportAssetManifest.Kind.MERMAID);
-        assertThat(manifest.forPage("100").get(2).reference().source()).isEqualTo("graph TD; A-->B");
+                .containsExactly(ExportAssetManifest.Kind.ATTACHMENT, ExportAssetManifest.Kind.ATTACHMENT,
+                        ExportAssetManifest.Kind.VIEW_IMAGE, ExportAssetManifest.Kind.MERMAID);
+        ExportAssetManifest.Entry picture = manifest.forPage("100").get(0);
+        ExportAssetManifest.Entry drawio = manifest.forPage("100").get(1);
+        ExportAssetManifest.Entry view = manifest.forPage("100").get(2);
+        ExportAssetManifest.Entry mermaid = manifest.forPage("100").get(3);
+        assertThat(mermaid.reference().source()).isEqualTo("graph TD; A-->B");
+        // Diagramme werden beim Beschaffen einmal gezeichnet und mit abgelegt (#190), Fotos nicht.
+        assertThat(picture.rendition()).isNull();
+        assertThat(drawio.rendition().drawn()).isTrue();
+        assertThat(drawio.rendition().mediaType()).isEqualTo("image/svg+xml");
+        assertThat(mermaid.rendition().drawn()).isTrue();
+        assertThat(mermaid.rendition().mediaType()).isEqualTo("image/png");
         assertThat(manifest.forPage("101")).singleElement().satisfies(entry -> {
             assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.MISSING);
             assertThat(entry.stored()).isFalse();
@@ -126,11 +141,16 @@ class ExportAssetCollectionTest {
         int downloads = source.downloads;
         ExportAssets stored = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
                 (owner, sourceId) -> false).assets(export.id());
-        assertThat(stored.content(manifest.forPage("100").get(0))).hasValue(PNG);
-        assertThat(stored.content(manifest.forPage("100").get(1))).hasValue(PNG);
-        assertThat(stored.content(manifest.forPage("100").get(2))).hasValue("graph TD; A-->B"
-                .getBytes(StandardCharsets.UTF_8));
-        assertThat(manifest.forPage("100").get(2).stored()).isTrue();
+        assertThat(stored.content(picture)).hasValue(PNG);
+        assertThat(stored.content(drawio)).hasValue(MXFILE);
+        assertThat(stored.content(view)).hasValue(PNG);
+        assertThat(stored.content(mermaid)).hasValue("graph TD; A-->B".getBytes(StandardCharsets.UTF_8));
+        assertThat(mermaid.stored()).isTrue();
+        assertThat(stored.rendition(picture)).isEmpty();
+        assertThat(stored.rendition(drawio)).hasValueSatisfying(svg -> assertThat(new String(svg,
+                StandardCharsets.UTF_8)).contains("<svg").contains("Start"));
+        assertThat(stored.rendition(mermaid)).hasValueSatisfying(png -> assertThat(png).startsWith(PNG[0], PNG[1],
+                PNG[2], PNG[3]));
         assertThat(stored.content(manifest.forPage("101").get(0))).isEmpty();
         assertThat(source.downloads).isEqualTo(downloads);
     }
@@ -219,6 +239,8 @@ class ExportAssetCollectionTest {
             if (pageId.equals("100")) {
                 list.add(new PageAttachment("att1", "confluence:wiki/attachment/att1", "bild.png", "image/png",
                         (long) PNG.length, "1", null, null));
+                list.add(new PageAttachment("att3", "confluence:wiki/attachment/att3", "ablauf.drawio",
+                        "application/vnd.jgraph.mxfile", (long) MXFILE.length, "2", null, null));
                 list.add(new PageAttachment("att2", "confluence:wiki/attachment/att2", "handbuch.pdf",
                         "application/pdf", 10L, "1", null, null));
             } else if (pageId.equals("101")) {
@@ -235,7 +257,7 @@ class ExportAssetCollectionTest {
                 throw new SourceAccessException(id(), SourceAccessException.Reason.NOT_FOUND, "gelöscht", null);
             }
             downloads++;
-            return new AttachmentFile(attachment, PNG, Instant.parse("2026-10-18T01:00:00Z"));
+            return new AttachmentFile(attachment, attachment.attachmentId().equals("att3") ? MXFILE : PNG, Instant.parse("2026-10-18T01:00:00Z"));
         }
 
         @Override

@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.assets;
 
+import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -226,6 +227,58 @@ public class Assets {
             return Optional.empty();
         }
         return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
+    }
+
+    /** Version der draw.io-Grafik im Speicher; ändert sich mit dem Renderer, damit alte Grafiken neu entstehen. */
+    public static final String DRAWIO_RENDITION = "drawio-svg-1";
+    /** Version der Mermaid-Grafik im Speicher. */
+    public static final String MERMAID_RENDITION = "mermaid-png-1";
+
+    /**
+     * Die gezeichnete Grafik eines Diagramms (#190): einmal mit {@link Diagrams} gezeichnet und unter der Kennung
+     * {@link #renditionId} seiner Quelldaten abgelegt; dieselben Quelldaten werden nie erneut gezeichnet. Ruft nie die
+     * Quelle.
+     *
+     * @param renderer     {@link #DRAWIO_RENDITION} oder {@link #MERMAID_RENDITION}
+     * @param source       Quelldaten ({@code mxfile} oder Mermaid-Text in UTF-8)
+     * @return die abgelegte Grafik oder warum es keine gibt
+     */
+    public Rendered rendition(String sourceId, String pageId, String renderer, byte[] source) {
+        String sourceSha256 = sha256(source);
+        String id = renditionId(sourceSha256);
+        Optional<Asset> stored = store.find(sourceId, id, renderer);
+        if (stored.isPresent()) {
+            return new Rendered(stored.get(), null);
+        }
+        Diagrams.Rendering rendering = switch (renderer) {
+            case DRAWIO_RENDITION -> Diagrams.drawio(source);
+            case MERMAID_RENDITION -> Diagrams.mermaid(new String(source, java.nio.charset.StandardCharsets.UTF_8));
+            default -> throw new IllegalArgumentException("Unbekannter Renderer " + renderer);
+        };
+        if (!rendering.drawn()) {
+            return new Rendered(null, rendering.problem());
+        }
+        byte[] content = rendering.content();
+        if (content.length > maxBytes) {
+            return new Rendered(null, "Grafik größer als die Grenze des Asset-Speichers");
+        }
+        Asset asset = new Asset(sourceId, pageId, id, renderer, "", rendering.mediaType(),
+                AssetKind.of(rendering.mediaType(), ""), content.length, sha256(content), clock.instant());
+        try {
+            store.put(asset, content);
+        } catch (AssetStoreException e) {
+            return new Rendered(null, "Grafik nicht ablegbar (" + e.getClass().getSimpleName() + ")");
+        }
+        return new Rendered(asset, null);
+    }
+
+    /** Kennung der Grafik im Speicher: aus dem Hash der Quelldaten, unabhängig von Seite und Anhang. */
+    public static String renditionId(String sourceSha256) {
+        return "render-" + sourceSha256.substring("sha256:".length(), "sha256:".length() + 32);
+    }
+
+    /** Ergebnis von {@link #rendition}: die abgelegte Grafik oder das Problem. */
+    public record Rendered(Asset asset, String problem) {
     }
 
     /** Medientyp aus den ersten Bytes, für Bilder ohne Angabe der Quelle. */
