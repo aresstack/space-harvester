@@ -22,9 +22,10 @@ import java.util.Set;
 
 /**
  * Quellen zur Laufzeit verwalten (#188), wie {@code KnowledgeSourceManagement} und {@code SourceConnectionCheck} im
- * Enterprise AI Client: prüfen, Verbindung testen, hinzufügen, ändern, entfernen. Die Einstellungen dauerhaft
- * ablegen (Konfigurationsdatei, Tresor) bleibt Sache des einbettenden Programms; diese Verwaltung ändert nur den
- * laufenden Stand.
+ * Enterprise AI Client: prüfen, Verbindung testen, hinzufügen, ändern, abschalten, entfernen. Eine Quelle ist wie dort
+ * durch Typ und Ziel bestimmt: dieselbe Basisadresse unter einer zweiten ID lehnt {@link #validate} ab. Die
+ * Einstellungen dauerhaft ablegen (Konfigurationsdatei, Tresor) bleibt Sache des einbettenden Programms; diese
+ * Verwaltung ändert nur den laufenden Stand.
  *
  * <p>Abgeleitete Daten gehören zur Quelle: Wird sie entfernt oder zeigt sie nach einer Änderung auf ein anderes Ziel
  * (anderer Typ oder andere Basisadresse), werden ihre offenen Aufträge abgebrochen und Seiten-Cache samt Suchindex
@@ -120,6 +121,30 @@ public final class SourceManagement {
         return moved;
     }
 
+    /** Ob die Quelle eingeschaltet ist; {@code false} auch für unbekannte. */
+    public boolean enabled(String sourceId) {
+        return catalog.enabled(sourceId);
+    }
+
+    /**
+     * Schaltet eine Quelle ab oder wieder ein (wie {@code setEnabled} im Enterprise AI Client). Abgeschaltet behält sie
+     * Einstellungen, Cache, Anreicherungen und Assets, nimmt aber an Suche, Lesen, Aufträgen und Export nicht teil;
+     * ihre offenen Aufträge werden abgebrochen. Eingeschaltet ist alles wieder da, ohne neuen Abgleich.
+     *
+     * @return ob sich etwas geändert hat
+     * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException ohne Quelle dieser ID
+     */
+    public synchronized boolean setEnabled(String sourceId, boolean enabled) {
+        boolean changed = catalog.setEnabled(sourceId, enabled);
+        if (changed && !enabled) {
+            stopJobs(sourceId);
+        }
+        if (changed) {
+            LOG.log(System.Logger.Level.INFO, "Quelle {0} {1}", sourceId, enabled ? "eingeschaltet" : "abgeschaltet");
+        }
+        return changed;
+    }
+
     /**
      * Entfernt eine Quelle samt ihrer abgeleiteten Daten.
      *
@@ -137,18 +162,22 @@ public final class SourceManagement {
 
     private void withdraw(String sourceId) {
         Instant start = clock.instant();
-        try {
-            if (!jobs.cancelSource(sourceId, JOB_STOP_TIMEOUT)) {
-                LOG.log(System.Logger.Level.WARNING, "Aufträge der Quelle {0} laufen nach {1} s noch; ihre Daten "
-                        + "werden trotzdem entfernt", sourceId, JOB_STOP_TIMEOUT.toSeconds());
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        stopJobs(sourceId);
         cache.removeSource(sourceId);
         enrichments.removeSource(sourceId);
         int blobs = assets.removeSource(sourceId, exportImages()::contains, start);
         LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} Asset-Inhalte)", sourceId, blobs);
+    }
+
+    private void stopJobs(String sourceId) {
+        try {
+            if (!jobs.cancelSource(sourceId, JOB_STOP_TIMEOUT)) {
+                LOG.log(System.Logger.Level.WARNING, "Aufträge der Quelle {0} laufen nach {1} s noch",
+                        sourceId, JOB_STOP_TIMEOUT.toSeconds());
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /** Inhalte, auf die bestehende Exporte verweisen (Bilder und gezeichnete Diagramme). */

@@ -141,8 +141,9 @@ class CoreParityTest {
             management.change(config("wiki", "Handbuch-Wiki", URI.create("http://127.0.0.1:1/wiki")));
             CORE_MANAGEMENT.put("change.other-target.withdrawn", String.valueOf(!cached(harvester)));
 
-            // SourceManagement kennt kein Abschalten: eine Quelle ist konfiguriert oder entfernt
-            CORE_MANAGEMENT.put("disable", "fehlt");
+            management.setEnabled("wiki", false);
+            CORE_MANAGEMENT.put("disable", !management.enabled("wiki") && listed(management, "wiki") ? "ok" : "fehlt");
+            management.setEnabled("wiki", true);
 
             management.change(wiki);
             synced(harvester);

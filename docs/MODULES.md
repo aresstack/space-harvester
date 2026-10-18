@@ -125,11 +125,14 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
 
    Zur Laufzeit verwaltet `Harvester.sourceManagement()` die Quellen wie `KnowledgeSourceManagement` im Enterprise AI
    Client:
-   - `validate`: Probleme ohne Werte.
+   - `validate`: Probleme ohne Werte. Eine Quelle ist durch Typ und Ziel bestimmt: dieselbe Basisadresse unter einer
+     zweiten ID wird abgelehnt („bereits vorhanden“).
    - `test`: „Verbindung testen“, live, ohne Ablage.
    - `add` und `change`: an Ort und Stelle; bei neuem Ziel (Typ oder Basisadresse) werden die alten Daten entfernt.
    - `remove`: entfernt die Quelle samt ihrer Daten, also offene Aufträge, Seiten-Cache mit Suchindex und
      Abgleichständen, Anreicherungen mit Embeddings und Lese-Ansichten sowie Assets. Exporte bleiben mit ihren Bildern.
+   - `setEnabled`: schaltet eine Quelle ab oder wieder ein (EAC `setEnabled`). Abgeschaltet behält sie Einstellungen und
+     Daten, ist für Suche, Lesen, Aufträge und Export aber unbekannt; ihre offenen Aufträge werden abgebrochen.
 
    Die Einstellungen dauerhaft ablegen bleibt Sache des Programms.
 6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,

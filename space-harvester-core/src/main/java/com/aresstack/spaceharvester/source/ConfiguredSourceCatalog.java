@@ -61,9 +61,16 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      */
     private volatile Map<String, Opened> opened;
 
-    /** Eine geöffnete Quelle mit ihren Einstellungen. */
+    /**
+     * Eine geöffnete Quelle mit ihren Einstellungen. Eine abgeschaltete ({@code enabled = false}) behält Einstellungen
+     * und Daten, ist für Suche, Lesen, Aufträge und Export aber unbekannt.
+     */
     private record Opened(SourceSettingsConfig config, HarvestSource source, DelegatedConfluenceHttp delegated,
-                          URI baseUrl) {
+                          URI baseUrl, boolean enabled) {
+
+        Opened enabled(boolean value) {
+            return new Opened(config, source, delegated, baseUrl, value);
+        }
 
         void close() {
             if (delegated != null) {
@@ -193,7 +200,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                 && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT));
         return new Opened(config, new KnowledgeSourceHarvestSource(config.id(), config.type(), title, source.port(),
                 context.async() == null ? null : context.async().inFlight()), source.delegated(),
-                http ? baseUrl : null);
+                http ? baseUrl : null, true);
     }
 
     /** Eigene Probleme und die des Typs; ohne etwas zu öffnen. */
@@ -222,26 +229,62 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         return problems;
     }
 
+    /** Die eingeschalteten Quellen; abgeschaltete nehmen an nichts teil. */
     @Override
     public List<HarvestSource> all() {
-        return opened.values().stream().map(Opened::source).toList();
+        return opened.values().stream().filter(Opened::enabled).map(Opened::source).toList();
     }
 
+    /** Leer für unbekannte und abgeschaltete Quellen. */
     @Override
     public Optional<HarvestSource> find(String sourceId) {
-        return Optional.ofNullable(opened.get(sourceId)).map(Opened::source);
+        return active(sourceId).map(Opened::source);
+    }
+
+    private Optional<Opened> active(String sourceId) {
+        return Optional.ofNullable(opened.get(sourceId)).filter(Opened::enabled);
     }
 
     // --- Quellen zur Laufzeit (#188) --------------------------------------------------------------------------------
 
-    /** Die Einstellungen aller Quellen in ihrer Reihenfolge; ihr {@code toString} zeigt keine Geheimnisse. */
+    /**
+     * Die Einstellungen aller Quellen in ihrer Reihenfolge, auch der abgeschalteten; ihr {@code toString} zeigt keine
+     * Geheimnisse.
+     */
     public List<SourceSettingsConfig> configs() {
         return opened.values().stream().map(Opened::config).toList();
     }
 
-    /** Die Einstellungen einer Quelle; leer für unbekannte. */
+    /** Die Einstellungen einer Quelle, auch einer abgeschalteten; leer für unbekannte. */
     public Optional<SourceSettingsConfig> config(String sourceId) {
         return Optional.ofNullable(opened.get(sourceId)).map(Opened::config);
+    }
+
+    /** Ob die Quelle eingeschaltet ist; {@code false} auch für unbekannte. */
+    public boolean enabled(String sourceId) {
+        return active(sourceId).isPresent();
+    }
+
+    /**
+     * Schaltet eine Quelle ab oder wieder ein, wie {@code SourceDefinitionStore#setEnabled} im Enterprise AI Client.
+     * Einstellungen, Zugangsdaten und abgeleitete Daten bleiben; eine abgeschaltete Quelle ist für Suche, Lesen,
+     * Aufträge und Export unbekannt, bis sie wieder eingeschaltet wird.
+     *
+     * @return ob sich etwas geändert hat
+     * @throws UnknownSourceException wenn es keine Quelle mit dieser ID gibt
+     */
+    public synchronized boolean setEnabled(String sourceId, boolean enabled) {
+        Opened current = opened.get(sourceId);
+        if (current == null) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (current.enabled() == enabled) {
+            return false;
+        }
+        Map<String, Opened> next = new LinkedHashMap<>(opened);
+        next.put(sourceId, current.enabled(enabled));
+        opened = Collections.unmodifiableMap(next);
+        return true;
     }
 
     /**
@@ -255,7 +298,33 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         if (replacing) {
             taken.remove(config.id());
         }
-        return check(config, taken, adapters, secrets.external());
+        List<String> problems = new ArrayList<>(check(config, taken, adapters, secrets.external()));
+        // Wie im Enterprise AI Client ist eine Quelle durch Typ und Ziel bestimmt: dasselbe Ziel zweimal wäre derselbe
+        // Datenbestand unter zwei IDs.
+        target(config).ifPresent(target -> opened.values().stream()
+                .filter(other -> !other.config().id().equals(config.id()))
+                .filter(other -> target(other.config()).filter(target::equals).isPresent())
+                .findFirst()
+                .ifPresent(other -> problems.add("Diese Wissensquelle ist bereits vorhanden (gleiches Ziel wie '"
+                        + other.config().id() + "')")));
+        return problems;
+    }
+
+    /**
+     * Typ und Basisadresse ohne Anmeldedaten, Query und abschließenden Schrägstrich, Schema und Host klein, Standardport
+     * weggelassen; leer ohne Basisadresse.
+     */
+    static Optional<String> target(SourceSettingsConfig config) {
+        URI base = config.baseUrl();
+        if (config.type() == null || base == null || base.getScheme() == null || base.getHost() == null) {
+            return Optional.empty();
+        }
+        String scheme = base.getScheme().toLowerCase(Locale.ROOT);
+        int port = base.getPort();
+        boolean defaultPort = port < 0 || "https".equals(scheme) && port == 443 || "http".equals(scheme) && port == 80;
+        String path = base.getPath() == null ? "" : base.getPath().replaceAll("/+$", "");
+        return Optional.of(config.type() + " " + scheme + "://" + base.getHost().toLowerCase(Locale.ROOT)
+                + (defaultPort ? "" : ":" + port) + path);
     }
 
     /**
@@ -295,7 +364,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             throw e;
         }
         Map<String, Opened> next = new LinkedHashMap<>(opened);
-        next.put(config.id(), source);
+        next.put(config.id(), source.enabled(previous.enabled()));
         opened = Collections.unmodifiableMap(next);
         previous.close();
         return previous.config();
@@ -356,7 +425,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * dasselbe Client-Zertifikat wie das Ernten; leer für unbekannte Quellen.
      */
     public Optional<DelegatedConfluenceHttp> delegatedHttp(String sourceId) {
-        return Optional.ofNullable(opened.get(sourceId)).map(Opened::delegated);
+        return active(sourceId).map(Opened::delegated);
     }
 
     /**
@@ -365,7 +434,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * nicht.
      */
     public Optional<String> route(String sourceId) {
-        Opened source = opened.get(sourceId);
+        Opened source = active(sourceId).orElse(null);
         URI baseUrl = source == null ? null : source.baseUrl();
         if (baseUrl == null) {
             return Optional.empty();
