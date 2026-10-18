@@ -110,6 +110,59 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Vergleicht die Navigation (#177). Beide Seiten liefern dieselben Schlüssel: {@code space.name},
+     * {@code space.children} und je Seite {@code <seite>.children}, {@code <seite>.ancestors}, {@code <seite>.links},
+     * jeweils als kommagetrennte Seiten-IDs. Kinder und Breadcrumbs müssen gleich sein (mit Reihenfolge), die
+     * ausgehenden Verweise des Maßstabs müssen im Core enthalten sein.
+     */
+    public static List<Finding> navigation(Map<String, String> eac, Map<String, String> core) {
+        String format = "navigation";
+        List<Finding> findings = new ArrayList<>();
+        String eacName = eac.getOrDefault("space.name", "");
+        String coreName = core.getOrDefault("space.name", "");
+        findings.add(new Finding(format, "space-name", "Name des Space", eacName, coreName,
+                eacName.equals(coreName) ? Verdict.GLEICH : Verdict.CORE_WENIGER,
+                eacName.equals(coreName) ? "" : "anderer Name im Core"));
+        findings.add(navigationLists(format, "kinder", "Kindseiten in Reihenfolge", eac, core, ".children", false));
+        findings.add(navigationLists(format, "breadcrumbs", "Breadcrumbs", eac, core, ".ancestors", false));
+        findings.add(navigationLists(format, "querverweise", "Ausgehende Seitenverweise", eac, core, ".links", true));
+        return findings;
+    }
+
+    private static Finding navigationLists(String format, String check, String title, Map<String, String> eac,
+                                           Map<String, String> core, String suffix, boolean subset) {
+        List<String> differing = new ArrayList<>();
+        boolean more = false;
+        int count = 0;
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            if (!entry.getKey().endsWith(suffix)) {
+                continue;
+            }
+            count++;
+            List<String> expected = ids(entry.getValue());
+            List<String> actual = ids(core.get(entry.getKey()));
+            boolean same = subset ? actual.containsAll(expected) : actual.equals(expected);
+            if (!same) {
+                differing.add(entry.getKey().substring(0, entry.getKey().length() - suffix.length()) + " (EAC "
+                        + String.join(",", expected) + ", Core " + (core.containsKey(entry.getKey())
+                        ? String.join(",", actual) : "fehlt") + ")");
+            } else if (subset && actual.size() > expected.size()) {
+                more = true;
+            }
+        }
+        Verdict verdict = !differing.isEmpty() ? Verdict.CORE_WENIGER : more ? Verdict.CORE_MEHR : Verdict.GLEICH;
+        return new Finding(format, check, title, count + " Knoten", (count - differing.size()) + " gleich", verdict,
+                differing.isEmpty() ? "" : "abweichend: " + listed(differing));
+    }
+
+    private static List<String> ids(String value) {
+        if (value == null || value.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(value.split(",")).map(String::strip).filter(id -> !id.isEmpty()).toList();
+    }
+
     private static DocumentOutline readingOutline(java.util.Collection<String> texts) {
         return new DocumentOutline("leseansicht", List.of(), false, false, false, 0, 0, 0, List.of(), Set.of(), 0, 0,
                 String.join("\n", texts));

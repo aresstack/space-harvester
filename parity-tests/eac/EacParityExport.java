@@ -12,7 +12,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportFormat;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportGraphics;
+import com.aresstack.enterpriseai.source.api.NavigationChildren;
 import com.aresstack.enterpriseai.source.api.NavigationNode;
+import com.aresstack.enterpriseai.source.api.PagePosition;
+import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.spaceharvester.parity.ParitySpace;
 
 import java.io.File;
@@ -27,7 +30,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Nur für {@code generate.sh}; Java 8, übersetzt gegen den Klassenpfad des Enterprise AI Client. Schreibt
  * {@code parity.docx}, {@code parity.pdf}, {@code parity.md}, je Format die Liste der nicht eingebetteten Bilder
- * ({@code problems-<format>.txt}) und die Leseansicht je Seite ({@code reading/}).</p>
+ * ({@code problems-<format>.txt}), die Leseansicht je Seite ({@code reading/}) und die Navigation
+ * ({@code navigation.properties}).</p>
  */
 public final class EacParityExport {
 
@@ -63,6 +67,69 @@ public final class EacParityExport {
         write(tree, ExportFormat.PDF, new File(out, "parity.pdf"), new File(out, "problems-pdf.txt"));
         write(tree, ExportFormat.MARKDOWN, new File(out, "parity.md"), new File(out, "problems-md.txt"));
         readingViews(source, new File(out, "reading"));
+        navigation(source, new File(out, "navigation.properties"));
+    }
+
+    /**
+     * Navigation je Seite als Seiten-IDs: {@code <seite>.children} (Kinder in Reihenfolge), {@code <seite>.ancestors}
+     * (Breadcrumbs von oben, ohne Space), {@code <seite>.links} (ausgehende Seitenverweise), dazu {@code space.name}
+     * und {@code space.children} (Wurzelseiten).
+     */
+    private static void navigation(ConfluenceKnowledgeSource source, File target) throws Exception {
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            PagePosition home = source.position(pageId(ParitySpace.HOME));
+            out.println("space.name=" + home.root().title());
+            out.println("space.children=" + children(source, home.root()));
+            for (String page : ParitySpace.PAGES) {
+                PagePosition position = source.position(pageId(page));
+                StringBuilder ancestors = new StringBuilder();
+                for (NavigationNode ancestor : position.ancestors()) {
+                    ancestors.append(ancestors.length() == 0 ? "" : ",").append(id(ancestor.resource()));
+                }
+                StringBuilder links = new StringBuilder();
+                for (SourceLink link : source.crossReferences(pageId(page)).outgoing()) {
+                    String linked = id(link.target());
+                    if (linked != null) {
+                        links.append(links.length() == 0 ? "" : ",").append(linked);
+                    }
+                }
+                out.println(page + ".children=" + children(source, position.page()));
+                out.println(page + ".ancestors=" + ancestors);
+                out.println(page + ".links=" + links);
+            }
+        } finally {
+            out.close();
+        }
+    }
+
+    private static String children(ConfluenceKnowledgeSource source, NavigationNode parent) throws Exception {
+        StringBuilder ids = new StringBuilder();
+        String cursor = null;
+        NavigationChildren batch;
+        do {
+            batch = source.children(parent, cursor);
+            for (NavigationNode child : batch.nodes()) {
+                ids.append(ids.length() == 0 ? "" : ",").append(id(child.resource()));
+            }
+            cursor = batch.nextCursor();
+        } while (!batch.complete());
+        return ids.toString();
+    }
+
+    private static KnowledgeResourceId pageId(String page) {
+        return KnowledgeResourceId.of("confluence",
+                FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
+    }
+
+    /** Seiten-ID aus der Ressource ({@code …/page/<id>}), sonst {@code null}. */
+    private static String id(KnowledgeResourceId resource) {
+        if (resource == null) {
+            return null;
+        }
+        String value = resource.value();
+        int at = value.lastIndexOf("/page/");
+        return at < 0 ? null : value.substring(at + "/page/".length());
     }
 
     /**
@@ -76,8 +143,7 @@ public final class EacParityExport {
         PrintWriter images = new PrintWriter(new File(out, "images.properties"), "UTF-8");
         try {
             for (String page : ParitySpace.PAGES) {
-                KnowledgeResourceId id = KnowledgeResourceId.of("confluence",
-                        FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
+                KnowledgeResourceId id = pageId(page);
                 PrintWriter text = new PrintWriter(new File(out, page + ".txt"), "UTF-8");
                 try {
                     text.print(source.load(id).text());
