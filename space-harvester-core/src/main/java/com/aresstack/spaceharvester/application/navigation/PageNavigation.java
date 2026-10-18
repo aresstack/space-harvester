@@ -52,10 +52,11 @@ public class PageNavigation {
     public Children children(AccessContext caller, String sourceId, String spaceKey, String parentPageId,
                              String cursor) {
         HarvestSource source = source(sourceId);
-        if (parentPageId == null) {
-            access.require(caller, ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey")),
-                    AccessKind.METADATA);
-        }
+        // Ohne Freigabe auf die Quelle fragt der Anwendungsfall sie gar nicht erst; der Space einer Seite steht erst
+        // nach dem Lesen fest, die Prüfung danach verdeckt eine Verweigerung wie eine unbekannte Seite.
+        access.require(caller, parentPageId == null
+                ? ResourceScope.space(sourceId, Objects.requireNonNull(spaceKey, "spaceKey"))
+                : ResourceScope.source(sourceId), AccessKind.METADATA);
         HarvestSource.ChildPages batch = source.children(spaceKey, parentPageId, cursor);
         if (parentPageId != null) {
             access.requireConcealed(caller, ResourceScope.page(sourceId, batch.partitionKey(), parentPageId),
@@ -71,6 +72,7 @@ public class PageNavigation {
      * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException verdeckt, ohne {@code metadata}
      */
     public Position position(AccessContext caller, String sourceId, String pageId) {
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.METADATA);
         HarvestSource.PagePosition position = source(sourceId).position(pageId);
         access.requireConcealed(caller, ResourceScope.page(sourceId, position.partitionKey(), pageId),
                 AccessKind.METADATA);
@@ -86,6 +88,7 @@ public class PageNavigation {
      */
     public References references(AccessContext caller, String sourceId, String pageId) {
         HarvestSource source = source(sourceId);
+        access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         String spaceKey = source.pageMetadata(pageId).partitionKey();
         access.requireConcealed(caller, ResourceScope.page(sourceId, spaceKey, pageId), AccessKind.CONTENT);
         HarvestSource.PageReferences references = source.references(pageId);
