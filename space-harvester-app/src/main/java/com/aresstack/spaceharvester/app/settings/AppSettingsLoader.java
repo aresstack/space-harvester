@@ -204,7 +204,35 @@ public final class AppSettingsLoader {
                 path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
                 tls(get(network, "tls"), problems), cache,
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
-                syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems));
+                syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
+                sync(map(get(root, "sync")), cache, problems));
+    }
+
+    /** Die globalen Werte unter {@code space-harvester.sync}, geprüft wie im Core; ungültige gelten wie die Vorgabe. */
+    private SyncSettings sync(Map<?, ?> sync, AppSettings.Cache cache, List<String> problems) {
+        String prefix = "space-harvester.";
+        SyncMode mode = SyncMode.CATALOG_ONLY;
+        String modeText = text(get(sync, "mode"), problems);
+        if (modeText != null && !modeText.isBlank()) {
+            SyncMode parsed = SyncMode.parse(modeText);
+            if (parsed == null) {
+                problems.add(prefix + SyncSettings.MODE + ": erwartet catalog-only, sync-cache oder full");
+            } else {
+                mode = parsed;
+            }
+        }
+        return new SyncSettings(
+                flag(get(sync, "events"), false, prefix + SyncSettings.EVENTS, problems),
+                interval(optionalDuration(get(sync, "interval"), prefix + SyncSettings.INTERVAL, problems),
+                        prefix + SyncSettings.INTERVAL, problems),
+                List.of(),
+                flag(get(sync, "before-search"), false, prefix + SyncSettings.BEFORE_SEARCH, problems),
+                cache.withheldRetention(),
+                flag(get(sync, "catch-up-on-start"), false, prefix + SyncSettings.CATCH_UP_ON_START, problems),
+                mode,
+                interval(optionalDuration(get(sync, "inventory-interval"), prefix + SyncSettings.INVENTORY_INTERVAL,
+                        problems), prefix + SyncSettings.INVENTORY_INTERVAL, problems),
+                Map.of());
     }
 
     /**

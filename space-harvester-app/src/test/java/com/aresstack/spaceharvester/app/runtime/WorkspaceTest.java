@@ -238,7 +238,7 @@ class WorkspaceTest {
         runtime = AppRuntime.start(new AppSettings(settings.file(), settings.sources(), settings.proxy(),
                 settings.asyncTransport(), settings.trustStores(), settings.storage(), settings.jobLimits(),
                 settings.ai(), settings.outputDirectory(), settings.problems(), java.util.Set.of("handbuch"),
-                settings.tls(), settings.cache(), settings.setupCompleted(), settings.syncRules()),
+                settings.tls(), settings.cache(), settings.setupCompleted(), settings.syncRules(), settings.sync()),
                 new AppRuntime.SessionSecrets(), "test");
 
         assertThat(runtime.workspace().sources()).extracting(HarvestSource::id).containsExactly("wiki");

@@ -185,4 +185,28 @@ class AppSettingsLoaderTest {
         assertThat(wiki.withheldRetention()).isNull();
         assertThat(settings.syncRule("docs").maxAge()).isNull();
     }
+
+    @Test
+    void aSourceWithoutOwnRulesInheritsTheGlobalValuesNotTheDefaults() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    interval: PT6H
+                    catch-up-on-start: true
+                    mode: sync-cache
+                    sources:
+                      wiki:
+                        mode: full
+                        catch-up-on-start: false
+                """, Map.of());
+        assertThat(settings.problems()).isEmpty();
+        var docs = settings.effectiveSync("docs");
+        assertThat(docs.interval()).isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(docs.catchUpOnStart()).isTrue();
+        assertThat(docs.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE);
+        var wiki = settings.effectiveSync("wiki");
+        assertThat(wiki.interval()).as("geerbt").isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(wiki.catchUpOnStart()).isFalse();
+        assertThat(wiki.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
+    }
 }

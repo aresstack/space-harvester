@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -375,18 +376,20 @@ public final class SourcesView implements View {
         }
         AppSettings.Cache cache = settings.cache();
         SourceSyncOverride rule = settings.syncRule(entry.id());
+        SyncSettings effective = settings.effectiveSync(entry.id());
         syncFacts.add("Erkennung", "Wie erfährt die App von neuen und geänderten Seiten?", Comic.MUTED)
                 .add("Über die Suche", "immer: gefundene Seiten kommen in den Cache")
-                .add("Automatische Änderungssuche", interval(rule.changeSearchInterval(), "CQL, ohne "
-                        + "Administratorrechte"), tone(rule.changeSearchInterval()))
-                .add("Regelmäßige Bestandsinventur", interval(rule.inventoryInterval(), "nur Seitenmetadaten"),
-                        tone(rule.inventoryInterval()))
-                .add("Betriebsart", rule.mode() == null ? SettingDialogs.CATALOG_ONLY + GLOBAL
-                        : SettingDialogs.modeLabel(rule.mode()) + OWN, tone(rule.mode()))
-                .add("Nachholen beim Start", onOff(rule.catchUpOnStart()), tone(rule.catchUpOnStart()))
-                .add("Abgleich vor jeder Suche", onOff(rule.beforeSearch()), tone(rule.beforeSearch()))
-                .add("Webhooks", onOff(rule.events()) + " · nur im Server, Einrichtung in Confluence",
-                        tone(rule.events()))
+                .add("Automatische Änderungssuche", interval(effective.interval(), "CQL, ohne "
+                        + "Administratorrechte") + origin(rule.changeSearchInterval()), tone(rule.changeSearchInterval()))
+                .add("Regelmäßige Bestandsinventur", interval(effective.inventoryInterval(), "nur Seitenmetadaten")
+                        + origin(rule.inventoryInterval()), tone(rule.inventoryInterval()))
+                .add("Betriebsart", SettingDialogs.modeLabel(effective.mode()) + origin(rule.mode()), tone(rule.mode()))
+                .add("Nachholen beim Start", onOff(effective.catchUpOnStart()) + origin(rule.catchUpOnStart()),
+                        tone(rule.catchUpOnStart()))
+                .add("Abgleich vor jeder Suche", onOff(effective.beforeSearch()) + origin(rule.beforeSearch()),
+                        tone(rule.beforeSearch()))
+                .add("Webhooks", onOff(effective.events()) + origin(rule.events())
+                        + " · nur im Server, Einrichtung in Confluence", tone(rule.events()))
                 .add("Von Hand", "Kreispfeil „Bestand abgleichen“ am Space unter Spaces")
                 .add("Aktualisierung", "Wann prüft die App gespeicherte Seiten?", Comic.MUTED);
         java.time.Duration maxAge = rule.maxAge() != null ? rule.maxAge() : cache.maxAge();
@@ -412,11 +415,16 @@ public final class SourcesView implements View {
     private static final String GLOBAL = " (wie global)";
 
     private static String interval(java.time.Duration value, String what) {
-        return value == null ? "aus · " + what + GLOBAL : "alle " + ConfigFileEditor.duration(value) + " · " + what + OWN;
+        return (value == null ? "aus" : "alle " + ConfigFileEditor.duration(value)) + " · " + what;
     }
 
-    private static String onOff(Boolean value) {
-        return value == null ? "aus" + GLOBAL : (value ? "an" : "aus") + OWN;
+    private static String onOff(boolean value) {
+        return value ? "an" : "aus";
+    }
+
+    /** Woher der angezeigte, wirksame Wert kommt: eigene Regel oder geerbt. */
+    private static String origin(Object own) {
+        return own == null ? GLOBAL : OWN;
     }
 
     /** Eigene Regeln in Tinte, globale Werte gedämpft. */
