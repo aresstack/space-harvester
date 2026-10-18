@@ -105,7 +105,8 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton saveRaw = Comic.button("Original speichern …", "Native Payload Byte für Byte");
     private final ComposerButton browse = Comic.button("Im Browser öffnen", "Öffnet die Seite in der Quelle im Browser");
     private final ComposerButton harvest = Comic.button("Alle Anhänge herunterladen",
-            "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
+            "Lädt alle Anhänge dieser Seite in den lokalen Bestand der App (nicht in den Downloads-Ordner); "
+                    + "einzelne Dateien speichert „Anhang speichern …“");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
     private final ComposerButton recompute = Comic.button("Neu berechnen", "Analysen dieser Seite neu berechnen");
 
@@ -550,7 +551,7 @@ public final class PageDetailPanel extends JPanel {
             long reused = result.entries().stream().filter(e -> e.status() == AssetHarvest.Status.REUSED).count();
             String summary = stored + " abgelegt, " + reused + " schon vorhanden, " + failed + " fehlgeschlagen";
             if (failed == 0 && result.listComplete()) {
-                feedback.success("Anhänge heruntergeladen: " + summary);
+                feedback.success("Anhänge im lokalen Bestand: " + summary + ". Dateien speichert „Anhang speichern …“");
             } else {
                 feedback.warning("Anhänge nur teilweise heruntergeladen", summary
                         + (result.listComplete() ? "" : "; die Anhangsliste war unvollständig"));

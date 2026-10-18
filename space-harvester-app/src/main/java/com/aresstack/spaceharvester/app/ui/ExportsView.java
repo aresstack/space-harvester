@@ -38,7 +38,7 @@ public final class ExportsView implements View {
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel hint = Comic.muted("Noch keine Spaces gesammelt.");
     private final ComposerButton start = Comic.primary("Ausführen", "Alle gesammelten Spaces herunterladen");
-    private final ComposerButton remove = Comic.button("Ausgewählten entfernen", "Markierten Eintrag aus der Sammlung entfernen");
+    private final ComposerButton remove = Comic.button("Ausgewählte entfernen", "Markierte Einträge aus der Sammlung entfernen");
     private final ComposerButton clear = Comic.button("Alle entfernen", "Gesamte Sammlung leeren");
     private final Feedback feedback = new Feedback();
     private boolean starting;
@@ -128,12 +128,19 @@ public final class ExportsView implements View {
         return List.of(DEFAULT_FORMAT);
     }
 
+    /** Für Tests: Meldung unter der Sammlung. */
+    Feedback feedback() {
+        return feedback;
+    }
+
     private void removeSelected() {
-        int row = table.getSelectedRow();
-        if (row < 0) {
+        int[] rows = table.getSelectedRows();
+        if (rows.length == 0) {
             return;
         }
-        queued.remove(model.get(table.convertRowIndexToModel(row)));
+        for (int row : rows) {
+            queued.remove(model.get(table.convertRowIndexToModel(row)));
+        }
         feedback.clear();
         render();
     }
@@ -172,13 +179,13 @@ public final class ExportsView implements View {
         Background.run(() -> {
             List<JobStatus> started = new ArrayList<>();
             List<QueuedSpace> accepted = new ArrayList<>();
-            List<String> failed = new ArrayList<>();
+            List<Failure> failed = new ArrayList<>();
             for (QueuedSpace entry : entries) {
                 try {
                     started.add(runtime.workspace().startExport(entry.sourceId(), entry.spaceKey(), chosenFormats()));
                     accepted.add(entry);
                 } catch (RuntimeException e) {
-                    failed.add(entry.sourceId() + " / " + entry.spaceKey() + ": " + Problems.describe(e).title());
+                    failed.add(new Failure(entry, Problems.describe(e)));
                 }
             }
             return new Started(started, accepted, failed);
@@ -190,8 +197,7 @@ public final class ExportsView implements View {
                 feedback.success(result.jobs().size() == 1 ? "Download gestartet"
                         : Texts.count(result.jobs().size(), "Download", "Downloads") + " gestartet");
             } else {
-                feedback.warning(Texts.count(result.failed().size(), "Download ließ", "Downloads ließen")
-                        + " sich nicht starten", String.join("; ", result.failed()));
+                feedback.problem(failure(result));
             }
             // Wenn alle Aufträge angelegt wurden, direkt zum ersten Auftrag wechseln.
             // Fehlerhafte Einträge bleiben dagegen im Sammler, damit sie erneut versucht werden können.
@@ -205,10 +211,49 @@ public final class ExportsView implements View {
         });
     }
 
-    private record QueuedSpace(String sourceId, String spaceKey) {
+    /**
+     * Fasst gescheiterte Starts zusammen, ohne Ursache, Abhilfe oder technische Details zu verlieren: ein einzelner
+     * Fehler erscheint wie jede andere Störung, mehrere stehen je Space untereinander.
+     */
+    static Problems.Problem failure(Started result) {
+        List<Failure> failed = result.failed();
+        String started = result.jobs().isEmpty() ? ""
+                : " (" + Texts.count(result.jobs().size(), "Download", "Downloads") + " gestartet)";
+        if (failed.size() == 1) {
+            Failure only = failed.get(0);
+            Problems.Problem problem = only.problem();
+            return new Problems.Problem("Download nicht gestartet (" + only.entry().label() + "): "
+                    + problem.title() + started, problem.message(), problem.hint(), problem.technical());
+        }
+        List<String> messages = new ArrayList<>();
+        Set<String> hints = new LinkedHashSet<>();
+        List<String> technical = new ArrayList<>();
+        for (Failure failure : failed) {
+            Problems.Problem problem = failure.problem();
+            messages.add(failure.entry().label() + ": " + problem.title() + ". " + problem.message());
+            if (problem.hint() != null) {
+                hints.add(problem.hint());
+            }
+            if (problem.technical() != null) {
+                technical.add(failure.entry().label() + ": " + problem.technical());
+            }
+        }
+        return new Problems.Problem(Texts.count(failed.size(), "Download ließ", "Downloads ließen")
+                + " sich nicht starten" + started, String.join("\n", messages),
+                hints.isEmpty() ? null : String.join("\n", hints),
+                technical.isEmpty() ? null : String.join("\n", technical));
     }
 
-    private record Started(List<JobStatus> jobs, List<QueuedSpace> accepted, List<String> failed) {
+    record QueuedSpace(String sourceId, String spaceKey) {
+        String label() {
+            return sourceId + " / " + spaceKey;
+        }
+    }
+
+    record Failure(QueuedSpace entry, Problems.Problem problem) {
+    }
+
+    record Started(List<JobStatus> jobs, List<QueuedSpace> accepted, List<Failure> failed) {
     }
 
     private static final class QueuedModel extends AbstractTableModel {
