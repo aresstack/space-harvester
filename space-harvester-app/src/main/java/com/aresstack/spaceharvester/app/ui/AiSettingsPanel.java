@@ -48,13 +48,25 @@ final class AiSettingsPanel {
     final Map<String, JCheckBox> released = new LinkedHashMap<>();
     private final JPanel releasedPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
     private Duration timeout;
+    private final boolean wizard;
+    /** Nur im Assistenten: Inhalte der neuen Quelle dürfen an den KI-Dienst gehen. */
+    final JCheckBox releaseThis = new JCheckBox("Inhalte dieser Quelle an den KI-Dienst geben");
     private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen und neu starten");
     final ComposerButton removeKey = Comic.button("API-Key entfernen", "Gespeicherten API-Key löschen");
     final Feedback feedback = new Feedback();
 
     AiSettingsPanel(AppContext context) {
+        this(context, false);
+    }
+
+    /**
+     * @param wizard als optionale Seite im Erst-Assistenten: ohne eigene Knöpfe, statt der Quellenliste ein Häkchen
+     *               für die neue Quelle; gespeichert wird mit der Quelle ({@link #draftFor})
+     */
+    AiSettingsPanel(AppContext context, boolean wizard) {
         this.context = context;
+        this.wizard = wizard;
         root.setOpaque(false);
         Comic.style(apiKey);
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
@@ -63,16 +75,28 @@ final class AiSettingsPanel {
         rows.add("Embedding-Modell", embeddingModel, "Für die semantische Suche, z. B. text-embedding-3-small");
         rows.add("Dimension", dimensions, "Optional; leer übernimmt die Dimension aus der ersten Antwort");
         releasedPanel.setOpaque(false);
-        rows.add("Freigegebene Quellen", releasedPanel, "Nur Inhalte angehakter Wissensquellen gehen an den "
-                + "KI-Dienst; Vorgabe keine");
-        root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell. "
-                + "Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der Konfigurationsdatei."),
+        if (wizard) {
+            releaseThis.setOpaque(false);
+            releaseThis.setFont(Comic.regular(13f));
+            releaseThis.setForeground(Comic.INK);
+            rows.add("Freigabe", releaseThis, "Weitere Quellen gibst du unter Einstellungen → KI frei; Vorgabe keine");
+        } else {
+            rows.add("Freigegebene Quellen", releasedPanel, "Nur Inhalte angehakter Wissensquellen gehen an den "
+                    + "KI-Dienst; Vorgabe keine");
+        }
+        root.add(Comic.note(wizard
+                ? "Optional: Für die spätere semantische Suche (experimentell) einen KI-Dienst mit Embedding-Modell "
+                + "eintragen. Leer lassen und „Weiter“ überspringt diesen Schritt; nachholen unter Einstellungen → KI."
+                : "Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell. Der API-Key "
+                + "liegt nur im Tresor dieses Windows-Kontos, nie in der Konfigurationsdatei."),
                 BorderLayout.NORTH);
         rows.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
         root.add(rows, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
+        if (!wizard) {
+            south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
+        }
         south.add(feedback, BorderLayout.SOUTH);
         root.add(south, BorderLayout.SOUTH);
         save.addActionListener(e -> save());
@@ -134,6 +158,25 @@ final class AiSettingsPanel {
                 .map(Map.Entry::getKey).toList();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
                 timeout, ids);
+    }
+
+    /** Für den Assistenten: die Eingaben, mit der neuen Quelle unter den Freigaben, wenn angehakt. */
+    AiDraft draftFor(String sourceId) {
+        AiDraft draft = draft();
+        if (!releaseThis.isSelected() || sourceId == null || sourceId.isBlank()) {
+            return draft;
+        }
+        List<String> ids = new ArrayList<>(draft.externalProcessingSources());
+        ids.add(sourceId);
+        return new AiDraft(draft.baseUrl(), draft.chatModel(), draft.embeddingModel(), draft.embeddingDimensions(),
+                draft.timeout(), ids);
+    }
+
+    /** Ob seit dem Öffnen etwas eingetragen wurde (Felder oder API-Key). */
+    boolean changed() {
+        AppSettings settings = context.settings();
+        AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
+        return !draft().equals(current) || apiKey.getPassword().length > 0 || releaseThis.isSelected();
     }
 
     private void save() {
