@@ -263,7 +263,31 @@ class SourcesViewTest {
             exports[0].prepare("lang", List.of(key, "zweiter"));
         });
         assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter");
+        assertThat(exports[0].chosenSources()).containsExactly("lang", "lang");
         assertThat(exports[0].chosenFormats()).containsExactly("json");
+
+        // Kein zweiter Quell-/Space-Picker: ausschließlich von anderswo gesammelte Einträge.
+        assertThat(find((Container) exports[0].component(), JComboBox.class)).isEmpty();
+        assertThat(find((Container) exports[0].component(), AbstractButton.class))
+                .anyMatch(button -> "Ausführen".equals(button.getText()));
+
+        // Ein neuer Download einer anderen Quelle ergänzt die Sammlung, statt sie zu ersetzen.
+        SwingUtilities.invokeAndWait(() -> {
+            exports[0].prepare("kurz", List.of("dritter"));
+            exports[0].prepare("lang", List.of(key));  // Duplikat wird ignoriert.
+        });
+        assertThat(exports[0].chosenSources()).containsExactly("lang", "lang", "kurz");
+        assertThat(exports[0].chosenSpaces()).containsExactly(key, "zweiter", "dritter");
+        JTable basket = find((Container) exports[0].component(), JTable.class).get(0);
+        assertThat(basket.getRowCount()).isEqualTo(3);
+
+        SwingUtilities.invokeAndWait(() -> {
+            basket.setRowSelectionInterval(0, 0);
+            find((Container) exports[0].component(), AbstractButton.class).stream()
+                    .filter(button -> "Ausgewählten entfernen".equals(button.getText()))
+                    .findFirst().orElseThrow().doClick();
+        });
+        assertThat(exports[0].chosenSpaces()).containsExactly("zweiter", "dritter");
         assertThat(context.runtime().workspace().jobs()).isEmpty();
     }
 
