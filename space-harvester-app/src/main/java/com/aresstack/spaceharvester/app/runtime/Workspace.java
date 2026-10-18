@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchResults;
@@ -145,6 +146,14 @@ public final class Workspace {
     /** Titel- und Metadatensuche im Cache ({@code GET /api/v1/search}); ohne {@code sourceId} global (#114). */
     public SearchResults search(PageSearchQuery query, String cursor, int limit) {
         return harvester.search().search(caller, query, cursor, limit);
+    }
+
+    /**
+     * Schlagwortsuche über Titel und Inhalt in den Quellen selbst ({@code GET /api/v1/search?text=…}); jeder Treffer
+     * ist live auf Freigabe geprüft. {@code cursor} gilt nur für dieselbe Anfrage.
+     */
+    public KeywordSearch.Results keywordSearch(KeywordSearch.Query query, String cursor, int limit) {
+        return harvester.keywordSearch().search(caller, query, cursor, limit);
     }
 
     /** Ob {@code sort=relevance} semantisch sucht (Embedding-Modell eingerichtet). */
