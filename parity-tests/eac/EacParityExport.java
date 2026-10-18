@@ -2,6 +2,7 @@ import com.aresstack.enterpriseai.adyton.SecretMaterial;
 import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeBookmarkIds;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeExportUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.PageNavigationUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.source.KnowledgeSourceManagement;
@@ -86,6 +87,47 @@ public final class EacParityExport {
         readingViews(source, new File(out, "reading"));
         navigation(source, new File(out, "navigation.properties"));
         management(confluence, none, new File(out, "management.properties"));
+        addresses(source, new File(out, "addresses.properties"));
+    }
+
+    /**
+     * Adressformen (#178): je Form aus {@link ParitySpace#ADDRESSES} die Seiten-ID, auf die {@code resolveAddress}
+     * führt, {@code -} wenn die Adresse auf keine Seite führt.
+     */
+    private static void addresses(ConfluenceKnowledgeSource source, File target) throws Exception {
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            for (String[] form : ParitySpace.ADDRESSES) {
+                String page;
+                try {
+                    String address = ParitySpace.address(form[1], FakeConfluence.BASE.toString());
+                    // Bookmarks und Ressourcen-IDs nehmen die Lesewerkzeuge (KnowledgeBookmarkIds), Web-Adressen
+                    // die Quelle selbst; beides prüft, ob die Seite existiert
+                    boolean web = address.startsWith("http://") || address.startsWith("https://");
+                    KnowledgeResourceId resource = !web && KnowledgeBookmarkIds.isBookmark(address)
+                            ? KnowledgeBookmarkIds.resourceIdOf(address)
+                            : !web && address.startsWith("confluence:")
+                            ? KnowledgeResourceId.of("confluence", address.substring("confluence:".length()))
+                            : source.resolveAddress(address);
+                    if (resource != null) {
+                        source.load(resource);
+                    }
+                    String resolved = id(resource);
+                    page = resolved == null ? "-" : resolved;
+                } catch (com.aresstack.enterpriseai.source.api.KnowledgeSourceException e) {
+                    // Nur "führt auf keine Seite" zählt als "-"; Netz- oder Antwortfehler brechen die Erzeugung ab,
+                    // damit eine gestörte Referenz keine Lücke des Core verdeckt
+                    if (e.kind() == com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind.UNAVAILABLE
+                            || e.kind() == com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind.INVALID_RESPONSE) {
+                        throw e;
+                    }
+                    page = "-";
+                }
+                out.println(form[0] + "=" + page);
+            }
+        } finally {
+            out.close();
+        }
     }
 
     /** Basis-URL einer zweiten Confluence-Instanz (anderes Ziel) und einer, die nicht antwortet. */

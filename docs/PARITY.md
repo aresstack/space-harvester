@@ -70,7 +70,7 @@ Nicht angebunden sind:
 | Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` | keine | fehlt → #183 |
 | CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | Kopie über `searchPages`; Space-Filter wird nachträglich angewendet, `excludedPartitions` ungenutzt | teilweise → #179 |
 | URL-Auflösung: `pageId=`, `/spaces/K/pages/ID`, `/x/…` | `conf/ConfluenceLinks`, `#resolveAddress` | `core/application/query/PageUrls` | gleich |
-| URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | keine | fehlt → #178 |
+| URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | `Harvester.addresses()` (`PageAddresses`), `pageByUrl`, REST `GET /api/v1/addresses` (#239); dazu Lesezeichen `space-harvester://…` | gleich (Vergleichstest Adressen) |
 | Paginierung, Wiederholung bei 429/5xx mit Backoff, Fehlerabbildung, HTML-statt-Datei-Erkennung | `#paged`, `#retryable`, `#statusFailure`, `HtmlResponseDiagnosis` | Kopie; `maxRetries=2`, `InFlightLimit`, `SourceAccessException.Reason` | gleich |
 | Anmeldung none / Basic / PAT, nur mTLS | `ConfluenceAuthorization`, `ClientCertificates` | `core/source/ConfluenceSourceAdapter`, `ConfiguredClientCertificates` (+ Thumbprint und Gültigkeit) | gleich |
 | Einmalcode (2FA) und Web-Session für Downloads | `conf/OneTimeCodeForm`, `ConfluenceWebSession`, `DownloadAccess`; `know/UnlockingDocumentReader` | Kopie vorhanden, nicht angebunden | fehlt → #185 |
@@ -291,8 +291,8 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/` sowie Kinder, Breadcrumbs und Querverweise
    (`children`, `position`, `crossReferences`) in `navigation.properties`, außerdem die Schritte der
    Quellenverwaltung (`KnowledgeSourceManagement` mit dem echten Confluence-Provider über dem Fake) in
-   `management.properties`. Die CI von Space
-   Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
+   `management.properties` sowie die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties`.
+   Die CI von Space Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
@@ -322,6 +322,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Ausgeführte Makros | alle (#218) | jeder Satz, den `include` oder `excerpt-include` aus einem anderen Space einsetzt, steht im Core; keine `OMITTED_CONTENT`-Meldung |
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
+| Adressen | je Form (#178) | dieselbe Seite wie beim Maßstab für Seiten-ID, `/spaces/…/pages/…`, `display/KEY/Titel`, `viewpage.action?spaceKey&title`, Space-Startseite, `confluence://`-Bookmark und Ressourcen-ID; keine Seite für unbekannten Titel und fremden Host |
 | Quellenverwaltung | Szenario (#188) | je Schritt dasselbe Ergebnis: prüfen (vollständig, ohne Basis-URL, dasselbe Ziel doppelt), Verbindung testen (erreichbar, nicht erreichbar, unvollständig), hinzufügen, ändern mit und ohne neues Ziel (Daten bleiben bzw. werden zurückgezogen), abschalten, entfernen (Daten zurückgezogen, gemessen am Cache) |
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der

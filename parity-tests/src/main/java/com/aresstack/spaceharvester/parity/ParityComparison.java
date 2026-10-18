@@ -159,6 +159,25 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Adressformen (#178): je Form die Seite, auf die sie führt ({@code -}: keine). Führt eine Form beim Enterprise AI
+     * Client auf eine Seite und im Core auf keine oder eine andere, ist das eine Lücke; führt sie nur im Core auf eine
+     * Seite, kann der Core mehr.
+     */
+    public static List<Finding> addresses(Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(entry.getKey(), "fehlt");
+            Verdict verdict = !core.containsKey(entry.getKey()) ? Verdict.CORE_WENIGER
+                    : expected.equals(actual) ? Verdict.GLEICH
+                    : expected.equals("-") ? Verdict.CORE_MEHR : Verdict.CORE_WENIGER;
+            findings.add(new Finding("adressen", entry.getKey(), "Adresse " + entry.getKey(), expected, actual,
+                    verdict, verdict == Verdict.CORE_WENIGER ? "andere oder keine Seite im Core" : ""));
+        }
+        return findings;
+    }
+
     /** Titel der Prüfpunkte der Quellenverwaltung (#188), in der Reihenfolge des Berichts. */
     private static final Map<String, String> MANAGEMENT = Map.ofEntries(
             Map.entry("validate.complete", "Vollständige Einstellungen sind gültig"),

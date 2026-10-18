@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -61,6 +62,7 @@ class CoreParityTest {
     private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_NAVIGATION = new LinkedHashMap<>();
     private static final Map<String, String> CORE_MANAGEMENT = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_ADDRESSES = new LinkedHashMap<>();
     /** Nicht ausgeführte Makros je Format ({@code OMITTED_CONTENT} der Konvertierung). */
     private static final Map<String, List<String>> CORE_OMITTED = new LinkedHashMap<>();
     @TempDir
@@ -107,6 +109,7 @@ class CoreParityTest {
                 }
             }
             navigation(harvester, caller);
+            addresses(harvester, caller);
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
         sourceManagement();
@@ -230,6 +233,14 @@ class CoreParityTest {
                         + finding.core() + "; " + finding.detail() + ")");
             }
         }
+        List<Finding> addresses = ParityComparison.addresses(eacProperties("addresses.properties"), CORE_ADDRESSES);
+        report.append('\n').append(ParityReport.section("Adressen", addresses, gaps));
+        for (Finding finding : addresses) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
         List<Finding> management = ParityComparison.sourceManagement(eacManagement(), CORE_MANAGEMENT);
         report.append('\n').append(ParityReport.section("Quellenverwaltung", management, gaps));
         for (Finding finding : management) {
@@ -267,6 +278,15 @@ class CoreParityTest {
         }
     }
 
+    /** Adressformen (#178) über {@code Harvester.addresses()}, in denselben Schlüsseln wie {@code eac/addresses.properties}. */
+    private static void addresses(Harvester harvester, AccessContext caller) {
+        for (String[] form : ParitySpace.ADDRESSES) {
+            String address = ParitySpace.address(form[1], server.baseUrl().toString());
+            List<PageAddresses.Match> matches = harvester.addresses().resolve(caller, address).matches();
+            CORE_ADDRESSES.put(form[0], matches.isEmpty() ? "-" : matches.get(0).pageId());
+        }
+    }
+
     private static String children(PageNavigation navigation, AccessContext caller, String parent) {
         List<HarvestSource.PageNode> pages = new ArrayList<>();
         String cursor = null;
@@ -284,8 +304,13 @@ class CoreParityTest {
 
     /** {@code eac/management.properties} in der Reihenfolge der Datei (die Schritte bauen aufeinander auf). */
     private static Map<String, String> eacManagement() throws IOException {
+        return eacProperties("management.properties");
+    }
+
+    /** Eine Referenzdatei {@code schlüssel=wert} in der Reihenfolge der Datei. */
+    private static Map<String, String> eacProperties(String name) throws IOException {
         Map<String, String> steps = new LinkedHashMap<>();
-        for (String line : Files.readAllLines(reference("management.properties"), StandardCharsets.UTF_8)) {
+        for (String line : Files.readAllLines(reference(name), StandardCharsets.UTF_8)) {
             int at = line.indexOf('=');
             if (at > 0 && !line.startsWith("#")) {
                 steps.put(line.substring(0, at).strip(), line.substring(at + 1).strip());
