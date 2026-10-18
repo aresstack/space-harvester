@@ -10,6 +10,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
@@ -96,6 +97,44 @@ class SearchViewTest {
         assertThat(first).containsExactly("Betrieb 000", "alpha", "DEV", "Auszug zu Betrieb 000");
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
+    }
+
+    @Test
+    void doubleClickOpensThePageAndSelectsItsSourceSpace() throws Exception {
+        start(false);
+        List<String> opened = new ArrayList<>();
+        context.setNavigator(new AppContext.Navigator() {
+            public void show(AppContext.Section section) { }
+            public void openPage(String sourceId, String pageId) {
+                opened.add("page:" + sourceId + "/" + pageId);
+            }
+            public void openSpace(String sourceId, String spaceKey) {
+                opened.add("space:" + sourceId + "/" + spaceKey);
+            }
+            public void showJob(String jobId) { }
+            public void showDiagnosis(String jobId) { }
+            public void prepareExport(String sourceId, List<String> spaces) { }
+            public void search(String text) { }
+        });
+
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].search("betrieb");
+        });
+        JTable table = find(view[0].component(), JTable.class).get(0);
+        await(() -> table.getRowCount() >= 1);
+        SwingUtilities.invokeAndWait(() -> {
+            table.setRowSelectionInterval(0, 0);
+            MouseEvent doubleClick = new MouseEvent(table, MouseEvent.MOUSE_CLICKED,
+                    System.currentTimeMillis(), 0, 8, 8, 2, false);
+            for (var listener : table.getMouseListeners()) {
+                listener.mouseClicked(doubleClick);
+            }
+        });
+        assertThat(opened).hasSize(2);
+        assertThat(opened.get(0)).isEqualTo("space:alpha/DEV");
+        assertThat(opened.get(1)).startsWith("page:alpha/");
     }
 
     @Test

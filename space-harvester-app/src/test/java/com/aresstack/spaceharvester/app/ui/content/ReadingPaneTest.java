@@ -11,14 +11,19 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.awt.event.MouseEvent;
 import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import javax.swing.JEditorPane;
+import javax.swing.JScrollPane;
+import javax.swing.SwingUtilities;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 class ReadingPaneTest {
 
@@ -26,6 +31,22 @@ class ReadingPaneTest {
     private static final PageHeader HEADER = PageHeader.of("wiki", new PageMetadata("42", "confluence:wiki/page/42",
             "Betrieb", "OPS", null, "3", T0, URI.create("https://wiki.example.org/pages/42"),
             new TreeMap<>(Map.of())), T0);
+
+    @Test
+    void hoveringOverTextDoesNotThrowWhenThereIsNoImage() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            ReadingPane reading = new ReadingPane();
+            JScrollPane scroll = (JScrollPane) reading.getComponent(1);
+            JEditorPane pane = (JEditorPane) scroll.getViewport().getView();
+            MouseEvent hover = new MouseEvent(pane, MouseEvent.MOUSE_MOVED, System.currentTimeMillis(),
+                    0, 3, 3, 0, false);
+            assertThatCode(() -> {
+                for (var listener : pane.getMouseMotionListeners()) {
+                    listener.mouseMoved(hover);
+                }
+            }).doesNotThrowAnyException();
+        });
+    }
 
     @Test
     void imagesComeFromTheCoreAndMissingOnesAreMarked() throws IOException {

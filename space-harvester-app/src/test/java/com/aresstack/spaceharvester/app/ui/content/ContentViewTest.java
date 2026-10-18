@@ -101,11 +101,41 @@ class ContentViewTest {
         });
 
         await(() -> view.detail().shownPage() != null);
+        assertThat(onEdt(() -> view.detail().selectedTab())).isEqualTo("Leseansicht");
         // Nachgeladen und sofort abgelegt (ADR 0010): die Anzeige kommt bereits aus dem Cache.
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
                 StandardCharsets.UTF_8)).contains("Text der Seite");
         assertThat(onEdt(() -> view.detail().feedback().isVisible())).as("keine Cache-Meldung").isFalse();
+    }
+
+    @Test
+    void checkingFreshnessKeepsTheChosenTab() throws Exception {
+        open("handbuch");
+        await(() -> view.pages().getRowCount() == 3);
+        onEdt(() -> {
+            view.pages().setRowSelectionInterval(1, 1);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+        String pageId = onEdt(() -> view.detail().shownPage().header().key().pageId());
+        String sourceId = onEdt(() -> view.detail().shownPage().header().key().sourceId());
+
+        onEdt(() -> {
+            view.detail().selectTab("Erweitert");
+            view.detail().load(sourceId, pageId, true);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+        assertThat(onEdt(() -> view.detail().selectedTab())).isEqualTo("Erweitert");
+
+        onEdt(() -> {
+            view.pages().setRowSelectionInterval(0, 0);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null
+                && !view.detail().shownPage().header().key().pageId().equals(pageId));
+        assertThat(onEdt(() -> view.detail().selectedTab())).as("andere Seite").isEqualTo("Leseansicht");
     }
 
     @Test

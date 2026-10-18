@@ -60,7 +60,7 @@ import java.util.Optional;
  */
 public final class PageDetailPanel extends JPanel {
 
-    private static final String READ = "Inhalt";
+    private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
@@ -175,8 +175,8 @@ public final class PageDetailPanel extends JPanel {
         advanced.add(Comic.row(refresh, saveRaw), BorderLayout.NORTH);
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
-        tabs.tab(READ, readerPanel)
-                .tab(READING, readingPane)
+        tabs.tab(READING, readingPane)
+                .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ADVANCED, advanced);
@@ -252,6 +252,16 @@ public final class PageDetailPanel extends JPanel {
         cards.show(deck, EMPTY);
     }
 
+    /** Für UI-Tests: angezeigte Ansicht der aktuellen Seite. */
+    String selectedTab() {
+        return tabs.selected();
+    }
+
+    /** Für UI-Tests: wählt eine Ansicht wie ein Klick auf ihren Reiter. */
+    void selectTab(String name) {
+        tabs.select(name);
+    }
+
     /** Ob gerade keine Seite angezeigt oder geladen wird. */
     public boolean isEmpty() {
         return pageId == null;
@@ -266,12 +276,17 @@ public final class PageDetailPanel extends JPanel {
         if (runtime == null || sourceId == null || pageId == null) {
             return;
         }
+        // Eine andere Seite zeigt zuerst die gerenderte Leseansicht; „Aktualität prüfen“ derselben Seite behält die Ansicht.
+        boolean samePage = refresh && sourceId.equals(this.sourceId) && pageId.equals(this.pageId);
         this.sourceId = sourceId;
         this.pageId = pageId;
         this.assetsLoaded = false;
         this.readingLoaded = false;
         this.page = null;
         readingPane.clear(" ");
+        if (!samePage) {
+            tabs.select(READING);
+        }
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
