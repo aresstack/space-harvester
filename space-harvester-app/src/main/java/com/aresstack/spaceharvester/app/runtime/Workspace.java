@@ -104,6 +104,11 @@ public final class Workspace {
         return harvester.navigation().position(caller, sourceId, pageId);
     }
 
+    /** Querverweise einer Seite, ausgehend und, wenn die Quelle sie kennt, eingehend ({@code PageNavigation.references}). */
+    public PageNavigation.References references(String sourceId, String pageId) {
+        return harvester.navigation().references(caller, sourceId, pageId);
+    }
+
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
     public PageMetadataListing liveMetadata(String sourceId, String spaceKey, String cursor, int limit) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
