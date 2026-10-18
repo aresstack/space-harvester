@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.configuration.HarvesterConfigura
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
+import com.aresstack.spaceharvester.application.configuration.SyncMode;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
@@ -27,7 +28,8 @@ class ConfigurationOverlayTest {
             new AiServiceSettings(URI.create("https://ki.example.org/v1"), "geheim", "chat", "embed", 768,
                     Duration.ofSeconds(45), "ki-bundle", Set.of("wiki", "docs"), "rerank"),
             new SearchSettings(true, false, false, new CacheFreshness(Duration.ofHours(6), false)),
-            new SyncSettings(true, Duration.ofDays(1), List.of("wiki/DEV", "wiki/OPS"), true, Duration.ofDays(7)),
+            new SyncSettings(true, Duration.ofDays(1), List.of("wiki/DEV", "wiki/OPS"), true, Duration.ofDays(7), true,
+                    SyncMode.SYNC_CACHE),
             new NetworkSettings(new ProxySettings(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.example", 3128,
                     List.of("*.intern"), null, null, null), TrustSettings.system()),
             new StorageSettings(Path.of("data", "cache")));

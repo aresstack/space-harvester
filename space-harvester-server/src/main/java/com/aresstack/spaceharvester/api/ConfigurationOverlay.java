@@ -32,9 +32,9 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.TRUST_BUNDLE, "ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
             "ai." + AiServiceSettings.RERANK_MODEL,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
-            SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK,
+            SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
-            SyncSettings.WITHHELD_RETENTION,
+            SyncSettings.WITHHELD_RETENTION, SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE,
             StorageSettings.DATA_DIRECTORY);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
@@ -81,6 +81,8 @@ public final class ConfigurationOverlay {
         }
         put(properties, SyncSettings.BEFORE_SEARCH, sync.beforeSearch());
         put(properties, SyncSettings.WITHHELD_RETENTION, sync.withheldRetention());
+        put(properties, SyncSettings.CATCH_UP_ON_START, sync.catchUpOnStart());
+        put(properties, SyncSettings.MODE, sync.mode().key());
         put(properties, StorageSettings.DATA_DIRECTORY, configuration.storage().dataDirectory());
         return properties;
     }
