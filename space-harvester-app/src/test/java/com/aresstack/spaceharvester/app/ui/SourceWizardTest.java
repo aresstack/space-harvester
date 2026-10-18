@@ -112,6 +112,21 @@ class SourceWizardTest {
 
     @Test
     void theCoreRejectsTheSameTargetUnderANewIdBeforeAnythingIsWritten() throws Exception {
+        rejectsTheSameTarget("");
+    }
+
+    /** Auch eine eingerichtete, aber nicht geöffnete Quelle (wartet auf ihr Token) belegt ihr Ziel (#236). */
+    @Test
+    void aSourceWaitingForItsTokenStillOccupiesItsTarget() throws Exception {
+        rejectsTheSameTarget("""
+                      auth:
+                        type: pat
+                        token: ${WIKI_TOKEN}
+                """);
+        assertThat(context.runtime().waitingForSecret()).containsExactly("wiki");
+    }
+
+    private void rejectsTheSameTarget(String auth) throws Exception {
         Path config = home.resolve("app.yml");
         Files.writeString(config, """
                 space-harvester-app:
@@ -122,7 +137,7 @@ class SourceWizardTest {
                       type: confluence
                       title: Wiki
                       base-url: https://wiki.example.invalid
-                """.formatted(home.resolve("data")));
+                """.formatted(home.resolve("data")) + auth);
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));

@@ -172,10 +172,13 @@ public final class Workspace {
      * Probleme der Einstellungen einer Quelle aus Sicht des laufenden Core ({@code SourceManagement.validate}, #188),
      * etwa dasselbe Ziel wie eine vorhandene Quelle unter neuer ID; leer, wenn sie sich übernehmen lassen.
      *
-     * @param replacing {@code true} beim Bearbeiten der Quelle mit derselben ID
+     * @param replacing  {@code true} beim Bearbeiten der Quelle mit derselben ID
+     * @param configured alle in der Datei eingerichteten Quellen, auch die, die der Core nicht geöffnet hat (warten auf
+     *                   ihr Geheimnis, beim Start abgelehnt); ihre IDs und Ziele sind ebenso belegt
      */
-    public List<String> sourceProblems(SourceSettingsConfig draft, boolean replacing) {
-        return harvester.sourceManagement().validate(draft, replacing);
+    public List<String> sourceProblems(SourceSettingsConfig draft, boolean replacing,
+                                       java.util.Collection<SourceSettingsConfig> configured) {
+        return harvester.sourceManagement().validate(draft, replacing, configured);
     }
 
     /** Ob die Quelle im Core eingeschaltet ist ({@code SourceManagement.enabled}); {@code false} auch für unbekannte. */

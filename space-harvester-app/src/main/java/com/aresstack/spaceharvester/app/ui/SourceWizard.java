@@ -481,6 +481,9 @@ final class SourceWizard {
         save.setEnabled(false);
         com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
         AppRuntime.SessionSecrets secrets = sessionSecrets(source);
+        AppSettings before = context.settings();
+        List<SourceSettingsConfig> configured = before == null ? List.of()
+                : before.sources().stream().map(AppSettings.SourceEntry::config).toList();
         Background.run(() -> {
             if (runtime != null) {
                 // Prüfung des Core (#188), u. a. dasselbe Ziel unter neuer ID; vor jedem Schreiben (auch des
@@ -493,7 +496,7 @@ final class SourceWizard {
                     // siehe oben
                 }
                 List<String> problems = config == null ? List.of()
-                        : runtime.workspace().sourceProblems(config, editing != null);
+                        : runtime.workspace().sourceProblems(config, editing != null, configured);
                 if (!problems.isEmpty()) {
                     throw new IllegalArgumentException(String.join("\n", problems));
                 }
