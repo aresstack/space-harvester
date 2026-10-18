@@ -188,6 +188,15 @@ class ExportsTest {
                         page(sourceId, spaceKey, "2", "1")));
                 return new Provisioned(true, false, java.util.List.of());
             }
+
+            @Override
+            public Provisioned provision(com.aresstack.spaceharvester.application.jobs.JobContext context,
+                                         String sourceId, String spaceKey,
+                                         java.util.function.Predicate<
+                                                 com.aresstack.spaceharvester.application.snapshot.PageHeader> counted) {
+                // Ohne nicht lesbare Seiten zählen beide.
+                return provision(context, sourceId, spaceKey);
+            }
         };
 
         JobStatus job = new Exports(jobs, cache, writer,

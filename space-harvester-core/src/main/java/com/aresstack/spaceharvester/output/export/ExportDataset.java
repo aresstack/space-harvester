@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.output.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
+import com.aresstack.spaceharvester.application.convert.SpaceNames;
 import com.aresstack.spaceharvester.application.export.ExportDatasetDamagedException;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -19,10 +20,12 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -77,7 +80,7 @@ final class ExportDataset implements ConversionInput {
                 }
             }
             List<PageTree.Node> roots = nodes(json.readTree(directory.resolve(FileSystemExportArtifactWriter.TREE)
-                    .toFile()).path("roots"), pages, exportId);
+                    .toFile()).path("roots"), pages, new HashSet<>(), exportId);
             int[] stats = new int[2];
             measure(roots, 1, stats);
             if (stats[0] != pages.size()) {
@@ -87,10 +90,11 @@ final class ExportDataset implements ConversionInput {
             String spaceKey = manifest.path("spaceKey").asString();
             return new ExportDataset(exportId, directory, sourceId, spaceKey,
                     new PageTree(roots, List.of(), stats[0], stats[1]), pages);
-        } catch (IOException e) {
-            throw new UncheckedIOException("Datenbestand des Exports " + exportId + " nicht lesbar", e);
+        } catch (IOException | UncheckedIOException e) {
+            // Eine Datei des Datenbestands fehlt oder ist nicht lesbar.
+            throw new ExportDatasetDamagedException(exportId, "Datei des Datenbestands fehlt oder ist nicht lesbar");
         } catch (RuntimeException e) {
-            if (e instanceof ExportDatasetDamagedException || e instanceof UncheckedIOException) {
+            if (e instanceof ExportDatasetDamagedException) {
                 throw e;
             }
             throw new ExportDatasetDamagedException(exportId, "Datenbestand nicht lesbar (" + e.getClass()
@@ -98,14 +102,19 @@ final class ExportDataset implements ConversionInput {
         }
     }
 
-    private static List<PageTree.Node> nodes(JsonNode array, Map<String, Entry> pages, String exportId) {
+    private static List<PageTree.Node> nodes(JsonNode array, Map<String, Entry> pages, Set<String> seen,
+                                             String exportId) {
         List<PageTree.Node> nodes = new ArrayList<>();
         for (JsonNode node : array) {
             String pageId = node.path("id").asString();
             if (!pages.containsKey(pageId)) {
                 throw new ExportDatasetDamagedException(exportId, "Baum nennt eine Seite ohne Payload");
             }
-            nodes.add(new PageTree.Node(pageId, nodes(node.path("children"), pages, exportId)));
+            if (!seen.add(pageId)) {
+                // Zusammen mit der Zählung unten: jede Seite der Liste genau einmal im Baum.
+                throw new ExportDatasetDamagedException(exportId, "Baum nennt eine Seite mehrfach");
+            }
+            nodes.add(new PageTree.Node(pageId, nodes(node.path("children"), pages, seen, exportId)));
         }
         return nodes;
     }
@@ -130,6 +139,15 @@ final class ExportDataset implements ConversionInput {
     @Override
     public String spaceKey() {
         return spaceKey;
+    }
+
+    /** Aus der ersten Seite in Baumreihenfolge; eine Seite genügt, alle tragen denselben Space. */
+    @Override
+    public String spaceName() {
+        if (tree.roots().isEmpty()) {
+            return spaceKey;
+        }
+        return SpaceNames.of(snapshot(pages.get(tree.roots().get(0).pageId())), spaceKey).orElse(spaceKey);
     }
 
     @Override

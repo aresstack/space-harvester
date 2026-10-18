@@ -174,6 +174,11 @@ public class ExportConversions {
             }
 
             @Override
+            public String spaceName() {
+                return dataset.spaceName();
+            }
+
+            @Override
             public com.aresstack.spaceharvester.application.tree.PageTree tree() {
                 return dataset.tree();
             }

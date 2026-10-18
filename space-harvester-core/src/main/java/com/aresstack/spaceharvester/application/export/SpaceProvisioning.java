@@ -30,11 +30,53 @@ public interface SpaceProvisioning {
     /**
      * Wie {@link #provision(JobContext, String, String)}, mit Fortschritt: {@code discovered} zählt die Seiten der
      * Inventur, {@code processed} die abgeglichenen, jeweils nur solche, für die {@code counted} gilt. So verraten die
-     * Zähler keine Seiten, die der Auftraggeber nicht lesen darf.
+     * Zähler keine Seiten, die der Auftraggeber nicht lesen darf. Eine Umsetzung ohne eigene Fassung dieser Methode
+     * kann nicht filtern; sie erhält einen Auftrag ohne Zähler.
      */
     default Provisioned provision(JobContext context, String sourceId, String spaceKey,
                                   Predicate<PageHeader> counted) {
-        return provision(context, sourceId, spaceKey);
+        return provision(new JobContext() {
+            @Override
+            public String jobId() {
+                return context.jobId();
+            }
+
+            @Override
+            public String owner() {
+                return context.owner();
+            }
+
+            @Override
+            public void checkpoint() {
+                context.checkpoint();
+            }
+
+            @Override
+            public boolean cancelRequested() {
+                return context.cancelRequested();
+            }
+
+            @Override
+            public void discovered(long pages) {
+            }
+
+            @Override
+            public void processed(long pages) {
+            }
+
+            @Override
+            public void written(long pages) {
+            }
+
+            @Override
+            public void failed(long pages) {
+            }
+
+            @Override
+            public void phase(String component, String phase) {
+                context.phase(component, phase);
+            }
+        }, sourceId, spaceKey);
     }
 
     /**
