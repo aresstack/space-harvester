@@ -19,7 +19,10 @@ import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -29,6 +32,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.Semaphore;
 
 /**
  * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche über die Quellen
@@ -66,6 +74,13 @@ import java.util.Set;
  * <p>Alle Filter der Anfrage gelten für jeden Kandidaten, auch aus der Vektorsuche; jeder Treffer trägt die aktuellen
  * Kopfdaten aus dem Suchindex. Ein Treffer, dessen Embedding aus einer älteren Revision stammt, heißt
  * {@link Freshness#STALE}.
+ *
+ * <p>Live-Prüfung (ADR 0011, Punkt 7, mit {@link Renewal}): Vor der Auslieferung prüft die Suche jeden Treffer wie das
+ * Lesen einer Seite. Ein Metadatenabruf bei der Quelle liefert Recht und Version; Rechte gelten für den aktuellen
+ * Space. Gesperrte oder verschwundene Seiten fallen ohne Spur weg, und weitere Kandidaten rücken nach. Meldet die
+ * Quelle eine neuere Version, wird die Seite über {@link Renewal} nachgeladen und abgelegt, ihr Vektor neu berechnet,
+ * und der Treffer heißt bis dahin {@link Freshness#STALE}. Ist ein Kandidat nicht prüfbar, fehlt er, und das Ergebnis
+ * ist unvollständig. Der Index bleibt gemeinsam für alle Benutzer.
  */
 public class RelevanceSearch {
 
@@ -74,6 +89,9 @@ public class RelevanceSearch {
 
     /** Höchstens so viele Seiten aus der Vektorsuche werden im Suchindex nachgeschlagen. */
     static final int MAX_LOOKUPS = 3 * Reranking.MAX_WINDOW;
+
+    /** Gleichzeitige Metadatenabrufe der Live-Prüfung je Suche. */
+    static final int PARALLEL_CHECKS = 6;
 
     /** Längster Anfragetext. */
     public static final int MAX_TEXT_LENGTH = 500;
@@ -86,8 +104,12 @@ public class RelevanceSearch {
     private final EnrichmentStore store;
     private final EmbeddingIndex vectors;
     private final EmbeddingProcessor embedding;
+    private final Renewal renewal;
 
     /**
+     * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
+     * Einbettungen ohne Zugriff auf die Quellen.
+     *
      * @param store     Ablage der Embeddings oder {@code null}
      * @param vectors   Vektorsuche über diese Ablage oder {@code null}
      * @param embedding Prozessor des eingerichteten Embedding-Dienstes oder {@code null}, wenn keiner eingerichtet ist;
@@ -95,6 +117,19 @@ public class RelevanceSearch {
      */
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding) {
+        this(catalog, index, access, store, vectors, embedding, null);
+    }
+
+    /**
+     * Mit Live-Prüfung je Treffer (ADR 0011, Punkt 7): Vor der Auslieferung liest die Suche die Kopfdaten jedes
+     * Treffers bei der Quelle und prüft an ihnen Recht und Version.
+     *
+     * @param renewal holt neuere Versionen nach und legt sie ab, damit ihr Vektor neu berechnet wird; {@code null}
+     *                schaltet die Live-Prüfung ab
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal) {
+        this.renewal = renewal;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -141,7 +176,7 @@ public class RelevanceSearch {
         SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
-            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of());
+            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), true);
         }
 
         float[] vector = queryVector(queryText);
@@ -164,13 +199,135 @@ public class RelevanceSearch {
         Reranking reranking = new Reranking(reranker);
         List<SearchHit> ordered = reranking.apply(query, window);
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
-        for (SearchHit hit : ordered.subList(0, Math.min(limit, ordered.size()))) {
-            Score score = scores.get(hit);
-            hits.add(score == null ? new RankedHit(hit, null)
-                    : new RankedHit(hit, new Relevance(score.similarity(), score.charStart(), score.charEnd(),
-                            score.freshness())));
+        boolean complete = true;
+        int next = 0;
+        // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
+        while (hits.size() < limit && next < ordered.size()) {
+            int end = Math.min(ordered.size(), next + limit - hits.size());
+            for (Verified verified : verify(caller, query, ordered.subList(next, end), scores)) {
+                complete &= !verified.failed();
+                if (verified.hit() != null && hits.size() < limit) {
+                    hits.add(verified.hit());
+                }
+            }
+            next = end;
         }
-        return new RelevanceResults(query.sourceId(), state, reranking.rerankerId(), hits);
+        return new RelevanceResults(query.sourceId(), state, reranking.rerankerId(), hits, complete);
+    }
+
+    /** Prüft Treffer parallel, Reihenfolge bleibt. */
+    private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
+                                  Map<SearchHit, Score> scores) {
+        if (renewal == null) {
+            return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false)).toList();
+        }
+        Semaphore slots = new Semaphore(PARALLEL_CHECKS);
+        List<Future<Verified>> futures = new ArrayList<>(batch.size());
+        try (ExecutorService checks = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (SearchHit hit : batch) {
+                futures.add(checks.submit(() -> {
+                    slots.acquireUninterruptibly();
+                    try {
+                        return verify(caller, query, hit, scores.get(hit));
+                    } finally {
+                        slots.release();
+                    }
+                }));
+            }
+        }
+        List<Verified> verified = new ArrayList<>(futures.size());
+        for (Future<Verified> future : futures) {
+            try {
+                verified.add(future.get());
+            } catch (ExecutionException e) {
+                // Nie ungeprüft ausliefern; der Stapel ist dann unvollständig.
+                verified.add(Verified.FAILED);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                verified.add(Verified.FAILED);
+            }
+        }
+        return verified;
+    }
+
+    /**
+     * Wie das Lesen einer Seite: ein Metadatenabruf bei der Quelle liefert Recht und Version in einem Schritt. Die
+     * Rechte gelten für den aktuellen Space der Seite, nicht den im Index.
+     */
+    private Verified verify(AccessContext caller, PageSearchQuery query, SearchHit hit, Score score) {
+        PageKey key = hit.page().header().key();
+        HarvestSource source = catalog.find(key.sourceId()).orElse(null);
+        if (source == null) {
+            return Verified.DROPPED;
+        }
+        PageMetadata live;
+        try {
+            live = source.pageMetadata(key.pageId());
+        } catch (SourceAccessException e) {
+            if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
+                return Verified.DROPPED;
+            }
+            if (e.reason() == SourceAccessException.Reason.UNSUPPORTED) {
+                // Die Quelle kann keine Einzelseite prüfen (wie beim Lesen ohne Inhaltsabruf): Policy und Index.
+                return new Verified(ranked(hit, score), false);
+            }
+            // Ohne Seiten-ID im Log.
+            LOG.log(System.Logger.Level.INFO, "Kopfdaten eines Relevanztreffers in {0} nicht lesbar ({1})",
+                    key.sourceId(), e.reason());
+            return Verified.FAILED;
+        }
+        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(live.partitionKey())) {
+            return Verified.DROPPED;
+        }
+        ResourceScope scope = ResourceScope.page(key.sourceId(), live.partitionKey(), key.pageId());
+        if (!access.permits(caller, scope, AccessKind.METADATA)
+                || score != null && !access.permits(caller, scope, AccessKind.CONTENT)) {
+            // Auch die Position eines Treffers mit Ähnlichkeit stammt aus dem Inhalt.
+            return Verified.DROPPED;
+        }
+        Score checked = score;
+        if (live.version() != null && !live.version().equals(hit.page().header().revision())) {
+            renew(caller, key);
+            if (checked != null) {
+                checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE);
+            }
+        }
+        return new Verified(ranked(hit, checked), false);
+    }
+
+    private void renew(AccessContext caller, PageKey key) {
+        try {
+            renewal.renew(caller, key);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Nachladen eines Relevanztreffers in {0} nicht eingeplant ({1})",
+                    key.sourceId(), e.getClass().getName());
+        }
+    }
+
+    private static RankedHit ranked(SearchHit hit, Score score) {
+        return score == null ? new RankedHit(hit, null)
+                : new RankedHit(hit, new Relevance(score.similarity(), score.charStart(), score.charEnd(),
+                        score.freshness()));
+    }
+
+    /** Ergebnis der Live-Prüfung: Treffer, weggefallen ({@code hit == null}) oder nicht prüfbar ({@code failed}). */
+    private record Verified(RankedHit hit, boolean failed) {
+
+        static final Verified DROPPED = new Verified(null, false);
+        static final Verified FAILED = new Verified(null, true);
+    }
+
+    /**
+     * Holt eine Seite, deren Quelle eine neuere Version meldet, nach und legt sie im gemeinsamen Cache ab; damit wird
+     * auch ihr Vektor neu berechnet (ADR 0011, Punkt 7). Darf nicht blockieren.
+     */
+    @FunctionalInterface
+    public interface Renewal {
+
+        /** Nur prüfen, nichts nachladen. */
+        Renewal NONE = (caller, key) -> { };
+
+        void renew(AccessContext caller, PageKey key);
     }
 
     private float[] queryVector(String text) {
@@ -350,8 +507,11 @@ public class RelevanceSearch {
      * @param sourceId die angefragte Quelle oder {@code null} bei der globalen Suche (#114)
      * @param index    gelesener Indexstand oder {@code null}, wenn global keine lesbare Quelle im Index liegt
      * @param reranker Kennung des Rerankers, {@code none} ohne Modell
+     * @param complete {@code false}, wenn die Kopfdaten eines Kandidaten bei der Quelle nicht lesbar waren; er fehlt
+     *                 dann, weil ungeprüft nichts ausgeliefert wird
      */
-    public record RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits) {
+    public record RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits,
+                                   boolean complete) {
 
         public RelevanceResults {
             hits = List.copyOf(hits);

@@ -47,6 +47,13 @@ class AiConfiguration {
                 properties.embeddingChunkChars(), settings::mayProcessExternally);
     }
 
+    /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
+    @Bean(destroyMethod = "shutdownNow")
+    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
+    ExecutorService relevanceRenewals() {
+        return Enrichments.background(100);
+    }
+
     /** Hintergrund der Anreicherungen, die über das Netz rechnen. */
     @Bean(destroyMethod = "shutdownNow")
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")

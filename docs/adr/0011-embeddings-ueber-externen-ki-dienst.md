@@ -61,13 +61,15 @@ Die Standardsuche ist die Schlagwortsuche über die native Suche der Quellen (AD
    Suche bekommen.
 7. **Jeder Relevanztreffer wird vor der Auslieferung geprüft wie das Lesen einer Seite.** Ein Metadatenabruf mit der
    Identität des Aufrufers (`expand=space,version`) liefert Recht und Version in einem Schritt.
-   - Gesperrte Seiten fallen ohne Spur weg; dann werden weitere Kandidaten geprüft, bis das Ergebnis voll ist oder die
-     Kandidaten aus sind.
-   - Ist die Version neuer, wird die Seite nachgeladen, im Cache abgelegt und ihr Vektor neu berechnet (im
-     Hintergrund); bis dahin trägt der Treffer `freshness: stale`.
+   - Rechte gelten für den aktuellen Space der Seite bei der Quelle, nicht den im Index. Gesperrte oder verschwundene
+     Seiten fallen ohne Spur weg; dann werden weitere Kandidaten geprüft, bis das Ergebnis voll ist oder die Kandidaten
+     aus sind.
+   - Ein Kandidat, dessen Kopfdaten die Quelle nicht liefern kann, wird nie ungeprüft ausgeliefert; er fehlt, und die
+     Antwort trägt `complete: false`.
+   - Ist die Version neuer, wird die Seite über den Beschaffungs-Use-Case nachgeladen und im Cache abgelegt, und ihr
+     Vektor wird neu berechnet (`PageRenewal`, im begrenzten Hintergrund); bis dahin trägt der Treffer
+     `freshness: stale`.
    - Der Index bleibt gemeinsam für alle Benutzer; es gibt keine Caches je Benutzer.
-   - Umsetzung im nächsten Schritt von Strang Q; bis dahin prüft die Suche die Rechte gegen die Zugriffspolicy und
-     markiert veraltete Vektoren wie bisher.
 
 ## Zielablauf
 
