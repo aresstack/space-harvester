@@ -184,12 +184,12 @@ Lücke mehr.
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | JSON (Raw-First, `pages.json`, `pages.ndjson`, `tree.json`, Manifest) | — | `Exports`, `JsonArrayConverter` | SH+ |
-| Aus dem gespeicherten Datenbestand konvertieren, ohne erneuten Abruf | nein (lädt jede Seite neu) | Cache-Generation (ADR 0010); Konvertierung bestehender Exporte | SH+; Konvertierung aus Datenbestand in Arbeit (Q, Runde 7) |
+| Aus dem gespeicherten Datenbestand konvertieren, ohne erneuten Abruf | nein (lädt jede Seite neu) | Cache-Generation (ADR 0010); `ExportConversions.convert` konvertiert einen abgeschlossenen Export in jedes Format ohne erneuten Abruf, REST `GET /api/v1/exports/{id}/conversions/{format}`; `ExportConversions.dataset` bzw. `GET /api/v1/exports/{id}/dataset` (`ExportDatasetInfo`) nennt Seiten, Vollständigkeit, Bildstand, Formate und je Stand die Mediendateien der letzten Beschaffung (`media()`: abgelegt, fehlend, wegen Anmeldung offen, bewusst weggelassen; #313, optionale Erweiterung) | SH+ |
 | Herkunft je Konvertierung (Konverterversion, Eingabe-Hash) | — | `manifest.conversions` | SH+ |
 | PDF: sichtbares Inhaltsverzeichnis über mehrere Seiten mit Einrückung, Seitenzahlen und Sprüngen (`tableOfContents()`), Seitenzahlen „12 / 85“, Kapitel je neuer Seite, Bilder, Mermaid | `doc/PdfExportWriter` | `core/output/convert/PdfConverter`: nur Lesezeichen (`PDDocumentOutline`) und interne Sprünge, Bilder als `[Bild: …]`; `PdfConverterTest` prüft kein Inhaltsverzeichnis | in Arbeit (Strang R, gemeinsames Kapitelmodell für Word und PDF) |
 | Markdown: eine Datei, Bilder als PNG-Data-URI eingebettet, Mermaid als Code und Grafik, fehlende Bilder gemeldet | `doc/MarkdownExportWriter` | `MarkdownConverter`: Sprungmarken und interne Seitenlinks (besser als EAC, bleiben), Bilder nur als `attachment:`-Verweis, Mermaid nur als Code | in Arbeit (Strang R, „Export-Parität: Markdown, Word, PDF und Bilder“, gemeinsamer Dokumentbaum) |
 | Verlinktes Inhaltsverzeichnis in Markdown | — | — | in keinem; keine Paritätslücke |
-| Exportumfang einzelne Seite oder Teilbaum | `KnowledgeExportUseCase` | nur ganze Spaces (`ExportScope`) | fehlt → #186 |
+| Exportumfang einzelne Seite oder Teilbaum | `KnowledgeExportUseCase` | ganzer Space oder ab einer Startseite samt Unterseiten: `ExportRequest.withRoot(rootPageId)`, `Exports.start(sourceId, spaceKey, rootPageId, owner, formats)`, REST `POST …/spaces/{key}/exports` mit `{"rootPageId":"…"}`; Daten, Formate und Rechteprüfung wie beim Space, eine fehlende oder nicht lesbare Startseite lässt den Auftrag mit `ROOT_NOT_FOUND` scheitern, `JobStatus` nennt `rootPageId` und `rootTitle`; eingelesen wird bei Bedarf trotzdem der ganze Space (#315). Offen: Einzelseite ohne Unterseiten, Tiefe, Vergleichstest | teilweise → #186 |
 | Portables ZIP (JSON + Bilder) | — | Format `json-package` (`JsonPackageConverter`): ZIP mit `pages.json`, `assets.json` mit relativen Pfaden, `assets/<Seiten-ID>/` mit Bildern und Anhängen, draw.io-Original, gezeichnetem SVG und `<Name>.graph.json` (Knoten und Verbindungen für KI-Systeme); keine Base64-Einbettung, nicht abgelegte Dateien nur mit Status; `json` bleibt unverändert (#306, ADR 0018) | SH+ |
 
 ## 11. Semantische Suche
@@ -270,7 +270,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
 | #184 | `ImageDescriber` über den externen KI-Dienst | Q |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | erledigt: Core (#303), Server-REST (#308), App (#312) |
-| #186 | Export einzelner Seiten und Teilbäume | Q |
+| #186 | Export einzelner Seiten und Teilbäume | Q; Teilbaum umgesetzt (#315), offen Einzelseite, Tiefe; Vergleichstest S |
 | #187 | Quellen ohne Partitionen und weitere Quelltypen des EAC | Q |
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
 | #189 | Netzwerk: Proxy-Anmeldung, PAC-Skript, Vertrauen, Kopfzeilen (#234), Verbindungsdiagnose (#238) | Q, erledigt |
@@ -376,5 +376,5 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 Die Trefferauswahl der Live-Suche vergleicht `:parity-tests` nicht, weil der Fake feste Treffer liefert und beide Seiten
 dieselbe CQL bauen. Anhänge fehlen noch, dafür fehlen Core-Schnittstellen: Text aus Anhängen #183,
-Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf
+Export einer einzelnen Seite und mit Tiefe wie im Enterprise AI Client #186 (den Teilbaum gibt es seit #315). Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.
