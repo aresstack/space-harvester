@@ -59,7 +59,9 @@ public final class TrustPolicy {
     /**
      * Baut die Regel jetzt (blockierend; unter Windows mit PowerShell-Export, sofern eingeschaltet).
      *
-     * @throws IllegalArgumentException wenn die CA-Datei nicht nutzbar ist (die Meldung nennt nie ihren Inhalt)
+     * @throws IllegalArgumentException wenn die CA-Datei nicht nutzbar ist (die Meldung nennt nie ihren Inhalt) oder
+     *                                  keine eingeschaltete Quelle Zertifikate liefert; der JVM-Truststore springt nur
+     *                                  ein, wenn er selbst eingeschaltet ist
      */
     public static TrustPolicy from(TrustSettings settings) {
         return build(settings, windows(System.getProperty("os.name", "")));
@@ -128,13 +130,22 @@ public final class TrustPolicy {
             }
             X509TrustManager manager = result.getTrustManager();
             if (result.isFallbackToJvmDefault() || manager == null) {
-                notices.add("Keine konfigurierte TLS-Quelle nutzbar; es gilt der JVM-Truststore.");
-                manager = jvmTrustManager();
-                if (!sources.contains(JVM_SOURCE)) {
-                    sources.add(JVM_SOURCE + " (Rückfall)");
+                // Der JVM-Truststore gilt nur, wenn er eingeschaltet ist; sonst bliebe eine bewusste Einschränkung
+                // unwirksam.
+                if (settings.useJvmDefault()) {
+                    notices.add("Keine Windows-Quelle nutzbar; es gilt der JVM-Truststore.");
+                    manager = jvmTrustManager();
+                    if (!sources.contains(JVM_SOURCE)) {
+                        sources.add(JVM_SOURCE);
+                    }
+                } else {
+                    notices.add("Keine der eingeschalteten Windows-Quellen ist nutzbar.");
+                    manager = null;
                 }
             }
-            anchors.addAll(List.of(manager.getAcceptedIssuers()));
+            if (manager != null) {
+                anchors.addAll(List.of(manager.getAcceptedIssuers()));
+            }
         }
         if (settings.caCertificatesFile() != null) {
             List<X509Certificate> file = caCertificates(settings.caCertificatesFile());
@@ -142,9 +153,9 @@ public final class TrustPolicy {
             sources.add(FILE_SOURCE + " (" + file.size() + " Zertifikate)");
         }
         if (anchors.isEmpty()) {
-            notices.add("Keine Vertrauensanker gefunden; es gilt der JVM-Truststore.");
-            anchors.addAll(List.of(jvmTrustManager().getAcceptedIssuers()));
-            sources.add(JVM_SOURCE + " (Rückfall)");
+            // Nie stillschweigend auf den JVM-Truststore ausweichen: Wer ihn abschaltet, will ihm nicht vertrauen.
+            throw new IllegalArgumentException("tls: keine der eingeschalteten Vertrauensquellen liefert Zertifikate"
+                    + (notices.isEmpty() ? "" : " (" + String.join(" ", notices) + ")"));
         }
         TrustPolicy policy = new TrustPolicy(sources, notices, diagnostics, pkix(anchors));
         LOG.info("TLS-Vertrauen: {} ({} Anker){}", String.join(", ", sources), anchors.size(),

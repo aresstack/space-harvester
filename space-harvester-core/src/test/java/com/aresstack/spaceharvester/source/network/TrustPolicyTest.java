@@ -81,6 +81,12 @@ class TrustPolicyTest {
     }
 
     @Test
+    void withTheJvmTruststoreSwitchedOffItIsNeverUsedAsFallback() {
+        assertThatThrownBy(() -> TrustPolicy.build(new TrustSettings(false, true, true, null), false))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("keine der eingeschalteten");
+    }
+
+    @Test
     void onlyTheCaFileTrustsOnlyItsCertificates() {
         TrustPolicy policy = TrustPolicy.build(new TrustSettings(false, false, false, serverCertificate), false);
 
