@@ -62,9 +62,13 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
 - Mit dem Config Server: Löst ein Refresh ein `EnvironmentChangeEvent` mit Schlüsseln unter `space-harvester.` aus,
   liest der Dienst die Konfiguration neu und aktiviert sie; das Log nennt nur Version und Schlüssel. Einen
   Refresh-Endpunkt gibt der Dienst nicht frei. Was zuvor per `POST` geändert wurde, überschreibt der Refresh.
-- Die bestehenden Bausteine (Embeddings, Reranker, Zeitplan) lesen ihre Properties noch beim Start; sie melden sich
-  erst nach und nach beim `ConfigurationManager` an. Bis dahin ist eine neue Version gespeichert und abrufbar, aber
-  noch nicht überall wirksam.
+- In der Bibliothek (`Harvester.builder().configuration(manager)`, etwa in der Desktop-App) wirkt eine aktivierte
+  Version sofort: Aktualität vorhandener Inhalte und Frist für gesperrte Seiten je Quelle (`freshnessFor`,
+  `syncFor`) beim nächsten Abruf bzw. Lauf, Embedding-Modell und Reranker für neue Suchen (alte Vektoren werden ohne
+  neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht), der Zeitplan aus `sync.spaces` mit Abstand und
+  Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen. Noch nicht live: Bestandsinventur-Zeitplan,
+  Webhooks, `before-search` und `search.prefetch-hits` (nur beim Bauen). Die Bausteine des Servers lesen ihre
+  Properties noch beim Start; dort ist eine neue Version gespeichert und abrufbar, aber noch nicht überall wirksam.
 
 ## Reihenfolge der Quellen
 

@@ -82,7 +82,9 @@ try (Harvester harvester = Harvester.builder()
 ```
 
 Proxy/PAC (`proxy(...)`), Vertrauensquellen (`trustBundles(...)`), Rechte (`accessPolicy(...)`, Standard: der
-einbettende Aufrufer darf alles lesen), Auftragsgrenzen und ein lokales Embedding-Modell setzt der Builder. Die
+einbettende Aufrufer darf alles lesen), Auftragsgrenzen und ein lokales Embedding-Modell setzt der Builder; mit
+`configuration(ConfigurationManager)` folgen Modelle, Zeitplan und Regeln je Quelle zur Laufzeit jeder aktivierten
+Konfiguration ([CONFIGURATION.md](docs/CONFIGURATION.md)). Die
 Veröffentlichung als `com.aresstack:space-harvester-core` ist vorbereitet (`./gradlew
 :space-harvester-core:publishMavenPublicationToLocalRepository` schreibt nach `space-harvester-core/build/repo`),
 aber noch nicht eingerichtet.

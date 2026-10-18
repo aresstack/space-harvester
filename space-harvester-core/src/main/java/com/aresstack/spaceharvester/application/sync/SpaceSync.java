@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Ablauf eines Sync-Laufs für einen Space.
@@ -31,7 +32,7 @@ public class SpaceSync {
     private final InventoryCollector collector;
     private final RemovalCheck removalCheck;
     private final Clock clock;
-    private final Duration withheldRetention;
+    private final Function<String, Duration> withheldRetention;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
         this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
@@ -43,6 +44,18 @@ public class SpaceSync {
      *                          nächsten Lauf
      */
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock, Duration withheldRetention) {
+        this(store, new InventoryCollector(queries, clock), new RemovalCheck(queries), clock,
+                fixed(withheldRetention));
+    }
+
+    /**
+     * Wie {@link #SpaceSync(SourceQueries, SyncBaselineStore, Clock, Duration)}, mit einer Frist je Quelle, die bei
+     * jedem Lauf neu gelesen wird (Konfiguration zur Laufzeit, ADR 0015).
+     *
+     * @param withheldRetention Frist für gesperrte Seiten je Quellen-ID
+     */
+    public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock,
+                     Function<String, Duration> withheldRetention) {
         this(store, new InventoryCollector(queries, clock), new RemovalCheck(queries), clock, withheldRetention);
     }
 
@@ -52,15 +65,30 @@ public class SpaceSync {
 
     SpaceSync(SyncBaselineStore store, InventoryCollector collector, RemovalCheck removalCheck, Clock clock,
               Duration withheldRetention) {
+        this(store, collector, removalCheck, clock, fixed(withheldRetention));
+    }
+
+    private SpaceSync(SyncBaselineStore store, InventoryCollector collector, RemovalCheck removalCheck, Clock clock,
+                      Function<String, Duration> withheldRetention) {
         this.store = Objects.requireNonNull(store, "store");
         this.collector = Objects.requireNonNull(collector, "collector");
         this.removalCheck = Objects.requireNonNull(removalCheck, "removalCheck");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.withheldRetention = Objects.requireNonNull(withheldRetention, "withheldRetention");
+    }
+
+    static Function<String, Duration> fixed(Duration withheldRetention) {
         Objects.requireNonNull(withheldRetention, "withheldRetention");
         if (withheldRetention.isNegative()) {
             throw new IllegalArgumentException("Frist für gesperrte Seiten darf nicht negativ sein");
         }
-        this.withheldRetention = withheldRetention;
+        return sourceId -> withheldRetention;
+    }
+
+    /** Die Frist für gesperrte Seiten einer Quelle; ungültige Werte fallen auf die Standardfrist zurück. */
+    private Duration retention(String sourceId) {
+        Duration retention = withheldRetention.apply(sourceId);
+        return retention == null || retention.isNegative() ? DEFAULT_WITHHELD_RETENTION : retention;
     }
 
     public SyncPlan plan(String sourceId, String spaceKey) {
@@ -89,7 +117,7 @@ public class SpaceSync {
         }
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
         SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
-        return checked.withPurgesDue(clock.instant().minus(withheldRetention));
+        return checked.withPurgesDue(clock.instant().minus(retention(sourceId)));
     }
 
     /**
