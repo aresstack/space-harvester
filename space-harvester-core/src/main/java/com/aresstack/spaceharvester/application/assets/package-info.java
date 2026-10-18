@@ -8,5 +8,9 @@
  * <p>Textuelle Diagrammdaten (draw.io, SVG) gehen Bildern vor: {@link
  * com.aresstack.spaceharvester.application.assets.AssetKind} ordnet die Anhänge ein, und ein Vorschaubild eines
  * draw.io-Diagramms verweist mit {@code previewOf} auf dessen Quelldaten.
+ *
+ * <p>Typ und Text (#183): Beim Ablegen prüft {@link com.aresstack.spaceharvester.application.assets.DocumentText} den
+ * Typ am Inhalt; Dokumente bekommen ihren Text als {@link com.aresstack.spaceharvester.application.assets.AssetText},
+ * je Inhalt und Extraktion abgelegt.
  */
 package com.aresstack.spaceharvester.application.assets;

@@ -3,8 +3,7 @@ package com.aresstack.spaceharvester.source;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
-import com.aresstack.enterpriseai.proasteion.emporion.deigma.ExtractionRegistry;
-import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.SimpleContentDetector;
+import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -15,7 +14,12 @@ import java.util.Map;
  * Quellentyp {@code files}: ein lokales Verzeichnis über {@code LocalFilesSourceProvider} aus
  * {@code enterprise-ai-sources} (#18). Eine Partition je Quelle (Schlüssel = Quellen-ID), darin alle lesbaren
  * Dokumente nach relativem Pfad; die Seiten-ID ist der relative Pfad als Base64url, der Inhalt die Datei Byte für
- * Byte. Ohne Netz, Anmeldung und Zertifikat; Text wird hier nicht extrahiert.
+ * Byte. Ohne Netz, Anmeldung und Zertifikat.
+ *
+ * <p>Erkennung und Extraktion wie im Enterprise AI Client (#183): {@link DocumentExtraction#detector()} (Endung, sonst
+ * Apache Tika am Inhalt) und {@link DocumentExtraction#registry()} (Markdown, Klartext, sonst Tika für PDF, Office,
+ * OpenDocument, RTF). Den Lesetext für Index und Anreicherungen bildet {@link LocalFilesTextProjector} aus dem
+ * abgelegten Original, mit dessen Größen- und Zeitgrenzen.
  *
  * <p>Einstellungen unter {@code options}: {@code directory} (Pflicht) und die übrigen Felder des Upstream-Typs, etwa
  * {@code include}, {@code exclude}, {@code maxFileMegabytes}.
@@ -30,7 +34,7 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     static final int MAX_FILE_MEGABYTES = 64;
 
     private final LocalFilesSourceProvider provider =
-            new LocalFilesSourceProvider(new SimpleContentDetector(), new ExtractionRegistry());
+            new LocalFilesSourceProvider(DocumentExtraction.detector(), DocumentExtraction.registry());
 
     @Override
     public String type() {

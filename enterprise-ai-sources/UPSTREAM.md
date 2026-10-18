@@ -1,12 +1,13 @@
 # enterprise-ai-sources
 
-Unveränderte Kopie der Confluence-Quelle und des Embedding-Adapters aus
+Unveränderte Kopie der Confluence-Quelle, der Dokument-Extraktion und des Embedding-Adapters aus
 [aresstack/enterprise-ai-client](https://github.com/aresstack/enterprise-ai-client). Der Space Harvester baut
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
-`bdaf512e8f60b3dc0fa08ecf366b3edf8981b348`, der Merge von enterprise-ai-client#191 (Suchanfrage mit Bereichsauswahl
-`SourceQuery.withIncludedPartitions`, Confluence `space in (…)`; davor #179, #178, #177, #176, #18) auf `main`.
+`9fb91c3200266169da0bc433894a331d575c2e5a`, der Merge von enterprise-ai-client#192 (Änderungssuche und Papierkorb je
+Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main`. Derselbe Stand enthält schon
+`document-tika`; für #183 kamen nur weitere Module und Klassen in die Auswahl, ohne neuen Upstream-Commit.
 
 ## Inhalt
 
@@ -18,7 +19,9 @@ Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPS
 | `source-api` | vollständig: `KnowledgeSourcePort`, `KnowledgeSourceProvider`, `PageNavigationSource`, `PageViewSource`, `PartitionListingSource`, Test-Fixtures |
 | `proasteion/emporion/holkas/source-confluence` | vollständig: `ConfluenceRestClient`, `ConfluenceKnowledgeSource`, `FakeConfluence`-Fixtures |
 | `proasteion/emporion/deigma` | vollständig: Port für Dateityp-Erkennung und Text-Extraktion (nur JDK) |
-| `proasteion/emporion/deigma/document-tika` | nur `SimpleContentDetector` (Erkennung nach Endung, nur JDK), ohne Apache Tika |
+| `proasteion/emporion/deigma/document-tika` | vollständig (#183): `TikaContentDetector`, `TikaResourceExtractor`, `DocumentExtraction`, `MarkdownTextExtractor`, `PlainTextExtractor`, `SimpleContentDetector`; Apache Tika 3.3.2 statt 2.9.1 (PDFBox 3 und POI 5.5 des Space Harvester), flexmark ausgeschlossen wie im Upstream |
+| `astu/acropolis` | nur `SourceFileTextExtractor` und für dessen Umsetzung `ImageAnalysis`, `ImageAnalysisCache`, `SourceImageAnalysisUseCase` (#183) |
+| `proasteion/application` | nur `DocumentSourceFileTextExtractor`: Text aus Dateien einer Quelle wie im Enterprise AI Client (#183) |
 | `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |

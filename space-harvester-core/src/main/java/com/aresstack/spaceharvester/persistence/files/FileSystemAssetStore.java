@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -37,6 +38,8 @@ import java.util.stream.Stream;
  *   <li>{@code index/<Quelle>/<Anhang>/<Version>.properties}: Metadaten mit Verweis auf den Inhalt</li>
  *   <li>{@code descriptions/<sha256-hex>/<Beschreiber>/<Modell>.properties}: Bildbeschreibungen, je Bildinhalt und
  *       Modell</li>
+ *   <li>{@code texts/<sha256-hex>/<Extraktion>/<Version>.properties}: Text von Dokumenten (#183), je Inhalt und
+ *       Extraktion</li>
  * </ul>
  *
  * <p>Namen aus Quell-IDs werden nie ungeprüft zu Pfaden: harmlose Namen bekommen das Präfix {@code p}, alle anderen
@@ -46,7 +49,8 @@ import java.util.stream.Stream;
  *
  * <p>Alle Inhalte zusammen belegen höchstens {@code maxTotalBytes}; ein neuer Inhalt darüber scheitert mit {@link
  * AssetStoreFullException}, nichts wird verdrängt. Gezählt wird beim ersten Schreiben einmal über {@code blobs/},
- * danach je neuem Inhalt; Einträge und Beschreibungen sind klein und zählen nicht mit.
+ * danach je neuem Inhalt; Einträge, Beschreibungen und Texte zählen nicht mit (ein Text ist durch die Zeichengrenze der
+ * Extraktion begrenzt).
  */
 public class FileSystemAssetStore implements AssetStore {
 
@@ -206,10 +210,56 @@ public class FileSystemAssetStore implements AssetStore {
         }
     }
 
+    @Override
+    public Optional<AssetText> text(String sha256, String extractor, String version) {
+        if (!HEX_SHA.matcher(sha256).matches()) {
+            return Optional.empty();
+        }
+        Properties p = new Properties();
+        try (var in = Files.newBufferedReader(textFile(sha256, extractor, version), StandardCharsets.UTF_8)) {
+            p.load(in);
+        } catch (NoSuchFileException e) {
+            return Optional.empty();
+        } catch (IOException e) {
+            throw new AssetStoreException("Dokumenttext nicht lesbar", e);
+        }
+        try {
+            AssetText text = new AssetText(p.getProperty("sha256"), p.getProperty("extractor"),
+                    p.getProperty("version"), p.getProperty("text"), Boolean.parseBoolean(p.getProperty("truncated")),
+                    Instant.parse(p.getProperty("createdAt")));
+            return text.sha256().equals(sha256) && text.extractor().equals(extractor)
+                    && text.version().equals(version) ? Optional.of(text) : Optional.empty();
+        } catch (RuntimeException e) {
+            throw new AssetStoreException("Dokumenttext beschädigt", null);
+        }
+    }
+
+    @Override
+    public void putText(AssetText text) {
+        if (!HEX_SHA.matcher(text.sha256()).matches()) {
+            throw new IllegalArgumentException("Ungültiger Hash");
+        }
+        Properties p = new Properties();
+        p.setProperty("sha256", text.sha256());
+        p.setProperty("extractor", text.extractor());
+        p.setProperty("version", text.version());
+        p.setProperty("text", text.text());
+        p.setProperty("truncated", Boolean.toString(text.truncated()));
+        p.setProperty("createdAt", text.createdAt().toString());
+        try {
+            var out = new java.io.StringWriter();
+            p.store(out, null);
+            write(textFile(text.sha256(), text.extractor(), text.version()),
+                    out.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException | UncheckedIOException e) {
+            throw new AssetStoreException("Dokumenttext nicht ablegbar", e);
+        }
+    }
+
     /**
      * Entfernt die Einträge einer Quelle (#188) und danach jeden Inhalt, auf den kein Eintrag mehr verweist und den
-     * {@code keep} nicht nennt (etwa Bilder bestehender Exporte), samt seinen Bildbeschreibungen. Inhalte, die seit
-     * {@code since} geschrieben wurden, bleiben: Sie gehören zu Ablagen, die gerade laufen.
+     * {@code keep} nicht nennt (etwa Bilder bestehender Exporte), samt seinen Bildbeschreibungen und Texten. Inhalte,
+     * die seit {@code since} geschrieben wurden, bleiben: Sie gehören zu Ablagen, die gerade laufen.
      *
      * @param keep {@code sha256:<hex>} von Inhalten, die bleiben müssen
      * @return Anzahl der entfernten Inhalte
@@ -256,6 +306,7 @@ public class FileSystemAssetStore implements AssetStore {
                         usedBytes = Math.max(0, usedBytes - size);
                     }
                     deleteTree(root.resolve("descriptions").resolve(hex));
+                    deleteTree(root.resolve("texts").resolve(hex));
                     removed++;
                 }
             }
@@ -307,6 +358,11 @@ public class FileSystemAssetStore implements AssetStore {
     private Path descriptionFile(String imageSha256, String describer, String modelVersion) {
         return root.resolve("descriptions").resolve(imageSha256.substring("sha256:".length()))
                 .resolve(name(describer)).resolve(name(modelVersion) + ".properties");
+    }
+
+    private Path textFile(String sha256, String extractor, String version) {
+        return root.resolve("texts").resolve(sha256.substring("sha256:".length())).resolve(name(extractor))
+                .resolve(name(version) + ".properties");
     }
 
     private Path blob(String sha256) {
