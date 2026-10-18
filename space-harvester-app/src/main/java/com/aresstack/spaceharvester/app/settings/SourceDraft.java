@@ -13,7 +13,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Eine neue Quelle aus dem Quellen-Assistenten, so wie sie in die Konfigurationsdatei kommt. Geheimnisse (Passwort,
+ * Eine Quelle aus dem Quellenformular, so wie sie in die Konfigurationsdatei kommt. Geheimnisse (Passwort,
  * Token, Zertifikatspasswort) stehen hier nie als Wert, sondern nur als Name der Umgebungsvariable; die Datei
  * enthält dafür einen Platzhalter {@code ${NAME}}.
  *
@@ -103,7 +103,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         unknown.addAll(unknownKeys(auth, KNOWN_AUTH, "auth."));
         unknown.addAll(unknownKeys(certificate, KNOWN_CERTIFICATE, "client-certificate."));
         if (!unknown.isEmpty()) {
-            throw new IllegalArgumentException("Der Eintrag enthält Angaben, die der Assistent nicht kennt ("
+            throw new IllegalArgumentException("Der Eintrag enthält Angaben, die das Quellenformular nicht kennt ("
                     + String.join(", ", unknown) + "); bitte in der Datei bearbeiten (Einstellungen › Datei öffnen).");
         }
         String type = text(raw, "type");

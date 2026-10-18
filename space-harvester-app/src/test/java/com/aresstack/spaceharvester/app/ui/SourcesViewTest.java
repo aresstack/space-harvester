@@ -330,4 +330,18 @@ class SourcesViewTest {
         }
         return found;
     }
+
+    @Test
+    void catalogColumnsNameTheStateAndCountKnownAgainstIndexedPages() {
+        var unknown = new com.aresstack.spaceharvester.application.sync.SpaceCatalog("wiki", "DEV",
+                com.aresstack.spaceharvester.application.sync.SpaceCatalog.State.UNKNOWN, 0, 0, 0, 0, null, null, null);
+        var cataloged = new com.aresstack.spaceharvester.application.sync.SpaceCatalog("wiki", "DEV",
+                com.aresstack.spaceharvester.application.sync.SpaceCatalog.State.CATALOGED, 120, 14, 3, 1, 4L, null,
+                null);
+        assertThat(SourcesView.catalogState(unknown)).isEqualTo("Unbekannt");
+        assertThat(SourcesView.pages(unknown)).isEqualTo("0 / 0");
+        assertThat(SourcesView.catalogState(cataloged)).isEqualTo("Erfasst");
+        assertThat(SourcesView.pages(cataloged)).isEqualTo("120 / 14 · 3 veraltet · 1 zurückgehalten");
+        assertThat(SourcesView.catalogState(null)).as("noch nicht geladen").isEmpty();
+    }
 }

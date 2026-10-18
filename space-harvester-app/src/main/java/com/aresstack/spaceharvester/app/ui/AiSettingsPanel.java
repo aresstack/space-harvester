@@ -10,15 +10,14 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 
-import javax.swing.JCheckBox;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextField;
 import java.awt.BorderLayout;
-import java.awt.FlowLayout;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -26,15 +25,13 @@ import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
  * Einstellungen des KI-Dienstes in zwei Reitern wie im Enterprise AI Client (ADR 0011): „KI-Dienst“
- * ({@link #serviceComponent()}: Basisadresse eines OpenAI-kompatiblen Dienstes, API-Key und die Wissensquellen, deren
- * Inhalte an den Dienst gehen dürfen, Vorgabe keine) und „Modelle“ ({@link #modelsComponent()}: zentral für alle
+ * ({@link #serviceComponent()}: Basisadresse eines OpenAI-kompatiblen Dienstes und API-Key; welche Wissensquellen
+ * Inhalte an den Dienst geben dürfen, legt das Formular jeder Quelle fest, Vorgabe keine) und „Modelle“ ({@link #modelsComponent()}: zentral für alle
  * Quellen Text-, Embedding- und Rerank-Modell, Dimension und die Zerlegung in Abschnitte für Embeddings). Beide
  * speichern denselben Block. Adresse und Modelle stehen unter
  * {@code space-harvester.ai} in der Datei; der API-Key nur im Tresor der App (unter Windows DPAPI, sonst für die
@@ -59,13 +56,11 @@ final class AiSettingsPanel {
     final JTextField chatModel = Comic.field(24);
     final JTextField embeddingModel = Comic.field(24);
     final JTextField dimensions = Comic.field(6);
-    /** Je Wissensquelle ein Häkchen: Inhalte dürfen an den KI-Dienst gehen. */
-    final Map<String, JCheckBox> released = new LinkedHashMap<>();
-    private final JPanel releasedPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+    /** Wie viele Quellen Inhalte an den Dienst geben dürfen; festgelegt im Formular jeder Quelle. */
+    final JLabel released = Comic.text(" ");
+    /** Die Freigaben aus der Datei; dieses Panel ändert sie nicht. */
+    private List<String> releasedIds = List.of();
     private Duration timeout;
-    private final boolean wizard;
-    /** Nur im Assistenten: Inhalte der neuen Quelle dürfen an den KI-Dienst gehen. */
-    final JCheckBox releaseThis = new JCheckBox("Inhalte dieser Quelle an den KI-Dienst geben");
     final JTextField rerankModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
@@ -83,40 +78,36 @@ final class AiSettingsPanel {
     final ComposerButton pickChat = Comic.button("▾", "Text-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickEmbedding = Comic.button("▾", "Embedding-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
+    /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
+    final ComposerButton advanced = Comic.button("▸ Erweitert", "Abschnittsgröße und Überlappung für Embeddings");
+    private final PreferredModels preferred = PreferredModels.bundled();
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
     List<AiModel> loaded = List.of();
 
     AiSettingsPanel(AppContext context) {
-        this(context, false);
-    }
-
-    /**
-     * @param wizard als optionale Seite im Erst-Assistenten: ohne eigene Knöpfe, statt der Quellenliste ein Häkchen
-     *               für die neue Quelle; gespeichert wird mit der Quelle ({@link #draftFor})
-     */
-    AiSettingsPanel(AppContext context, boolean wizard) {
         this.context = context;
-        this.wizard = wizard;
-        this.modelsFeedback = wizard ? feedback : new Feedback();
-        // Im Assistenten stehen Dienst und Modelle auf einer Seite.
-        this.modelRows = wizard ? rows : new SettingDialogs.Rows();
+        this.modelsFeedback = new Feedback();
+        this.modelRows = new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab; danach Auswahl über ▾");
+        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab und wählt die Vorzugsmodelle vor; andere über ▾");
         modelRows.add("Text-Modell", Comic.row(chatModel, pickChat),
                 "Für spätere Suchbegriffe aus einer Frage; optional");
         modelRows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
-        if (!wizard) {
+        {
             modelRows.add("Rerank-Modell", Comic.row(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
                             + "bleibt");
+            modelRows.add("", advanced, "Zerlegung der Inhalte für Embeddings; die Vorgaben passen meistens");
             modelRows.add("Abschnittsgröße", chunkTokens, "Höchstens so viele Tokens je Abschnitt für Embeddings; "
                     + "leer: 350");
             modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1");
+            advanced.addActionListener(e -> advanced(!modelRows.shows(chunkTokens)));
+            advanced(false);
         }
         pickChat.setEnabled(false);
         pickEmbedding.setEnabled(false);
@@ -125,37 +116,21 @@ final class AiSettingsPanel {
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
-        releasedPanel.setOpaque(false);
-        if (wizard) {
-            releaseThis.setOpaque(false);
-            releaseThis.setFont(Comic.regular(13f));
-            releaseThis.setForeground(Comic.INK);
-            rows.add("Freigabe", releaseThis, "Weitere Quellen gibst du unter Einstellungen → KI-Dienst frei; "
-                    + "Vorgabe keine");
-        } else {
-            rows.add("Freigegebene Quellen", releasedPanel, "Nur Inhalte angehakter Wissensquellen gehen an den "
-                    + "KI-Dienst; Vorgabe keine");
-        }
-        root.add(Comic.note(wizard
-                ? "Optional: Für die spätere semantische Suche (experimentell) einen KI-Dienst mit Embedding-Modell "
-                + "eintragen. Leer lassen und „Weiter“ überspringt diesen Schritt; nachholen unter Einstellungen → "
-                + "KI-Dienst."
-                : "Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die Modelle "
-                + "wählst du unter „Modelle“. Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der "
-                + "Konfigurationsdatei."),
-                BorderLayout.NORTH);
+        rows.add("Freigegeben", released, "Je Quelle im Formular unter Wissensquellen › Bearbeiten …; ohne Freigabe "
+                + "keine Embeddings und kein Reranking");
+        root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die "
+                + "Modelle wählst du unter „Modelle“. Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der "
+                + "Konfigurationsdatei."), BorderLayout.NORTH);
         rows.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
         root.add(rows, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        if (!wizard) {
-            south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
-        }
+        south.add(Comic.row(save, removeKey), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         root.add(south, BorderLayout.SOUTH);
         save.addActionListener(e -> save(save, feedback));
         removeKey.addActionListener(e -> removeKey());
-        if (!wizard) {
+        {
             models.setOpaque(false);
             models.add(Comic.note("Modelle gelten zentral für alle Wissensquellen. „Modelle laden“ fragt den unter "
                     + "„KI-Dienst“ eingetragenen Dienst ab."), BorderLayout.NORTH);
@@ -171,12 +146,7 @@ final class AiSettingsPanel {
         render();
     }
 
-    /** Im Assistenten: Dienst und Modelle auf einer Seite. */
-    JComponent component() {
-        return root;
-    }
-
-    /** Reiter „KI-Dienst“: Adresse, API-Key, freigegebene Quellen. */
+    /** Reiter „KI-Dienst“: Adresse, API-Key und wie viele Quellen freigegeben sind. */
     JComponent serviceComponent() {
         return root;
     }
@@ -197,35 +167,11 @@ final class AiSettingsPanel {
         rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
+        advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
         timeout = current.timeout();
-        released.clear();
-        releasedPanel.removeAll();
-        List<String> ids = new ArrayList<>();
-        Map<String, String> titles = new LinkedHashMap<>();
-        if (settings != null) {
-            settings.sources().forEach(source -> {
-                ids.add(source.id());
-                String title = source.config().title();
-                titles.put(source.id(), title == null || title.isBlank() ? source.id() : title);
-            });
-        }
-        // Freigaben für Quellen, die (noch) fehlen, gehen beim Speichern nicht verloren.
-        current.externalProcessingSources().stream().filter(id -> !ids.contains(id)).forEach(ids::add);
-        for (String id : ids) {
-            JCheckBox box = new JCheckBox(titles.getOrDefault(id, id));
-            box.setToolTipText("Quelle " + id);
-            box.setOpaque(false);
-            box.setFont(Comic.regular(13f));
-            box.setForeground(Comic.INK);
-            box.setSelected(current.externalProcessingSources().contains(id));
-            released.put(id, box);
-            releasedPanel.add(box);
-        }
-        if (ids.isEmpty()) {
-            releasedPanel.add(Comic.muted("Noch keine Wissensquelle eingerichtet"));
-        }
-        releasedPanel.revalidate();
-        releasedPanel.repaint();
+        // Freigaben gehören zur Quelle; dieses Panel zeigt nur ihre Zahl und schreibt sie unverändert zurück.
+        releasedIds = current.externalProcessingSources();
+        released.setText(releasedText(settings, releasedIds));
         apiKey.setText("");
         boolean stored = context.aiKeyAvailable();
         rows.hint(apiKey, stored ? "Gespeichert; leer lassen, um ihn zu behalten"
@@ -235,28 +181,36 @@ final class AiSettingsPanel {
     }
 
     AiDraft draft() {
-        List<String> ids = released.entrySet().stream().filter(e -> e.getValue().isSelected())
-                .map(Map.Entry::getKey).toList();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, ids, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
+                timeout, releasedIds, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
     }
 
-    /** Für den Assistenten: die Eingaben, mit der neuen Quelle unter den Freigaben, wenn angehakt. */
-    AiDraft draftFor(String sourceId) {
-        AiDraft draft = draft();
-        if (!releaseThis.isSelected() || sourceId == null || sourceId.isBlank()) {
-            return draft;
+    /** „2 von 3 Quellen“ mit ihren Namen, oder „keine“. */
+    static String releasedText(AppSettings settings, List<String> ids) {
+        if (ids.isEmpty()) {
+            return "keine Quelle";
         }
-        List<String> ids = new ArrayList<>(draft.externalProcessingSources());
-        ids.add(sourceId);
-        return draft.withService(draft.baseUrl(), ids);
+        List<String> names = new ArrayList<>();
+        for (String id : ids) {
+            String name = id;
+            if (settings != null) {
+                for (AppSettings.SourceEntry source : settings.sources()) {
+                    if (source.id().equals(id) && source.config().title() != null && !source.config().title().isBlank()) {
+                        name = source.config().title();
+                    }
+                }
+            }
+            names.add(name);
+        }
+        int total = settings == null ? ids.size() : settings.sources().size();
+        return ids.size() + " von " + Texts.count(total, "Quelle", "Quellen") + ": " + String.join(", ", names);
     }
 
     /** Ob seit dem Öffnen etwas eingetragen wurde (Felder oder API-Key). */
     boolean changed() {
         AppSettings settings = context.settings();
         AiDraft current = settings == null ? AiDraft.EMPTY : AiDraft.of(settings.ai());
-        return !draft().equals(current) || apiKey.getPassword().length > 0 || releaseThis.isSelected();
+        return !draft().equals(current) || apiKey.getPassword().length > 0;
     }
 
     private void save(ComposerButton save, Feedback feedback) {
@@ -458,8 +412,33 @@ final class AiSettingsPanel {
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
+    /** Erweitert auf- oder zuklappen; eigene Werte bleiben sichtbar, damit nichts verdeckt wirkt. */
+    void advanced(boolean open) {
+        modelRows.visible(chunkTokens, open);
+        modelRows.visible(chunkOverlap, open);
+        advanced.setText((open ? "▾" : "▸") + " Erweitert");
+        models.revalidate();
+    }
+
+    /** Ob „Erweitert“ aufgeklappt ist. */
+    boolean advancedOpen() {
+        return modelRows.shows(chunkTokens);
+    }
+
+    /**
+     * Lädt die Modelle einmal von selbst, wenn ein Dienst eingetragen ist und noch nichts geladen wurde; der
+     * Assistent ruft es beim Betreten von „Modelle“ auf, wie der Enterprise AI Client nach dem Verbindungstest.
+     */
+    void prepareModels() {
+        if (loaded.isEmpty() && loadModels.isEnabled() && blankToNull(baseUrl.getText()) != null) {
+            loadModels();
+        }
+    }
+
     void showModels(List<AiModel> loaded) {
         this.loaded = List.copyOf(loaded);
+        preselect(chatModel, AiModel.CHAT, "chat");
+        preselect(embeddingModel, AiModel.EMBEDDING, "embedding");
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
@@ -502,6 +481,18 @@ final class AiSettingsPanel {
             menu.add(item);
         }
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    /**
+     * Wählt wie der Enterprise AI Client ({@link ModelPreselection}) vor: eine Wahl, die der Dienst noch anbietet,
+     * bleibt; sonst das Vorzugsmodell aus {@code setup-models.properties}, sonst das erste passende Modell.
+     */
+    private void preselect(JTextField field, String category, String kind) {
+        List<String> ids = choices(category).stream().map(AiModel::id).toList();
+        String chosen = ModelPreselection.choose(ids, field.getText(), preferred.model(kind), preferred.match(kind));
+        if (!chosen.isEmpty() && !chosen.equals(field.getText().strip())) {
+            choose(field, chosen);
+        }
     }
 
     /** Setzt ein Modell; ein anderes Embedding-Modell leert die Dimension, damit Speichern sie neu misst. */

@@ -6,6 +6,12 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
+import com.aresstack.spaceharvester.application.configuration.SearchSettings;
+import com.aresstack.spaceharvester.application.configuration.StorageSettings;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.core.Harvester;
@@ -39,8 +45,12 @@ import java.util.stream.Stream;
  */
 public final class AppRuntime implements AutoCloseable {
 
-    private final AppSettings settings;
+    private volatile AppSettings settings;
     private final Harvester harvester;
+    /** Laufzeitkonfiguration des Harvesters (ADR 0015); eine aktivierte Version wirkt ohne Neustart. */
+    private final ConfigurationManager configuration;
+    /** {@link SessionSecrets#sourceFingerprint()} beim Start. */
+    private final int startedSecrets;
     private final Workspace workspace;
     private static final System.Logger LOG = System.getLogger(AppRuntime.class.getName());
     private static final Pattern SOURCE_POSITION = Pattern.compile("sources\\[(\\d+)]");
@@ -48,9 +58,12 @@ public final class AppRuntime implements AutoCloseable {
     private final Set<String> waitingForSecret;
     private final List<String> rejectedSources;
 
-    private AppRuntime(AppSettings settings, Harvester harvester, Workspace workspace, Set<String> waitingForSecret,
-                       List<String> rejectedSources) {
+    private AppRuntime(AppSettings settings, Harvester harvester, ConfigurationManager configuration,
+                       Workspace workspace, Set<String> waitingForSecret, List<String> rejectedSources,
+                       int startedSecrets) {
         this.settings = settings;
+        this.startedSecrets = startedSecrets;
+        this.configuration = configuration;
         this.harvester = harvester;
         this.workspace = workspace;
         this.waitingForSecret = waitingForSecret;
@@ -79,13 +92,15 @@ public final class AppRuntime implements AutoCloseable {
         List<String> rejected = new ArrayList<>();
         Harvester harvester = null;
         AccessPolicy policy = null;
+        ConfigurationManager configuration = new ConfigurationManager(configuration(settings, sessionSecrets, version));
         while (harvester == null) {
             Set<String> ids = new LinkedHashSet<>();
             sources.forEach(source -> ids.add(source.id()));
             // Der Aufrufer des Harvesters ist der Bediener; nur er ist freigegeben, nur für konfigurierte Quellen.
             policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), ids);
             try {
-                harvester = builder(settings, settings.storage(), sources, policy, version, sessionSecrets, true).build();
+                harvester = builder(settings, settings.storage(), sources, policy, version, sessionSecrets, true)
+                        .configuration(configuration).build();
             } catch (InvalidSourceConfigurationException e) {
                 Set<Integer> invalid = new TreeSet<>(Comparator.reverseOrder());
                 for (String problem : e.problems()) {
@@ -108,8 +123,8 @@ public final class AppRuntime implements AutoCloseable {
         }
         ActivityLog activities = new ActivityLog(settings.storage().dataDirectory().resolve("app")
                 .resolve("activities.txt"));
-        return new AppRuntime(settings, harvester, new Workspace(harvester, new AccessGuard(policy), activities),
-                Collections.unmodifiableSet(waiting), List.copyOf(rejected));
+        return new AppRuntime(settings, harvester, configuration, new Workspace(harvester, new AccessGuard(policy), activities),
+                Collections.unmodifiableSet(waiting), List.copyOf(rejected), sessionSecrets.sourceFingerprint());
     }
 
     /**
@@ -203,10 +218,61 @@ public final class AppRuntime implements AutoCloseable {
                     ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
         }
         builder.accessPolicy(policy);
-        if (withAi) {
-            builder.ai(aiService(settings.ai(), secrets.aiKey(), version));
-        }
         return builder;
+    }
+
+    /**
+     * Die Laufzeitkonfiguration aus der Datei der App (ADR 0015): KI-Dienst mit dem Key der Sitzung, Aktualität,
+     * Synchronisierung samt Regeln je Quelle und Freigaben an den KI-Dienst. Proxy und TLS übergibt die App typisiert
+     * beim Bauen; ein anderer Datenordner wirkt erst nach einem Neustart.
+     */
+    static HarvesterConfiguration configuration(AppSettings settings, SessionSecrets secrets, String version) {
+        SyncSettings sync = settings.sync();
+        SyncSettings withRules = new SyncSettings(sync.events(), sync.interval(), sync.spaces(), sync.beforeSearch(),
+                settings.cache().withheldRetention(), sync.catchUpOnStart(), sync.mode(), sync.inventoryInterval(),
+                settings.syncRules());
+        SearchSettings search = SearchSettings.DEFAULT.withCacheFreshness(
+                new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
+        return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
+                NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()));
+    }
+
+    /**
+     * Ob {@code next} sich von {@code current} nur in Werten unterscheidet, die der Harvester zur Laufzeit übernimmt:
+     * KI-Dienst und Modelle, Freigaben, Aktualität, Frist, Synchronisierung und Regeln je Quelle. Quellen, Proxy, TLS,
+     * Ablage und die Zerlegung für Embeddings verlangen einen Neustart.
+     */
+    public static boolean liveChange(AppSettings current, AppSettings next) {
+        AppSettings.AiSettings a = current.ai();
+        AppSettings.AiSettings b = next.ai();
+        if (!java.util.Objects.equals(a.chunkTokens(), b.chunkTokens())
+                || !java.util.Objects.equals(a.chunkOverlapSentences(), b.chunkOverlapSentences())) {
+            return false;
+        }
+        return next.equals(current.withLive(next));
+    }
+
+    /**
+     * Übernimmt eine geänderte Datei ohne Neustart, wenn sich nur Laufzeitwerte geändert haben ({@link #liveChange}).
+     *
+     * @return {@code true}, wenn der Core die neue Version aktiviert hat oder nichts zu ändern war
+     */
+    public boolean reconfigure(AppSettings next, SessionSecrets secrets, String version) {
+        if (!liveChange(settings, next) || secrets.sourceFingerprint() != startedSecrets) {
+            return false;
+        }
+        ConfigurationManager.Activation activation = configuration.apply(configuration(next, secrets, version));
+        if (activation.outcome() == ConfigurationManager.Outcome.REJECTED) {
+            LOG.log(System.Logger.Level.WARNING, "Neue Konfiguration abgelehnt: {0}", activation.problems());
+            return false;
+        }
+        settings = next;
+        return true;
+    }
+
+    /** Die wirksame Version der Laufzeitkonfiguration. */
+    public long configurationVersion() {
+        return configuration.current().version();
     }
 
     /**
@@ -289,6 +355,20 @@ public final class AppRuntime implements AutoCloseable {
         private final Map<String, Value> secrets = Collections.synchronizedMap(new HashMap<>());
         private volatile String aiKey;
         private volatile char[] proxyPassword;
+
+        /**
+         * Kennzeichen der Zugangsdaten von Quellen und Proxy, nur im Speicher und nie ausgegeben: Ändert sich eines,
+         * muss die Laufzeit neu starten, weil der Core sie beim Bauen übernimmt. Der KI-Key gehört nicht dazu, er
+         * wechselt zur Laufzeit.
+         */
+        int sourceFingerprint() {
+            int hash;
+            synchronized (secrets) {
+                hash = secrets.hashCode();
+            }
+            char[] proxy = proxyPassword;
+            return 31 * hash + (proxy == null ? 0 : java.util.Arrays.hashCode(proxy));
+        }
 
         /**
          * Wofür ein Wert gilt: Anmeldeart, (bei Basic) Benutzer und Platzhalter. Ändert sich eins davon in der Datei,

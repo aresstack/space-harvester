@@ -95,6 +95,9 @@ class SearchViewTest {
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
         assertThat(view[0].statusText()).doesNotContain("unvollständig");
+        await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
+        assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
+                + (2 * PAGES_PER_SOURCE) + " Treffer");
     }
 
     /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
@@ -119,8 +122,9 @@ class SearchViewTest {
 
     @Test
     void pagesStillLoadingIntoTheCacheAreCounted() {
-        assertThat(SearchView.loadingTitle(1)).isEqualTo("1 Seite wird noch in den Cache geladen");
-        assertThat(SearchView.loadingTitle(3)).isEqualTo("3 Seiten werden noch in den Cache geladen");
+        assertThat(SearchView.progressLine(12, 25, 7)).isEqualTo("12 von 25 Seiten im Cache · 7 Treffer");
+        assertThat(SearchView.progressLine(0, 1, 1)).isEqualTo("0 von 1 Seite im Cache · 1 Treffer");
+        assertThat(SearchView.LIMIT).as("ein Bildschirm, nicht der Höchstwert des Core").isLessThan(50);
     }
 
     @Test

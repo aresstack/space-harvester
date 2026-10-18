@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
+import com.aresstack.spaceharvester.application.sync.SpaceCatalog;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
@@ -119,7 +120,7 @@ public final class SourcesView implements View {
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
-            "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
+            "Formular: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
     private final JLabel title = new JLabel(" ");
     private final JLabel address = Comic.muted(" ");
 
@@ -141,12 +142,12 @@ public final class SourcesView implements View {
         cardsScroll.setBorder(BorderFactory.createEmptyBorder());
         cardsScroll.getViewport().setBackground(Comic.SURFACE);
         left.add(cardsScroll, BorderLayout.CENTER);
-        add.addActionListener(e -> SourceWizard.open(root, context, this::select));
+        add.addActionListener(e -> SourceForm.open(root, context, this::select));
         JPanel south = new JPanel(new BorderLayout(0, 8));
         south.setOpaque(false);
         south.add(add, BorderLayout.NORTH);
         south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "der Assistent verschlüsselt ab."), BorderLayout.SOUTH);
+                + "die App verschlüsselt ab."), BorderLayout.SOUTH);
         left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
@@ -480,6 +481,7 @@ public final class SourcesView implements View {
         }
         spacesOf = entry.id();
         spacesModel.set(connection.spaces());
+        loadCatalogs(entry.id(), connection.spaces());
         updateExportButtons();
         reselect(keep);
         // Erfolg zeigt das Zeichen an der Karte; hier erscheinen nur laufende Prüfungen und Probleme.
@@ -578,7 +580,7 @@ public final class SourcesView implements View {
                         SettingDialogs.trustLabel(config.trustBundle(), context.settings()), Comic.INK,
                         "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
                         () -> setting(entry, SettingDialogs::trust)));
-                row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())
+                row(EditableProperty.action("Proxy", SettingDialogs.proxyLabel(context.settings().proxy().mode())
                                 + " · gilt für alle Quellen", Comic.INK, "Proxy ändern (gilt für alle Quellen)",
                         () -> SettingDialogs.proxy(root, context,
                                 config.baseUrl() == null ? null : config.baseUrl().toString(),
@@ -607,7 +609,7 @@ public final class SourcesView implements View {
     /**
      * Ändert ein Feld der Quelle in der Konfigurationsdatei (kommentarschonend, mit .bak) und lädt neu. Enthält der
      * Eintrag ein Geheimnis im Klartext, bleibt die Datei unverändert: Das Speichern ersetzte es durch einen
-     * Platzhalter; das übernimmt der Assistent mit Rückfrage.
+     * Platzhalter; das übernimmt das Formular „Bearbeiten …“ mit Rückfrage.
      */
     private void saveField(AppSettings.SourceEntry entry, UnaryOperator<SourceDraft> change, Runnable ok,
                            Consumer<Throwable> failed) {
@@ -620,7 +622,7 @@ public final class SourcesView implements View {
             SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
             if (!editable.plaintextSecrets().isEmpty()) {
                 throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über ⋯ › "
-                        + "„Assistent erneut öffnen“ an der Karte bearbeiten; der Assistent legt es sicher ab.");
+                        + "„Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
             }
             boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
             ConfigFileEditor.Draft draft = editor.replace(context.configFile(), change.apply(editable.draft()));
@@ -727,10 +729,6 @@ public final class SourcesView implements View {
         context.reload(() -> { });
     }
 
-    private void edit(AppSettings.SourceEntry entry) {
-        edit(entry, null);
-    }
-
     /** Ein Einstellungsdialog der Quelle, z. B. „Anmeldung“; liest den Eintrag frisch aus der Datei. */
     private void setting(AppSettings.SourceEntry entry, SettingDialog dialog) {
         SourceDraft.Editable editable;
@@ -749,7 +747,8 @@ public final class SourcesView implements View {
                                     Consumer<String> saved);
     }
 
-    private void edit(AppSettings.SourceEntry entry, SourceWizard.Step step) {
+    /** Öffnet das Formular der Quelle mit dem Eintrag frisch aus der Datei. */
+    private void edit(AppSettings.SourceEntry entry) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         SourceDraft.Editable editable;
@@ -759,7 +758,7 @@ public final class SourcesView implements View {
             feedback.problem(e);
             return;
         }
-        SourceWizard.open(root, context, editable, step, this::select);
+        SourceForm.open(root, context, editable, this::select);
     }
 
     private boolean disabled(AppSettings.SourceEntry entry) {
@@ -827,6 +826,11 @@ public final class SourcesView implements View {
                 }
                 if (removed.settings() != null && removed.settings().syncRules().containsKey(id)) {
                     removed = editor.withSyncRule(context.configFile(), removed, id, SourceSyncOverride.NONE);
+                }
+                // Ebenso die Freigabe für den KI-Dienst.
+                if (removed.settings() != null && removed.settings().ai().externalProcessingSources().contains(id)) {
+                    removed = editor.withAi(context.configFile(), removed,
+                            SourceForm.withRelease(removed.settings(), id, false));
                 }
                 editor.save(context.configFile(), removed, !plaintext);
             } catch (IOException | RuntimeException e) {
@@ -907,6 +911,32 @@ public final class SourcesView implements View {
                 context.navigator().show(AppContext.Section.ACTIVITIES);
             }
         }, feedback::problem);
+    }
+
+    /**
+     * Lädt Katalogstand und Zähler der Spaces aus dem Cache, ohne die Quelle zu fragen; gilt nur, solange dieselbe
+     * Quelle gewählt ist.
+     */
+    private void loadCatalogs(String sourceId, List<Partition> partitions) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || partitions.isEmpty()) {
+            return;
+        }
+        Background.run(() -> {
+            Map<String, SpaceCatalog> catalogs = new LinkedHashMap<>();
+            for (Partition partition : partitions) {
+                try {
+                    catalogs.put(partition.key(), runtime.workspace().catalog(sourceId, partition.key()));
+                } catch (RuntimeException e) {
+                    // ohne Recht oder Quelle gerade nicht aktiv: die Zeile bleibt ohne Stand
+                }
+            }
+            return catalogs;
+        }, catalogs -> {
+            if (sourceId.equals(spacesOf)) {
+                spacesModel.catalogs(catalogs);
+            }
+        }, failure -> { });
     }
 
     /** Die angehakten Spaces, ohne Häkchen der gewählte. */
@@ -1125,7 +1155,7 @@ public final class SourcesView implements View {
 
         private JPopupMenu menu() {
             JPopupMenu menu = new JPopupMenu();
-            JMenuItem wizard = new JMenuItem("Assistent erneut öffnen …");
+            JMenuItem wizard = new JMenuItem("Bearbeiten …");
             wizard.addActionListener(e -> SourcesView.this.edit(entry));
             menu.add(wizard);
             boolean off = disabled(entry);
@@ -1326,9 +1356,13 @@ public final class SourcesView implements View {
         static final int MARK = 0;
         static final int NAME = 1;
         static final int KEY = 2;
-        static final int EXPORT = 3;
+        static final int STATE = 3;
+        static final int PAGES = 4;
+        static final int EXPORT = 5;
 
         private List<Partition> rows = new ArrayList<>();
+        /** Katalogstand je Space-Key, sobald geladen. */
+        private Map<String, SpaceCatalog> catalogs = Map.of();
         /** Angehakte Spaces (Schlüssel); bleiben beim Neuladen derselben Quelle erhalten. */
         private final java.util.Set<String> marked = new java.util.LinkedHashSet<>();
         private Runnable onMarked = () -> { };
@@ -1336,7 +1370,17 @@ public final class SourcesView implements View {
         void set(List<Partition> partitions) {
             rows = new ArrayList<>(partitions);
             marked.retainAll(rows.stream().map(Partition::key).toList());
+            catalogs = Map.of();
             fireTableDataChanged();
+        }
+
+        void catalogs(Map<String, SpaceCatalog> loaded) {
+            catalogs = Map.copyOf(loaded);
+            fireTableDataChanged();
+        }
+
+        SpaceCatalog catalog(int row) {
+            return catalogs.get(rows.get(row).key());
         }
 
         void onMarked(Runnable listener) {
@@ -1361,7 +1405,7 @@ public final class SourcesView implements View {
 
         @Override
         public int getColumnCount() {
-            return 4;
+            return 6;
         }
 
         @Override
@@ -1369,6 +1413,8 @@ public final class SourcesView implements View {
             return switch (column) {
                 case NAME -> "Name";
                 case KEY -> "Schlüssel";
+                case STATE -> "Katalog";
+                case PAGES -> "Bekannt / im Index";
                 default -> "";
             };
         }
@@ -1404,8 +1450,37 @@ public final class SourcesView implements View {
                 case MARK -> marked.contains(partition.key());
                 case NAME -> partition.name();
                 case KEY -> partition.key();
+                case STATE -> catalogState(catalogs.get(partition.key()));
+                case PAGES -> pages(catalogs.get(partition.key()));
                 default -> "";
             };
         }
+    }
+
+    /** Katalogstand wie im Core: Unbekannt, Teilbestand oder Erfasst. */
+    static String catalogState(SpaceCatalog catalog) {
+        if (catalog == null) {
+            return "";
+        }
+        return switch (catalog.state()) {
+            case UNKNOWN -> "Unbekannt";
+            case PARTIAL -> "Teilbestand";
+            case CATALOGED -> "Erfasst";
+        };
+    }
+
+    /** „bekannte Seiten / Inhalte im Index“, mit veralteten und zurückgehaltenen, wo es welche gibt. */
+    static String pages(SpaceCatalog catalog) {
+        if (catalog == null) {
+            return "";
+        }
+        String text = catalog.knownPages() + " / " + catalog.cachedPages();
+        if (catalog.stalePages() > 0) {
+            text += " · " + catalog.stalePages() + " veraltet";
+        }
+        if (catalog.withheldPages() > 0) {
+            text += " · " + catalog.withheldPages() + " zurückgehalten";
+        }
+        return text;
     }
 }

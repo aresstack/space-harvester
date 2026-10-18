@@ -80,9 +80,14 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
     public List<String> problems() {
         List<String> problems = new ArrayList<>();
         if (baseUrl == null) {
-            if (!empty()) {
+            // Freigaben je Quelle dürfen ohne Dienst stehen: Sie wirken, sobald einer eingetragen ist.
+            if (chatModel != null || embeddingModel != null || embeddingDimensions != null || rerankModel != null
+                    || chunkTokens != null || chunkOverlapSentences != null) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
+        } else if (looksLikeKey(baseUrl)) {
+            problems.add("Die Basisadresse sieht wie ein API-Key aus; der gehört in das Feld API-Key, die "
+                    + "Basisadresse beginnt mit http:// oder https://.");
         } else if (!baseUrl.matches("(?i)https?://.+") || !parsable(baseUrl)) {
             problems.add("Die Basisadresse beginnt mit http:// oder https:// und ist eine gültige Adresse.");
         }
@@ -96,6 +101,19 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
             problems.add("Die Überlappung ist eine ganze Zahl ab 0 oder bleibt leer.");
         }
         return problems;
+    }
+
+    /**
+     * Ob ein Wert eher ein Schlüssel als eine Adresse ist: ohne {@code ://}, ohne Leerzeichen und entweder mit
+     * typischem Präfix ({@code sk-}, {@code Bearer }) oder lang und ohne Punkt.
+     */
+    static boolean looksLikeKey(String value) {
+        if (value.contains("://")) {
+            return false;
+        }
+        String v = value.strip();
+        return v.regionMatches(true, 0, "sk-", 0, 3) || v.regionMatches(true, 0, "bearer ", 0, 7)
+                || (v.length() >= 24 && !v.contains(".") && v.matches("[A-Za-z0-9_\\-]+"));
     }
 
     /** Die Dimension als Zahl oder {@code null}, wenn leer oder ungültig. */
