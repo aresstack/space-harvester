@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
@@ -104,8 +105,17 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
-        ExcerptPriority excerpts = excerptRanking && reranker.getIfUnique() instanceof ModelReranker model
-                ? model.excerptPriority() : ExcerptPriority.off();
+        SearchReranker current = reranker.getIfUnique();
+        ExcerptPriority excerpts;
+        if (!excerptRanking) {
+            excerpts = ExcerptPriority.off();
+        } else if (current instanceof SwappableReranker live) {
+            // Folgt dem Reranker der wirksamen Konfiguration (ADR 0015).
+            excerpts = ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
+                    ? cross.excerptPriority() : ExcerptPriority.off());
+        } else {
+            excerpts = current instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+        }
         return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts, loads);
     }
 

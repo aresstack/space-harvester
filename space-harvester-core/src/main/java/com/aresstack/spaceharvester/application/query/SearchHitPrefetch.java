@@ -154,8 +154,9 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                     }
                 });
                 done.whenComplete((ignored, failure) -> {
-                    if (done.isCancelled()) {
-                        task.cancel(false);
+                    // Nur ein noch wartender Abruf entfällt; ein laufender schreibt zu Ende und gibt die Seite
+                    // erst dann frei, damit dieselbe Seite nicht doppelt lädt.
+                    if (done.isCancelled() && task.cancel(false)) {
                         running.remove(key, done);
                     }
                 });
