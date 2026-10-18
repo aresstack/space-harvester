@@ -42,6 +42,7 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.Set;
 import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -605,6 +606,8 @@ public final class Explorer {
         if (runtime == null) {
             return;
         }
+        List<String> sources = List.copyOf(shownSources);
+        // Erst der Bestand, dann jede Quelle selbst (CQL „Titel enthält“), damit auch ungeladene Seiten erscheinen.
         Background.run(() -> runtime.workspace().search(query, null, MATCH_LIMIT), results -> {
             if (id != filterRequest) {
                 return;
@@ -615,7 +618,46 @@ public final class Explorer {
                 found.putIfAbsent(sourceId + "/" + page.pageId(), new Match(sourceId, page.partitionKey(),
                         page.pageId(), page.title(), where(sourceId, page.partitionKey())));
             }
+            show(found, true);
+            live(runtime, id, text, sources, found);
+        }, error -> {
+            if (id == filterRequest) {
+                show(found, true);
+                live(runtime, id, text, sources, found);
+            }
+        });
+    }
+
+    /** Die Titelsuche jeder Quelle ({@code PageNavigation.findByTitle}); eine Quelle, die scheitert, fehlt nur. */
+    private void live(AppRuntime runtime, int id, String text, List<String> sources, Map<String, Match> found) {
+        Background.run(() -> {
+            List<Match> matches = new ArrayList<>();
+            boolean truncated = false;
+            for (String sourceId : sources) {
+                try {
+                    PageNavigation.TitleMatches result = runtime.workspace().findByTitle(sourceId, Set.of(), text,
+                            MATCH_LIMIT);
+                    truncated |= result.truncated();
+                    for (HarvestSource.PageNode page : result.pages()) {
+                        matches.add(new Match(sourceId, page.partitionKey(), page.pageId(), page.title(), null));
+                    }
+                } catch (RuntimeException unavailable) {
+                    // Nicht erreichbar oder ohne Titelsuche: Bestand und geladene Knoten bleiben.
+                }
+            }
+            return new LiveMatches(matches, truncated);
+        }, live -> {
+            if (id != filterRequest) {
+                return;
+            }
+            for (Match match : live.matches()) {
+                found.putIfAbsent(match.sourceId() + "/" + match.pageId(), new Match(match.sourceId(),
+                        match.spaceKey(), match.pageId(), match.title(), where(match.sourceId(), match.spaceKey())));
+            }
             show(found, false);
+            if (live.truncated() || found.size() > MATCH_LIMIT) {
+                note.setText(note.getText() + " · weitere vorhanden, Titel genauer eingeben");
+            }
         }, error -> {
             if (id == filterRequest) {
                 show(found, false);
@@ -623,10 +665,13 @@ public final class Explorer {
         });
     }
 
+    private record LiveMatches(List<Match> matches, boolean truncated) {
+    }
+
     private void show(Map<String, Match> found, boolean searching) {
         matchModel.clear();
         found.values().stream().limit(MATCH_LIMIT).forEach(matchModel::addElement);
-        note.setText(searching ? "Bestand wird durchsucht …"
+        note.setText(searching ? "Wissensquellen werden durchsucht …"
                 : found.isEmpty() ? "Kein Seitentitel passt" : Texts.count(Math.min(found.size(), MATCH_LIMIT),
                 "Seite", "Seiten"));
     }

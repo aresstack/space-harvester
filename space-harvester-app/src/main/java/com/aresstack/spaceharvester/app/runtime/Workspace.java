@@ -50,6 +50,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -303,6 +304,11 @@ public final class Workspace {
     /** Ob die Varianten der progressiven Suche vom Chat-Modell kommen; sonst nach Regeln. */
     public boolean aiVariants() {
         return harvester.searchProfile().expansion() == SearchProfile.Expansion.AI;
+    }
+
+    /** Seiten einer Quelle über ihren Titel, auch nie abgeglichene (Confluence per CQL); leer ohne Titelsuche. */
+    public PageNavigation.TitleMatches findByTitle(String sourceId, Set<String> spaceKeys, String title, int limit) {
+        return harvester.navigation().findByTitle(caller, sourceId, spaceKeys, title, limit);
     }
 
     /** Offene Einmalcode-Anforderungen der Quellen (ADR 0018); Senden und Neu-Senden blockieren, nie auf dem EDT. */

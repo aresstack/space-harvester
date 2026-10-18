@@ -195,8 +195,9 @@ alle Wissensquellen (Breite ziehbar, einklappbar): Wissensquelle → Space → S
 beim Aufklappen geladen, Kindseiten live über die Navigation des Core in der Reihenfolge der Quelle
 (`PageNavigation.children`, #177; je Stapel „Weitere laden …“); Quellen ohne Seitenbaum zeigen den Seitenbaum des Space
 aus dem Bestand bzw. aus den Metadaten der Quelle. Ein Klick oder Enter auf eine Seite öffnet sie unter Inhalte; Wissensquellen und Spaces tragen rechtsbündig das Download-Symbol, der Rechtsklick bietet **Herunterladen** (Seiten: **Öffnen**). Oben
-im Explorer **Titel filtern …** nur zur Navigation: Seitentitel aus den geladenen Knoten und aus dem Bestand
-(Titelsuche des Core), je Treffer mit Quelle und Space; Escape leert das Feld. Rechts die Arbeitsfläche des gewählten
+im Explorer **Titel filtern …** nur zur Navigation: Seitentitel aus den geladenen Knoten, aus dem Bestand
+und von jeder Quelle selbst, auch nie geladene Seiten (`PageNavigation.findByTitle`, Confluence per CQL „Titel enthält“,
+Ordner per Dateiname; höchstens 50, sonst „weitere vorhanden, Titel genauer eingeben“), je Treffer mit Quelle und Space; Escape leert das Feld. Rechts die Arbeitsfläche des gewählten
 Bereichs. Über der Statusleiste steht die feste Aktions- und Fortschrittszeile des Bereichs. Die App öffnet mit der
 Suche.
 
