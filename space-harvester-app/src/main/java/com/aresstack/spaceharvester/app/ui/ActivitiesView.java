@@ -822,9 +822,11 @@ public final class ActivitiesView implements View {
     /** Zielformat mit Anzeigenamen in der Reihenfolge aus Angelos Skizze; unbekannte folgen mit ihrem Kürzel. */
     record Format(String id, String title) {
 
-        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "json-package", "json");
+        private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "markdown-package", "json-package",
+                "json");
         private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
-                "markdown", "Markdown", "json-package", "JSON mit Medien", "json", "JSON");
+                "markdown", "Markdown", "markdown-package", "Markdown mit Medien", "json-package", "JSON mit Medien",
+                "json", "JSON");
 
         static String title(String format) {
             return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
