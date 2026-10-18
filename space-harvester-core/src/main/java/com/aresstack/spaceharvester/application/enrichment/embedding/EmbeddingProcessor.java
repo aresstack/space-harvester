@@ -173,18 +173,20 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         int previous = 0;
         for (PageText.Section section : text.sections()) {
             if (section.start() > previous) {
-                spans.add(new Span(previous, section.start(), null));
+                spans.add(new Span(previous, section.start(), null, null));
             }
             while (!open.isEmpty() && open.getLast().level() >= section.level()) {
                 open.removeLast();
             }
+            String ancestors = open.isEmpty() ? null
+                    : String.join(" > ", open.stream().map(PageText.Section::heading).toList());
             open.add(section);
             spans.add(new Span(section.start(), section.end(),
-                    String.join(" > ", open.stream().map(PageText.Section::heading).toList())));
+                    String.join(" > ", open.stream().map(PageText.Section::heading).toList()), ancestors));
             previous = section.end();
         }
         if (previous < text.text().length()) {
-            spans.add(new Span(previous, text.text().length(), null));
+            spans.add(new Span(previous, text.text().length(), null, null));
         }
         List<Chunk> chunks = new ArrayList<>();
         for (Span span : spans) {
@@ -196,10 +198,10 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     private void chunk(String text, Span span, List<Chunk> chunks) {
         String section = span.heading() == null || span.heading().isBlank() ? null : span.heading().strip();
         String heading = section;
-        if (heading != null && heading.length() > maxChunkChars / 4) {
-            heading = heading.substring(heading.length() - maxChunkChars / 4);
-        }
-        String prefix = heading == null ? "" : heading + "\n\n";
+        String prefix = prefix(section);
+        // Beginnt das Stück mit der Überschrift selbst, stehen davor nur die übergeordneten Überschriften.
+        String opening = prefix(span.ancestors() == null || span.ancestors().isBlank() ? null
+                : span.ancestors().strip());
         List<int[]> units = new ArrayList<>();
         for (int[] sentence : sentences(text, span.start(), span.end())) {
             units.addAll(fit(text, sentence, prefix));
@@ -219,11 +221,20 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             }
             int start = current.getFirst()[0];
             int end = current.getLast()[1];
-            // Beginnt das Stück mit der Überschrift selbst, braucht es sie nicht noch einmal davor.
             boolean headed = heading != null && start > span.start();
-            chunks.add(new Chunk(start, end, headed ? prefix : "", section));
+            chunks.add(new Chunk(start, end, headed ? prefix : opening, section));
             previous = current;
         }
+    }
+
+    /** Überschriftenkette als Vorspann, höchstens ein Viertel eines Stücks, die hinteren Glieder zuerst. */
+    private String prefix(String headings) {
+        if (headings == null) {
+            return "";
+        }
+        String kept = headings.length() > maxChunkChars / 4 ? headings.substring(headings.length() - maxChunkChars / 4)
+                : headings;
+        return kept + "\n\n";
     }
 
     /** Sätze als Stellen im Text, ohne Leerraum am Rand; Zeilen und Absätze sind eigene Grenzen. */
@@ -271,8 +282,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                 cursor = wordEnd + 1;
             }
             if (end == start) {
-                // Ein Wort allein ist zu lang: nach Zeichen schneiden.
-                end = Math.min(sentence[1], start + Math.max(1, maxChunkChars - prefix.length()));
+                // Ein Wort allein ist zu lang: so viele Zeichen, wie Zeichen- und Token-Budget erlauben.
+                end = longestFit(text, prefix, start, sentence[1]);
             }
             pieces.add(new int[] {start, end});
             start = end;
@@ -283,13 +294,28 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return pieces;
     }
 
+    /** Das späteste Ende ab {@code start + 1}, bei dem das Stück noch passt; mindestens ein Zeichen. */
+    private int longestFit(String text, String prefix, int start, int limit) {
+        int low = start + 1;
+        int high = Math.min(limit, start + Math.max(1, maxChunkChars - prefix.length()));
+        while (low < high) {
+            int middle = (low + high + 1) >>> 1;
+            if (fits(text, prefix, start, middle)) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        return low;
+    }
+
     private boolean fits(String text, String prefix, int start, int end) {
         return prefix.length() + end - start <= maxChunkChars
                 && segmentation.tokens(prefix + text.substring(start, end)) <= segmentation.maxTokens();
     }
 
     /** Ein Abschnitt oder Text zwischen Abschnitten mit seiner Überschriftenkette. */
-    private record Span(int start, int end, String heading) {
+    private record Span(int start, int end, String heading, String ancestors) {
     }
 
     /**

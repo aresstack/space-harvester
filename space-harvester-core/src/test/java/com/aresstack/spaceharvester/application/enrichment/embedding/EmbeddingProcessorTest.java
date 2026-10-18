@@ -105,6 +105,17 @@ class EmbeddingProcessorTest {
     }
 
     @Test
+    void textWithoutSpacesIsCutWithinTheTokenBudgetToo() {
+        String text = "(){}[];".repeat(300);
+        List<EmbeddingProcessor.Chunk> chunks = new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 1500,
+                SEGMENTS).chunks(new PageText("t/v1", text, List.of()));
+
+        assertThat(chunks).hasSizeGreaterThan(1).allSatisfy(chunk ->
+                assertThat(SEGMENTS.tokens(chunk.input(text))).isLessThanOrEqualTo(SEGMENTS.maxTokens()));
+        assertThat(chunks.getLast().end()).isEqualTo(text.length());
+    }
+
+    @Test
     void nestedSectionsCarryTheirHeadingPath() {
         String text = "Handbuch\nEinleitung.\nBetrieb\n" + "Ein Satz über den Betrieb. ".repeat(40).strip();
         int betrieb = text.indexOf("Betrieb\n");
@@ -116,6 +127,9 @@ class EmbeddingProcessorTest {
 
         assertThat(provider.calls.getFirst()).anySatisfy(input ->
                 assertThat(input).startsWith("Handbuch > Betrieb\n\nEin Satz"));
+        // Das erste Stück beginnt mit der eigenen Überschrift; davor stehen die übergeordneten.
+        assertThat(provider.calls.getFirst()).anySatisfy(input ->
+                assertThat(input).startsWith("Handbuch\n\nBetrieb\nEin Satz"));
         // Die Kette steht auch im Ergebnis, damit verwandte Abschnitte denselben Abschnitt erkennen.
         assertThat(output.payloadJson()).contains("\"section\":\"Handbuch\"")
                 .contains("\"section\":\"Handbuch > Betrieb\"");
