@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 class ParityComparisonTest {
 
@@ -125,6 +126,28 @@ class ParityComparisonTest {
 
         assertThat(ParityComparison.search(eac, core)).extracting(Finding::verdict).containsExactly(Verdict.GLEICH,
                 Verdict.CORE_WENIGER, Verdict.CORE_MEHR, Verdict.GLEICH, Verdict.CORE_WENIGER, Verdict.CORE_WENIGER);
+    }
+
+    @Test
+    void anotherTypeMissingWordsOrNoTextAreGaps() {
+        Map<String, String> eacTypes = Map.of("a.docx.content-type", "application/msword", "b.pdf.content-type",
+                "application/pdf", "c.rtf.content-type", "application/rtf");
+        Map<String, String> coreTypes = Map.of("a.docx.content-type", "application/msword", "b.pdf.content-type",
+                "-", "c.rtf.content-type", "application/rtf");
+        Map<String, String> eacTexts = new LinkedHashMap<>();
+        eacTexts.put("a.docx", "Wartungsfenster am Sonntag");
+        eacTexts.put("b.pdf", "Notfallplan Rechenzentrum");
+        eacTexts.put("c.rtf", "Protokoll der Lenkungsrunde");
+        Map<String, String> coreTexts = Map.of("a.docx", "Wartungsfenster am Sonntag und mehr", "b.pdf",
+                "Notfallplan");
+
+        assertThat(ParityComparison.documents(eacTypes, coreTypes, eacTexts, coreTexts))
+                .extracting(Finding::key, Finding::verdict).containsExactly(
+                        tuple("dokument-a.docx.typ", Verdict.GLEICH), tuple("dokument-a.docx.text", Verdict.GLEICH),
+                        tuple("dokument-b.pdf.typ", Verdict.CORE_WENIGER),
+                        tuple("dokument-b.pdf.text", Verdict.CORE_WENIGER),
+                        tuple("dokument-c.rtf.typ", Verdict.GLEICH),
+                        tuple("dokument-c.rtf.text", Verdict.CORE_WENIGER));
     }
 
     private static DocumentOutline outline(String text, int images, int notes) {

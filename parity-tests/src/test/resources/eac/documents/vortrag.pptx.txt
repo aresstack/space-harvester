@@ -1,0 +1,4 @@
+Migrationsfahrplan
+Altsystem abschalten nach erfolgreicher Parallelphase
+Risiken
+Schnittstellenpartner liefern Testdaten verspätet

@@ -1,0 +1,5 @@
+Kennzahlen
+	Verfügbarkeit Kernsystem	99.5
+	Störungsmeldungen Quartal	17
+Ansprechpartner
+	Leitstelle Nordwest

@@ -86,7 +86,7 @@ Nicht angebunden sind:
 | Metadaten und Auszüge je Treffer | `SourceSearchHit`, `ConfluenceRestClient#excerpt` | `KeywordSearch.Hit` (Version, Änderung, URL, Space, Elternseite, Auszug) | gleich |
 | Rechte je Treffer | eigene Anmeldung | `AccessGuard` je Treffer, gesperrte fallen ohne Spur weg; für delegierte Benutzer (`END_USER`) prüft die Suche nur die Endliste aus dem Cache seitenweise, Funde der Quelle dienen nur zum Bewerten und Laden, `Results.found()` bleibt leer und der Cursor nennt keine ungeprüften Seiten; technische Clients unverändert, die progressive Suche erbt die Regel (#323, ADR 0014 Punkt 4, Festlegung Berechtigung) | SH+ |
 | Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | Mit Cache sucht `KeywordSearch` im Volltextindex des Caches (ADR 0013), damit auch über Quellen ohne eigene Suche (`PageTextIndex`, Status `INDEXED`, REST `indexed`); Treffer verlangen zusätzlich das Inhaltsrecht; ohne Cache (Server ohne `space-harvester.cache.directory`) liefert sie die geprüften Treffer der Quellen, Quellen ohne eigene Suche sind dann `NOT_SUPPORTED` | gleich (Vergleichstest Suche, #180) |
-| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff; lokale Dateien nur als Text (UTF-8, JSON, XML), PDF und Word werden nicht extrahiert (`LocalFilesTextProjector`), der EAC liest sie über `DocumentExtraction.registry()` | teilweise → #183 (Textdateien gleich laut Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung) |
+| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff; lokale Dateien als Text und PDF, Word, Excel, PowerPoint, ODF und RTF über `TikaDocumentText` wie im EAC über `DocumentExtraction.registry()` (`LocalFilesTextProjector`, Schema `file-document-text/v1`, #328); Anhangstexte noch nicht im Index | teilweise (Q, #328) → #183 (Textdateien gleich laut Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung; Dokumenttext gleich laut Vergleichstest Dokumenttext) |
 | Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | `SearchHitPrefetch` lädt die gefundenen Seiten eines Stapels, deren Version nicht im Cache liegt, seitenweise mit den Rechten des Aufrufers über den Beschaffungs-Use-Case in den Cache, in der Rangfolge von Titel und Auszug (`space-harvester.search.loads`, Standard alle); Server und Core warten standardmäßig nicht darauf (#296, `Harvester.builder().searchWait(Duration)`, Standard 0), die Desktop-App wartet bis 5 s (`AppRuntime`: `searchWait(SearchHitPrefetch.DEFAULT_WAIT)`), delegierte Benutzer warten höchstens 5 s und laden nur während ihres Aufrufs; Nachzügler zählen in `Results.loading()` (REST `loading`) und rücken mit dem nächsten Stapel nach (#255); `Harvester.builder().prefetchSearchHits(boolean)`, Standard an | gleich (Vergleichstest Suche) |
 | Schlagworte aus der Frage ableiten | `research/…/knowledge/ResearchQueries` (deterministische Schlagwort-Rückfälle `keywordQueries`, `literalQuery`, `isConcise`) | `SearchTerms` (`keywordQueries`, `literalQuery`, `isConcise`): eine Frage mit mehr als sechs Wörtern geht als ihre stärksten wörtlichen Begriffe, dann ihre Schlüsselwörter einzeln und die ersten beiden zusammen an die Suche jeder Quelle, ohne Füll- und Fragewörter; höchstens `space-harvester.search.discovery.max-queries` Anfragen (Standard 4, 1 bis 8) parallel, Funde je Quelle reihum ohne Dopplung zusammengeführt; im Cache sucht weiter der Text des Aufrufers; `Harvester.builder().discoveryQueries(int)` (#296). Zusätzlich entfernt `SearchTerms` Wörter einer Bitte vor der Schlüsselwortwahl | gleich (#181, #296) |
 | Kurze lexikalische Suchausdrücke (interne Kürzel unverändert) | `research/…/knowledge/LexicalDiscoveryStrategy` (`accepts` = `isConcise`, `fallbackQuery` = `literalQuery`, `planningRules` für das Modell des Agenten) | `KeywordSearch` schickt einen knappen Suchausdruck unverändert und leitet aus einem Satz zuerst `SearchTerms.literalQuery` ab (Kürzel wie `HaVdB`, `BS-PIMA` in ihrer Schreibung); die `planningRules` sind Anweisungen an das Modell des Agenten und bleiben im Client | gleich (#181, #296) |
@@ -137,7 +137,7 @@ Nicht angebunden sind:
 | Bilder der Leseansicht (Inline, Vorschaubilder, draw.io-Vorschau; ohne Emoticons) | `conf/ConfluencePageView`, `#viewImage`, `#loadViewImage` | keine | in Arbeit (Strang Q, Runde 7: Bildreferenzen aus Anhängen und `PageViewSource`) |
 | Authentifizierter Abruf, dauerhafte, versionierte Ablage, Wiederverwendung | `doc/ExportGraphics`, `exedra/…/reader/ReaderImageStore` (flüchtig) | `Assets`, `core/persistence/files/FileSystemAssetStore` (SHA-256, versioniert) | SH+ |
 | Bilder beim Herunterladen mitbeschaffen, Asset-Manifest im Datenbestand | `know/KnowledgeExportUseCase#figures` | eigener Auftrag „Bilder beschaffen“ nach jedem Export (`ExportAssetCollection`, #200), SHA-256-adressiert, `assets.json` (`ExportAssetManifest`) mit Status je Datei, darunter `SIGN_IN_REQUIRED` und `REDUNDANT` (#303); Nachholen über `ExportConversions.collectImages` | gleich (#200, #303) |
-| Dateityp am Inhalt erkennen (Magic Bytes) | `deigma/document-tika/…/TikaContentDetector`, `ExportGraphics#decode` | nur Medientyp der Quelle und Endung (`AssetKind`, `SimpleContentDetector`) | teilweise → #183 |
+| Dateityp am Inhalt erkennen (Magic Bytes) | `deigma/document-tika/…/TikaContentDetector`, `ExportGraphics#decode` | `DocumentText#detect` über dieselbe `DocumentExtraction.detector()` wie im EAC (#328); beim Ablegen eines Anhangs wird der Typ an den Magic Bytes geprüft und bei Bedarf korrigiert | gleich (Vergleichstest Dokumenttext: derselbe Typ je Datei) |
 | Bildbeschreibung durch ein Vision-Modell | `astu/acropolis/…/image/SourceImageAnalysisUseCase`, `ImageAnalysisCache` | Port `ImageDescriber` und Ablage, aber keine Implementierung; Diagramme mit textueller Quelle (draw.io, SVG, Mermaid) werden statt einer Beschreibung textuell verwendet (`*.graph.json` im `json-package`, #306). Offen: Beschreibung durch ein Vision-Modell (nicht beauftragt) | teilweise → #184 |
 
 ## 7. Anhänge
@@ -146,7 +146,7 @@ Nicht angebunden sind:
 |---|---|---|---|
 | Auflisten mit Metadaten (Größe, Medientyp, Version, Änderung, Container) | `#storedAttachments`, `know/ListKnowledgeAttachmentsUseCase` | `SourceQueries.attachments`, `PageAttachment` | gleich |
 | Abrufen mit Grenze, Ablage | `#loadAttachmentFile` | dasselbe plus versionierter Store, `AssetTooLargeException`, Speichergrenze | SH+ |
-| Text aus Anhängen und Dateien (PDF, DOCX, XLSX, PPTX, ODF, RTF) | `deigma/document-tika/…/TikaResourceExtractor`, `know/SourceAttachmentReader`, `DocumentSourceFileTextExtractor` | keine (`LocalFilesSourceAdapter` mit leerer `ExtractionRegistry`) | fehlt → #183 |
+| Text aus Anhängen und Dateien (PDF, DOCX, XLSX, PPTX, ODF, RTF) | `deigma/document-tika/…/TikaResourceExtractor`, `know/SourceAttachmentReader`, `DocumentSourceFileTextExtractor` | `core/application/assets/DocumentText` mit `TikaDocumentText` (#328): dieselben übernommenen Klassen `DocumentExtraction` und `DocumentSourceFileTextExtractor`, Tika 3.3.2 statt 2.9.1 (PDFBox 3.0.8 statt 2), Grenzen 20 MiB je Datei, 30 s je Lauf, 2 Läufe gleichzeitig, 1 Mio. Zeichen; `Assets.text()` → `AssetText`; lokale Dateien im Volltextindex. Noch offen: Anhangstexte im Index mit den Rechten der Seite, REST für `Assets.text` | teilweise (Q, #328) → #183; Text und Typ gleich laut Vergleichstest Dokumenttext |
 | Vorschau von Office- und PDF-Anhängen | `#loadAttachmentPreview` | keine | fehlt → #183 |
 
 ## 8. Diagramme
@@ -222,7 +222,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
-| Lokale Dateien | `source-localfiles` | `core/source/LocalFilesSourceAdapter` (Kopie) | gleich, ohne Text → #183 |
+| Lokale Dateien | `source-localfiles` | `core/source/LocalFilesSourceAdapter` (Kopie) | gleich, mit Text aus PDF und Office-Dateien (#328) |
 | Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | nur Option `directory` | teilweise → #187 |
 | Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort` | keine | fehlt → #187 |
 | MediaWiki, Git, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
@@ -268,7 +268,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
 | #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013) | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
-| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
+| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q; teilweise (#328): Extraktion, Typerkennung, lokale Dateien; offen Anhangstexte im Index, REST, Vorschauen |
 | #184 | `ImageDescriber` über den externen KI-Dienst | offen, nicht beauftragt; Diagramme textuell erledigt (#306) |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | erledigt: Core (#303), Server-REST (#308), App (#312) |
 | #186 | Export einzelner Seiten und Teilbäume | Q; Teilbaum umgesetzt (#315), offen Einzelseite, Tiefe; Vergleichstest S |
@@ -300,6 +300,9 @@ eingebettetes SVG aus der Anhangsliste, interner `ac:link`, Mermaid-Makro, draw.
 Bild (404) und ein nicht ladbares externes Bild, sieben Merksätze. Jede Seite hat `body.storage` und eine
 handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text speichert.
 
+Für den Dokumenttext (#183) liegen unter `src/test/resources/documents/` acht kleine Dateien (DOCX, XLSX, PPTX,
+ODT, RTF, HTML, TXT, Markdown); dazu kommen die Word- und PDF-Referenz des Enterprise AI Client.
+
 ### Ablauf
 
 1. **Referenzen des Enterprise AI Client:** `parity-tests/eac/generate.sh [pfad-zum-checkout]` baut den
@@ -311,13 +314,15 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    Quellenverwaltung (`KnowledgeSourceManagement` mit dem echten Confluence-Provider über dem Fake) in
    `management.properties`, die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties` sowie die
    Suche (`SearchKnowledgeSourcesUseCase` über eine indexierte Dateiquelle, Vorladen der Confluence-Treffer mit
-   `KnowledgePrefetchService`) in `search.properties`.
+   `KnowledgePrefetchService`) in `search.properties` und je Testdokument den Typ (nach Name und Inhalt sowie nur nach
+   dem Inhalt, `DocumentExtraction.detector()`) und den Text (`DocumentSourceFileTextExtractor`) unter `documents/`
+   (`EacDocumentText`).
    Die CI von Space Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
    die Navigation (`Harvester.navigation()`), spielt die Schritte der Quellenverwaltung mit
-   `Harvester.sourceManagement()` nach, sucht mit `Harvester.keywordSearch()` und vergleicht mit den Referenzen. Bericht:
+   `Harvester.sourceManagement()` nach, sucht mit `Harvester.keywordSearch()`, liest die Testdokumente mit `TikaDocumentText` und vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -341,6 +346,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 | Ausgeführte Makros | alle (#218) | jeder Satz, den `include` oder `excerpt-include` aus einem anderen Space einsetzt, steht im Core; keine `OMITTED_CONTENT`-Meldung |
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
+| Dokumenttext | je Datei (#183) | Typ nach dem Inhalt gleich; Text wie bei Text |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
 | Adressen | je Form (#178) | dieselbe Seite wie beim Maßstab für Seiten-ID, `/spaces/…/pages/…`, `display/KEY/Titel`, `viewpage.action?spaceKey&title`, Space-Startseite, `confluence://`-Bookmark und Ressourcen-ID; keine Seite für unbekannten Titel und fremden Host |
 | Suche | je Suchbegriff und Live-Treffer (#180) | Quelle ohne eigene Suche: dieselben Dateien wie beim Maßstab (eine, zwei, Großschreibung, keine), jeder Auszug zeigt den Suchbegriff; jeder Treffer der Live-Suche in Confluence danach vorgeladen |
@@ -372,6 +378,6 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 ### Noch nicht abgedeckt
 
 Die Trefferauswahl der Live-Suche vergleicht `:parity-tests` nicht, weil der Fake feste Treffer liefert und beide Seiten
-dieselbe CQL bauen. Anhänge fehlen noch, dafür fehlen Core-Schnittstellen: Text aus Anhängen #183,
+dieselbe CQL bauen. Anhänge von Confluence-Seiten fehlen noch, dafür fehlen Core-Schnittstellen: Anhangstexte im Index und Vorschauen #183 (den Dokumenttext je Datei vergleicht der Abschnitt Dokumenttext seit #328),
 Export einer einzelnen Seite und mit Tiefe wie im Enterprise AI Client #186 (den Teilbaum gibt es seit #315). Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.
