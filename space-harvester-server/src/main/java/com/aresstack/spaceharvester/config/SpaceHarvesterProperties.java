@@ -33,7 +33,7 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
     public record Network(Proxy proxy, ConfiguredSourceCatalog.AsyncTransport asyncTransport) {
 
         public Network {
-            proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null) : proxy;
+            proxy = proxy == null ? new Proxy(null, null, null, null, null, null, null, null, null) : proxy;
             asyncTransport = asyncTransport == null ? ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT : asyncTransport;
         }
     }
@@ -51,13 +51,34 @@ public record SpaceHarvesterProperties(List<Source> sources, Network network) {
      * @param resolveTimeout Frist je Auflösung (Standard 20 s)
      * @param cacheTtl       Gültigkeit einer gefundenen Route (Standard 10 min)
      * @param failureTtl     Gültigkeit einer gescheiterten Auflösung (Standard 1 min)
+     * @param auth           Anmeldung am Proxy mit BASIC (optional, #189)
      */
     public record Proxy(ProxySettings.Mode mode, URI pacUrl, String proxyHost, Integer proxyPort,
-                        List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+                        List<String> nonProxyHosts, Duration resolveTimeout, Duration cacheTtl, Duration failureTtl,
+                        ProxyAuth auth) {
 
         ProxySettings toSettings() {
             return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
-                    failureTtl);
+                    failureTtl, auth == null ? null : auth.toAuthentication());
+        }
+    }
+
+    /**
+     * Anmeldung am Proxy mit BASIC, auch im HTTPS-Tunnel. Das Passwort kommt über einen Platzhalter aus einer
+     * Umgebungsvariable oder einem Secret-Speicher, nie aus einer Datei im Repository.
+     *
+     * @param username Benutzername
+     * @param password Passwort
+     */
+    public record ProxyAuth(String username, String password) {
+
+        ProxySettings.Authentication toAuthentication() {
+            return new ProxySettings.Authentication(username, password == null ? null : password.toCharArray());
+        }
+
+        @Override
+        public String toString() {
+            return "ProxyAuth[username=" + username + ", password=" + (password == null ? "-" : "***") + "]";
         }
     }
 

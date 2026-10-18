@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.astu.security.SecretRef;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceAsyncHttpTransport;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
@@ -27,6 +28,7 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
     private final SecretProvider secrets;
     private final HttpRoutePort routes;
     private final String userAgent;
+    private final ProxyCredentials proxyCredentials;
     private final List<WebClientConfluenceTransport> transports = new CopyOnWriteArrayList<>();
     private final ExecutorService mapping;
     private final InFlightLimit inFlight;
@@ -36,6 +38,12 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
      *                ({@link #inFlight()}), damit gepufferte Antworten nicht unbegrenzt vor der Abbildung warten
      */
     public AsyncSnapshotTransports(SecretProvider secrets, HttpRoutePort routes, String userAgent, int threads) {
+        this(secrets, routes, userAgent, ProxyCredentials.none(), threads);
+    }
+
+    /** Mit Anmeldung am Proxy (#189). */
+    public AsyncSnapshotTransports(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                   ProxyCredentials proxyCredentials, int threads) {
         if (secrets == null || routes == null) {
             throw new IllegalArgumentException("secrets and routes must not be null");
         }
@@ -45,6 +53,7 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
         this.secrets = secrets;
         this.routes = routes;
         this.userAgent = userAgent;
+        this.proxyCredentials = proxyCredentials == null ? ProxyCredentials.none() : proxyCredentials;
         this.inFlight = new InFlightLimit(2 * threads);
         AtomicInteger counter = new AtomicInteger();
         this.mapping = Executors.newFixedThreadPool(threads, runnable -> {
@@ -56,7 +65,13 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
 
     /** Standard: so viele Abbildungs-Threads wie Prozessoren, mindestens zwei. */
     public AsyncSnapshotTransports(SecretProvider secrets, HttpRoutePort routes, String userAgent) {
-        this(secrets, routes, userAgent, Math.max(2, Runtime.getRuntime().availableProcessors()));
+        this(secrets, routes, userAgent, ProxyCredentials.none());
+    }
+
+    /** Standard-Threads, mit Anmeldung am Proxy (#189). */
+    public AsyncSnapshotTransports(SecretProvider secrets, HttpRoutePort routes, String userAgent,
+                                   ProxyCredentials proxyCredentials) {
+        this(secrets, routes, userAgent, proxyCredentials, Math.max(2, Runtime.getRuntime().availableProcessors()));
     }
 
     /** Derselbe Provider mit asynchronen Snapshots über Transporte dieser Instanz. */
@@ -105,6 +120,7 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
                     .clientTls(clientTls)
                     .anonymousTls(trustOnly)
                     .userAgent(userAgent)
+                    .proxyCredentials(proxyCredentials)
                     .connectTimeout(Duration.ofMillis(connectTimeoutMillis))
                     .readTimeout(Duration.ofMillis(readTimeoutMillis))
                     .build();

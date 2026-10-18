@@ -230,7 +230,25 @@ space-harvester:
   Fehlermeldungen zeigen Ziel- und PAC-URLs nur ohne Query (`?…`), auch in Meldungen der Bibliothek. Die
   Auflösung läuft auf einem eigenen Pool (höchstens 4 gleichzeitig) und erst bei der ersten Anfrage.
 - **HTTPS über Proxy** läuft per `CONNECT`-Tunnel; `Authorization`, Zugangsdaten und das Client-Zertifikat (mTLS)
-  gehen nur durch den Tunnel zum Ziel, nicht an den Proxy. Proxy-Authentifizierung wird noch nicht unterstützt.
+  gehen nur durch den Tunnel zum Ziel, nicht an den Proxy.
+- **Anmeldung am Proxy** (BASIC, [#189](https://github.com/aresstack/space-harvester/issues/189)): `auth.username`
+  und `auth.password` (Passwort über einen Platzhalter, z. B. `${PROXY_PASSWORD}`). Der WebClient-Transport meldet
+  sich je Verbindung an, auch im `CONNECT`-Tunnel. Für `HttpURLConnection` (synchrone Confluence-Aufrufe,
+  KI-Dienst) setzt der Core wie der Enterprise AI Client einen prozessweiten `Authenticator`, der nur dem Proxy
+  antwortet, und gibt BASIC für den Tunnel frei (`jdk.http.auth.tunneling.disabledSchemes`, sofern nicht gesetzt).
+  Einbettende Programme können das Passwort auch über `Harvester.builder().secretProvider(…)` unter
+  `network:proxy` liefern; dann reicht `auth.username` oder ein leeres `auth`. Weder Benutzer noch Passwort
+  erscheinen im Protokoll.
+
+  ```yaml
+  space-harvester:
+    network:
+      proxy:
+        mode: pac-url-powershell
+        auth:
+          username: proxy-nutzer
+          password: ${PROXY_PASSWORD}
+  ```
 - **Windows-Dienst:** `pac-url-powershell`, `pac-url-windows-settings`, `pac-url-wscript` und `windows-static-proxy`
   lesen `HKCU` des **ausführenden Dienstkontos**, nicht die Einstellungen des angemeldeten Benutzers. Hat das
   Dienstkonto keine `AutoConfigURL`, `pac-url-manual` mit der PAC-Adresse des Unternehmens verwenden.

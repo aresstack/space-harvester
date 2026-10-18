@@ -15,9 +15,14 @@ import java.util.List;
  * @param resolveTimeout Frist für eine Auflösung (PowerShell, PAC-Download und -Auswertung zusammen)
  * @param cacheTtl       wie lange eine gefundene Route gilt
  * @param failureTtl     wie lange eine gescheiterte Auflösung gilt, bevor erneut aufgelöst wird
+ * @param authentication Anmeldung am Proxy (#189); {@code null} ohne
  */
 public record ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer proxyPort, List<String> nonProxyHosts,
-                            Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+                            Duration resolveTimeout, Duration cacheTtl, Duration failureTtl,
+                            Authentication authentication) {
+
+    /** Verweis, unter dem der Core das Proxy-Passwort beim Anbieter des Programms erfragt ({@code SourceSecrets}). */
+    public static final String SECRET_REF = "network:proxy";
 
     public static final Duration DEFAULT_RESOLVE_TIMEOUT = Duration.ofSeconds(20);
     public static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(10);
@@ -31,9 +36,64 @@ public record ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer pro
         failureTtl = failureTtl == null ? DEFAULT_FAILURE_TTL : failureTtl;
     }
 
+    /** Ohne Anmeldung am Proxy. */
+    public ProxySettings(Mode mode, URI pacUrl, String proxyHost, Integer proxyPort, List<String> nonProxyHosts,
+                         Duration resolveTimeout, Duration cacheTtl, Duration failureTtl) {
+        this(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl, failureTtl, null);
+    }
+
+    /** Dieselben Einstellungen mit dieser Anmeldung am Proxy ({@code null} ohne). */
+    public ProxySettings withAuthentication(Authentication value) {
+        return new ProxySettings(mode, pacUrl, proxyHost, proxyPort, nonProxyHosts, resolveTimeout, cacheTtl,
+                failureTtl, value);
+    }
+
     /** Ohne Proxy: jede Verbindung geht direkt (Standard ohne Konfiguration). */
     public static ProxySettings disabled() {
         return new ProxySettings(Mode.DISABLED, null, null, null, null, null, null, null);
+    }
+
+    /**
+     * Anmeldung am Proxy mit BASIC (wie {@code ProxyAuthMode.BASIC} im Enterprise AI Client), auch im
+     * HTTPS-Tunnel ({@code CONNECT}). Fehlt das Passwort, fragt der Core beim ersten Proxy-Zugriff den Anbieter des
+     * Programms unter {@value #SECRET_REF}; dessen Benutzername gilt, wenn hier keiner steht.
+     *
+     * @param username Benutzername oder {@code null}, wenn der Anbieter ihn liefert
+     * @param password Passwort oder {@code null}; das {@code toString} zeigt es nie
+     */
+    public record Authentication(String username, char[] password) {
+
+        public Authentication {
+            username = username == null || username.isBlank() ? null : username.strip();
+            password = password == null || password.length == 0 ? null : password.clone();
+        }
+
+        /** Nur der Benutzername, das Passwort kommt vom Anbieter. */
+        public static Authentication basic(String username) {
+            return new Authentication(username, null);
+        }
+
+        @Override
+        public char[] password() {
+            return password == null ? null : password.clone();
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof Authentication that && java.util.Objects.equals(username, that.username)
+                    && java.util.Arrays.equals(password, that.password);
+        }
+
+        @Override
+        public int hashCode() {
+            return java.util.Objects.hash(username, java.util.Arrays.hashCode(password));
+        }
+
+        @Override
+        public String toString() {
+            return "Authentication[basic, username=" + username + ", password=" + (password == null ? "-" : "***")
+                    + "]";
+        }
     }
 
     /**
