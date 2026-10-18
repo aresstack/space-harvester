@@ -231,7 +231,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 
 | Fähigkeit | EAC | App | Bewertung |
 |---|---|---|---|
-| Leseansicht mit Bildern, Diagrammen, Bildergalerie | `exedra/…/reader/ReaderHtmlView`, `ImageSlideshowPanel` | `desk/…/PageDetailPanel`: Text ohne Bilder | fehlt → #192 |
+| Leseansicht mit Bildern, Diagrammen, Bildergalerie | `exedra/…/reader/ReaderHtmlView`, `ImageSlideshowPanel` | `desk/…/content/ReadingPane` (Reiter „Leseansicht“): HTML aus `ReadingViews`, Bilder über `Assets.viewImage`, Mermaid über `Diagrams`, fehlende Bilder markiert, Klick öffnet Galerie mit ◀/▶ | gleich (#192) |
 | Auftragskarte mit „Exportieren als …“, Ausgabeordner | — | in Arbeit (Strang L, Runde 7) | in Arbeit |
 
 ## Lücken und Issues

@@ -26,6 +26,8 @@ import com.aresstack.spaceharvester.application.query.SearchResults;
 import com.aresstack.spaceharvester.application.query.SpaceTree;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.reading.ReadingView;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -120,6 +122,28 @@ public final class Workspace {
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
+    }
+
+    /**
+     * Lese-Ansicht einer Seite ({@code …/pages/{pageId}/reading-view}, #176): gerendertes HTML der Quelle mit den
+     * Bildern, die sie zeigt; Rechte und Version prüft der Core.
+     */
+    public ReadingView readingView(String sourceId, String pageId, boolean refresh) {
+        return harvester.readingViews().view(caller, sourceId, pageId, refresh);
+    }
+
+    /**
+     * Ein Bild einer Lese-Ansicht aus der Ablage oder einmalig über die Anmeldung der Quelle geladen und abgelegt
+     * ({@link Assets#viewImage}). Nur Bilder, die die Ansicht des Aufrufers selbst nennt.
+     */
+    public Assets.AssetContent viewImage(ReadingView view, HarvestSource.ViewImage image) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE || !view.images().contains(image)) {
+            throw new IllegalArgumentException("Das Bild gehört nicht zu dieser Lese-Ansicht");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
