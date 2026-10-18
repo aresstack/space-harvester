@@ -104,6 +104,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -405,7 +406,9 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
-            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, builder.imageDescriber);
+            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
+            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, builder.imageDescriber,
+                    TikaDocumentText.shared());
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche.
