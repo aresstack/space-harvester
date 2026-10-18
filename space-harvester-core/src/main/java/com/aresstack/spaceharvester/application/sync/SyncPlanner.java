@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.sync;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -26,14 +27,31 @@ public final class SyncPlanner {
      * @throws IllegalArgumentException wenn die Generation zu einer anderen Quelle oder einem anderen Space gehört
      */
     public static SyncPlan plan(SyncBaseline baseline, Inventory inventory) {
+        return plan(baseline, inventory, Map.of(), true);
+    }
+
+    /**
+     * Abgleich ohne Erstbefüllung (ADR 0014, Punkt 2): Bekannt ist, was die Generation führt, und darüber, was der Cache
+     * kennt ({@code cached}, frischer als die Generation). Ohne {@code loadUnknown} wird eine gelistete, aber unbekannte
+     * Seite {@link PageChange.Kind#NOT_LOADED} statt {@link PageChange.Kind#NEW}.
+     *
+     * @param cached Stand des Cache je {@code pageId} ({@link SyncBaselineStore#knownPages})
+     */
+    public static SyncPlan plan(SyncBaseline baseline, Inventory inventory, Map<String, BaselineEntry> cached,
+                                boolean loadUnknown) {
         if (baseline != null && !(baseline.sourceId().equals(inventory.sourceId())
                 && baseline.spaceKey().equals(inventory.spaceKey()))) {
             throw new IllegalArgumentException("Generation und Inventur gehören zu verschiedenen Spaces");
         }
-        Map<String, BaselineEntry> previous = baseline == null ? Map.of() : baseline.pages();
+        Map<String, BaselineEntry> previous = new HashMap<>(baseline == null ? Map.of() : baseline.pages());
+        previous.putAll(cached);
         Map<String, PageMetadataListing.Entry> current = inventory.byPageId();
         List<PageChange> changes = new ArrayList<>();
-        current.forEach((pageId, entry) -> changes.add(classify(previous.get(pageId), entry)));
+        current.forEach((pageId, entry) -> {
+            PageChange change = classify(previous.get(pageId), entry);
+            changes.add(change.kind() == PageChange.Kind.NEW && !loadUnknown
+                    ? new PageChange(pageId, PageChange.Kind.NOT_LOADED, null, entry) : change);
+        });
         PageChange.Kind absent = inventory.confirmed() ? PageChange.Kind.MISSING : PageChange.Kind.NOT_SEEN;
         previous.forEach((pageId, entry) -> {
             if (!current.containsKey(pageId)) {

@@ -64,8 +64,21 @@ public class SpaceSync {
     }
 
     public SyncPlan plan(String sourceId, String spaceKey) {
+        return plan(sourceId, spaceKey, true);
+    }
+
+    /**
+     * Plant einen Lauf. Bekannt ist, was die Generation führt und was der Cache kennt (ADR 0014, Punkt 2): Seiten, die
+     * Suche oder Abruf schon mit derselben Version abgelegt haben, werden nicht erneut geladen.
+     *
+     * @param loadUnknown ob gelistete, aber unbekannte Seiten geladen werden ({@code true}: der Space wird vollständig
+     *                    gehalten); sonst {@link PageChange.Kind#NOT_LOADED}
+     */
+    public SyncPlan plan(String sourceId, String spaceKey, boolean loadUnknown) {
         SyncBaseline baseline = store.confirmed(sourceId, spaceKey).orElse(null);
-        SyncPlan plan = SyncPlanner.plan(baseline, collector.collect(sourceId, spaceKey));
+        Inventory inventory = collector.collect(sourceId, spaceKey);
+        SyncPlan plan = SyncPlanner.plan(baseline, inventory,
+                inventory.confirmed() ? store.knownPages(sourceId, spaceKey) : Map.of(), loadUnknown);
         if (!plan.inventory().confirmed()) {
             return plan;
         }
@@ -106,7 +119,17 @@ public class SpaceSync {
 
     /** Wie {@link #run(String, String, PlanApplier)}, mit Rückmeldungen und Abbruchstellen für einen Auftrag. */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener) {
-        SyncPlan plan = plan(sourceId, spaceKey);
+        return run(sourceId, spaceKey, applier, listener, true);
+    }
+
+    /**
+     * Wie {@link #run(String, String, PlanApplier, SyncListener)}; ohne {@code loadUnknown} ein Abgleich ohne
+     * Erstbefüllung (ADR 0014): Er prüft und aktualisiert nur, was Generation und Cache kennen, und führt unbekannte
+     * Seiten als fehlend.
+     */
+    public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener,
+                       boolean loadUnknown) {
+        SyncPlan plan = plan(sourceId, spaceKey, loadUnknown);
         listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {

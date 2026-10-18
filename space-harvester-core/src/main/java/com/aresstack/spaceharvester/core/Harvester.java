@@ -56,6 +56,7 @@ import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -152,6 +153,7 @@ public final class Harvester implements AutoCloseable {
     private final RelevanceSearch relevance;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
+    private final Reconciliation reconciliation;
     private final Exports exports;
     private final ExportConversions conversions;
     private final Assets assets;
@@ -294,6 +296,8 @@ public final class Harvester implements AutoCloseable {
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
                     exportWriter, clock);
+            this.reconciliation = new Reconciliation(syncs, OWNER, clock);
+            opened.add(reconciliation);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);
@@ -453,6 +457,33 @@ public final class Harvester implements AutoCloseable {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
         return syncs.start(sourceId, spaceKey, OWNER);
+    }
+
+    /**
+     * Plant den regelmäßigen Abgleich eines Space ein oder ersetzt seine Einplanung (ADR 0014): je {@code interval} eine
+     * Metadateninventur, die nur geänderte Inhalte lädt und Fehlendes einzeln prüft. Ohne {@code loadUnknown} lädt sie
+     * keine unbekannten Seiten, sondern hält nur aktuell, was der Cache schon kennt. Gilt bis {@link #close()}; die
+     * Anwendung plant beim Start aus ihrer Konfiguration neu ein.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie {@code SYNC}
+     *                                                                               nicht freigibt
+     * @throws IllegalArgumentException bei einem Abstand unter {@link Reconciliation#MIN_INTERVAL}
+     */
+    public Reconciliation.Schedule reconcile(String sourceId, String spaceKey, Duration interval,
+                                             boolean loadUnknown) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return reconciliation.schedule(sourceId, spaceKey, interval, loadUnknown);
+    }
+
+    /** Nimmt den Space aus dem regelmäßigen Abgleich; {@code false}, wenn er nicht eingeplant war. */
+    public boolean stopReconciling(String sourceId, String spaceKey) {
+        return reconciliation.cancel(sourceId, spaceKey);
+    }
+
+    /** Alle eingeplanten regelmäßigen Abgleiche mit letztem und nächstem Start. */
+    public List<Reconciliation.Schedule> reconciliations() {
+        return reconciliation.schedules();
     }
 
     /** Abgeschaltete oder unbekannte Quellen nehmen an keinem Auftrag teil, auch nicht über den Cache (#188). */

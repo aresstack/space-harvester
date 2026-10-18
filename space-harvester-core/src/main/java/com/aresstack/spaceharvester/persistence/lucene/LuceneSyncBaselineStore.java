@@ -3,9 +3,11 @@ package com.aresstack.spaceharvester.persistence.lucene;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sync.BaselineEntry;
 import com.aresstack.spaceharvester.application.sync.StagedGeneration;
 import com.aresstack.spaceharvester.application.sync.SyncBaseline;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -29,6 +31,11 @@ public final class LuceneSyncBaselineStore implements SyncBaselineStore {
     @Override
     public Optional<SyncBaseline> confirmed(String sourceId, String spaceKey) {
         return cache.confirmed(sourceId, spaceKey);
+    }
+
+    @Override
+    public Map<String, BaselineEntry> knownPages(String sourceId, String spaceKey) {
+        return cache.knownPages(sourceId, spaceKey);
     }
 
     @Override

@@ -133,6 +133,10 @@ public final class PageCacheSchema {
             VERSION_FIELD, MODIFIED_AT, URL, ATTRIBUTE_KEY, ATTRIBUTE_VALUE, METADATA_HASH, ATTRIBUTES_HASH,
             OBSERVED_AT, RAW_SHA256);
 
+    /** Gespeicherte Felder für {@link #known}: aktuelle Kopfdaten und Version des Snapshots. */
+    static final Set<String> KNOWN_FIELDS = Set.of(PAGE_ID, RAW_SHA256, SPACE_KEY, PARENT_ID, METADATA_HASH,
+            ATTRIBUTES_HASH, SNAPSHOT + VERSION_FIELD);
+
     /** Trennzeichen in zusammengesetzten IDs; kommt in Quellen-, Seiten- und Space-IDs nicht vor. */
     private static final char SEPARATOR = '\u001f';
 
@@ -386,6 +390,18 @@ public final class PageCacheSchema {
     }
 
     /** Ob das Seitendokument einen Snapshot enthält. */
+    /**
+     * Der Stand einer Seite im Cache als Generationseintrag: aktuelle Kopfdaten, aber die Version des gespeicherten
+     * Snapshots, damit eine neuere Version in der Quelle den Inhalt nachlädt; {@code null} ohne Snapshot.
+     */
+    static BaselineEntry known(Document doc) {
+        if (!hasSnapshot(doc)) {
+            return null;
+        }
+        return new BaselineEntry(doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(PARENT_ID),
+                doc.get(SNAPSHOT + VERSION_FIELD), doc.get(METADATA_HASH), doc.get(ATTRIBUTES_HASH));
+    }
+
     static boolean hasSnapshot(Document doc) {
         return doc.get(RAW_SHA256) != null;
     }

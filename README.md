@@ -561,9 +561,16 @@ altem Stand, Cache-Stand `stale`; nie `confirmed`, der nächste Lauf gleicht sie
 `summary` nennt das Delta (Zähler je Änderungsart, `failed`, `missing`, `generation`, `complete`, `spaceFingerprint`,
 `notConfirmed` als fester Grund; `failedPageIds` nur mit `metadata`-Freigabe). Je Space läuft höchstens ein Abgleich (`sync-already-running`, 409); nur der
 auslösende Client sieht ihn, andere bekommen `sync-not-found` (404). Solange Cache-Speicher (#26) oder Inhaltsabruf
-(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Einen Hintergrundabgleich plant
-`space-harvester.sync.interval` (etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je `<sourceId>/<spaceKey>`);
-ein noch laufender Abgleich wird nicht doppelt gestartet.
+(#8) nicht angebunden sind, antwortet der Start mit `sync-unavailable` (503). Bekannt ist beim Abgleich, was die
+Generation führt und was der Cache schon kennt, etwa durch Suche oder Abruf; solche Seiten werden nur bei neuer Version
+erneut geladen. Mit `loadUnknown=false` gleicht der Lauf ohne Erstbefüllung ab: Er prüft, aktualisiert und bereinigt nur
+Bekanntes und lädt keine unbekannten Seiten (`summary.notLoaded`, Teil von `missing`, `complete: false`)
+([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)). Einen regelmäßigen Abgleich plant
+`space-harvester.sync.interval` (mindestens `PT1M`, etwa `PT30M`) für die Spaces in `space-harvester.sync.spaces` (je
+`<sourceId>/<spaceKey>`), mit `space-harvester.sync.load-unknown` (Standard `true`, Space vollständig halten); ein noch
+laufender Abgleich wird nicht doppelt gestartet. `GET /api/v1/reconciliations` zeigt je eingeplantem Space (nur mit
+`sync`-Freigabe) Abstand, letzten Start samt Ergebnis und nächsten Start; ohne Einplanung behauptet der Dienst keine
+lückenlose Aktualität.
 
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export und
 antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Ein vorheriger Abgleich ist nicht nötig: Liegt

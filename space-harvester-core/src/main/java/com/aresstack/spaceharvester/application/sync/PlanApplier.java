@@ -78,7 +78,7 @@ public class PlanApplier {
                         written = false;
                     }
                 }
-                case UNCHANGED, NOT_SEEN -> written = false;
+                case UNCHANGED, NOT_SEEN, NOT_LOADED -> written = false;
             }
             listener.pageDone(change, written, failed.contains(change.pageId()));
         }
