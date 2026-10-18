@@ -15,6 +15,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.swing.JCheckBox;
@@ -205,6 +207,7 @@ class SettingDialogsTest {
         AiSettingsPanel[] panel = new AiSettingsPanel[1];
         SwingUtilities.invokeAndWait(() -> {
             panel[0] = new AiSettingsPanel(context);
+            panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
             // Die Freigabe gehört zur Quelle; hier steht nur, wie viele freigegeben sind.
             assertThat(panel[0].released.getText()).as("Vorgabe: keine Quelle freigegeben").isEqualTo("keine Quelle");
             panel[0].baseUrl.setText("sk-abcdefghijklmnopqrstuvwxyz0123");
@@ -240,6 +243,91 @@ class SettingDialogsTest {
         SwingUtilities.invokeAndWait(() -> assertThat(panel[0].apiKey.getPassword()).isEmpty());
     }
 
+    /** Ein Passwortspeicher wie KeePass im Speicher: Titel, Adresse, Passwort. */
+    static final class FakeKeePass implements com.aresstack.enterpriseai.adyton.SecretVault {
+        final Map<String, String[]> entries = new java.util.LinkedHashMap<>();
+
+        @Override
+        public List<com.aresstack.enterpriseai.adyton.VaultEntry> list() {
+            return entries.entrySet().stream().map(e -> new com.aresstack.enterpriseai.adyton.VaultEntry(e.getKey(),
+                    "", e.getValue()[0], Map.of())).toList();
+        }
+
+        @Override
+        public com.aresstack.enterpriseai.adyton.VaultEntryDraft read(String title)
+                throws com.aresstack.enterpriseai.adyton.SecretUnavailableException {
+            String[] entry = entries.get(title);
+            if (entry == null) {
+                throw new com.aresstack.enterpriseai.adyton.SecretUnavailableException(
+                        com.aresstack.enterpriseai.adyton.SecretUnavailableException.Reason.NOT_FOUND, null, title);
+            }
+            return new com.aresstack.enterpriseai.adyton.VaultEntryDraft(title, "", entry[1].toCharArray(), entry[0],
+                    Map.of());
+        }
+
+        @Override
+        public void save(com.aresstack.enterpriseai.adyton.VaultEntryDraft entry) {
+            create(entry);
+        }
+
+        @Override
+        public void create(com.aresstack.enterpriseai.adyton.VaultEntryDraft entry) {
+            entries.put(entry.title(), new String[] {entry.location(), new String(entry.copyPassword())});
+        }
+
+        @Override
+        public void remove(String title) {
+            entries.remove(title);
+        }
+    }
+
+    @Test
+    void keePassIsTheDefaultAndOnlyTheEntryNameReachesTheFile() throws Exception {
+        FakeKeePass keePass = new FakeKeePass();
+        keePass.entries.put("Enterprise AI API", new String[] {"https://kp.example.invalid/v1", "sk-aus-keepass"});
+        boolean[] paired = {false};
+        context.keePass(new com.aresstack.spaceharvester.app.credentials.KeePassLink(keePass, () -> paired[0]));
+        AiSettingsPanel[] panel = new AiSettingsPanel[1];
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0] = new AiSettingsPanel(context);
+            assertThat(panel[0].access.getSelectedItem()).as("Vorgabe wie im Enterprise AI Client")
+                    .isEqualTo(AiSettingsPanel.KEEPASS);
+            assertThat(panel[0].keePassStatus.getText()).isEqualTo("Nicht gekoppelt");
+            assertThat(panel[0].entry.isEditable()).isTrue();
+            paired[0] = true;
+            panel[0].pair.doClick();
+        });
+        await(() -> panel[0].baseUrl.getText().equals("https://kp.example.invalid/v1"));
+        SwingUtilities.invokeAndWait(() -> {
+            assertThat(panel[0].keePassStatus.getText()).startsWith("Gekoppelt");
+            assertThat(panel[0].titles).containsExactly("Enterprise AI API");
+            panel[0].embeddingModel.setText("text-embedding-3-small");
+            panel[0].dimensions.setText("1536");
+            panel[0].save.doClick();
+        });
+        awaitFeedback(panel[0], "übernommen");
+        assertThat(Files.readString(config)).contains("ai-access: keepass", "ai-keepass-entry: \"Enterprise AI API\"",
+                "base-url: \"https://kp.example.invalid/v1\"").doesNotContain("sk-aus-keepass");
+        assertThat(context.aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)).isFalse();
+        assertThat(context.aiKeyAvailable()).isTrue();
+        assertThat(new String(context.storedAiKey())).as("der Core erhält den Key aus KeePass")
+                .isEqualTo("sk-aus-keepass");
+
+        // Ein neuer Name legt den Eintrag mit Basisadresse und Key in KeePass an.
+        SwingUtilities.invokeAndWait(() -> {
+            panel[0].entry.getEditor().setItem("Mein Dienst");
+            panel[0].save.doClick();
+            assertThat(panel[0].feedback.text()).contains("API-Key fehlt");
+            panel[0].apiKey.setText("sk-neu");
+            panel[0].save.doClick();
+        });
+        await(() -> keePass.entries.containsKey("Mein Dienst"));
+        assertThat(keePass.entries.get("Mein Dienst")).containsExactly("https://kp.example.invalid/v1", "sk-neu");
+        await(() -> context.settings().aiAccess().entry() != null
+                && context.settings().aiAccess().entry().equals("Mein Dienst"));
+        assertThat(Files.readString(config)).doesNotContain("sk-neu");
+    }
+
     @Test
     void modelsComeFromTheServiceAndSavingMeasuresTheDimension() throws Exception {
         List<String> authorizations = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -263,6 +351,7 @@ class SettingDialogsTest {
             AiSettingsPanel[] panel = new AiSettingsPanel[1];
             SwingUtilities.invokeAndWait(() -> {
                 panel[0] = new AiSettingsPanel(context);
+                panel[0].access.setSelectedItem(AiSettingsPanel.MANUAL);
                 assertThat(panel[0].pickEmbedding.isEnabled()).as("erst nach „Modelle laden“").isFalse();
                 panel[0].baseUrl.setText("http://127.0.0.1:" + service.getAddress().getPort() + "/v1");
                 panel[0].apiKey.setText("sk-geheim");
@@ -295,6 +384,19 @@ class SettingDialogsTest {
         } finally {
             service.stop(0);
         }
+    }
+
+    private static void await(BooleanSupplier condition) throws Exception {
+        long until = System.currentTimeMillis() + 30_000;
+        boolean[] met = {false};
+        while (System.currentTimeMillis() < until) {
+            SwingUtilities.invokeAndWait(() -> met[0] = condition.getAsBoolean());
+            if (met[0]) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Bedingung nicht erfüllt");
     }
 
     private static void awaitFeedback(AiSettingsPanel panel, String expected) throws Exception {

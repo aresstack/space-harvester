@@ -525,6 +525,25 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Setzt Bezugsart und KeePass-Eintrag des KI-Keys ({@code space-harvester-app.ai-access},
+     * {@code .ai-keepass-entry}); das Geheimnis selbst steht nie in der Datei.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withAiAccess(Path file, Draft base, AiAccess access) {
+        String text = appValue(base.text(), "aiaccess", access.mode() == null ? null
+                : "ai-access: " + access.mode().key());
+        text = appValue(text, "aikeepassentry", access.entry() == null ? null
+                : "ai-keepass-entry: \"" + access.entry().replace("\\", "\\\\").replace("\"", "\\\"") + "\"");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.aiAccess().equals(access)) {
+            throw new IllegalArgumentException("Der Bezug des API-Keys ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.ai-access von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
     /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
     static String outputDirectory(String text, String directory) {
         return appValue(text, "outputdirectory", directory == null ? null

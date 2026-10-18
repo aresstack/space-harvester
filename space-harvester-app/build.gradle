@@ -19,6 +19,8 @@ dependencies {
     // Nur die Bibliothek, nie :space-harvester-server (#103)
     implementation project(':space-harvester-core')
     implementation project(':comic-controls')
+    // KeePass koppeln und Einträge lesen/anlegen wie im Enterprise AI Client; nur die App, nie der Core
+    implementation project(':enterprise-ai-keepass')
     implementation libs.snakeyaml
     implementation libs.jsoup
     // Eingebautes trust-bundle 'windows': JVM-Truststore plus Windows Root/CA wie im Enterprise AI Client
