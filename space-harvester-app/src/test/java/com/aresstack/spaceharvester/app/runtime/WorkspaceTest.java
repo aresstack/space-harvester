@@ -25,6 +25,7 @@ import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
 import java.io.InputStream;
@@ -207,11 +208,25 @@ class WorkspaceTest {
         secrets.put("neu", AppRuntime.SessionSecrets.login(SourceSettingsConfig.AuthType.PAT, null, "NEU_TOKEN"),
                 TOKEN.toCharArray());
         Path second = Files.createTempDirectory(home, "probe");
-        assertThat(AppRuntime.probe(draft.settings(), "neu", secrets, "test", second))
-                .extracting(Partition::key).containsExactly("DEV");
+        SourceManagement.ConnectionCheck check = AppRuntime.probe(draft.settings(), "neu", secrets, "test", second);
+        assertThat(check.successful()).as(check.message()).isTrue();
+        assertThat(check.partitions()).isEqualTo(1);
+        assertThat(check.message()).isEqualTo("Verbunden, 1 Space sichtbar");
         assertThat(second).doesNotExist();
         assertThat(Files.readString(config)).isEqualTo(before);
         assertThat(running.spaces("wiki")).extracting(Partition::key).containsExactly("DEV");
+    }
+
+    @Test
+    void removingASourceDropsItsCachedPagesInTheCore() throws Exception {
+        Workspace workspace = start().workspace();
+        assertThat(await(workspace, workspace.startSync("wiki", "DEV")).state()).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.cachedPages("wiki", "DEV", null, 100).pages()).hasSize(2);
+
+        assertThat(workspace.removeSource("wiki")).isTrue();
+
+        assertThat(workspace.sources()).extracting(HarvestSource::id).containsExactly("handbuch");
+        assertThat(workspace.removeSource("wiki")).isFalse();
     }
 
     @Test
