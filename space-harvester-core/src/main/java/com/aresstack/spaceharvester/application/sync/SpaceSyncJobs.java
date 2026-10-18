@@ -234,6 +234,36 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         });
     }
 
+    /**
+     * Vorschau eines Abgleichs in der Betriebsart {@code mode} ({@link SyncPreview}): Inventur und Einzelprüfungen
+     * fehlender Seiten, aber kein Laden und kein Schreiben. Läuft im Aufrufer, nicht als Auftrag.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    public SyncPreview preview(String sourceId, String spaceKey, SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        return SyncPreview.of(sync.plan(sourceId, spaceKey, mode));
+    }
+
+    /**
+     * Bestand des Space im Cache ({@link SpaceCatalog}), ohne Quellenzugriff; ohne Cache-Speicher
+     * {@link SpaceCatalog.State#UNKNOWN}.
+     */
+    public SpaceCatalog catalog(String sourceId, String spaceKey) {
+        if (store == null) {
+            return SpaceCatalog.of(sourceId, spaceKey, null, 0, 0);
+        }
+        return SpaceCatalog.of(sourceId, spaceKey, store.confirmed(sourceId, spaceKey).orElse(null),
+                store.catalogedPages(sourceId, spaceKey), store.knownPages(sourceId, spaceKey).size());
+    }
+
     /** Alle Spaces mit bestätigter Generation ({@link SyncBaselineStore#confirmedSpaces()}). */
     public List<SyncBaselineStore.SpaceRef> confirmedSpaces() {
         return store == null ? List.of() : store.confirmedSpaces();

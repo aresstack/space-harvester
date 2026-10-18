@@ -576,7 +576,11 @@ Version werden neu geladen, unbekannte nur in den Katalog übernommen, Seiten im
 (`summary.inventory: changes`). Kann die Quelle das nicht, läuft ein Abgleich ohne Erstbefüllung. Auf Wunsch holt der
 Dienst das beim Start für jeden Space mit bestätigter Generation nach (`space-harvester.sync.catch-up-on-start`,
 Standard `false`); ein Zeitplan holt ebenfalls nur nach. Alle Änderungsquellen sind optional: Ohne sie beschafft und
-aktualisiert die Suche die Seiten, die sie findet ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)).
+aktualisiert die Suche die Seiten, die sie findet ([ADR 0014](docs/adr/0014-abgleich-berechtigung-suche-getrennt.md)). Den Stand
+eines Space zeigt `GET /api/v1/sources/{sourceId}/spaces/{spaceKey}/catalog` ohne Quellenzugriff (`metadata`-Freigabe):
+Katalogstatus `unknown`, `partial` oder `cataloged`, bekannte Seiten, Seiten mit Inhalt, veraltete und zurückgehaltene
+sowie die bestätigte Generation. `GET …/sync-preview?mode=…` (`sync`-Freigabe) zeigt, was ein Abgleich ändern würde,
+ohne etwas zu schreiben; die Seiten-IDs nur mit `metadata`-Freigabe.
 
 **Exporte (#11, #12):** `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/exports` startet einen Export und
 antwortet sofort mit 202 und `Location: /api/v1/exports/{exportId}`. Ein vorheriger Abgleich ist nicht nötig: Liegt
