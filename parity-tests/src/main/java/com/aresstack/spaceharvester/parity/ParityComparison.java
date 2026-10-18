@@ -89,6 +89,35 @@ public final class ParityComparison {
     }
 
     /**
+     * Ausgeführte Makros im Export (#218): wie viele der Sätze, die nur ein ausgeführtes {@code include} oder
+     * {@code excerpt-include} in die Seite bringt, im Export stehen, und welche Makros der Core als nicht ausgeführt
+     * gemeldet hat ({@code OMITTED_CONTENT}). Der Enterprise AI Client meldet nichts; er schreibt die Ansicht.
+     *
+     * @param omitted die Meldungen des Core über nicht ausgeführte Makros, je eine Zeile
+     */
+    public static Finding macros(String format, DocumentOutline eac, DocumentOutline core, List<String> sentences,
+                                 List<String> omitted) {
+        long expected = sentences.stream().filter(sentence -> contains(eac, sentence)).count();
+        List<String> missing = sentences.stream().filter(sentence -> contains(eac, sentence)
+                && !contains(core, sentence)).toList();
+        long found = expected - missing.size();
+        List<String> problems = new ArrayList<>();
+        if (!missing.isEmpty()) {
+            problems.add("fehlt: " + listed(missing));
+        }
+        if (!omitted.isEmpty()) {
+            problems.add("nicht ausgeführt: " + listed(omitted));
+        }
+        return new Finding(format, "makros", "Ausgeführte Makros (include, excerpt-include, children)",
+                expected + " Sätze", found + " Sätze" + (omitted.isEmpty() ? "" : ", " + omitted.size() + " Hinweise"),
+                problems.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER, String.join("; ", problems));
+    }
+
+    private static boolean contains(DocumentOutline outline, String sentence) {
+        return outline.text().replaceAll("\\s+", " ").contains(sentence);
+    }
+
+    /**
      * Vergleicht die Leseansicht aller Seiten (#176): Seiten mit Ansicht, Lesetext (wie {@code text}) und Bilder.
      *
      * @param eac  Lesetext je Seite beim Enterprise AI Client
