@@ -78,6 +78,20 @@ class ParityComparisonTest {
         assertThat(findings.get(1).core()).isEqualTo("fehlt");
     }
 
+    @Test
+    void aMacroSentenceMissingOrReportedAsOmittedIsAGap() {
+        List<String> sentences = List.of("Satz Hotel.", "Satz India.");
+        DocumentOutline eac = outline("Satz Hotel. Satz  India.", 0, 0);
+
+        assertThat(ParityComparison.macros("md", eac, outline("Satz Hotel.\nSatz India.", 0, 0), sentences,
+                List.of()).verdict()).isEqualTo(Verdict.GLEICH);
+        Finding missing = ParityComparison.macros("md", eac, outline("Satz Hotel.", 0, 0), sentences, List.of());
+        assertThat(missing.verdict()).isEqualTo(Verdict.CORE_WENIGER);
+        assertThat(missing.detail()).contains("Satz India.");
+        assertThat(ParityComparison.macros("md", eac, eac, sentences, List.of("1009 children (not-collected)"))
+                .verdict()).isEqualTo(Verdict.CORE_WENIGER);
+    }
+
     private static DocumentOutline outline(String text, int images, int notes) {
         return new DocumentOutline("md", List.of(), false, false, false, 0, images, notes, List.of(), Set.of(), 0, 0,
                 text);

@@ -108,7 +108,7 @@ Nicht angebunden sind:
 | Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1` | SH+ |
 | Quelle nicht erreichbar → Cache-Stand | Prefetch | `PageQueries#page` liefert Cache bei `UNAVAILABLE`/`RATE_LIMITED` | gleich |
 | Text der Seite zum Lesen | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `ReadingViews` (#176): Lesetext aus `body.view` mit ausgeführten Makros | gleich (Vergleichstest Leseansicht) |
-| Ausgeführte Makros (`include`, `excerpt-include`, `children`) in Word, PDF und Markdown | über `body.view` im Export | Leseansicht im Datenbestand (`views/`, `export-reading-view/v1`, `ConversionInput#readingView`, Q #222), dann in den Konvertern (R) | in Arbeit → #218 |
+| Ausgeführte Makros (`include`, `excerpt-include`, `children`) in Word, PDF und Markdown | über `body.view` im Export | Leseansicht im Datenbestand (`views/`, `export-reading-view/v1`, `ConversionInput#readingView`, Q #222), in Word, PDF und Markdown aus der Leseansicht, ohne Quellabfrage (R #230); fehlt sie, Hinweis und `OMITTED_CONTENT` | gleich (Vergleichstest Makros) |
 | Text für die KI-Anreicherung | `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`) | gewollt anders: fremd gerendert eingebundene Inhalte wären in der gemeinsamen Anreicherung ein Rechteleck; wer die Seite lesen darf, bekommt den Lesetext über `ReadingViews` |
 
 ## 5. Cache
@@ -319,6 +319,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Externe Links | alle | Ziele des Maßstabs ⊆ Core |
 | Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
+| Ausgeführte Makros | alle (#218) | jeder Satz, den `include` oder `excerpt-include` aus einem anderen Space einsetzt, steht im Core; keine `OMITTED_CONTENT`-Meldung |
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
 | Quellenverwaltung | Szenario (#188) | je Schritt dasselbe Ergebnis: prüfen (vollständig, ohne Basis-URL, dasselbe Ziel doppelt), Verbindung testen (erreichbar, nicht erreichbar, unvollständig), hinzufügen, ändern mit und ohne neues Ziel (Daten bleiben bzw. werden zurückgezogen), abschalten, entfernen (Daten zurückgezogen, gemessen am Cache) |
