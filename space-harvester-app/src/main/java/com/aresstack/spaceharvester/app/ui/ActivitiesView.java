@@ -1,7 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
-import com.aresstack.enterpriseai.ui.comic.control.ComicSplitPane;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
@@ -17,8 +17,8 @@ import com.aresstack.spaceharvester.application.sync.Inventory;
 import com.aresstack.spaceharvester.application.sync.SyncSummary;
 
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.JComponent;
-import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -43,9 +43,13 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Aufträge: Abgleiche und Exporte dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Ein Lauf heißt
- * nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte, erscheint als
- * Warnung mit Grund.
+ * Aufträge: Abgleiche und Downloads dieser App mit Fortschritt, Ergebnis, Teilfehlern und Abbruch. Oben die
+ * Auftragsliste über die volle Breite, je Zeile rechtsbündig die Symbolaktionen ({@link RowActions}): Exportieren als
+ * PDF, Word, Markdown oder JSON (ein Klick erzeugt die Datei sofort), Diagnose, Inhalte, Löschen. Darunter links die
+ * Kachel „Auftrag“, rechts „Ergebnis“ und „Exportieren“ (Ausgabeordner, erzeugte Dateien, Hinweise). Der Fortschritt
+ * steht im globalen Balken über der Statusleiste ({@link #actions()}), mittig „Abbrechen“, danach der Endzustand. Ein
+ * Lauf heißt nur dann erfolgreich, wenn er vollständig ist; ein Abgleich, der keine Generation bestätigen konnte,
+ * erscheint als Warnung mit Grund.
  */
 public final class ActivitiesView implements View {
 
@@ -54,28 +58,37 @@ public final class ActivitiesView implements View {
     private final JobsModel model = new JobsModel();
     private final JTable table = Comic.table(new JTable(model));
     private final JLabel title = new JLabel("Kein Auftrag gewählt");
-    private final JProgressBar progress = new JProgressBar();
-    /** Leiste am unteren Rand mit dem Fortschritt. */
+    /** Der globale Fortschrittsbalken über der Statusleiste; darauf links der Schritt, mittig Abbrechen bzw. der Endzustand. */
+    final JProgressBar progress = new JProgressBar();
     private final JPanel progressBar = new JPanel(new BorderLayout());
+    final JLabel progressText = Comic.muted(" ");
+    /** Mittig im Balken: „Fertig“, „Abgebrochen“ oder „Fehlgeschlagen“, sobald der Auftrag endet. */
+    final JLabel endState = new JLabel(" ");
     private final Facts facts = new Facts();
     private final Facts result = new Facts();
     private final Feedback feedback = new Feedback();
-    private final ComposerButton cancel = Comic.danger("Abbrechen", "Auftrag abbrechen");
+    final ComposerButton cancel = Comic.danger("Abbrechen", "Auftrag abbrechen");
     private final ComposerButton again = Comic.button("Erneut abgleichen", "Denselben Space erneut abgleichen");
-    /** Karte „Exportieren als …“ eines fertigen Downloads: Formatwahl, Exportieren, Ausgabeordner. */
+    /** Kachel „Exportieren“ eines fertigen Downloads: Datenbestand, erzeugte Dateien, Ausgabeordner, Hinweise. */
     final JPanel card = new JPanel(new BorderLayout(0, 6));
     private final JComponent cardPlate;
+    private final JComponent details;
     private final JLabel cardTitle = new JLabel();
     private final JLabel cardLine = new JLabel();
     /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
     final JTextArea cardImages = Comic.note("");
-    final JComboBox<Format> format = Comic.combo();
-    final ComposerButton exportAs = Comic.primary("Exportieren", "Die Datei aus dem vorhandenen Datenbestand im "
-            + "Ausgabeordner erzeugen, ohne die Quelle erneut zu lesen");
+    /** Die Dateien dieses Downloads im Ausgabeordner und laufende Exporte, eine Zeile je Datei. */
+    final JTextArea files = Comic.note("");
     private final JLabel output = new JLabel();
     private final ComposerButton openOutput = Comic.button("Ordner öffnen", "Den Ausgabeordner anzeigen");
-    /** Datenbestand, den die Karte gerade zeigt; die Formatwahl bleibt beim Auffrischen erhalten. */
+    /** Datenbestand, den die Kachel gerade zeigt. */
     private ExportDatasetInfo shownDataset;
+    /** Datenbestand je fertigem Download, für die Format-Symbole in der Liste. */
+    private final Map<String, ExportDatasetInfo> datasets = new HashMap<>();
+    /** Dateien des gewählten Downloads im Ausgabeordner (Name enthält die Export-ID). */
+    private List<String> outputFiles = List.of();
+    /** Format, das je Download gerade erzeugt wird. */
+    private final Map<String, String> convertingFormat = new HashMap<>();
     /** Hinweise der letzten Konvertierung des gezeigten Downloads (fehlende Bilder, Diagramme …), aufklappbar. */
     final ComposerButton toggleNotices = Comic.button("Hinweise anzeigen", "Was in der Datei fehlt oder vereinfacht ist");
     final JTextArea noticeList = Comic.note("");
@@ -83,17 +96,15 @@ public final class ActivitiesView implements View {
     private final Map<String, ExportConversions.ConvertedFile> lastFile = new HashMap<>();
     /** Letzte Rückmeldung von „Exportieren“ je Download; sie bleibt stehen, während die Ansicht auffrischt. */
     private final Map<String, Consumer<Feedback>> converted = new HashMap<>();
-    /** Downloads, deren Konvertierung gerade läuft; ihr Knopf bleibt gesperrt. */
+    /** Downloads, deren Konvertierung gerade läuft; ihre Format-Symbole bleiben gesperrt. */
     private final Set<String> converting = new HashSet<>();
-    private final ComposerButton content = Comic.button("Inhalte öffnen", "Seiten dieses Space ansehen");
-    private final ComposerButton diagnosis = Comic.button("Diagnose ansehen", "Unter Status: Phasen, Fehlercode, "
-            + "HTTP-Status, Proxy-Route, TLS-Befund und Ausnahmekette dieses Auftrags");
-    final ComposerButton delete = Comic.button("Löschen …", "Diesen beendeten Auftrag samt Diagnose löschen");
     final ComposerButton deleteFinished = Comic.button("Abgeschlossene Aufträge löschen …",
             "Alle beendeten Aufträge samt Diagnose löschen; laufende bleiben");
     private final Timer timer = new Timer(1500, e -> poll());
     private String selectedId;
     private Object detail;
+    /** Der Auftrag, dem der globale Balken folgt; „Abbrechen“ bricht ihn ab. */
+    private JobStatus barJob;
     /** Jüngste Phase des gewählten Auftrags aus seiner Diagnose, solange er läuft; sonst {@code null}. */
     private String phase;
 
@@ -106,27 +117,28 @@ public final class ActivitiesView implements View {
                 select(model.rows.get(table.getSelectedRow()).id());
             }
         });
-        JPanel left = new JPanel(new BorderLayout(0, 6));
-        left.setBackground(Comic.SURFACE);
-        left.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 8));
-        left.add(Comic.caption("Aufträge dieser App"), BorderLayout.NORTH);
-        left.add(Comic.scroll(table), BorderLayout.CENTER);
-        JPanel leftSouth = new JPanel(new BorderLayout(0, 6));
-        leftSouth.setOpaque(false);
-        leftSouth.add(Comic.row(deleteFinished), BorderLayout.NORTH);
-        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Downloads unter Herunterladen. "
-                + "Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist endet oder sie gelöscht werden."),
-                BorderLayout.SOUTH);
-        left.add(leftSouth, BorderLayout.SOUTH);
+        RowActions.install(table, JobsModel.ACTIONS, 7, this::rowActions);
+        JPanel list = new JPanel(new BorderLayout(0, 6));
+        list.setBackground(Comic.SURFACE);
+        list.setBorder(BorderFactory.createEmptyBorder(12, 12, 8, 12));
+        JLabel hint = new JLabel(ComposerIcons.info());
+        hint.setToolTipText("<html>Abgleiche startest du unter Wissensquellen verwalten, Downloads im Explorer links "
+                + "(Rechtsklick oder Download-Symbol).<br>Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist "
+                + "endet oder sie gelöscht werden.</html>");
+        JPanel listHead = new JPanel(new BorderLayout(8, 0));
+        listHead.setOpaque(false);
+        listHead.add(Comic.row(Comic.caption("Aufträge dieser App"), hint), BorderLayout.WEST);
+        listHead.add(Comic.row(deleteFinished), BorderLayout.EAST);
+        list.add(listHead, BorderLayout.NORTH);
+        list.add(Comic.scroll(table), BorderLayout.CENTER);
 
         title.setFont(Comic.semiBold(17f));
         title.setForeground(Comic.INK);
-        progress.setStringPainted(true);
-        progress.setFont(Comic.regular(12f));
+        progress.setStringPainted(false);
         progress.setForeground(Comic.BLUE);
+        progress.setPreferredSize(new java.awt.Dimension(200, 26));
         cancel.addActionListener(e -> cancelSelected());
         again.addActionListener(e -> restart());
-        exportAs.addActionListener(e -> exportAs());
         openOutput.addActionListener(e -> {
             if (context.settings() != null) {
                 SettingsView.open(context.settings().outputDirectory(), feedback);
@@ -151,48 +163,105 @@ public final class ActivitiesView implements View {
             noticeList.setVisible(!noticeList.isVisible());
             renderNotices();
         });
-        JPanel actions = new JPanel(new BorderLayout(0, 4));
-        actions.setOpaque(false);
-        actions.add(Comic.row(format, exportAs, toggleNotices), BorderLayout.NORTH);
-        actions.add(noticeList, BorderLayout.CENTER);
-        card.add(actions, BorderLayout.CENTER);
+        JPanel produced = new JPanel(new BorderLayout(0, 4));
+        produced.setOpaque(false);
+        produced.add(files, BorderLayout.NORTH);
+        produced.add(Comic.row(toggleNotices), BorderLayout.CENTER);
+        produced.add(noticeList, BorderLayout.SOUTH);
+        card.add(produced, BorderLayout.CENTER);
         card.add(Comic.row(output, openOutput), BorderLayout.SOUTH);
-        content.addActionListener(e -> currentStatus().ifPresent(s ->
-                context.navigator().openSpace(s.sourceId(), s.partitionKey())));
-        diagnosis.addActionListener(e -> currentStatus().ifPresent(s -> context.navigator().showDiagnosis(s.id())));
-        delete.addActionListener(e -> deleteSelected());
         deleteFinished.addActionListener(e -> deleteFinished());
 
-        JPanel head = new JPanel(new BorderLayout(0, 8));
+        JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
-        head.add(title, BorderLayout.NORTH);
-        JPanel south = new JPanel(new BorderLayout(0, 6));
-        south.setOpaque(false);
-        south.add(Comic.row(diagnosis, cancel, again, content, delete), BorderLayout.NORTH);
-        south.add(feedback, BorderLayout.SOUTH);
-        head.add(south, BorderLayout.SOUTH);
+        JPanel titleRow = new JPanel(new BorderLayout(8, 0));
+        titleRow.setOpaque(false);
+        titleRow.add(title, BorderLayout.CENTER);
+        titleRow.add(Comic.row(again), BorderLayout.EAST);
+        head.add(titleRow, BorderLayout.NORTH);
+        head.add(feedback, BorderLayout.SOUTH);
 
-        JPanel right = new JPanel(new BorderLayout());
-        right.setBackground(Comic.SURFACE);
-        cardPlate = Comic.plate("Exportieren als …", Comic.GREEN, card);
+        cardPlate = Comic.plate("Exportieren", Comic.GREEN, card);
         cardPlate.setVisible(false);
-        right.add(Comic.column(head, cardPlate, Comic.plate("Auftrag", Comic.PETROL, facts),
-                Comic.plate("Ergebnis", Comic.ORANGE, result)), BorderLayout.CENTER);
-        // Der Fortschritt klebt am unteren Rand und bleibt sichtbar, während die Details darüber scrollen.
-        JPanel bottom = progressBar;
-        bottom.setBackground(Comic.SURFACE);
-        bottom.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Comic.LINE),
-                BorderFactory.createEmptyBorder(8, 14, 10, 14)));
-        bottom.add(progress, BorderLayout.CENTER);
-        right.add(bottom, BorderLayout.SOUTH);
-        root.add(new ComicSplitPane(left, right, 320, 700), BorderLayout.CENTER);
+        JPanel tiles = new JPanel(new java.awt.GridLayout(1, 2, 12, 0));
+        tiles.setOpaque(false);
+        tiles.add(stack(Comic.plate("Auftrag", Comic.PETROL, facts)));
+        tiles.add(stack(Comic.plate("Ergebnis", Comic.ORANGE, result), cardPlate));
+        JPanel details = new JPanel(new BorderLayout(0, 8));
+        details.setOpaque(false);
+        details.setBorder(BorderFactory.createEmptyBorder(4, 12, 12, 12));
+        details.add(head, BorderLayout.NORTH);
+        details.add(tiles, BorderLayout.CENTER);
+        this.details = details;
+
+        javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, list,
+                Comic.column(details));
+        split.setBorder(BorderFactory.createEmptyBorder());
+        split.setBackground(Comic.SURFACE);
+        split.setResizeWeight(0.4);
+        split.setDividerLocation(260);
+        split.setContinuousLayout(true);
+        root.add(split, BorderLayout.CENTER);
+
+        // Der globale Balken: links der Schritt, mittig Abbrechen bzw. der Endzustand, beides über dem Balken.
+        endState.setFont(Comic.semiBold(13f));
+        endState.setForeground(Comic.INK);
+        endState.setVisible(false);
+        JPanel center = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.CENTER, 0, 0));
+        center.setOpaque(false);
+        center.add(cancel);
+        center.add(endState);
+        JPanel overlay = new JPanel(new BorderLayout());
+        overlay.setOpaque(false);
+        overlay.setBorder(BorderFactory.createEmptyBorder(0, 10, 0, 10));
+        overlay.add(progressText, BorderLayout.WEST);
+        overlay.add(center, BorderLayout.CENTER);
+        JPanel layered = new JPanel();
+        layered.setOpaque(false);
+        layered.setLayout(new javax.swing.OverlayLayout(layered));
+        overlay.setAlignmentX(0.5f);
+        overlay.setAlignmentY(0.5f);
+        progress.setAlignmentX(0.5f);
+        progress.setAlignmentY(0.5f);
+        overlay.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        progress.setMaximumSize(new java.awt.Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
+        layered.add(overlay);
+        layered.add(progress);
+        progressBar.setOpaque(false);
+        progressBar.add(layered, BorderLayout.CENTER);
+        progressText.setText("Kein Auftrag läuft");
+        cancel.setVisible(false);
         updateButtons();
         context.onChange(ignored -> poll());
+    }
+
+    /** Platten untereinander, oben ausgerichtet; die Kacheln teilen sich einen Bildlauf statt je einen eigenen. */
+    private static JComponent stack(JComponent... plates) {
+        JPanel stack = new JPanel(new java.awt.GridBagLayout());
+        stack.setOpaque(false);
+        java.awt.GridBagConstraints c = new java.awt.GridBagConstraints();
+        c.gridx = 0;
+        c.weightx = 1;
+        c.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        c.anchor = java.awt.GridBagConstraints.NORTH;
+        c.insets = new java.awt.Insets(0, 0, 12, 0);
+        for (JComponent plate : plates) {
+            stack.add(plate, c);
+        }
+        c.weighty = 1;
+        stack.add(Box.createVerticalGlue(), c);
+        return stack;
     }
 
     @Override
     public JComponent component() {
         return root;
+    }
+
+    /** Der globale Fortschrittsbalken; das Hauptfenster zeigt ihn in jedem Bereich ohne eigene Aktionszeile. */
+    @Override
+    public JComponent actions() {
+        return progressBar;
     }
 
     @Override
@@ -215,10 +284,20 @@ public final class ActivitiesView implements View {
             return;
         }
         String id = selectedId;
+        Set<String> known = Set.copyOf(datasets.keySet());
+        Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         Background.run(() -> {
             List<JobStatus> jobs = runtime.workspace().jobs();
+            // Datenbestand je fertigem Download einmal holen, für die Format-Symbole der Liste.
+            Map<String, ExportDatasetInfo> found = new HashMap<>();
+            for (JobStatus job : jobs) {
+                if (job.type() == JobType.EXPORT && job.state() == JobState.COMPLETED && !known.contains(job.id())) {
+                    runtime.workspace().exportDataset(job.id()).ifPresent(info -> found.put(job.id(), info));
+                }
+            }
             Object current = null;
             String currentPhase = null;
+            List<String> produced = List.of();
             if (id != null) {
                 JobStatus status = runtime.workspace().job(id);
                 if (!status.state().terminal()) {
@@ -227,20 +306,39 @@ public final class ActivitiesView implements View {
                 }
                 current = status.type() == JobType.SYNC ? runtime.workspace().syncStatus(id) : status;
                 if (status.type() == JobType.EXPORT && status.state() == JobState.COMPLETED) {
-                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null),
-                            runtime.workspace().exportDataset(id).orElse(null));
+                    ExportDatasetInfo dataset = runtime.workspace().exportDataset(id).orElse(null);
+                    current = new ExportDetail(status, runtime.workspace().exportArtifact(id).orElse(null), dataset);
+                    if (dataset != null) {
+                        found.put(id, dataset);
+                    }
+                    produced = outputFiles(directory, id);
                 }
+            } else {
+                // Ohne Auswahl folgt der globale Balken dem jüngsten laufenden Auftrag.
+                current = jobs.stream().filter(j -> !j.state().terminal()).findFirst().orElse(null);
             }
-            return new Object[] {jobs, current, currentPhase};
+            return new Object[] {jobs, current, currentPhase, found, produced};
         }, data -> {
             @SuppressWarnings("unchecked")
             List<JobStatus> jobs = (List<JobStatus>) data[0];
+            @SuppressWarnings("unchecked")
+            Map<String, ExportDatasetInfo> found = (Map<String, ExportDatasetInfo>) data[3];
+            datasets.putAll(found);
+            datasets.keySet().retainAll(jobs.stream().map(JobStatus::id).collect(java.util.stream.Collectors.toSet()));
             model.set(jobs);
             deleteFinished.setEnabled(jobs.stream().anyMatch(j -> j.state().terminal()));
             reselect();
             // Ein Abruf für einen inzwischen abgewählten Auftrag zeigt nichts mehr an.
             if (java.util.Objects.equals(id, selectedId)) {
-                detail = data[1];
+                @SuppressWarnings("unchecked")
+                List<String> produced = (List<String>) data[4];
+                outputFiles = produced;
+                if (id == null) {
+                    detail = null;
+                    renderBar(data[1] instanceof JobStatus running ? running : null);
+                } else {
+                    detail = data[1];
+                }
                 phase = (String) data[2];
                 render();
             }
@@ -254,12 +352,79 @@ public final class ActivitiesView implements View {
         });
     }
 
+    /**
+     * Dateien dieses Downloads im Ausgabeordner, neueste zuerst: Name {@code <Space>-<erste 8 Zeichen der
+     * Export-ID>[-n].<Endung>} wie {@code ExportConversions}; halbfertige {@code .part}-Dateien zählen nicht.
+     */
+    static List<String> outputFiles(Path directory, String exportId) {
+        if (directory == null || !java.nio.file.Files.isDirectory(directory)) {
+            return List.of();
+        }
+        String mark = "-" + exportId.substring(0, Math.min(8, exportId.length()));
+        try (java.util.stream.Stream<Path> entries = java.nio.file.Files.list(directory)) {
+            return entries.filter(java.nio.file.Files::isRegularFile)
+                    .filter(file -> !file.getFileName().toString().startsWith(".")
+                            && file.getFileName().toString().contains(mark))
+                    .sorted(Comparator.comparing((Path file) -> file.toFile().lastModified()).reversed())
+                    .map(file -> file.getFileName().toString()).toList();
+        } catch (java.io.IOException e) {
+            return List.of();
+        }
+    }
+
+    /**
+     * Der globale Balken für diesen Auftrag: während er läuft der Schritt links und mittig „Abbrechen“, danach mittig
+     * der Endzustand; ohne Auftrag „Kein Auftrag läuft“.
+     */
+    private void renderBar(JobStatus status) {
+        barJob = status;
+        if (status == null) {
+            progress.setIndeterminate(false);
+            progress.setValue(0);
+            progressText.setText("Kein Auftrag läuft");
+            cancel.setVisible(false);
+            endState.setVisible(false);
+            return;
+        }
+        JobProgress p = status.progress();
+        Step step = Step.of(status.type(), phase, p);
+        boolean running = !status.state().terminal();
+        String subject = Texts.type(status.type()) + " " + status.partitionKey();
+        if (status.state() == JobState.RUNNING && step.total() > 0) {
+            progress.setIndeterminate(false);
+            progress.setMaximum((int) Math.min(Integer.MAX_VALUE, step.total()));
+            progress.setValue((int) Math.min(Integer.MAX_VALUE, step.done()));
+            progressText.setText(subject + " · " + step.text());
+        } else {
+            progress.setIndeterminate(running);
+            progress.setMaximum(1);
+            // Nach dem Ende bleibt die Spur leer, damit der Endzustand mittig gut lesbar ist.
+            progress.setValue(0);
+            String state = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
+            progressText.setText(subject + (running ? " · " + state : ""));
+        }
+        cancel.setVisible(running);
+        cancel.setEnabled(running && !status.cancelRequested());
+        cancel.setText(status.cancelRequested() ? "Abbruch angefordert" : "Abbrechen");
+        endState.setVisible(!running);
+        endState.setText(switch (status.state()) {
+            case COMPLETED -> "Fertig";
+            case CANCELLED -> "Abgebrochen";
+            case FAILED -> "Fehlgeschlagen";
+            default -> Texts.state(status.state());
+        });
+        endState.setForeground(status.state() == JobState.COMPLETED ? Comic.GREEN
+                : status.state() == JobState.FAILED ? Comic.RED : Comic.ORANGE);
+    }
+
     private void select(String id) {
         if (!id.equals(selectedId)) {
             selectedId = id;
             detail = null;
             // Die Karte gehört zum bisherigen Auftrag: sofort ausblenden, nicht erst nach dem nächsten Abruf.
             renderCard();
+            details.revalidate();
+            details.repaint();
             feedback.clear();
             poll();
         }
@@ -292,29 +457,16 @@ public final class ActivitiesView implements View {
         result.reset();
         if (current.isEmpty()) {
             title.setText(model.rows.isEmpty() ? "Noch keine Aufträge" : "Kein Auftrag gewählt");
-            progressBar.setVisible(false);
             renderCard();
+            details.revalidate();
+            details.repaint();
             updateButtons();
             return;
         }
         JobStatus status = current.get();
         title.setText(Texts.type(status.type()) + " " + status.sourceId() + " / " + status.partitionKey());
         JobProgress p = status.progress();
-        progressBar.setVisible(true);
-        Step step = Step.of(status.type(), phase, p);
-        if (status.state() == JobState.RUNNING && step.total() > 0) {
-            progress.setIndeterminate(false);
-            progress.setMaximum((int) Math.min(Integer.MAX_VALUE, step.total()));
-            progress.setValue((int) Math.min(Integer.MAX_VALUE, step.done()));
-            progress.setString(step.text() + (status.cancelRequested() ? " · Abbruch angefordert" : ""));
-        } else {
-            progress.setIndeterminate(!status.state().terminal());
-            progress.setMaximum(1);
-            progress.setValue(status.state().terminal() ? 1 : 0);
-            String running = status.state() == JobState.RUNNING && phase != null ? phase : Texts.state(status.state());
-            progress.setString(running + (status.cancelRequested() && !status.state().terminal()
-                    ? " · Abbruch angefordert" : ""));
-        }
+        renderBar(status);
         Counters counters = Counters.of(status.type());
         facts.add("Zustand", Texts.state(status.state()), Comic.tone(Texts.tone(status.state())))
                 .add("Quelle", status.sourceId())
@@ -342,6 +494,8 @@ public final class ActivitiesView implements View {
             renderTerminal(status, true);
         }
         renderCard();
+        details.revalidate();
+        details.repaint();
         updateButtons();
         root.revalidate();
     }
@@ -437,7 +591,7 @@ public final class ActivitiesView implements View {
         }
     }
 
-    /** Zeigt die Karte „Exportieren als …“, solange der gewählte Download einen Datenbestand hat. */
+    /** Zeigt die Kachel „Exportieren“, solange der gewählte Download einen Datenbestand hat. */
     private void renderCard() {
         ExportDatasetInfo dataset = detail instanceof ExportDetail export ? export.dataset() : null;
         cardPlate.setVisible(dataset != null);
@@ -448,10 +602,10 @@ public final class ActivitiesView implements View {
         Path directory = context.settings() == null ? null : context.settings().outputDirectory();
         output.setText("Ausgabeordner: " + (directory == null ? "–" : name(directory)));
         output.setToolTipText(directory == null ? null : directory.toString());
+        renderFiles(dataset.exportId());
         if (dataset.equals(shownDataset)) {
             return;
         }
-        boolean sameFormats = shownDataset != null && shownDataset.formats().equals(dataset.formats());
         boolean otherDownload = shownDataset == null || !shownDataset.exportId().equals(dataset.exportId());
         shownDataset = dataset;
         if (otherDownload) {
@@ -463,36 +617,55 @@ public final class ActivitiesView implements View {
         cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
         cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
                 + (dataset.complete() ? "" : " · unvollständig"));
-        if (!sameFormats) {
-            format.removeAllItems();
-            Format.ordered(dataset.formats()).forEach(format::addItem);
-        }
-        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(dataset.exportId()));
     }
 
-    private void exportAs() {
-        AppRuntime runtime = context.runtime();
-        Format chosen = (Format) format.getSelectedItem();
-        if (runtime == null || chosen == null || shownDataset == null || context.settings() == null
-                || !shownDataset.exportId().equals(selectedId)) {
-            return;
+    /** Erzeugte Dateien und ein laufender Export des gezeigten Downloads. */
+    private void renderFiles(String exportId) {
+        StringBuilder text = new StringBuilder();
+        String running = convertingFormat.get(exportId);
+        if (running != null) {
+            text.append(Format.title(running)).append(": wird erzeugt …");
         }
-        String exportId = shownDataset.exportId();
-        if (!converting.add(exportId)) {
+        for (String name : outputFiles) {
+            if (!text.isEmpty()) {
+                text.append('\n');
+            }
+            text.append(name);
+        }
+        files.setText(text.isEmpty() ? "Noch nichts exportiert; die Format-Symbole in der Liste erzeugen die Datei."
+                : text.toString());
+        files.setForeground(text.isEmpty() ? Comic.MUTED : Comic.INK);
+    }
+
+    /**
+     * Exportiert einen fertigen Download sofort im Format (Symbol in der Liste): die Datei entsteht aus dem
+     * vorhandenen Datenbestand im Ausgabeordner, ohne die Quelle erneut zu lesen. Je Download läuft höchstens ein
+     * Export; weitere Klicks sind gesperrt, bis er endet.
+     */
+    void exportAs(String exportId, String format) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || context.settings() == null || !converting.add(exportId)) {
             return;
         }
         Path directory = context.settings().outputDirectory();
-        exportAs.setEnabled(false);
-        showConverted(exportId, f -> f.working(chosen.title() + " wird erzeugt …"));
-        Background.run(() -> runtime.workspace().convertExport(exportId, chosen.id(), directory), file -> {
+        convertingFormat.put(exportId, format);
+        select(exportId);
+        table.repaint();
+        showConverted(exportId, f -> f.working(Format.title(format) + " wird erzeugt …"));
+        Background.run(() -> runtime.workspace().convertExport(exportId, format, directory), file -> {
             converting.remove(exportId);
+            convertingFormat.remove(exportId);
+            table.repaint();
             lastFile.put(exportId, file);
             String notices = file.noticeCount() == 0 ? ""
                     : ", " + Texts.count(file.noticeCount(), "Hinweis", "Hinweise");
             showConverted(exportId, f -> f.success(file.path().getFileName() + " gespeichert in " + name(directory)
                     + notices));
+            poll();
         }, error -> {
             converting.remove(exportId);
+            convertingFormat.remove(exportId);
+            table.repaint();
             showConverted(exportId, f -> f.problem(error));
         });
     }
@@ -503,7 +676,7 @@ public final class ActivitiesView implements View {
         if (shownDataset == null || !shownDataset.exportId().equals(exportId)) {
             return;
         }
-        exportAs.setEnabled(format.getItemCount() > 0 && !converting.contains(exportId));
+        renderFiles(exportId);
         noticeList.setVisible(false);
         renderNotices();
         show.accept(feedback);
@@ -600,6 +773,10 @@ public final class ActivitiesView implements View {
         private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
                 "markdown", "Markdown", "json", "JSON");
 
+        static String title(String format) {
+            return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
+        }
+
         static List<Format> ordered(List<String> formats) {
             return formats.stream().sorted(Comparator.comparingInt((String f) -> ORDER.contains(f) ? ORDER.indexOf(f)
                     : ORDER.size())).map(f -> new Format(f, TITLES.getOrDefault(f, f.toUpperCase(Locale.ROOT))))
@@ -615,27 +792,85 @@ public final class ActivitiesView implements View {
     private void updateButtons() {
         Optional<JobStatus> current = currentStatus();
         boolean running = current.map(s -> !s.state().terminal()).orElse(false);
-        cancel.setEnabled(running && !current.get().cancelRequested());
         again.setVisible(current.map(s -> s.type() == JobType.SYNC).orElse(false));
         again.setEnabled(!running);
-        content.setEnabled(current.isPresent());
-        diagnosis.setEnabled(current.isPresent());
-        // Laufende Aufträge erst abbrechen; gelöscht wird nur, was beendet ist.
-        delete.setEnabled(current.isPresent() && !running);
-        delete.setToolTipText(running ? "Läuft noch: erst abbrechen, dann löschen"
-                : "Diesen beendeten Auftrag samt Diagnose löschen");
-        // Ein gescheiterter Auftrag führt zuerst zu seiner Diagnose.
-        boolean failed = current.map(s -> s.state() == JobState.FAILED).orElse(false);
-        diagnosis.setText(failed ? "Fehler diagnostizieren" : "Diagnose ansehen");
+    }
+
+    /** Formate der Symbole in der Liste, in der Reihenfolge aus Angelos Skizze. */
+    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json");
+    private static final Map<String, String> EXPORT_TIPS = Map.of("pdf", "Als PDF exportieren", "docx",
+            "Als Word-Dokument exportieren", "markdown", "Als Markdown exportieren", "json", "Als JSON exportieren");
+    private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
+            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json", FormatIcon.of("json"));
+    private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
+    private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
+
+    /** Die sieben Aktionen einer Zeile: vier Formate, Diagnose, Inhalte, Löschen. */
+    private List<RowActions.Action> rowActions(int index) {
+        if (index < 0 || index >= model.rows.size()) {
+            return List.of();
+        }
+        JobStatus job = model.rows.get(index);
+        boolean running = !job.state().terminal();
+        List<RowActions.Action> actions = new ArrayList<>();
+        for (String format : FORMATS) {
+            String blocked = exportBlocked(job, format);
+            actions.add(new RowActions.Action(FORMAT_ICONS.get(format), blocked == null ? EXPORT_TIPS.get(format)
+                    : EXPORT_TIPS.get(format) + " · " + blocked, blocked == null, () -> exportAs(job.id(), format)));
+        }
+        boolean failed = job.state() == JobState.FAILED;
+        actions.add(new RowActions.Action(DIAGNOSIS, failed ? "Fehler diagnostizieren" : "Diagnose ansehen", true,
+                () -> context.navigator().showDiagnosis(job.id())));
+        boolean space = job.sourceId() != null && job.partitionKey() != null;
+        actions.add(new RowActions.Action(CONTENT, space ? "Inhalte öffnen" : "Inhalte öffnen · kein Space", space,
+                () -> context.navigator().openSpace(job.sourceId(), job.partitionKey())));
+        actions.add(new RowActions.Action(Glyph.TRASH, running ? "Auftrag löschen · läuft noch, erst abbrechen"
+                : "Auftrag löschen", !running, () -> deleteJob(job)));
+        return actions;
+    }
+
+    /** Für Tests. */
+    JTable table() {
+        return table;
+    }
+
+    /** Für Tests: ob das Format-Symbol dieses Auftrags in der Liste anklickbar ist, sonst der Grund. */
+    String exportBlocked(String jobId, String format) {
+        for (JobStatus job : model.rows) {
+            if (job.id().equals(jobId)) {
+                return exportBlocked(job, format);
+            }
+        }
+        return "unbekannter Auftrag";
+    }
+
+    /** Warum dieses Format für den Auftrag gerade nicht geht, oder {@code null}. */
+    private String exportBlocked(JobStatus job, String format) {
+        if (job.type() != JobType.EXPORT) {
+            return "nur für Downloads";
+        }
+        if (!job.state().terminal()) {
+            return "Download läuft noch";
+        }
+        if (job.state() != JobState.COMPLETED) {
+            return "Download nicht abgeschlossen";
+        }
+        if (converting.contains(job.id())) {
+            return Format.title(convertingFormat.getOrDefault(job.id(), format)) + " wird gerade erzeugt";
+        }
+        ExportDatasetInfo dataset = datasets.get(job.id());
+        if (dataset == null) {
+            return "kein Datenbestand vorhanden";
+        }
+        return dataset.formats().contains(format) ? null : "Format nicht angeboten";
     }
 
     private void cancelSelected() {
         AppRuntime runtime = context.runtime();
-        Optional<JobStatus> current = currentStatus();
-        if (runtime == null || current.isEmpty()) {
+        JobStatus status = barJob;
+        if (runtime == null || status == null || status.state().terminal()) {
             return;
         }
-        JobStatus status = current.get();
         if (!Dialogs.confirm(root, "Auftrag abbrechen?", Texts.type(status.type()) + " von " + status.partitionKey()
                 + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
             return;
@@ -696,22 +931,23 @@ public final class ActivitiesView implements View {
     static final String KEPT = "Dateien im Ausgabeordner und der Seitenbestand bleiben erhalten; der JSON-Datenbestand "
             + "des Downloads verschwindet mit dem Auftrag.";
 
-    private void deleteSelected() {
+    /** Löscht einen beendeten Auftrag samt Diagnose nach Rückfrage (Symbol in der Liste). */
+    private void deleteJob(JobStatus status) {
         AppRuntime runtime = context.runtime();
-        Optional<JobStatus> current = currentStatus();
-        if (runtime == null || current.isEmpty() || !current.get().state().terminal()) {
+        if (runtime == null || !status.state().terminal()) {
             return;
         }
-        JobStatus status = current.get();
         if (!Dialogs.confirm(root, "Auftrag löschen?", Texts.type(status.type()) + " von " + status.partitionKey()
                 + " und seine Diagnoseereignisse werden dauerhaft gelöscht. " + KEPT, "Löschen")) {
             return;
         }
         Background.execute(() -> runtime.workspace().deleteJob(status.id()), () -> {
-            selectedId = null;
-            detail = null;
-            table.clearSelection();
-            render();
+            if (status.id().equals(selectedId)) {
+                selectedId = null;
+                detail = null;
+                table.clearSelection();
+                render();
+            }
             feedback.success("Auftrag gelöscht");
             poll();
         }, feedback::problem);
@@ -761,7 +997,8 @@ public final class ActivitiesView implements View {
 
     private static final class JobsModel extends AbstractTableModel {
 
-        private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt"};
+        static final int ACTIONS = 5;
+        private static final String[] COLUMNS = {"Art", "Quelle / Space", "Zustand", "Fortschritt", "Angelegt", ""};
         private List<JobStatus> rows = new ArrayList<>();
 
         void set(List<JobStatus> jobs) {
@@ -794,7 +1031,8 @@ public final class ActivitiesView implements View {
                 case 3 -> (status.type() == JobType.EXPORT ? status.progress().written() : status.progress().processed())
                         + "/" + status.progress().discovered()
                         + (status.progress().failed() > 0 ? " · " + status.progress().failed() + " Fehler" : "");
-                default -> Texts.time(status.createdAt());
+                case 4 -> Texts.time(status.createdAt());
+                default -> "";
             };
         }
     }

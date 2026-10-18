@@ -94,10 +94,10 @@ public final class SourcesView implements View {
     private final TableRowSorter<SpacesModel> sorter = new TableRowSorter<>(spacesModel);
     private final JTextField filter = Comic.field(14);
     private final JLabel spacesHint = Comic.muted(" ");
-    final ComposerButton exportAll = Comic.button("Alle herunterladen …",
-            "Herunterladen mit allen Spaces dieser Quelle vorbelegt öffnen");
-    final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen …",
-            "Herunterladen mit den angehakten Spaces vorbelegt öffnen");
+    final ComposerButton exportAll = Comic.button("Alle herunterladen",
+            "Je Space dieser Quelle sofort einen Download starten; exportiert wird unter Aufträge");
+    final ComposerButton exportMarked = Comic.button("Ausgewählte herunterladen",
+            "Je angehaktem Space sofort einen Download starten; exportiert wird unter Aufträge");
     /** Kreispfeil am Space: vollständiger Abgleich des gewählten bzw. der angehakten Spaces, sofort angewendet. */
     final ComposerButton reconcile = Comic.button(Glyph.REFRESH, "Bestand abgleichen",
             "Gewählten Space (oder alle angehakten) vollständig mit der Quelle abgleichen: neue Seiten aufnehmen, "
@@ -163,7 +163,7 @@ public final class SourcesView implements View {
         // Derselbe runde Knopf wie an den Einstellungen, je Zeile mit Export-Symbol; der Rand erscheint beim
         // Darüberfahren.
         spaces.getColumnModel().getColumn(SpacesModel.EXPORT).setCellRenderer(new RowButton(Glyph.EXPORT,
-                "Herunterladen mit diesem Space vorbelegt öffnen", () -> hoverRow));
+                "Diesen Space herunterladen (Auftrag startet sofort)", () -> hoverRow));
         spaces.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
             public void mouseMoved(MouseEvent e) {
@@ -971,18 +971,18 @@ public final class SourcesView implements View {
         }
     }
 
-    /** Öffnet Herunterladen mit dieser Quelle und diesen Spaces; gestartet wird erst dort. */
+    /** Startet je Space sofort einen Download dieser Quelle ({@link Downloads}). */
     private void exportSpaces(List<String> keys) {
         String id = selectedId();
         if (id != null && !keys.isEmpty()) {
-            context.navigator().prepareExport(id, keys);
+            context.navigator().download(id, keys);
         }
     }
 
     private void updateExportButtons() {
         int marked = spacesModel.marked().size();
         exportMarked.setEnabled(marked > 0);
-        exportMarked.setText(marked == 0 ? "Ausgewählte exportieren …" : "Ausgewählte exportieren (" + marked + ") …");
+        exportMarked.setText(marked == 0 ? "Ausgewählte herunterladen" : "Ausgewählte herunterladen (" + marked + ")");
         exportAll.setEnabled(!spacesModel.rows.isEmpty());
     }
 
@@ -1166,11 +1166,10 @@ public final class SourcesView implements View {
             check.setEnabled(running && context.connection(entry.id()).state() != AppContext.Connection.State.CHECKING);
             check.addActionListener(e -> SourcesView.this.check(entry));
             menu.add(check);
-            JMenuItem export = new JMenuItem("Herunterladen …");
-            export.setToolTipText("Export vorbereiten, mit dem gewählten Space");
+            JMenuItem export = new JMenuItem("Herunterladen");
+            export.setToolTipText("Je Space dieser Quelle sofort einen Download starten");
             export.setEnabled(running);
-            export.addActionListener(e -> context.navigator().prepareExport(entry.id(),
-                    selectedSpace().map(Partition::key).orElse(null)));
+            export.addActionListener(e -> context.navigator().download(entry.id(), List.of()));
             menu.add(export);
             JMenuItem toggle = new JMenuItem(off ? "Einschalten" : "Abschalten …");
             toggle.setToolTipText(off ? "Die Quelle wieder suchen, lesen und abgleichen"
@@ -1330,20 +1329,7 @@ public final class SourcesView implements View {
             graphics.setColor(getBackground());
             graphics.fillRect(0, 0, getWidth(), getHeight());
             if (hover) {
-                java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
-                try {
-                    g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
-                            java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
-                    int size = Math.min(26, getHeight() - 1);
-                    int x = (getWidth() - size) / 2;
-                    int y = (getHeight() - size) / 2;
-                    g.setColor(new java.awt.Color(255, 255, 255, 170));
-                    g.fillOval(x, y, size - 1, size - 1);
-                    g.setColor(Comic.INK);
-                    g.drawOval(x, y, size - 1, size - 1);
-                } finally {
-                    g.dispose();
-                }
+                RoundHover.paint(graphics, 0, 0, getWidth(), getHeight(), false);
             }
             Glyph glyph = (Glyph) getIcon();
             glyph.paintIcon(this, graphics, (getWidth() - glyph.getIconWidth()) / 2,

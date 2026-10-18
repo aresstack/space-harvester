@@ -62,27 +62,28 @@ class ExportCardTest {
         Workspace workspace = context.runtime().workspace();
         await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
         String space = workspace.spaces("handbuch").get(0).key();
-        String job = workspace.startExport("handbuch", space, List.of(ExportsView.DEFAULT_FORMAT)).id();
+        String job = workspace.startExport("handbuch", space, List.of(Downloads.FORMAT)).id();
 
         ActivitiesView[] view = new ActivitiesView[1];
         SwingUtilities.invokeAndWait(() -> {
             view[0] = new ActivitiesView(context);
             view[0].show(job);
         });
-        await(() -> view[0].card.isShowing() || view[0].format.getItemCount() > 0);
+        // Ein Klick auf das Format-Symbol der Zeile exportiert sofort; ohne Formatwahl und ohne Knopf.
+        await(() -> view[0].exportBlocked(job, "markdown") == null);
         SwingUtilities.invokeAndWait(() -> {
-            assertThat(view[0].format.getItemAt(0).title()).isEqualTo("PDF-Dokument");
-            for (int i = 0; i < view[0].format.getItemCount(); i++) {
-                if (view[0].format.getItemAt(i).id().equals("markdown")) {
-                    view[0].format.setSelectedIndex(i);
-                }
-            }
-            view[0].exportAs.doClick();
+            assertThat(view[0].exportBlocked(job, "pdf")).isNull();
+            view[0].exportAs(job, "markdown");
+            assertThat(view[0].exportBlocked(job, "pdf")).as("ein Export je Download zugleich")
+                    .contains("wird gerade erzeugt");
         });
         await(() -> Files.isDirectory(out) && list(out).stream().anyMatch(p -> p.toString().endsWith(".md")));
         // Nur die gewünschte Datei, keine technischen Dateien wie pages.json oder tree.json.
         assertThat(list(out)).singleElement().satisfies(p ->
                 assertThat(p.getFileName().toString()).startsWith(space).endsWith(".md"));
+        // Die Kachel „Exportieren“ listet die erzeugte Datei.
+        await(() -> view[0].files.getText().contains(".md"));
+        await(() -> view[0].exportBlocked(job, "pdf") == null);
     }
 
     @Test

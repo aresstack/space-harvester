@@ -29,8 +29,6 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import javax.swing.AbstractButton;
-import javax.swing.JCheckBox;
-import javax.swing.JComboBox;
 import javax.swing.JTable;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
@@ -69,8 +67,8 @@ class SearchViewTest {
             view[0] = new SearchView(context);
             view[0].search("betrieb");
         });
-        JTable table = find(view[0].component(), JTable.class).get(0);
-        AbstractButton more = button(view[0].component(), "Weitere laden");
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
         // ADR 0013: Die Quellen finden, die Seiten werden in den Cache geladen, Treffer kommen aus dem Cache. Was beim
         // Antworten noch lädt, kommt über „Weitere laden“.
         await(() -> table.getRowCount() > 0);
@@ -134,8 +132,8 @@ class SearchViewTest {
             view[0] = new SearchView(context);
             view[0].search("betrieb");
         });
-        JTable table = find(view[0].component(), JTable.class).get(0);
-        AbstractButton more = button(view[0].component(), "Weitere laden");
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
         await(() -> table.getRowCount() > 0 && more.isEnabled());
         // Das Nachfragen wiederholt nur den angezeigten Stapel; weitere Treffer holt erst „Weitere laden“.
         Thread.sleep(3 * 1000);
@@ -143,6 +141,30 @@ class SearchViewTest {
         SwingUtilities.invokeAndWait(() -> rows[0] = table.getRowCount());
         assertThat(rows[0]).isLessThanOrEqualTo(2 * SearchView.LIMIT);
         assertThat(more.isEnabled()).isTrue();
+    }
+
+    private final java.util.Map<SearchView, javax.swing.JPanel> wholes = new java.util.IdentityHashMap<>();
+
+    /** Arbeitsfläche und Aktionszeile zusammen, wie im Hauptfenster. */
+    private javax.swing.JPanel whole(SearchView view) {
+        return wholes.computeIfAbsent(view, v -> {
+            javax.swing.JPanel[] panel = new javax.swing.JPanel[1];
+            Runnable build = () -> {
+                panel[0] = new javax.swing.JPanel(new java.awt.BorderLayout());
+                panel[0].add(v.component(), java.awt.BorderLayout.CENTER);
+                panel[0].add(v.actions(), java.awt.BorderLayout.SOUTH);
+            };
+            if (SwingUtilities.isEventDispatchThread()) {
+                build.run();
+            } else {
+                try {
+                    SwingUtilities.invokeAndWait(build);
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            return panel[0];
+        });
     }
 
     /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
@@ -180,8 +202,8 @@ class SearchViewTest {
             view[0] = new SearchView(context);
             view[0].search("betrieb");
         });
-        JTable table = find(view[0].component(), JTable.class).get(0);
-        loadAll(table, button(view[0].component(), "Weitere laden"), 2 * PAGES_PER_SOURCE);
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        loadAll(table, button(whole(view[0]), "Weitere laden"), 2 * PAGES_PER_SOURCE);
         assertThat(view[0].statusText()).contains("Offline: nicht erreichbar", "unvollständig");
     }
 
@@ -191,8 +213,8 @@ class SearchViewTest {
 
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
-        AbstractButton semantic = button(view[0].component(), "Semantische Suche (experimentell)");
-        JTable table = find(view[0].component(), JTable.class).get(0);
+        AbstractButton semantic = button(whole(view[0]), "Semantische Suche (experimentell)");
+        JTable table = find(whole(view[0]), JTable.class).get(0);
         List<String> columns = new ArrayList<>();
         for (int column = 0; column < table.getModel().getColumnCount(); column++) {
             columns.add(table.getModel().getColumnName(column));
@@ -201,7 +223,7 @@ class SearchViewTest {
         assertThat(semantic.isEnabled()).isFalse();
         assertThat(semantic.isSelected()).isFalse();
         assertThat(columns).containsExactly("Titel", "Quelle", "Space", "Auszug", "Geändert");
-        assertThat(find(view[0].component(), AbstractButton.class)).extracting(AbstractButton::getText)
+        assertThat(find(whole(view[0]), AbstractButton.class)).extracting(AbstractButton::getText)
                 .doesNotContain("Relevanz", "Titel", "Neueste");
     }
 
@@ -247,24 +269,21 @@ class SearchViewTest {
         start(false);
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
-        // Sichtbare Häkchen: „Alle“ ist vorgegeben; die Space-Auswahl zeigt die Spaces der Quellen mit Quelle.
-        // Die Häkchen entstehen bei jeder Änderung der Quellen neu (Verbindungsprüfung); daher jedes Mal frisch.
-        java.util.function.Supplier<List<JCheckBox>> boxes = () -> find(view[0].component(), JCheckBox.class)
-                .stream().filter(JCheckBox::isEnabled).toList();
-        await(() -> context.connection("alpha").state() == AppContext.Connection.State.CONNECTED
-                && context.connection("beta").state() == AppContext.Connection.State.CONNECTED);
-        assertThat(boxes.get()).extracting(JCheckBox::getText).containsExactly("Alle", "Alpha", "Beta", "Dateien");
-        assertThat(boxes.get().get(0).isSelected()).isTrue();
-        JComboBox<?> spaces = find(view[0].component(), JComboBox.class).get(0);
-        await(() -> spaces.getItemCount() >= 3);
+        // Der Umfang kommt aus dem Explorer: ohne Auswahl alle Wissensquellen, sonst die gewählten.
+        await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
+        assertThat(view[0].everywhere.isVisible()).isFalse();
         SwingUtilities.invokeAndWait(() -> {
-            boxes.get().get(2).doClick();
+            view[0].scope(List.of(new Explorer.Scope("beta", null)));
             view[0].search("betrieb");
         });
-        assertThat(boxes.get().get(0).isSelected()).isFalse();
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Beta");
+        assertThat(view[0].everywhere.isVisible()).isTrue();
         assertThat(view[0].chosenSources()).containsExactly("beta");
-        JTable table = find(view[0].component(), JTable.class).get(0);
-        AbstractButton more = button(view[0].component(), "Weitere laden");
+        assertThat(view[0].chosenSpaces()).isEmpty();
+        JTable table = find(whole(view[0]), JTable.class).get(0);
+        AbstractButton more = button(whole(view[0]), "Weitere laden");
         loadAll(table, more, PAGES_PER_SOURCE);
         Set<String> sourcesSeen = new HashSet<>();
         SwingUtilities.invokeAndWait(() -> {
@@ -275,13 +294,13 @@ class SearchViewTest {
         assertThat(sourcesSeen).containsExactly("beta");
         assertThat(view[0].statusText()).doesNotContain("Dateien");
 
-        // „Alle“ hebt die Auswahl auf: Suche ohne sourceIds.
+        // „Überall suchen“ hebt die Auswahl auf: Suche ohne sourceIds.
         SwingUtilities.invokeAndWait(() -> {
-            boxes.get().get(0).doClick();
+            view[0].everywhere.doClick();
             view[0].search("betrieb");
         });
         assertThat(view[0].chosenSources()).isEmpty();
-        assertThat(boxes.get().get(2).isSelected()).isFalse();
+        assertThat(view[0].scopeLabel.getText()).isEqualTo("In: Alle Wissensquellen");
         loadAll(table, more, 2 * PAGES_PER_SOURCE);
     }
 
