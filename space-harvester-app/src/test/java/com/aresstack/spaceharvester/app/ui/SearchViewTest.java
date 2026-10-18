@@ -101,6 +101,31 @@ class SearchViewTest {
     }
 
     @Test
+    void loadedPagesMoveUpButNoHitEverDisappears() {
+        SearchView.HitsModel model = new SearchView.HitsModel();
+        model.set(List.of(hit("a"), hit("b"), hit("c")));
+        // c ist geladen und steht beim Core vorn; b fehlt in der neuen Liste und bleibt trotzdem.
+        model.reorder(0, List.of(hit("c"), hit("a")));
+        assertThat(pageIds(model)).containsExactly("c", "a", "b");
+        // Frühere Stapel bleiben oben; ein Treffer aus ihnen wird nur aktualisiert.
+        model.reorder(1, List.of(hit("b"), new SearchView.Hit("s", "c", "neu", "DEV", "", null)));
+        assertThat(pageIds(model)).containsExactly("c", "b", "a");
+        assertThat(model.getValueAt(0, 0)).isEqualTo("neu");
+    }
+
+    private static SearchView.Hit hit(String pageId) {
+        return new SearchView.Hit("s", pageId, "Seite " + pageId, "DEV", "", null);
+    }
+
+    private static List<String> pageIds(SearchView.HitsModel model) {
+        List<String> ids = new ArrayList<>();
+        for (int row = 0; row < model.getRowCount(); row++) {
+            ids.add(model.rows.get(row).pageId());
+        }
+        return ids;
+    }
+
+    @Test
     void waitingForPagesNeverFetchesTheNextBatchOnItsOwn() throws Exception {
         start(false);
 
