@@ -158,4 +158,55 @@ class AppSettingsLoaderTest {
         AppSettings settings = new AppSettingsLoader(new Placeholders(name -> null), home).load(file);
         assertThat(settings.problems()).anyMatch(problem -> problem.contains("disabled-sources"));
     }
+
+    @Test
+    void sourceRulesTheCoreWouldRejectAreReportedAndFallBackToGlobal() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    sources:
+                      wiki:
+                        interval: PT30S
+                        inventory-interval: PT2H
+                        refresh-strategy: time-based
+                        withheld-retention: -P1D
+                      docs:
+                        max-age: P400D
+                """, Map.of());
+        assertThat(settings.problems())
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.interval"))
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.refresh-strategy"))
+                .anyMatch(problem -> problem.contains("sync.sources.wiki.withheld-retention"))
+                .anyMatch(problem -> problem.contains("sync.sources.docs.max-age"));
+        var wiki = settings.syncRule("wiki");
+        assertThat(wiki.changeSearchInterval()).as("unter einer Minute gilt global").isNull();
+        assertThat(wiki.inventoryInterval()).isEqualTo(java.time.Duration.ofHours(2));
+        assertThat(wiki.refreshStrategy()).as("zeitbasiert ohne Frist gilt global").isNull();
+        assertThat(wiki.withheldRetention()).isNull();
+        assertThat(settings.syncRule("docs").maxAge()).isNull();
+    }
+
+    @Test
+    void aSourceWithoutOwnRulesInheritsTheGlobalValuesNotTheDefaults() throws Exception {
+        AppSettings settings = load("""
+                space-harvester:
+                  sync:
+                    interval: PT6H
+                    catch-up-on-start: true
+                    mode: sync-cache
+                    sources:
+                      wiki:
+                        mode: full
+                        catch-up-on-start: false
+                """, Map.of());
+        assertThat(settings.problems()).isEmpty();
+        var docs = settings.effectiveSync("docs");
+        assertThat(docs.interval()).isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(docs.catchUpOnStart()).isTrue();
+        assertThat(docs.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE);
+        var wiki = settings.effectiveSync("wiki");
+        assertThat(wiki.interval()).as("geerbt").isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(wiki.catchUpOnStart()).isFalse();
+        assertThat(wiki.mode()).isEqualTo(com.aresstack.spaceharvester.application.sync.SyncMode.FULL);
+    }
 }

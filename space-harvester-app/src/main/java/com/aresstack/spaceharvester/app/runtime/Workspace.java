@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.InputStream;
@@ -287,11 +288,28 @@ public final class Workspace {
 
     // ------------------------------------------------------------------ Abgleich
 
-    /** Abgleich eines Space starten ({@code POST …/spaces/{key}/syncs}). */
+    /** Vollständiger Abgleich eines Space mit dem Cache ({@link SyncMode#SYNC_CACHE}). */
     public JobStatus startSync(String sourceId, String spaceKey) {
+        return startSync(sourceId, spaceKey, SyncMode.SYNC_CACHE);
+    }
+
+    /** Abgleich eines Space in der Betriebsart {@code mode} starten ({@code POST …/spaces/{key}/syncs?mode=…}). */
+    public JobStatus startSync(String sourceId, String spaceKey, SyncMode mode) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         harvester.spaceKeys().requireExisting(sourceId, spaceKey);
-        JobStatus status = harvester.syncs().start(sourceId, spaceKey, Harvester.OWNER);
+        JobStatus status = harvester.syncs().start(sourceId, spaceKey, Harvester.OWNER, mode);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
+     * Änderungen eines Space seit dem letzten Lauf übernehmen ({@code POST …/syncs?listing=changes}); ohne
+     * Änderungssuche der Quelle gleicht der Core stattdessen den Bestand ab.
+     */
+    public JobStatus catchUp(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        harvester.spaceKeys().requireExisting(sourceId, spaceKey);
+        JobStatus status = harvester.syncs().catchUp(sourceId, spaceKey, Harvester.OWNER, null);
         activities.remember(status.id());
         return status;
     }

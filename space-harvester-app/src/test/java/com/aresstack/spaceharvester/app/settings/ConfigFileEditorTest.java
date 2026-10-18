@@ -408,6 +408,47 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void syncRulesPerSourceUseTheCoreKeysAndKeepTheOtherSources() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sync:\n    withheld-retention: 14d   # bleibt\n");
+        var wiki = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(Duration.ofHours(1),
+                Duration.ofDays(1), null, true, null,
+                com.aresstack.spaceharvester.application.sync.SyncMode.SYNC_CACHE,
+                com.aresstack.spaceharvester.application.configuration.RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK,
+                Duration.ofHours(6), null);
+        var docs = new com.aresstack.spaceharvester.application.configuration.SourceSyncOverride(null, null, false,
+                null, null, null, null, null, Duration.ofDays(7));
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null), "wiki",
+                wiki));
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null), "docs",
+                docs));
+
+        String text = Files.readString(file);
+        assertThat(text).contains("withheld-retention: 14d   # bleibt", "    sources:", "      \"wiki\":",
+                "        interval: 1h", "        inventory-interval: 1d", "        catch-up-on-start: true",
+                "        mode: sync-cache", "        refresh-strategy: time-based-with-version-check",
+                "        max-age: 6h", "        events: false", "        withheld-retention: 7d");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.syncRule("wiki")).isEqualTo(wiki);
+        assertThat(settings.syncRule("docs")).isEqualTo(docs);
+        assertThat(settings.cache().withheldRetention()).isEqualTo(Duration.ofDays(14));
+        // Die Properties liest der Core genauso.
+        assertThat(com.aresstack.spaceharvester.application.configuration.SourceSyncOverride.key("wiki", "interval"))
+                .isEqualTo("sync.sources.wiki.interval");
+
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null), "wiki",
+                com.aresstack.spaceharvester.application.configuration.SourceSyncOverride.NONE));
+        settings = loader.load(file);
+        assertThat(settings.syncRules()).containsOnlyKeys("docs");
+        editor.save(file, editor.withSyncRule(file, new ConfigFileEditor.Draft(Files.readString(file), null), "docs",
+                com.aresstack.spaceharvester.application.configuration.SourceSyncOverride.NONE));
+        assertThat(Files.readString(file)).doesNotContain("sources:").contains("withheld-retention: 14d");
+        Files.writeString(file, "space-harvester:\n  sync:\n    sources:\n      wiki:\n        mode: alles\n");
+        assertThat(loader.load(file).problems()).anyMatch(p -> p.contains("sync.sources.wiki.mode"));
+    }
+
+    @Test
     void rerankModelAndChunkingGoIntoTheAiBlock() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, "space-harvester:\n  sources: []\n");
