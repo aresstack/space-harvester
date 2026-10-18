@@ -9,7 +9,10 @@
   Knoten und Verbindungen (`DrawioGraph`, `*.graph.json`).
 - PDF und Word: bereits die Writer des Enterprise AI Client (`document-export`, Kopie von `PdfExportWriter` und
   `DocxExportWriter` mit Inhaltsverzeichnis, Bildplatzierung und Skalierung; Paritätstests ohne bekannte Lücken).
-- Offen: REST für Anmeldungen, Eingabemaske in der App (Strang L), Ansichtsbild der Vorschau doppelt, wenn das
+- Server: `GET /api/v1/sign-ins`, `POST /api/v1/sign-ins/{id}/code` (`{"code": "…"}`), `POST …/resend`,
+  `DELETE /api/v1/sign-ins/{id}`; nur Anforderungen, auf die ein eigener Auftrag wartet. Wartezeit
+  `space-harvester.export.sign-in-wait` (Standard `PT0S`: nie).
+- Offen: Eingabemaske in der App (Strang L), Ansichtsbild der Vorschau doppelt, wenn das
   Diagramm nicht zeichenbar ist.
 - Bezüge: Paritäts-Issues #185 (2FA beim Download), #190 (Diagramme), #184 (nur Textfassung von Diagrammen);
   `ExportAssetCollection`, `ExportAssetManifest`, `ExportChapters`, `SignInRequests`.
@@ -78,6 +81,6 @@ fehlendes Bild; er profitiert nur von einer vorher in der Leseansicht freigescha
 
 - Ein Auftrag kann bis zur Wartezeit im Zustand `RUNNING` stehen, ohne zu laden; die Phase und `waiting(jobId)`
   sagen warum. Abbrechen greift auch während des Wartens.
-- Der Server wartet nie, bis es eine REST-Schnittstelle für Anmeldungen gibt.
+- Der Server wartet nur mit `space-harvester.export.sign-in-wait`; dann beantwortet der Client über `/api/v1/sign-ins`.
 - `assets.json` hat zwei neue Statuswerte; Leser, die nur `STORED` als vorhanden werten, bleiben richtig, sollten
   `REDUNDANT` aber nicht als fehlend melden (`Entry.present()`).
