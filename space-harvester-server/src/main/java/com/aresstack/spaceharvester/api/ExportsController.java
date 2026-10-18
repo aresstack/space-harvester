@@ -1,10 +1,11 @@
 package com.aresstack.spaceharvester.api;
 
-import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessContext.PrincipalKind;
+import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
@@ -27,12 +28,15 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.net.URI;
 import java.time.Instant;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
@@ -277,7 +281,8 @@ public class ExportsController {
     @Operation(summary = "Datenbestand eines Exports in ein Format konvertieren und herunterladen",
             description = "Einmal beschaffen, beliebig oft konvertieren: erzeugt die Datei aus dem gespeicherten "
                     + "Datenbestand (Seiten, Rohdaten, Baum), ohne die Quelle erneut zu lesen und ohne neuen Export. "
-                    + "Formate wie beim Export (json, markdown, docx, pdf).")
+                    + "Formate wie beim Export (json, markdown, docx, pdf). Hinweise der Converter, etwa fehlende Bilder "
+                    + "oder Diagramme, in X-Conversion-Notices (Zahl) und X-Conversion-Notice-Kinds (je Art).")
     @ApiResponse(responseCode = "200", description = "Die konvertierte Datei")
     @ApiResponse(responseCode = "400", description = "Unbekanntes Format (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -315,7 +320,21 @@ public class ExportsController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"" + file.path().getFileName() + "\"")
                 .header("Content-Security-Policy", "sandbox; default-src 'none'")
+                .header(NOTICES_HEADER, Integer.toString(file.noticeCount()))
+                .header(NOTICE_KINDS_HEADER, noticeKinds(file.notices()))
                 .body(new InputStreamResource(content));
+    }
+
+    /** Zahl der Hinweise, etwa fehlender Bilder; die Stellen nennt das Dokument selbst. */
+    static final String NOTICES_HEADER = "X-Conversion-Notices";
+    /** Hinweise je Art, etwa {@code missing-image=2, missing-diagram=1}; leer ohne Hinweise. */
+    static final String NOTICE_KINDS_HEADER = "X-Conversion-Notice-Kinds";
+
+    private static String noticeKinds(List<ConversionNotice> notices) {
+        Map<ConversionNotice.Kind, Long> kinds = new EnumMap<>(ConversionNotice.Kind.class);
+        notices.forEach(notice -> kinds.merge(notice.kind(), 1L, Long::sum));
+        return kinds.entrySet().stream().map(entry -> entry.getKey().name().toLowerCase(Locale.ROOT).replace('_', '-')
+                + "=" + entry.getValue()).collect(Collectors.joining(", "));
     }
 
     private static void deleteQuietly(Path directory, Path file) {

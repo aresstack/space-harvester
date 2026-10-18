@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -22,6 +23,7 @@ import java.security.DigestOutputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -40,6 +42,8 @@ import java.util.regex.Pattern;
 public class ExportConversions {
 
     private static final Pattern UNSAFE = Pattern.compile("[^A-Za-z0-9_-]+");
+    /** Höchstens so viele Hinweise je Datei im Ergebnis; gezählt werden alle. */
+    static final int MAX_NOTICES = 1000;
 
     private final Jobs jobs;
     private final ExportArtifactWriter writer;
@@ -96,7 +100,8 @@ public class ExportConversions {
      */
     public ConvertedFile convert(String exportId, String owner, String format, Path directory) {
         Objects.requireNonNull(directory, "directory");
-        ConversionInput input = input(exportId, owner);
+        Notices notices = new Notices();
+        ConversionInput input = input(exportId, owner, notices);
         ExportConverter converter = converter(format);
         try {
             Files.createDirectories(directory);
@@ -122,7 +127,7 @@ public class ExportConversions {
                         continue;
                     }
                     return new ConvertedFile(exportId, converter.format(), converter.mediaType(), target,
-                            hashing.count, hashing.sha256());
+                            hashing.count, hashing.sha256(), List.copyOf(notices.kept), notices.count);
                 }
             } finally {
                 Files.deleteIfExists(part);
@@ -140,7 +145,7 @@ public class ExportConversions {
      * @return Medientyp und Dateiname der Datei
      */
     public ExportConverter convert(String exportId, String owner, String format, OutputStream out) throws IOException {
-        ConversionInput input = input(exportId, owner);
+        ConversionInput input = input(exportId, owner, new Notices());
         ExportConverter converter = converter(format);
         write(converter, input, out);
         return converter;
@@ -151,17 +156,14 @@ public class ExportConversions {
         return converters.select(List.of(format)).get(0);
     }
 
-    private ConversionInput input(String exportId, String owner) {
+    private ConversionInput input(String exportId, String owner, Notices notices) {
         JobStatus status = ownExport(exportId, owner);
         if (status.state() != JobState.COMPLETED) {
             throw new ExportNotConvertibleException(exportId, "Export ist nicht abgeschlossen");
         }
         ConversionInput dataset = writer.dataset(exportId).orElseThrow(() -> new ExportNotConvertibleException(
                 exportId, "kein Datenbestand vorhanden"));
-        if (images == null) {
-            return dataset;
-        }
-        ExportAssets assets = images.assets(exportId);
+        ExportAssets assets = images == null ? dataset.assets() : images.assets(exportId);
         return new ConversionInput() {
             @Override
             public String sourceId() {
@@ -198,6 +200,11 @@ public class ExportConversions {
             public ExportAssets assets() {
                 return assets;
             }
+
+            @Override
+            public void report(ConversionNotice notice) {
+                notices.add(Objects.requireNonNull(notice, "notice"));
+            }
         };
     }
 
@@ -221,10 +228,38 @@ public class ExportConversions {
     /**
      * Eine erzeugte Datei.
      *
-     * @param sha256 {@code sha256:<hex>} über die Datei
+     * @param sha256      {@code sha256:<hex>} über die Datei
+     * @param notices     Hinweise der Converter, etwa fehlende Bilder, in der Reihenfolge der Meldung; höchstens
+     *                    {@value #MAX_NOTICES}
+     * @param noticeCount Zahl aller (verschiedenen) Hinweise, auch über {@code notices} hinaus
      */
     public record ConvertedFile(String exportId, String format, String mediaType, Path path, long bytes,
-                                String sha256) {
+                                String sha256, List<ConversionNotice> notices, int noticeCount) {
+
+        public ConvertedFile {
+            notices = List.copyOf(notices);
+        }
+    }
+
+    /** Sammelt die Hinweise einer Konvertierung: gleiche einmal, die ersten {@link #MAX_NOTICES} im Ergebnis. */
+    private static final class Notices {
+
+        private final LinkedHashSet<ConversionNotice> kept = new LinkedHashSet<>();
+        private final java.util.Set<Integer> beyond = new java.util.HashSet<>();
+        private int count;
+
+        synchronized void add(ConversionNotice notice) {
+            if (kept.contains(notice)) {
+                return;
+            }
+            if (kept.size() < MAX_NOTICES) {
+                kept.add(notice);
+                count++;
+            } else if (beyond.add(notice.hashCode())) {
+                // Jenseits der Grenze nur noch gezählt; Hash statt Hinweis hält den Speicher klein.
+                count++;
+            }
+        }
     }
 
     private static final class Hashing extends DigestOutputStream {

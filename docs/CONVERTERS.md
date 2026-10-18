@@ -33,6 +33,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   abgeschnitten.
 - **Rechte.** Konvertierte Dateien liegen im selben Artefakt. Sie sind nur über dieselbe Download-Route erreichbar,
   mit den Freigaben `export` und `content` und nur für den Client, der den Export gestartet hat.
+- **Fehlendes erkennbar melden.** Fehlt ein Bild, ein Diagramm oder ein Anhang im Datenbestand oder lässt es sich
+  nicht darstellen, nennt das Dokument die Stelle, und der Converter meldet sie mit
+  `ConversionInput.report(ConversionNotice(pageId, kind, reference, reason))` (`MISSING_IMAGE`, `MISSING_DIAGRAM`,
+  `MISSING_ATTACHMENT`, `OMITTED_CONTENT`; `reason` etwa der Status aus `assets.json`). Die Konvertierung aus dem
+  Datenbestand liefert sie in `ConvertedFile.notices()` und `noticeCount()` (gleiche Hinweise einmal, höchstens 1000
+  in der Liste), der REST-Download in `X-Conversion-Notices` (Zahl) und `X-Conversion-Notice-Kinds`
+  (`missing-image=2, missing-diagram=1`).
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
 

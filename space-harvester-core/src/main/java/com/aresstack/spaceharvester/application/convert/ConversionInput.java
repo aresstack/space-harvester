@@ -42,4 +42,11 @@ public interface ConversionInput {
     default ExportAssets assets() {
         return ExportAssets.NONE;
     }
+
+    /**
+     * Meldet einen Hinweis zur erzeugten Datei, etwa ein fehlendes Bild ({@link ConversionNotice}); die Konvertierung
+     * nennt ihn im Ergebnis. Gleiche Hinweise zählen einmal. Ohne Empfänger (etwa beim Export selbst) ohne Wirkung.
+     */
+    default void report(ConversionNotice notice) {
+    }
 }
