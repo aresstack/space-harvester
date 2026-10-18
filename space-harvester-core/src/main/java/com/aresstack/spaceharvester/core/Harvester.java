@@ -54,6 +54,11 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
+import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -168,6 +173,7 @@ public final class Harvester implements AutoCloseable {
     private final PageNavigation navigation;
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
+    private final SearchOrchestrator progressiveSearch;
     private final RelevanceSearch relevance;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -326,6 +332,11 @@ public final class Harvester implements AutoCloseable {
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
                     excerpts, builder.searchLoads);
+            // ADR 0017: Varianten zuerst regelbasiert, bewertet gegen die ursprüngliche Anfrage.
+            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
+                    new RuleBasedExpansion(), HitScorer.of(excerpts));
+            opened.add(orchestrator);
+            this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -646,6 +657,14 @@ public final class Harvester implements AutoCloseable {
      */
     public KeywordSearch keywordSearch() {
         return keywordSearch;
+    }
+
+    /**
+     * Progressive Suche (ADR 0017): die ursprüngliche Anfrage sofort, dann Varianten in Wellen, bewertet gegen die
+     * ursprüngliche Anfrage, bis das Qualitätsziel des {@link SearchProfile} erreicht oder das Budget aufgebraucht ist.
+     */
+    public SearchOrchestrator progressiveSearch() {
+        return progressiveSearch;
     }
 
     /**

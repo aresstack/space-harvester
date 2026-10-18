@@ -507,6 +507,14 @@ Embeddings, keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `spa
 Spaces, und gilt ebenso im Volltextindex. Im Core lädt `Harvester.builder().prefetchSearchHits(false)` nichts; dann
 findet die Suche nur, was schon im Cache liegt.
 
+**Progressive Suche ([ADR 0017](docs/adr/0017-progressive-suche.md), Core):** `Harvester.progressiveSearch()` sucht
+die ursprüngliche Anfrage sofort und erzeugt gleichzeitig Varianten (zuerst mit allen Begriffen, dann schrittweise
+weniger). Die Varianten laufen in Wellen, und jeder Fund wird gegen die ursprüngliche Anfrage bewertet. Die Suche
+endet am Qualitätsziel des `SearchProfile` oder an Zeit- und Abfragebudget. `searchAsync` liefert die sortierte
+Liste mit Abschlussgrund, ein `ProgressiveSearchListener` meldet unterwegs Varianten und die neu geordnete Liste.
+Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
+[ADR 0016](docs/adr/0016-auswahl-beschaffung-hintergrund.md).
+
 Eine längere Frage (mehr als 6 Wörter) geht nicht als Satz an die Quelle: Wie im Enterprise AI Client werden daraus
 zuerst ihre stärksten wörtlichen Begriffe (Kürzel wie `HaVdB` oder `BS-PIMA` in ihrer Schreibung), dann ihre
 Schlüsselwörter einzeln und die ersten beiden zusammen, ohne Füll- und Fragewörter und ohne Dopplungen. Höchstens
