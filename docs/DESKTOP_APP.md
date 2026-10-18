@@ -271,15 +271,15 @@ Core selbst.
 
 | REST (Dienst) | Anwendungsfall (Core) | App-Aktion | Test |
 |---|---|---|---|
-| `GET /api/v1/sources` | `SourceQueries.sources` | Wissensquellen, Status | `WorkspaceTest.harvestsBrowses…` |
+| `GET /api/v1/sources` | `SourceQueries.sources` | Explorer, Verwaltung › Wissensquellen verwalten, Status | `WorkspaceTest.harvestsBrowses…` |
 | `GET …/sources/{id}/spaces` | `SourceQueries.partitions` | Verbindung prüfen, Space-Auswahl | `WorkspaceTest.harvestsBrowses…`, `…onlyConfiguredSourcesAreReachable` |
-| `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Inhalte › Seiten ohne Bestand (live) | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
+| `GET …/spaces/{key}/pages/metadata` | `SourceQueries.pageMetadata` | Explorer und Inhalte › Liste ohne Bestand (live) | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
 | `GET …/pages/{pageId}/metadata` | `SourceQueries.pageMetadata` | Seite › Eigenschaften (live) | `MainWindowTest` (Navigation) |
 | `GET …/pages/{pageId}/attachments` | `SourceQueries.attachments` | Seite › Anhänge | `WorkspaceTest.attachmentsAre…` |
-| `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Seiten aus dem Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…`, `ContentViewTest` |
-| `GET …/spaces/{key}/tree` | `PageQueries.tree` | Inhalte › Seitenbaum | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
+| `GET …/spaces/{key}/pages` | `PageQueries.pages` | Inhalte › Liste aus dem Bestand | `WorkspaceTest.harvestsBrowses…`, `…readsLocalFiles…`, `ContentViewTest` |
+| `GET …/spaces/{key}/tree` | `PageQueries.tree` | Explorer (Baum ohne Live-Navigation der Quelle) | `WorkspaceTest.harvestsBrowses…`, `ContentViewTest` |
 | `GET …/pages/{pageId}` (`refresh`, `view=extended`) | `PageQueries.page`, `Enrichments.view` | Seite wählen (ohne Bestand live), Erweitert › Aktualität prüfen, Analyse | `WorkspaceTest.harvestsBrowses…`, `…aFreshSourceDeliversPagesLive…`, `ContentViewTest` |
-| `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seite öffnen (Adresse) | `WorkspaceTest.pagesOpenByAddress…` |
+| `GET …/pages?url=` | `PageQueries.pageByUrl` | Inhalte › Seiten-ID oder Adresse | `WorkspaceTest.pagesOpenByAddress…` |
 | `POST …/pages/{pageId}/enrichments` | `Enrichments.recompute` | Seite › Analyse › Neu berechnen | `WorkspaceTest.pagesOpenByAddress…` |
 | `GET …/pages/{pageId}?view=extended` (`acronyms`) | `PageAcronyms.read` | Seite › Inhalt: Akronyme markiert, Tooltip, Alt+→ | `ReaderAcronymsTest`, `PageAcronymsTest` |
 | `GET /api/v1/search?text=…[&sourceId=…\|sourceIds=…][&cursor=…]` | `KeywordSearch.search` (ohne Quelle global, #114) | Suche mit Quellen-Häkchen und „Weitere laden“ über den Core-Cursor | `WorkspaceTest.harvestsBrowses…`, `SearchViewTest`, `MainWindowTest` |
@@ -288,7 +288,15 @@ Core selbst.
 | `GET /api/v1/syncs/{id}` | `SpaceSyncJobs.status` | Aufträge | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/syncs/{id}/events`, `GET /api/v1/exports/{id}/events` | `Harvester.events`, `Harvester.recentEvents` | Status (Diagnose), Aufträge › Diagnose ansehen | `StatusViewTest` |
 | `POST /api/v1/syncs/{id}/cancel` | `SpaceSyncJobs.cancel` | Aufträge › Abbrechen | `WorkspaceTest.aRunningSyncCanBeCancelled` |
-| `POST …/spaces/{key}/exports` | `Exports.start` | Herunterladen › Herunterladen | `WorkspaceTest.harvestsBrowses…` |
+| `POST …/spaces/{key}/exports` | `Exports.start` | Explorer › Herunterladen an Quelle oder Space, Wissensquellen verwalten › Herunterladen | `WorkspaceTest.harvestsBrowses…` |
+| `POST …/spaces/{key}/exports` mit `{"rootPageId"}` | `Exports.start(…, rootPageId, …)` (#315) | Explorer › Herunterladen an einer Seite (samt Unterseiten); Aufträge nennen „ab „Startseite““ | `JobStepTest.aPageDownloadNamesItsStartPage…` (Anzeige) |
+| `GET …/sources/{id}/spaces/{key}/children`, `…/pages/{pageId}/children`, `…/ancestors` | `PageNavigation.children`, `.position` (#177) | Explorer: Space und Seiten aufklappen, Space zeigen | `SourcesViewTest`, `ExplorerTest` |
+| `GET …/sources/{id}/pages?title=…` | `PageNavigation.findByTitle` (#305) | Explorer › Titelfilter (auch nie geladene Seiten) | `ExplorerTest.theTitleFilterAsksTheSourceForPagesNeverLoaded` |
+| `GET /api/v1/search/progress/{id}`, `DELETE …` | `KeywordSearch.progress`, `.cancel` | Suche › Balken unten, „Abbrechen“ mittig, danach „Fertig“ | `SearchViewTest.allSourcesIsOneGlobalKeywordSearch…`, `…theSemanticCheckbox…` |
+| – (REST der progressiven Suche folgt im Core) | `SearchOrchestrator.searchAsync`, `ProgressiveSearch.cancel` (ADR 0017) | Suche › Semantische Suche: Varianten als Schlagwörter, Abschlussgrund | `SearchViewTest.theSemanticCheckboxRunsTheProgressiveSearch…`, `…everyEndOfTheProgressiveSearch…` |
+| `GET /api/v1/exports/{id}/dataset` | `ExportConversions.dataset` (mit `media()`, #313) | Aufträge › Ergebnis und Exportieren: Seiten, Bilder, Medien | `JobStepTest.theCardCountsStoredMissing…`, `ExportCardTest` |
+| `POST /api/v1/exports/{id}/conversions/{format}` | `ExportConversions.convert` | Aufträge › PDF, Word, Markdown, JSON (`json-package`) | `ExportCardTest.aFinishedDownloadIsExported…` |
+| `GET /api/v1/sign-ins`, `POST …/{id}/code`, `POST …/{id}/resend`, `DELETE …/{id}` | `SignInRequests.pending`, `.submit`, `.resend`, `.decline` (ADR 0018) | Einmalcode-Abfrage in Aufträgen und Leseansicht | `SignInSlotTest` |
 | `GET /api/v1/exports/{id}` | `Exports.artifact` | Aufträge › Ergebnis | `WorkspaceTest.harvestsBrowses…` |
 | `GET /api/v1/exports/{id}/artifact/**` | `Exports.artifactFile` | – (nur REST) | `WorkspaceTest.harvestsBrowses…` |
 | `POST /api/v1/exports/{id}/cancel` | `Jobs.cancel` | Aufträge › Abbrechen | – |
@@ -298,7 +306,7 @@ Core selbst.
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
-| – | `SourceManagement.test`, `.change`, `.remove` (#188) | Wissensquellen › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceFormTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
+| – | `SourceManagement.test`, `.change`, `.remove` (#188) | Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceFormTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
 | – | – | Konfiguration, Platzhalter, fehlende Zugangsdaten | `AppSettingsLoaderTest`, `PlaceholdersTest`, `WorkspaceTest.aSourceWithoutToken…` |
 | – | Auftragsliste der App | Aufträge nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
 
