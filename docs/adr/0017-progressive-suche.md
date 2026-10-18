@@ -8,8 +8,8 @@
 - Umgesetzt: Varianten über ein Modell des KI-Dienstes, REST-Schnittstelle (`/api/v1/search/progressive`).
 - Umgesetzt: Anbindung an die semantische Suche im Core (`SearchProfile.Ranking`, `SemanticVariantSearch`,
   `Harvester.searchProfile()`).
-- Offen: `ranking` über REST (der Server sucht progressiv weiter nur mit der Schlagwortsuche) und in der App eine
-  Anzeige, ob semantisch gesucht wird.
+- Umgesetzt: `ranking` über REST (`keyword`/`semantic`, `semantic-search-unavailable` ohne Embedding-Modell).
+- Offen: in der App eine Anzeige, ob semantisch gesucht wird.
 
 ## Kontext
 
@@ -151,12 +151,27 @@ progressive Suche, aber jede Suchanfrage lief über die Schlagwortsuche (BM25), 
 - **`Harvester.searchProfile()`** ist das Profil des Hakens: `SEMANTIC`, sobald die wirksame Konfiguration ein
   Embedding-Modell hat, sonst `KEYWORD`, wie `expansion` ohne Chat-Modell `RULES` meldet. Der Haken der App wird so
   ohne Änderung an der App semantisch. Weil jede Suchanfrage erst lädt und einbettet, hat sie dann
-  `SemanticVariantSearch.VARIANT_TIMEOUT` (20 s) und die Suche `Harvester.SEMANTIC_TIME_BUDGET` (60 s).
+  `SemanticVariantSearch.VARIANT_TIMEOUT` (20 s) und die Suche `SemanticVariantSearch.TIME_BUDGET` (60 s); beides setzt `SemanticVariantSearch.profile()`.
   `search.semantic` prüft der Core weiterhin nicht, wie bei `sort=relevance`.
+
+## Umsetzung (fünfter Schritt: semantisch über REST)
+
+Der Server verdrahtet `SemanticVariantSearch` über seine `RelevanceSearch` im `SearchOrchestrator`, wie der Harvester.
+
+- `POST /api/v1/search/progressive` nimmt `ranking`: `keyword` (Standard, wie bisher) oder `semantic`. Semantisch
+  gilt `SemanticVariantSearch.profile()`, also 20 s je Suchanfrage und 60 s Zeitbudget; `timeBudgetMs` und die
+  übrigen Angaben überschreiben das weiterhin einzeln. Ein anderer Wert ergibt 400 (`invalid-request`).
+- Der Stand nennt `ranking`; semantisch ist `score` die Kosinusähnlichkeit zu `q`.
+- Ohne Embedding-Modell antwortet der Dienst sofort mit 503 `semantic-search-unavailable`, wie `sort=relevance`,
+  und startet keine Suche. Der Hinweis im `detail` nennt die Schlagwortsuche ohne `ranking=semantic` statt der
+  Titelsuche von `sort=relevance`, nie den Suchtext. Es gibt keinen stillen Rückfall.
+- Rechte prüft die `RelevanceSearch` je Suchanfrage wie bei `sort=relevance`; die Route und ihre Rechteprüfung
+  bleiben unverändert.
 
 ## Folgen
 
 - Desktop-App und Agenten nutzen denselben Dienst; die App braucht keine eigene Suchlogik.
 - Über REST wartet ein Agent auf das Ergebnis, eine Oberfläche fragt den Stand ab.
 - Mit Haken und Embedding-Modell sucht die progressive Suche semantisch über die Vektoren, ohne Fusion mit der
-  Schlagwortsuche. Nächste Schritte sind `ranking` über REST und die Anzeige in der App.
+  Schlagwortsuche, in der App über den Haken, über REST mit `ranking: semantic`. Nächster Schritt ist die Anzeige in
+  der App.

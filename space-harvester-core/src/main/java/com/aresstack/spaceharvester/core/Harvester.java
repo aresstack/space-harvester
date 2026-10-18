@@ -62,7 +62,6 @@ import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
 import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
-import com.aresstack.spaceharvester.application.query.progressive.SearchExecutionPolicy;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
@@ -169,9 +168,6 @@ public final class Harvester implements AutoCloseable {
 
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
-
-    /** Zeitbudget der semantischen progressiven Suche: Jede Suchanfrage lädt und bettet erst ein, bevor sie sucht. */
-    public static final Duration SEMANTIC_TIME_BUDGET = Duration.ofSeconds(60);
 
     private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
     private static final Duration POLL = Duration.ofMillis(50);
@@ -780,20 +776,13 @@ public final class Harvester implements AutoCloseable {
      * ({@link SearchProfile.Ranking#SEMANTIC}), wenn ein Embedding-Modell verfügbar ist, sonst wie bei den Varianten die
      * wirksame Wahl, also die Schlagwortsuche. Semantisch finden die Varianten nur, und die Treffer kommen aus der
      * Vektorsuche mit der ursprünglichen Anfrage; jede Suchanfrage hat dafür {@link SemanticVariantSearch#VARIANT_TIMEOUT}
-     * und die Suche {@link #SEMANTIC_TIME_BUDGET}. Eine ausdrücklich semantische Suche ohne Modell scheitert mit
+     * und die Suche {@link SemanticVariantSearch#TIME_BUDGET}. Eine ausdrücklich semantische Suche ohne Modell scheitert mit
      * {@link com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException}.
      */
     public SearchProfile searchProfile() {
         SearchProfile profile = SearchProfile.defaults().withExpansion(variantModels.get().isPresent()
                 ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES);
-        if (!relevance.semantic()) {
-            return profile;
-        }
-        SearchExecutionPolicy execution = profile.execution();
-        return profile.withRanking(SearchProfile.Ranking.SEMANTIC)
-                .withExecution(new SearchExecutionPolicy(execution.waveSize(), execution.parallelism(),
-                        SemanticVariantSearch.VARIANT_TIMEOUT, execution.retries()))
-                .withBudget(SEMANTIC_TIME_BUDGET, profile.searchBudget());
+        return relevance.semantic() ? SemanticVariantSearch.profile(profile) : profile;
     }
 
     /**

@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.query.progressive.SearchExecutionPolicy;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -38,6 +39,9 @@ public final class SemanticVariantSearch implements VariantSearch {
      * ({@link SemanticPreparation#DEFAULT_WAIT}), danach Vektorsuche und Live-Prüfung.
      */
     public static final Duration VARIANT_TIMEOUT = SemanticPreparation.DEFAULT_WAIT.plusSeconds(10);
+
+    /** Zeitbudget einer semantischen progressiven Suche: Jede Suchanfrage lädt und bettet erst ein, bevor sie sucht. */
+    public static final Duration TIME_BUDGET = Duration.ofSeconds(60);
 
     private final RelevanceSearch relevance;
     private final PageTextIndex texts;
@@ -89,6 +93,18 @@ public final class SemanticVariantSearch implements VariantSearch {
         if (!relevance.semantic()) {
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+    }
+
+    /**
+     * {@code profile} semantisch: {@link SearchProfile.Ranking#SEMANTIC} mit {@link #VARIANT_TIMEOUT} je Suchanfrage
+     * und {@link #TIME_BUDGET}; Wellen, Parallelität, Wiederholung und Abfragebudget bleiben.
+     */
+    public static SearchProfile profile(SearchProfile profile) {
+        SearchExecutionPolicy execution = profile.execution();
+        return profile.withRanking(SearchProfile.Ranking.SEMANTIC)
+                .withExecution(new SearchExecutionPolicy(execution.waveSize(), execution.parallelism(),
+                        VARIANT_TIMEOUT, execution.retries()))
+                .withBudget(TIME_BUDGET, profile.searchBudget());
     }
 
     /** Der Lesetext um das ähnlichste Stück, ohne Ähnlichkeit vom Anfang; leer ohne Volltextindex. */

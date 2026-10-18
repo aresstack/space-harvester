@@ -208,7 +208,7 @@ class HarvesterConfigurationLiveTest {
             SearchProfile profile = harvester.searchProfile();
             assertThat(profile.ranking()).isEqualTo(SearchProfile.Ranking.SEMANTIC);
             assertThat(profile.execution().variantTimeout()).isEqualTo(SemanticVariantSearch.VARIANT_TIMEOUT);
-            assertThat(profile.timeBudget()).isEqualTo(Harvester.SEMANTIC_TIME_BUDGET);
+            assertThat(profile.timeBudget()).isEqualTo(SemanticVariantSearch.TIME_BUDGET);
 
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
             assertThat(harvester.searchProfile().ranking()).isEqualTo(SearchProfile.Ranking.KEYWORD);
