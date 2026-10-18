@@ -311,7 +311,29 @@ public final class AppSettingsLoader {
                 port == null ? null : integer(port, 0, "space-harvester.network.proxy.proxy-port", problems), nonProxy,
                 optionalDuration(get(proxy, "resolve-timeout"), "space-harvester.network.proxy.resolve-timeout", problems),
                 optionalDuration(get(proxy, "cache-ttl"), "space-harvester.network.proxy.cache-ttl", problems),
-                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems));
+                optionalDuration(get(proxy, "failure-ttl"), "space-harvester.network.proxy.failure-ttl", problems),
+                proxyAuthentication(map(get(proxy, "auth")), problems), script(get(proxy, "pac-discovery-script")));
+    }
+
+    /**
+     * Nur der Benutzer steht in der Datei; das Passwort liegt im Tresor der App ({@code ProxySettings.SECRET_REF}) und
+     * wird beim Start dazugegeben. Ein Passwort in der Datei bleibt unbenutzt.
+     */
+    private ProxySettings.Authentication proxyAuthentication(Map<?, ?> auth, List<String> problems) {
+        if (auth.isEmpty()) {
+            return null;
+        }
+        if (get(auth, "password") != null) {
+            problems.add("space-harvester.network.proxy.auth.password wird nicht gelesen: Das Proxy-Passwort gehört "
+                    + "in den Tresor (Einstellungen › Proxy)");
+        }
+        String username = text(get(auth, "username"), problems);
+        return username == null || username.isBlank() ? null : ProxySettings.Authentication.basic(username);
+    }
+
+    /** Ein Skript wörtlich, ohne Platzhalter aufzulösen: {@code ${…}} ist dort Teil der Skriptsprache. */
+    private static String script(Object raw) {
+        return raw == null || raw instanceof Map<?, ?> || raw instanceof List<?> ? null : String.valueOf(raw);
     }
 
     private Map<String, AppSettings.TrustStoreSettings> trustStores(Map<?, ?> spring, List<String> problems) {

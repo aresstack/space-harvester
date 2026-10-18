@@ -189,6 +189,14 @@ public final class SettingsView implements View {
             if (proxy != null && proxy.proxyHost() != null) {
                 network.add("Proxy-Host", proxy.proxyHost() + (proxy.proxyPort() == null ? "" : ":" + proxy.proxyPort()));
             }
+            if (proxy != null && proxy.authentication() != null) {
+                String user = proxy.authentication().username();
+                network.add("Proxy-Anmeldung", user + (context.proxyPasswordAvailable(user) ? " · Passwort gespeichert"
+                        : " · Passwort fehlt"));
+            }
+            if (proxy != null && proxy.pacDiscoveryScript() != null) {
+                network.add("PAC-Skript", "eigenes Skript");
+            }
             if (proxy != null && !proxy.nonProxyHosts().isEmpty()) {
                 network.add("Ohne Proxy", String.join(", ", proxy.nonProxyHosts()));
             }

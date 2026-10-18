@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,12 +80,17 @@ public final class AppContext {
     }
 
     private static final Logger LOG = LoggerFactory.getLogger(AppContext.class);
+    /** Tresor und Eintrag des Proxy-Passworts; die Anmeldung, für die es gilt, ist der Proxy-Benutzer. */
+    static final String PROXY_VAULT = "network";
+    static final String PROXY_KEY = "proxy";
 
     private final AppSettingsLoader loader;
     private final Path configFile;
     private final String version;
     private final AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
     private char[] sessionAiKey;
+    /** Für welchen Proxy-Benutzer das Passwort der Sitzung gilt. */
+    private volatile String proxyPasswordUser;
     private final SecretVault vault;
     private final List<Consumer<AppContext>> listeners = new ArrayList<>();
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
@@ -142,6 +148,30 @@ public final class AppContext {
     /** Tresor nur für den API-Key des KI-Dienstes, getrennt von den Quellen. */
     public SecretVault aiVault() {
         return vault.scope(AiSettingsPanel.VAULT);
+    }
+
+    /** Tresor nur für das Proxy-Passwort ({@code ProxySettings.SECRET_REF}), getrennt von Quellen und KI-Dienst. */
+    public SecretVault proxyVault() {
+        return vault.scope(PROXY_VAULT);
+    }
+
+    /** Ob für diesen Proxy-Benutzer ein Passwort vorliegt: im Tresor oder für diese Sitzung. */
+    public boolean proxyPasswordAvailable(String username) {
+        if (username == null) {
+            return false;
+        }
+        char[] session = secrets.proxyPassword();
+        if (session != null) {
+            java.util.Arrays.fill(session, '\0');
+            return proxyPasswordUser != null && proxyPasswordUser.equals(username);
+        }
+        return proxyVault().has(PROXY_KEY, username);
+    }
+
+    /** Merkt das Proxy-Passwort für diese Sitzung, wenn es keinen Tresor gibt; das Feld wird geleert. */
+    void sessionProxyPassword(String username, char[] password) {
+        proxyPasswordUser = username;
+        secrets.proxyPassword(password);
     }
 
     /** API-Key des KI-Dienstes für diese Sitzung, wenn es keinen Tresor gibt; sonst {@code null}. */
@@ -324,10 +354,34 @@ public final class AppContext {
         });
     }
 
+    /**
+     * Das Proxy-Passwort für den Benutzer aus der Datei: aus dem Tresor, sonst ein in dieser Sitzung eingegebenes für
+     * denselben Benutzer. Ohne Anmeldung am Proxy fällt ein altes Passwort weg.
+     */
+    private void unlockProxy(ProxySettings.Authentication auth) {
+        String username = auth == null ? null : auth.username();
+        if (username == null) {
+            sessionProxyPassword(null, null);
+            return;
+        }
+        try {
+            if (proxyVault().has(PROXY_KEY, username)) {
+                sessionProxyPassword(username, proxyVault().load(PROXY_KEY, username));
+                return;
+            }
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("Das gespeicherte Proxy-Passwort ließ sich nicht lesen: {}", e.getMessage());
+        }
+        if (!username.equals(proxyPasswordUser)) {
+            sessionProxyPassword(null, null);
+        }
+    }
+
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
         // Der Core bekommt den Key nur zur Laufzeit (ADR 0011).
         secrets.aiKey(storedAiKey());
+        unlockProxy(loaded.proxy().authentication());
         for (AppSettings.SourceEntry entry : loaded.sources()) {
             if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
                     || !vault.has(entry.id())) {

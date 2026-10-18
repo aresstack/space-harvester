@@ -331,6 +331,35 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void proxyUserAndPacScriptRoundTripButNoPasswordEverReachesTheFile() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        String script = "$url = (Get-ItemProperty 'HKCU:\\Software\\X').AutoConfigURL\r\n\tWrite-Output \"${url}\"";
+        ProxyDraft proxy = new ProxyDraft(ProxySettings.Mode.PAC_URL_POWERSHELL, null, null, null, null, null, null,
+                null, " proxy-nutzer ", script);
+
+        ConfigFileEditor.Draft draft = editor.withProxy(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                proxy);
+        editor.save(file, draft);
+
+        String text = Files.readString(file);
+        assertThat(text).contains("auth:\n", "username: \"proxy-nutzer\"", "pac-discovery-script: \"")
+                .doesNotContain("password");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.proxy().authentication().username()).isEqualTo("proxy-nutzer");
+        assertThat(settings.proxy().authentication().password()).isNull();
+        assertThat(settings.proxy().pacDiscoveryScript()).as("wörtlich, ${…} bleibt Teil des Skripts")
+                .isEqualTo(script.replace("\r\n", "\n"));
+        assertThat(ProxyDraft.of(settings.proxy()).settings()).isEqualTo(proxy.settings());
+
+        ProxyDraft manual = new ProxyDraft(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.firma.de", "3128", null,
+                null, null, null, "", script);
+        assertThat(manual.settings().authentication()).as("ohne Benutzer keine Anmeldung").isNull();
+        assertThat(manual.settings().pacDiscoveryScript()).as("Skript nur für PowerShell/VBScript").isNull();
+    }
+
+    @Test
     void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
         ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
                 null, null, null, null, null);

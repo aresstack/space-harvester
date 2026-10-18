@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.ProxyDraft;
+import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -345,6 +346,14 @@ final class SettingDialogs {
         port.setText(current.proxyPort() == null ? "" : current.proxyPort());
         JTextField address = Comic.field(32);
         address.setText(target != null ? target : defaultTarget(context));
+        JTextField user = Comic.field(24);
+        user.setText(current.proxyUser() == null ? "" : current.proxyUser());
+        JPasswordField password = new JPasswordField(24);
+        Comic.style(password);
+        JTextArea script = Comic.code();
+        script.setEditable(true);
+        script.setRows(5);
+        script.setText(current.pacDiscoveryScript() == null ? "" : current.pacDiscoveryScript());
         HostListEditor exceptions = new HostListEditor();
         exceptions.hosts(current.nonProxyHosts());
         ComposerButton advanced = Comic.button(Glyph.EXPAND, "Erweitert", "Proxy-Ausnahmen anzeigen");
@@ -356,7 +365,7 @@ final class SettingDialogs {
         Supplier<ProxySettings.Mode> chosen = () -> SourceWizard.PROXY_MODES.get(Math.max(0, mode.getSelectedIndex()));
         Supplier<ProxyDraft> draft = () -> new ProxyDraft(chosen.get(), pacUrl.getText(), host.getText(),
                 port.getText(), exceptions.hosts(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
-                currentProxy.failureTtl());
+                currentProxy.failureTtl(), user.getText(), script.getText());
 
         Rows rows = new Rows();
         rows.add("Proxy", mode, "Standard unter Windows: PAC-Adresse der Interneteinstellungen per PowerShell");
@@ -367,7 +376,12 @@ final class SettingDialogs {
         advancedRow.setOpaque(false);
         advancedRow.add(advanced);
         rows.add("", advancedRow, null);
+        rows.add("Proxy-Benutzer", user, "Nur wenn der Proxy eine Anmeldung verlangt (BASIC); sonst leer lassen");
+        rows.add("Proxy-Passwort", password, null);
         rows.add("Proxy-Ausnahmen", exceptions, "Diese Hosts werden direkt und nicht über den Proxy angesprochen.");
+        JComponent scriptScroll = Comic.scroll(script);
+        scriptScroll.setPreferredSize(new Dimension(480, 100));
+        rows.add("PAC-Skript", scriptScroll, "Eigenes Skript, das die PAC-Adresse ausgibt; leer für das eingebaute");
         rows.add("Testadresse", row(address, resolve), "Nur für „Proxy auflösen“; wird nicht gespeichert");
         JComponent logScroll = Comic.scroll(log);
         logScroll.setPreferredSize(new Dimension(480, 100));
@@ -379,6 +393,14 @@ final class SettingDialogs {
             rows.visible(port, m == ProxySettings.Mode.MANUAL_PROXY);
             rows.visible(advancedRow, m != ProxySettings.Mode.DISABLED);
             rows.visible(exceptions, open[0] && m != ProxySettings.Mode.DISABLED);
+            rows.visible(scriptScroll, open[0] && ProxyDraft.scriptable(m));
+            rows.label(scriptScroll, m == ProxySettings.Mode.PAC_URL_WSCRIPT ? "VBScript" : "PowerShell-Skript");
+            rows.visible(user, m != ProxySettings.Mode.DISABLED);
+            String name = user.getText().strip();
+            rows.visible(password, m != ProxySettings.Mode.DISABLED && !name.isEmpty());
+            rows.hint(password, context.proxyPasswordAvailable(name)
+                    ? "Gespeichert; leer lassen, um es zu behalten" : context.proxyVault().available()
+                    ? "Wird verschlüsselt im Tresor abgelegt, nie in der Datei" : "Gilt bis zum Schließen der App");
             int count = exceptions.count();
             advanced.setIcon(open[0] ? Glyph.COLLAPSE : Glyph.EXPAND);
             advanced.setText("Erweitert" + (count == 0 ? ""
@@ -387,6 +409,22 @@ final class SettingDialogs {
             rows.repaint();
         };
         mode.addActionListener(e -> visibility.run());
+        user.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override
+            public void insertUpdate(javax.swing.event.DocumentEvent e) {
+                visibility.run();
+            }
+
+            @Override
+            public void removeUpdate(javax.swing.event.DocumentEvent e) {
+                visibility.run();
+            }
+
+            @Override
+            public void changedUpdate(javax.swing.event.DocumentEvent e) {
+                visibility.run();
+            }
+        });
         exceptions.onChange(visibility);
         advanced.addActionListener(e -> {
             open[0] = !open[0];
@@ -433,9 +471,56 @@ final class SettingDialogs {
                     ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
             ConfigFileEditor.Draft written = editor.withProxy(context.configFile(),
                     new ConfigFileEditor.Draft(text, null), proxy);
-            editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
-        }, () -> draft.get().settings().equals(currentProxy), context, saved);
+            storeProxy(context, editor, written, proxy.proxyUser(), password.getPassword());
+        }, () -> draft.get().settings().equals(currentProxy) && password.getPassword().length == 0, context, saved);
         return shell;
+    }
+
+    /**
+     * Schreibt den Proxy in die Datei und das Passwort in den Tresor (ohne Tresor nur in die Sitzung). Scheitert die
+     * Datei, kommt der alte Tresoreintrag zurück. Ohne Benutzer fällt ein gespeichertes Passwort weg.
+     */
+    static void storeProxy(AppContext context, ConfigFileEditor editor, ConfigFileEditor.Draft written,
+                           String username, char[] password) throws IOException {
+        boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
+        SecretVault vault = context.proxyVault();
+        try {
+            if (username == null) {
+                editor.save(context.configFile(), written, backup);
+                if (vault.available()) {
+                    vault.remove(AppContext.PROXY_KEY);
+                }
+                context.sessionProxyPassword(null, null);
+                return;
+            }
+            if (password.length == 0) {
+                editor.save(context.configFile(), written, backup);
+                return;
+            }
+            if (!vault.available()) {
+                editor.save(context.configFile(), written, backup);
+                context.sessionProxyPassword(username, password.clone());
+                return;
+            }
+            String stored = vault.raw(AppContext.PROXY_KEY);
+            vault.store(AppContext.PROXY_KEY, username, password.clone());
+            try {
+                editor.save(context.configFile(), written, backup);
+            } catch (IOException | RuntimeException e) {
+                try {
+                    if (stored == null) {
+                        vault.remove(AppContext.PROXY_KEY);
+                    } else {
+                        vault.restore(AppContext.PROXY_KEY, stored);
+                    }
+                } catch (IOException | RuntimeException restore) {
+                    e.addSuppressed(restore);
+                }
+                throw e;
+            }
+        } finally {
+            Arrays.fill(password, '\0');
+        }
     }
 
     /** Adresse der ersten Confluence-Quelle, sonst die öffentliche Confluence-Hilfe. */

@@ -576,7 +576,10 @@ final class SourceWizard {
         ProxySettings.Mode mode = PROXY_MODES.get(Math.max(0, proxyMode.getSelectedIndex()));
         return new ProxyDraft(mode, pacUrl.getText(), proxyHost.getText(), proxyPort.getText(),
                 proxyExceptions.hosts(), currentProxy.resolveTimeout(), currentProxy.cacheTtl(),
-                currentProxy.failureTtl());
+                currentProxy.failureTtl(),
+                // Anmeldung am Proxy und PAC-Skript stellt der Dialog „Proxy“ ein; der Assistent behält sie.
+                currentProxy.authentication() == null ? null : currentProxy.authentication().username(),
+                currentProxy.pacDiscoveryScript());
     }
 
     /** Ob Schritt 3 vom bisherigen Proxy abweicht (nur für Confluence, Dateien brauchen kein Netz). */
@@ -671,6 +674,8 @@ final class SourceWizard {
 
     AppRuntime.SessionSecrets sessionSecrets(SourceDraft source) {
         AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
+        // „Verbindung testen“ geht über denselben Proxy, also mit dessen Passwort.
+        secrets.proxyPassword(context.secrets().proxyPassword());
         String sourceId = source.id();
         char[] value = sessionValue.getPassword();
         if (value.length > 0 && sourceId != null) {
