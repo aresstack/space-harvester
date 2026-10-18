@@ -99,3 +99,12 @@ Die Anreicherungen nach einem Abgleich oder Einlesen laufen als eigener Auftrag 
 Abgleich und Export warten nicht darauf. Die Phase nennt den aktiven Prozessor, `discovered` zählt Seiten mal
 Prozessoren, `processed` erledigte Schritte, `written` neu berechnete und `failed` fehlgeschlagene Ergebnisse. Der
 Auftrag lässt sich wie jeder andere abbrechen; Berechnetes bleibt, der Rest folgt beim nächsten Abgleich.
+
+## Bilder beschaffen
+
+Nach jedem veröffentlichten Export beschafft ein eigener Auftrag `ASSETS` („Bilder beschaffen“) die Bilder seiner Seiten:
+Bild-, Vektor- und Diagramm-Anhänge, Bilder der Lese-Ansicht, die kein Anhang sind, und Mermaid-Diagramme als Text.
+`discovered` zählt gefundene Bilder, `processed` geprüfte, `written` abgelegte (auch bereits vorhandene), `failed`
+fehlende. Das Ergebnis steht in `assets.json` des Exports (Format `space-harvester/export-assets/v1`, je Eintrag Seite,
+Referenz, Version, Größe, `sha256`, Status `STORED`/`MISSING`/`FORBIDDEN`/`TOO_LARGE`/`UNAVAILABLE` und Grund); die Bytes
+liegen im Asset-Speicher. Der Export wartet nicht darauf.

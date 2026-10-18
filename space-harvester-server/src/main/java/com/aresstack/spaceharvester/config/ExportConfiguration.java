@@ -1,12 +1,15 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
+import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -79,7 +82,17 @@ class ExportConfiguration {
     }
 
     @Bean
-    ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters) {
-        return new ExportConversions(jobs, writer, converters);
+    ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
+                                                Assets assets, Exports exports) {
+        // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets);
+        exports.onPublished(images::start);
+        return images;
+    }
+
+    @Bean
+    ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters,
+                                        ExportAssetCollection images) {
+        return new ExportConversions(jobs, writer, converters, images);
     }
 }

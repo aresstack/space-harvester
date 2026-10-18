@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.output.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.export.Conversion;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
@@ -38,11 +39,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.regex.Pattern;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
-import java.util.TreeMap;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import tools.jackson.core.JsonGenerator;
@@ -60,6 +61,8 @@ import tools.jackson.databind.json.JsonMapper;
  *   <li>{@code tree.json}: Hierarchie nur aus Verweisen ({@code roots}, je Knoten {@code id} und {@code url})</li>
  *   <li>{@code manifest.json}: Vollständigkeit, Generation, Zähler, Fehler, Warnungen, Dateien mit {@code sha256},
  *       Herkunft konvertierter Dateien ({@code conversions})</li>
+ *   <li>{@code assets.json}: die Bilder des Datenbestands ({@link ExportAssetManifest}), sobald sie beschafft sind;
+ *       die Bytes liegen im Asset-Speicher</li>
  *   <li>konvertierte Dateien der angefragten Formate (#30), etwa {@code pages.json} oder {@code pages.md}</li>
  * </ul>
  *
@@ -74,6 +77,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     static final String PAGES = "pages.ndjson";
     static final String TREE = "tree.json";
     static final String MANIFEST = "manifest.json";
+    static final String ASSETS = "assets.json";
     static final String RAW = "raw";
     static final String INCOMPLETE = ".incomplete";
 
@@ -83,7 +87,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
     private static final Pattern SAFE_CONVERTED = Pattern.compile(CONVERTED_NAME);
     // Nur Kleinbuchstaben: Dateisysteme ohne Groß-/Kleinschreibung dürfen keine zwei Seiten zusammenlegen.
     private static final Pattern SAFE_FILE = Pattern.compile(
-            "(pages\\.ndjson|tree\\.json|manifest\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin)"
+            "(pages\\.ndjson|tree\\.json|manifest\\.json|assets\\.json|raw/[0-9a-z][0-9a-z_-]{0,63}\\.(json|bin)"
                     + "|" + CONVERTED_NAME + ")");
     private static final Pattern SAFE_PAGE_ID = Pattern.compile("[0-9a-z][0-9a-z_-]{0,63}");
 
@@ -219,6 +223,104 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
             return Optional.empty();
         }
         return Optional.of(ExportDataset.open(exportId, dir, json));
+    }
+
+    @Override
+    public void putAssets(String exportId, ExportAssetManifest manifest) {
+        requireSafe(exportId);
+        Path dir = root.resolve(exportId);
+        if (!Files.isRegularFile(dir.resolve(MANIFEST))) {
+            throw new IllegalStateException("Export " + exportId + " ist nicht veröffentlicht");
+        }
+        Path part = dir.resolve(ASSETS + ".part");
+        try {
+            try (JsonGenerator generator = json.createGenerator(Files.newOutputStream(part))) {
+                writeAssets(generator, manifest);
+            }
+            try {
+                Files.move(part, dir.resolve(ASSETS), StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(part, dir.resolve(ASSETS), StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("Bildmanifest des Exports " + exportId + " nicht schreibbar", e);
+        }
+    }
+
+    @Override
+    public Optional<ExportAssetManifest> assets(String exportId) {
+        if (!SAFE_EXPORT_ID.matcher(exportId).matches()) {
+            return Optional.empty();
+        }
+        Path file = root.resolve(exportId).resolve(ASSETS);
+        if (!Files.isRegularFile(file)) {
+            return Optional.empty();
+        }
+        JsonNode node = json.readTree(file.toFile());
+        if (!ExportAssetManifest.FORMAT.equals(node.path("format").asString())) {
+            return Optional.empty();
+        }
+        List<ExportAssetManifest.Entry> entries = new ArrayList<>();
+        for (JsonNode entry : node.path("assets")) {
+            JsonNode ref = entry.path("reference");
+            ExportAssetManifest.Reference reference = new ExportAssetManifest.Reference(
+                    ExportAssetManifest.Kind.ofJson(ref.path("kind").asString()), optional(ref, "attachmentId"),
+                    optional(ref, "filename"), optional(ref, "src"),
+                    ref.hasNonNull("index") ? ref.path("index").asInt() : null, optional(ref, "source"));
+            entries.add(new ExportAssetManifest.Entry(entry.path("pageId").asString(), reference,
+                    optional(entry, "attachmentId"), optional(entry, "version"), optional(entry, "title"),
+                    optional(entry, "mediaType"), entry.path("size").asLong(), optional(entry, "sha256"),
+                    ExportAssetManifest.Status.valueOf(entry.path("status").asString()), optional(entry, "reason")));
+        }
+        return Optional.of(new ExportAssetManifest(node.path("complete").asBoolean(false), entries));
+    }
+
+    private static String optional(JsonNode node, String name) {
+        return node.hasNonNull(name) ? node.path(name).asString() : null;
+    }
+
+    private static void writeAssets(JsonGenerator generator, ExportAssetManifest manifest) {
+        generator.writeStartObject();
+        generator.writeStringProperty("format", ExportAssetManifest.FORMAT);
+        generator.writeBooleanProperty("complete", manifest.complete());
+        generator.writeName("assets");
+        generator.writeStartArray();
+        for (ExportAssetManifest.Entry entry : manifest.assets()) {
+            ExportAssetManifest.Reference ref = entry.reference();
+            generator.writeStartObject();
+            generator.writeStringProperty("pageId", entry.pageId());
+            generator.writeName("reference");
+            generator.writeStartObject();
+            generator.writeStringProperty("kind", ref.kind().json());
+            if (ref.attachmentId() != null) {
+                generator.writeStringProperty("attachmentId", ref.attachmentId());
+            }
+            if (ref.filename() != null) {
+                generator.writeStringProperty("filename", ref.filename());
+            }
+            if (ref.src() != null) {
+                generator.writeStringProperty("src", ref.src());
+            }
+            if (ref.index() != null) {
+                generator.writeNumberProperty("index", ref.index());
+            }
+            if (ref.source() != null) {
+                generator.writeStringProperty("source", ref.source());
+            }
+            generator.writeEndObject();
+            generator.writeStringProperty("attachmentId", entry.attachmentId());
+            generator.writeStringProperty("version", entry.version());
+            generator.writeStringProperty("title", entry.title());
+            generator.writeStringProperty("mediaType", entry.mediaType());
+            generator.writeNumberProperty("size", entry.size());
+            generator.writeStringProperty("sha256", entry.sha256());
+            generator.writeStringProperty("status", entry.status().name());
+            generator.writeStringProperty("reason", entry.reason());
+            generator.writeEndObject();
+        }
+        generator.writeEndArray();
+        generator.writeEndObject();
     }
 
     @Override
@@ -370,7 +472,7 @@ public class FileSystemExportArtifactWriter implements ExportArtifactWriter {
         @Override
         public ExportArtifact.File converted(Conversion conversion, Content content) throws IOException {
             String name = conversion.fileName();
-            if (!SAFE_CONVERTED.matcher(name).matches() || List.of(PAGES, TREE, MANIFEST).contains(name)
+            if (!SAFE_CONVERTED.matcher(name).matches() || List.of(PAGES, TREE, MANIFEST, ASSETS).contains(name)
                     || conversions.stream().anyMatch(done -> done.fileName().equals(name))) {
                 throw new IllegalArgumentException("Ungültiger oder doppelter Dateiname " + name);
             }

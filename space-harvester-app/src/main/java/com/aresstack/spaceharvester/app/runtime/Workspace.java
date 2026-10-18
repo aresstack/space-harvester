@@ -282,8 +282,10 @@ public final class Workspace {
                 // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar.
             }
         }
-        // Anreicherungen plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
-        for (JobStatus enrichment : harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT)) {
+        // Anreicherungen und Bilder plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
+        List<JobStatus> followUps = new ArrayList<>(harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT));
+        followUps.addAll(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS));
+        for (JobStatus enrichment : followUps) {
             if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
                 try {
                     requireVisible(enrichment, AccessKind.SYNC);
