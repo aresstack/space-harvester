@@ -94,6 +94,10 @@ class HarvesterSearchTest {
             assertThat(second.complete()).isTrue();
             assertThatThrownBy(() -> harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), "k1.kaputt!", 1)).isInstanceOf(InvalidQueryException.class);
+            // Ein Cursor gilt nur für die Anfrage, aus der er stammt.
+            assertThatThrownBy(() -> harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Bereitschaft"), first.nextCursor(), 1))
+                    .isInstanceOf(InvalidQueryException.class);
         }
     }
 
@@ -132,6 +136,15 @@ class HarvesterSearchTest {
                     tuple("wiki", KeywordSearch.SourceState.Status.SEARCHED),
                     tuple("down", KeywordSearch.SourceState.Status.UNAVAILABLE));
             assertThat(results.complete()).isFalse();
+
+            // Auch über „Weitere laden“ bleibt die ausgefallene Quelle als Lücke sichtbar.
+            KeywordSearch.Results first = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 1);
+            KeywordSearch.Results last = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), first.nextCursor(), 1);
+            assertThat(last.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+            assertThat(last.nextCursor()).isNull();
+            assertThat(last.complete()).isFalse();
         }
     }
 

@@ -13,15 +13,19 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceSearchMatch;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -45,7 +49,7 @@ import java.util.regex.Pattern;
  * <p>Ein Stapel nimmt reihum Treffer aus jeder Quelle in deren Rangfolge, bis {@code limit} erreicht ist; der Cursor
  * merkt sich je Quelle, wie weit sie gelesen ist („Weitere laden“). Eine Quelle, die nicht antwortet, verwirft die
  * anderen nicht: sie steht mit {@link SourceState.Status#UNAVAILABLE} in {@link Results#sources()}, und das Ergebnis
- * ist nicht {@code complete}. Quellen ohne eigene Suche stehen dort als {@link SourceState.Status#NOT_SUPPORTED},
+ * ist nicht {@code complete}, auch in allen Folgestapeln desselben Cursors. Quellen ohne eigene Suche stehen dort als {@link SourceState.Status#NOT_SUPPORTED},
  * statt still „keine Treffer“ zu melden. Je Quelle reicht die Suche höchstens {@value #MAX_DEPTH} Treffer tief.
  *
  * <p>Nur Schlagworte, keine semantische Suche ({@code SemanticSearch} beschreibt die geplante Erweiterung).
@@ -65,6 +69,7 @@ public class KeywordSearch {
     private static final System.Logger LOG = System.getLogger(KeywordSearch.class.getName());
     private static final String CURSOR_PREFIX = "k1.";
     private static final Pattern CURSOR_ENTRY = Pattern.compile("[^\\t\\n]{1,255}\\t[0-9]{1,4}");
+    private static final Pattern CURSOR_HEAD = Pattern.compile("[0-9a-f]{24}\\t[01]");
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
@@ -91,13 +96,15 @@ public class KeywordSearch {
         }
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
         scope.requireKnown(catalog);
-        Map<String, Integer> offsets = cursor == null || cursor.isEmpty() ? null : decode(cursor);
+        Position position = cursor == null || cursor.isEmpty() ? null : decode(cursor, fingerprint(query));
+        Map<String, Integer> offsets = position == null ? null : position.offsets();
 
         List<SourceState> states = new ArrayList<>();
         Map<String, List<SourceSearchMatch>> pending = new LinkedHashMap<>();
         Map<String, Boolean> more = new LinkedHashMap<>();
         Map<String, Integer> start = new LinkedHashMap<>();
-        boolean complete = true;
+        // Was ein früherer Stapel nicht prüfen konnte, bleibt bis zum Ende offen.
+        boolean complete = position == null || !position.incomplete();
         for (HarvestSource source : catalog.all()) {
             String sourceId = source.id();
             if (!scope.sourceIds().contains(sourceId) || (offsets != null && !offsets.containsKey(sourceId))) {
@@ -150,9 +157,9 @@ public class KeywordSearch {
             }
         }
         Checked checked = check(caller, query, candidates);
-        complete &= checked.complete() && next.isEmpty();
-        return new Results(scope.sourceId(), checked.hits(), states, next.isEmpty() ? null : encode(next),
-                complete);
+        boolean checkedAll = complete && checked.complete();
+        return new Results(scope.sourceId(), checked.hits(), states,
+                next.isEmpty() ? null : encode(fingerprint(query), !checkedAll, next), checkedAll && next.isEmpty());
     }
 
     /** Kopfdaten live und Freigabe je Treffer; parallel, Reihenfolge der Kandidaten bleibt. */
@@ -225,15 +232,15 @@ public class KeywordSearch {
                 metadata.parentPageId()));
     }
 
-    private static String encode(Map<String, Integer> offsets) {
-        StringBuilder text = new StringBuilder();
-        offsets.forEach((id, offset) -> text.append(text.isEmpty() ? "" : "\n").append(id).append('\t')
-                .append(offset));
+    /** Der Cursor gilt nur für dieselbe Anfrage; er trägt mit, ob ein früherer Stapel unvollständig war. */
+    private static String encode(String fingerprint, boolean incomplete, Map<String, Integer> offsets) {
+        StringBuilder text = new StringBuilder(fingerprint).append('\t').append(incomplete ? '1' : '0');
+        offsets.forEach((id, offset) -> text.append('\n').append(id).append('\t').append(offset));
         return CURSOR_PREFIX + Base64.getUrlEncoder().withoutPadding()
                 .encodeToString(text.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private static Map<String, Integer> decode(String cursor) {
+    private static Position decode(String cursor, String fingerprint) {
         if (!cursor.startsWith(CURSOR_PREFIX) || cursor.length() > 20_000) {
             throw new InvalidQueryException("cursor ist ungültig");
         }
@@ -244,8 +251,15 @@ public class KeywordSearch {
         } catch (IllegalArgumentException e) {
             throw new InvalidQueryException("cursor ist ungültig");
         }
+        String[] lines = text.split("\n");
+        if (lines.length < 2 || !CURSOR_HEAD.matcher(lines[0]).matches()) {
+            throw new InvalidQueryException("cursor ist ungültig");
+        }
+        if (!lines[0].startsWith(fingerprint)) {
+            throw new InvalidQueryException("cursor gehört zu einer anderen Suchanfrage");
+        }
         Map<String, Integer> offsets = new LinkedHashMap<>();
-        for (String entry : text.split("\n")) {
+        for (String entry : List.of(lines).subList(1, lines.length)) {
             if (!CURSOR_ENTRY.matcher(entry).matches()) {
                 throw new InvalidQueryException("cursor ist ungültig");
             }
@@ -256,7 +270,22 @@ public class KeywordSearch {
             }
             offsets.put(entry.substring(0, tab), offset);
         }
-        return offsets;
+        return new Position(offsets, lines[0].endsWith("1"));
+    }
+
+    private static String fingerprint(Query query) {
+        String canonical = String.join("\u0000", query.text(), String.valueOf(query.sourceId()),
+                String.join("\u0001", new TreeSet<>(query.sourceIds())),
+                String.join("\u0001", new TreeSet<>(query.spaceKeys())));
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonical.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, 12);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+    }
+
+    private record Position(Map<String, Integer> offsets, boolean incomplete) {
     }
 
     private record Candidate(String sourceId, SourceSearchMatch match) {
@@ -310,7 +339,8 @@ public class KeywordSearch {
      *                   Treffer folgen
      * @param sources    je Quelle des Umfangs, ob sie gesucht hat; im ersten Stapel alle, danach nur die noch offenen
      * @param nextCursor für „Weitere laden“ mit derselben Anfrage, {@code null}, wenn keine Quelle mehr Treffer hat
-     * @param complete   keine Quelle hat mehr Treffer, und jede Quelle und jeder Treffer ließ sich prüfen
+     * @param complete   keine Quelle hat mehr Treffer, und jede Quelle und jeder Treffer dieses und aller früheren
+ *                   Stapel ließ sich prüfen
      */
     public record Results(String sourceId, List<Hit> hits, List<SourceState> sources, String nextCursor,
                           boolean complete) {
