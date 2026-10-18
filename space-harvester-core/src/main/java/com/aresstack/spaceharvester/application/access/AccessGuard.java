@@ -38,6 +38,23 @@ public final class AccessGuard {
     }
 
     /**
+     * Darf der Aufrufer alles lesen, was die Zugangsdaten der Quelle sehen ({@link AccessPolicy#decideSourceWide})?
+     * Fail closed wie {@link #permits}.
+     */
+    public boolean permitsSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+        if (context == null || sourceId == null || kind == null) {
+            return false;
+        }
+        try {
+            return policy.decideSourceWide(context, sourceId, kind) == AccessDecision.ALLOW;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Rechteprüfung für {0} fehlgeschlagen ({1}); Zugriff verweigert",
+                    context.principal(), e.getClass().getName());
+            return false;
+        }
+    }
+
+    /**
      * @throws AccessDeniedException wenn nicht freigegeben; die API antwortet mit 403
      */
     public void require(AccessContext context, ResourceScope scope, AccessKind kind) {

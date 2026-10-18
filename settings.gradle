@@ -17,8 +17,9 @@ rootProject.name = 'space-harvester'
 // Unveränderte Kopie der Confluence-Quelle aus aresstack/enterprise-ai-client, siehe enterprise-ai-sources/UPSTREAM.md.
 include 'enterprise-ai-sources'
 
-// Word-Ausgabe des Enterprise AI Client als eigene Bibliothek ohne Swing (angepasste Kopie, siehe docx-export/UPSTREAM.md).
-include 'docx-export'
+// Dokumentausgabe des Enterprise AI Client (Word, PDF, Markdown) als eigene Bibliothek ohne Swing (angepasste Kopie,
+// siehe document-export/UPSTREAM.md).
+include 'document-export'
 
 // Bibliothek mit der Fachlogik, ohne Spring Boot und REST, siehe docs/MODULES.md (#100).
 include 'space-harvester-core'
@@ -38,3 +39,7 @@ include 'comic-controls'
 
 // Eigenständige Swing-Desktop-App auf der Core-Bibliothek, ohne REST und ohne Spring-Kontext (#103).
 include 'space-harvester-app'
+
+// Vergleichstests gegen den Enterprise AI Client (ADR 0012, docs/PARITY.md, #193): neutrales Dokumentmodell für
+// DOCX, PDF und Markdown, ParityReport für den Live-Lauf; hängt nur am Core, nichts hängt davon ab.
+include 'parity-tests'

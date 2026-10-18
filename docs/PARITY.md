@@ -151,7 +151,7 @@ Nicht angebunden sind:
 
 Maßstab: `doc/DocxExportWriter`, `doc/MarkdownDocxRenderer`, `doc/ExportGraphics` über `know/KnowledgeExportUseCase`.
 Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R ersetzt ihn durch das Modul
-`:docx-export` mit dem Exporter des EAC (PR #175), Strang Q liefert das Asset-Manifest.
+`:document-export` mit dem Exporter des EAC (Word #175, PDF #202), Strang Q liefert das Asset-Manifest.
 
 | Fähigkeit | EAC | Core (main) | Bewertung |
 |---|---|---|---|
@@ -161,7 +161,7 @@ Im Core: `core/output/convert/DocxConverter` (docx/2, eigenes OOXML). Strang R e
 | Bilder eingebettet, skaliert, Bildunterschrift, Meldung fehlender Bilder | `run.addPicture`, `ExportGraphics#problems` | Platzhalter `[Bild: …]` | in Arbeit (R mit Manifest von Q) |
 | Mermaid und draw.io als Grafik | ja (draw.io über Renderer) | Code bzw. Hinweis | in Arbeit (R); Renderer im Core → #190 |
 | Hyperlinks, Codeblöcke, Listen | ja | ja | gleich |
-| Interne Seitenlinks innerhalb des Dokuments | — | Lesezeichen `page_<id>` | SH+ (in `:docx-export` erhalten) |
+| Interne Seitenlinks innerhalb des Dokuments | — | Lesezeichen `page_<id>` | SH+ (in `:document-export` erhalten) |
 | Durchgestrichen, Dokumenteigenschaften (Titel, Autor) | ja | nein | in Arbeit (R, #175) |
 
 ## 10. Weitere Formate und Datenbestand
@@ -259,65 +259,83 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:docx-export`, #175),
+- Export-Parität Markdown, Word und PDF mit Bildern auf einem gemeinsamen Dokumentbaum aus dem Datenbestand (R; Word über `:document-export`, #175),
 - Auftragskarte und Ausgabeordner (L).
 
 ## Vergleichstests
 
-Ziel: Für die wichtigsten Fälle laufen dieselben Confluence-Testdaten durch beide Implementierungen, und die
-Ergebnisse werden verglichen (Issue #193). Eine Lücke gilt erst als geschlossen, wenn ihr Vergleich grün ist.
+Modul `:parity-tests` (#193). Maßstab ist der Export des Enterprise AI Client; der Core darf mehr können, nie
+weniger. Verglichen wird die Struktur, nicht die Bytes: Leser für DOCX (OOXML im ZIP), PDF (PDFBox) und Markdown
+bilden jede Datei auf ein neutrales `DocumentOutline` ab, `ParityComparison` vergleicht zwei davon.
 
 ### Testdaten
 
-1. **Fixture im Repository:** `FakeConfluence` aus `source-confluence` (in beiden Repositories identisch) bekommt einen
-   Paritäts-Space `PARITY` mit:
-   - drei Ebenen Hierarchie (Kapitel, Unterkapitel, Seite) und einer Seite auf Ebene 7 (Überschriften > 6);
-   - einer Tabelle mit Kopfzeile, verbundenen Zellen und Ausrichtung;
-   - Bildern als Anhang (PNG, JPEG, SVG), einem externen Bild (`ri:url`) und einem Inline-Bild, das nur in der
-     Leseansicht vorkommt;
-   - einem draw.io-Diagramm (mxfile + PNG-Vorschau, mit Revision), einem `inc-drawio` von einer anderen Seite und
-     einem Mermaid-Makro;
-   - internen Links zwischen Seiten, einem externen Link, `mailto:`, Codeblock, verschachtelten Listen,
-     Durchgestrichenem, `include`-, `children`- und Jira-Makro;
-   - einem nicht abrufbaren Bild (404) für die Fehlermeldung;
-   - einem Anhang als PDF und als DOCX für die Textextraktion.
-2. **Echte Daten (nur Angelo):** ein freigegebener Space aus Confluence Data Center, z. B. JIRAPortfolio. Aus
-   Containern ist `confluence.atlassian.com` gesperrt; die Live-Nachstellung macht nur Angelo.
+`ParitySpace` legt im `FakeConfluence` (in beiden Repositories gleich) den Space `PARITY` „Paritätsprüfung“ an:
+Handbuch → Architektur, Komponenten → Ebene 4 … Ebene 7 (sieben Gliederungsebenen unter dem Space), Betrieb. Darin:
+externer Link und `mailto`, Tabelle 3 × 3 mit Kopfzeile, verschachtelte Listen, Hervorhebungen, Code-Makro,
+eingebettetes SVG aus der Anhangsliste, interner `ac:link`, Mermaid-Makro, draw.io-Makro mit Anhang, ein fehlendes
+Bild (404) und ein nicht ladbares externes Bild, sieben Merksätze. Jede Seite hat `body.storage` und eine
+handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text speichert.
 
 ### Ablauf
 
-1. Ein Testmodul (Vorschlag `:parity-tests`, nur Testcode) startet `FakeConfluence` und erzeugt:
-   - **EAC:** `KnowledgeExportUseCase` mit `DocxExportWriter`, `PdfExportWriter`, `MarkdownExportWriter` über den
-     Teilbaum ab Kapitel 1. Dafür wird der EAC als Jar eines festen Commits eingebunden (Java 8 läuft auf 21).
-   - **Core:** Herunterladen des Space über `Harvester`, dann Konvertierung aus dem Datenbestand nach DOCX, PDF und
-     Markdown ohne Netz (Fake nach dem Herunterladen gestoppt: beweist „nie erneut abrufen“).
-2. Beide Ergebnisse werden in ein neutrales Modell gelesen und verglichen, nicht byteweise.
-3. Für die echten Daten liefert ein kleines Programm (`ParityReport`) dieselben Vergleiche als Bericht. Angelo führt
-   es unter Windows gegen Confluence aus, beide Dateien werden zusätzlich in Word geöffnet, und dort wird das
-   Inhaltsverzeichnis aktualisiert.
+1. **Referenzen des Enterprise AI Client:** `parity-tests/eac/generate.sh [pfad-zum-checkout]` baut den
+   Enterprise AI Client am Commit aus `src/test/resources/eac/COMMIT`, exportiert den Paritäts-Space über
+   `KnowledgeExportUseCase.subtree` als Word, PDF und Markdown und legt `parity.{docx,pdf,md}` samt
+   `problems-<format>.txt` (Meldungen von `ExportGraphics`) unter `src/test/resources/eac/` ab. Die CI von Space
+   Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
+   Commit des Enterprise AI Client neu erzeugt.
+2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, exportiert denselben Space über
+   `Harvester.export(…, docx, pdf, markdown)` und vergleicht mit den Referenzen. Bericht:
+   `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
+   Core-Exporte daneben unter `core/`.
+3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
+   `src/test/resources/known-gaps.properties` mit Issue oder Strang. Eine neue Lücke lässt den Test scheitern;
+   eine geschlossene meldet der Bericht („aus known-gaps entfernen“).
 
-### Prüfpunkte Word
+### Prüfpunkte
 
-| Prüfpunkt | Wie gemessen | Erwartung |
+| Prüfung | Formate | Regel |
 |---|---|---|
-| Kapitel | Folge der Überschriften (Ebene, Text) aus `word/document.xml` | gleiche Folge; Core darf mehr Ebenen haben, nie weniger |
-| Inhaltsverzeichnis | TOC-Feld vorhanden, `updateFields` in `settings.xml` | in beiden vorhanden |
-| Bilder | Zahl der `w:drawing`, Bildgrößen, Unterschriften, Meldungsliste fehlender Bilder | Core ≥ EAC; das 404-Bild in beiden gemeldet, kein `[Bild: …]` als Erfolg |
-| Diagramme | draw.io und Mermaid als Grafik | in beiden als Grafik |
-| Tabellen | Zahl, Zeilen, Spalten, Kopfzeile wiederholt | gleich |
-| Links | externe Ziele (`document.xml.rels`), interne Sprungziele | externe gleich; interne im Core zusätzlich erlaubt |
-| Text | normalisierter Fließtext je Kapitel | gleich bis auf bekannte Abweichungen (Liste im Test) |
+| Kapitel und Überschriften | alle | jeder Titel des Maßstabs im Core |
+| Tiefste Gliederungsebene | alle | Core ≥ Maßstab |
+| Inhaltsverzeichnis, Seitenzahlen | Word, PDF (Markdown nur wenn eine Seite eins hat) | Core ≥ Maßstab |
+| Felder beim Öffnen aktualisieren | Word | Core ≥ Maßstab |
+| PDF-Lesezeichen | PDF | Core ≥ Maßstab |
+| Eingebettete Bilder | alle | Core ≥ Maßstab (Data-URI oder lokale Datei in Markdown) |
+| Hinweise auf fehlende Bilder | alle | meldet der Maßstab welche, meldet sie auch der Core |
+| Tabellen | Word, Markdown | jede Tabelle (Zeilen × Spalten, Kopfzeile) im Core |
+| Externe Links | alle | Ziele des Maßstabs ⊆ Core |
+| Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
+| Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 
-### Prüfpunkte PDF, Markdown und Seitenabruf
+Stand nach #175 (Word über `:document-export`): Der Enterprise AI Client verliert die Ziele externer Links in allen
+Formaten, der Core behält sie. Tabellen, Text, Inhaltsverzeichnis und Felder in Word sind gleich. Offen (in
+`known-gaps.properties`): Space-Name als oberstes Kapitel (wartet auf den Space-Namen im Konvertier-Eingang),
+Inhaltsverzeichnisseite, Seitenzahlen und Lesezeichen im PDF (#202), eingebettete Bilder in allen Formaten (Strang R,
+Asset-Manifest aus Runde 7).
 
-| Bereich | Prüfpunkte |
-|---|---|
-| PDF | Gliederung (Lesezeichen), Inhaltsverzeichnisseite mit Seitenzahlen, Seitenzahlen, Bildanzahl, Text je Kapitel (PDFBox) |
-| Markdown | Überschriftenfolge, Bilder vorhanden (eingebettet oder Datei aus dem Manifest), Mermaid-Block, Links |
-| Suche | dieselbe Anfrage über `SearchKnowledgeSourcesUseCase` und `KeywordSearch`: gleiche Treffermenge, Auszüge, Metadaten |
-| Navigation | Kinder, Reihenfolge und Breadcrumbs einer Seite auf Ebene 3 |
-| Anhänge | Liste mit Metadaten gleich; Bytes gleich (SHA-256) |
-| Leseansicht | Text einer Seite mit `include`-, `children`- und Jira-Makro enthält dieselben ausgeführten Inhalte |
+Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
+Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht.
 
-Bekannte, gewollte Abweichungen (Core darf hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest,
-textuelle Diagrammquellen, PlantUML als Code.
+### Live-Lauf gegen echte Daten
+
+Denselben Space einmal im Enterprise AI Client (Space-Knoten oder Startseite, „Exportieren“ als Word, PDF und
+Markdown) und einmal in der Desktop-App (Herunterladen, dann Exportieren in denselben Formaten) exportieren. Dann
+im Checkout von Space Harvester:
+
+```bat
+gradlew.bat :parity-tests:run --args="C:\Exporte\eac.docx C:\Exporte\sh.docx C:\Exporte\eac.pdf C:\Exporte\sh.pdf C:\Exporte\eac.md C:\Exporte\sh.md --out C:\Exporte\paritaet.md"
+```
+
+Oder einmal `gradlew.bat :parity-tests:installDist` und danach
+`parity-tests\build\install\parity-report\bin\parity-report.bat <eac-datei> <core-datei> … --out bericht.md`.
+Die Paare sind immer „Enterprise AI Client, dann Space Harvester“; das Format folgt der Dateiendung. Der Bericht
+ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
+
+### Noch nicht abgedeckt
+
+Suche, Navigation, Anhänge und Leseansicht vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen:
+Leseansicht #176, Navigation mit Breadcrumbs #177, Space-Filter der Suche in der Anfrage #179, Text aus Anhängen
+#183, Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf hier mehr): interne
+Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.

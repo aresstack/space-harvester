@@ -32,7 +32,8 @@ public interface ExportAssets {
     }
 
     /**
-     * Die abgelegten Bytes eines Eintrags, gegen seine {@code sha256} geprüft.
+     * Die abgelegten Bytes eines Eintrags, gegen seine {@code sha256} geprüft; bei {@link ExportAssetManifest.Kind#MERMAID}
+     * der Diagrammtext in UTF-8.
      *
      * @return leer, wenn er nicht abgelegt ist oder die Ablage ihn nicht (mehr) hat
      */

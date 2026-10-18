@@ -1,20 +1,16 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
-import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
-import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.docx.DocxExportWriter;
-import com.aresstack.spaceharvester.docx.ExportGraphics;
-import com.aresstack.spaceharvester.output.convert.StorageDocument.Block;
-import com.aresstack.spaceharvester.output.convert.StorageDocument.Note;
+import com.aresstack.spaceharvester.document.DocxExportWriter;
+import com.aresstack.spaceharvester.document.ExportGraphics;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.List;
 
 /**
  * Word (#30): alle Seiten eines Exports in einer Datei {@code pages.docx}, geschrieben mit dem Word-Exporter des
- * Enterprise AI Client (Modul {@code :docx-export}, Apache POI). Das Kapitelmodell: der Space ist Kapitel 1
+ * Enterprise AI Client (Modul {@code :document-export}, Apache POI). Das Kapitelmodell: der Space ist Kapitel 1
  * (Überschrift 1), jede Seite ein Unterkapitel nach ihrer Tiefe im Baum (Wurzelseiten Überschrift 2, deren Kinder
  * Überschrift 3 …), linear in Baumreihenfolge. Davor steht ein echtes Inhaltsverzeichnis-Feld über alle Ebenen, das
  * Word beim Öffnen aktualisiert; es gibt damit die Hierarchie von Space und Seiten wieder.
@@ -53,36 +49,13 @@ public final class DocxConverter implements ExportConverter {
     @Override
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
-        String title = "Space " + input.spaceKey() + " (" + input.sourceId() + ")";
+        String title = ExportChapters.title(input);
         DocxExportWriter writer = new DocxExportWriter(ExportGraphics.standard(), "Space Harvester");
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
-            chapters.chapter(title, null, "*" + MarkdownConverter.escape(input.headers().size() + " Seiten der Quelle "
-                    + input.sourceId() + ", erzeugt mit " + VERSION + " aus dem Confluence-Storage-Format.") + "*",
-                    List.of(), 1);
-            input.forEachPage(page -> chapters.chapter(title(page), PageLinks.anchor(page.pageId()),
-                    markdown(page, parser), List.of(), page.depth() + 2));
+            chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            input.forEachPage(page -> chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
+                    ExportChapters.markdown(page, parser), List.of(), ExportChapters.depth(page)));
             chapters.finish(out);
         }
-    }
-
-    private static String title(ConvertiblePage page) {
-        String title = page.header().metadata().title();
-        return title == null || title.isBlank() ? "Seite " + page.pageId() : title;
-    }
-
-    /** Seiten-ID, Version und Link in Confluence, darunter der Inhalt; Überschriften ab Ebene 1 (verschiebt der Writer). */
-    private static String markdown(ConvertiblePage page, StorageParser parser) {
-        PageMetadata metadata = page.header().metadata();
-        StringBuilder facts = new StringBuilder("Seite " + MarkdownConverter.escape(page.pageId()));
-        if (metadata.version() != null) {
-            facts.append(" · Version ").append(MarkdownConverter.escape(metadata.version()));
-        }
-        if (metadata.url() != null) {
-            facts.append(" · [In Confluence öffnen](").append(MarkdownConverter.destination(metadata.url().toString()))
-                    .append(')');
-        }
-        List<Block> blocks = PageBody.storage(page.snapshot().payload()).map(parser::parse)
-                .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
-        return "*" + facts + "*\n\n" + MarkdownConverter.blocks(blocks, 0);
     }
 }
