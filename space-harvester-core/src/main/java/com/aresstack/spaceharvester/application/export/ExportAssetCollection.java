@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.jobs.JobTask;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
+import com.aresstack.spaceharvester.application.reading.ForeignContent;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -31,6 +32,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiPredicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import tools.jackson.core.JacksonException;
@@ -46,7 +48,13 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>Je Seite: Anhänge der Arten Bild, Vektor und Diagramm aus der Anhangsliste, dazu die Bilder der Lese-Ansicht,
  * die kein Anhang sind (Makros, gerenderte Diagramme), und die Mermaid-Diagramme des Storage-Formats als Text. Eine
- * Seite, deren Space inzwischen ein anderer ist, bleibt außen vor. Zähler: {@code discovered} gefundene Bilder,
+ * Seite, deren Space inzwischen ein anderer ist, bleibt außen vor.
+ *
+ * <p>Inhalte anderer Seiten: Bindet die Seite Fremdes ein ({@link ForeignContent}, etwa {@code include} oder
+ * {@code jira}) oder zeigt die Ansicht einen Anhang einer anderen Seite, hat die Quelle diese Bilder mit ihren eigenen
+ * Zugangsdaten gerendert. Sie werden nur beschafft, wenn der Auftraggeber alles lesen darf, was diese Zugangsdaten
+ * sehen ({@code sourceWide}); sonst stehen sie mit {@link ExportAssetManifest.Status#FORBIDDEN} und Grund
+ * {@code foreign-content} im Manifest. Zähler: {@code discovered} gefundene Bilder,
  * {@code processed} geprüfte, {@code written} abgelegte (auch bereits vorhandene), {@code failed} fehlende.
  */
 public class ExportAssetCollection {
@@ -66,10 +74,17 @@ public class ExportAssetCollection {
     private final ExportArtifactWriter writer;
     private final SourceQueries sources;
     private final Assets assets;
+    private final BiPredicate<String, String> sourceWide;
     /** Laufende Aufträge je Export; nach einem Neustart entscheidet allein das Manifest. */
     private final Map<String, String> running = new ConcurrentHashMap<>();
 
-    public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets) {
+    /**
+     * @param sourceWide ob ein Auftraggeber ({@link JobContext#owner()}) für eine Quelle alles lesen darf, was ihre
+     *                   Zugangsdaten sehen ({@link com.aresstack.spaceharvester.application.access.AccessGuard#permitsSourceWide})
+     */
+    public ExportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources, Assets assets,
+                                 BiPredicate<String, String> sourceWide) {
+        this.sourceWide = Objects.requireNonNull(sourceWide, "sourceWide");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.writer = Objects.requireNonNull(writer, "writer");
         this.sources = Objects.requireNonNull(sources, "sources");
@@ -137,6 +152,9 @@ public class ExportAssetCollection {
 
             @Override
             public Optional<byte[]> content(ExportAssetManifest.Entry entry) {
+                if (entry.stored() && entry.reference().kind() == ExportAssetManifest.Kind.MERMAID) {
+                    return Optional.of(entry.reference().source().getBytes(StandardCharsets.UTF_8));
+                }
                 if (!entry.stored() || entry.attachmentId() == null) {
                     return Optional.empty();
                 }
@@ -191,13 +209,19 @@ public class ExportAssetCollection {
         String pageId = snapshot.key().pageId();
         boolean checked = true;
         Set<String> attachmentIds = new HashSet<>();
+        Set<String> ownAttachments = new HashSet<>();
         try {
             PageAttachmentList list = sources.attachments(sourceId, pageId);
             if (!dataset.spaceKey().equals(list.spaceKey())) {
                 // Inzwischen in einem anderen Space: die Seite bleibt, wie sie exportiert wurde, ohne Bilder.
                 return false;
             }
+            if (!list.attachments().complete()) {
+                // Die Quelle hat nicht alle Anhänge genannt: was fehlt, ist nicht einmal als Eintrag da.
+                checked = false;
+            }
             for (PageAttachment attachment : list.attachments().attachments()) {
+                ownAttachments.add(attachment.attachmentId());
                 AssetKind kind = AssetKind.of(attachment.mediaType(), attachment.title());
                 if (kind == AssetKind.OTHER) {
                     continue;
@@ -216,6 +240,8 @@ public class ExportAssetCollection {
                 checked = false;
             }
         }
+        boolean foreign = ForeignContent.of(snapshot).present();
+        boolean mayShowForeign = sourceWide.test(context.owner(), sourceId);
         try {
             for (HarvestSource.ViewImage image : assets.viewImages(sourceId, pageId)) {
                 if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
@@ -224,6 +250,15 @@ public class ExportAssetCollection {
                 context.discovered(1);
                 ExportAssetManifest.Reference reference = ExportAssetManifest.Reference.viewImage(withoutUserInfo(
                         image.src()));
+                boolean otherPage = image.attachmentId() != null && !ownAttachments.contains(image.attachmentId());
+                if ((foreign || otherPage) && !mayShowForeign) {
+                    // Gerendert mit den Zugangsdaten der Quelle: nicht laden, nur als nicht freigegeben melden.
+                    context.processed(1);
+                    context.failed(1);
+                    entries.add(new ExportAssetManifest.Entry(pageId, reference, null, null, image.title(),
+                            image.mediaType(), 0, null, ExportAssetManifest.Status.FORBIDDEN, "foreign-content"));
+                    continue;
+                }
                 entries.add(store(context, pageId, reference, null, null, image.title(), image.mediaType(),
                         () -> assets.viewImage(sourceId, pageId, snapshot.revision(), image).asset()));
             }
@@ -235,9 +270,11 @@ public class ExportAssetCollection {
         }
         List<String> diagrams = mermaid(snapshot);
         for (int i = 0; i < diagrams.size(); i++) {
+            // Der Diagrammtext steht im Manifest selbst; der Hash gilt seinen UTF-8-Bytes.
+            byte[] text = diagrams.get(i).getBytes(StandardCharsets.UTF_8);
             entries.add(new ExportAssetManifest.Entry(pageId, ExportAssetManifest.Reference.mermaid(i,
-                    diagrams.get(i)), null, null, "Mermaid " + (i + 1), "text/vnd.mermaid", diagrams.get(i)
-                    .getBytes(StandardCharsets.UTF_8).length, null, ExportAssetManifest.Status.STORED, null));
+                    diagrams.get(i)), null, null, "Mermaid " + (i + 1), "text/vnd.mermaid", text.length,
+                    Assets.sha256(text), ExportAssetManifest.Status.STORED, null));
         }
         return checked;
     }

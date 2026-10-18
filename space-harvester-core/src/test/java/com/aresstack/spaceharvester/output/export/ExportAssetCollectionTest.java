@@ -87,7 +87,8 @@ class ExportAssetCollectionTest {
             }
         };
         Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets")), 1000, clock);
-        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> true);
         Exports exports = new Exports(jobs, cache, writer, converters, clock);
         exports.onPublished(images::start);
         ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
@@ -123,12 +124,57 @@ class ExportAssetCollectionTest {
         });
         // Die Bytes kommen aus dem Speicher, nie wieder von der Quelle.
         int downloads = source.downloads;
-        ExportAssets stored = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets)
-                .assets(export.id());
+        ExportAssets stored = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> false).assets(export.id());
         assertThat(stored.content(manifest.forPage("100").get(0))).hasValue(PNG);
         assertThat(stored.content(manifest.forPage("100").get(1))).hasValue(PNG);
+        assertThat(stored.content(manifest.forPage("100").get(2))).hasValue("graph TD; A-->B"
+                .getBytes(StandardCharsets.UTF_8));
+        assertThat(manifest.forPage("100").get(2).stored()).isTrue();
         assertThat(stored.content(manifest.forPage("101").get(0))).isEmpty();
         assertThat(source.downloads).isEqualTo(downloads);
+    }
+
+    @Test
+    void imagesTheSourceRendersFromOtherPagesNeedTheWholeSource() {
+        assertThat(foreignImages(false)).allSatisfy(entry -> {
+            assertThat(entry.status()).isEqualTo(ExportAssetManifest.Status.FORBIDDEN);
+            assertThat(entry.reason()).isEqualTo("foreign-content");
+        }).hasSize(2);
+        assertThat(source.downloads).isZero();
+
+        assertThat(foreignImages(true)).allSatisfy(entry -> assertThat(entry.stored()).isTrue()).hasSize(2);
+    }
+
+    /** Seite 102 bindet eine andere Seite ein; ihre Ansicht zeigt einen fremden Anhang und ein gerendertes Bild. */
+    private List<ExportAssetManifest.Entry> foreignImages(boolean sourceWide) {
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports-"
+                + sourceWide));
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of(source);
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return Optional.of(source);
+            }
+        };
+        Assets assets = new Assets(catalog, new FileSystemAssetStore(data.resolve("assets-" + sourceWide)), 1000,
+                clock);
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, new SourceQueries(catalog), assets,
+                (owner, sourceId) -> sourceWide && owner.equals("client-a"));
+        Exports exports = new Exports(jobs, cache, writer, converters, clock);
+        exports.onPublished(images::start);
+        String include = "{\"body\":{\"storage\":{\"value\":\"<ac:structured-macro ac:name=\\\"include\\\">"
+                + "<ac:parameter ac:name=\\\"\\\"><ac:link><ri:page ri:content-title=\\\"Geheim\\\"/></ac:link>"
+                + "</ac:parameter></ac:structured-macro>\"}}}";
+        cache.publish("confluence", "DEV", confirmed("g-" + sourceWide), List.of(
+                page("confluence", "DEV", "102", null, include.getBytes(StandardCharsets.UTF_8))));
+        JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
+        drain();
+        return writer.assets(export.id()).orElseThrow().forPage("102");
     }
 
     /** Seite 100 mit Bild-Anhang und Ansichtsbild, Seite 101 mit einem gelöschten Anhang. */
@@ -175,7 +221,7 @@ class ExportAssetCollectionTest {
                         (long) PNG.length, "1", null, null));
                 list.add(new PageAttachment("att2", "confluence:wiki/attachment/att2", "handbuch.pdf",
                         "application/pdf", 10L, "1", null, null));
-            } else {
+            } else if (pageId.equals("101")) {
                 list.add(new PageAttachment("att9", "confluence:wiki/attachment/att9", "weg.png", "image/png", 5L,
                         "1", null, null));
             }
@@ -194,6 +240,11 @@ class ExportAssetCollectionTest {
 
         @Override
         public List<ViewImage> viewImages(String pageId) {
+            if (pageId.equals("102")) {
+                return List.of(new ViewImage("https://wiki.example.org/download/attachments/200/geheim.png",
+                        "geheim.png", "att5", "image/png", "1"), new ViewImage(
+                        "https://wiki.example.org/plugins/servlet/status/1.png", "Status", null, null, null));
+            }
             if (!pageId.equals("100")) {
                 return List.of();
             }

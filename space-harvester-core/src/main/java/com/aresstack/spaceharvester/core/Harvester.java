@@ -221,10 +221,12 @@ public final class Harvester implements AutoCloseable {
             this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
                     builder.maxAssetBytes, clock, builder.imageDescriber);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
-            ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets);
+            this.caller = AccessContext.technicalClient(OWNER);
+            ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
+                    (owner, sourceId) -> OWNER.equals(owner)
+                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.caller = AccessContext.technicalClient(OWNER);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);
@@ -523,7 +525,7 @@ public final class Harvester implements AutoCloseable {
         private ProxySettings proxy = ProxySettings.disabled();
         private TrustBundles trustBundles = TrustBundles.NONE;
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
-        private AccessPolicy accessPolicy = (context, scope, kind) -> AccessDecision.ALLOW;
+        private AccessPolicy accessPolicy = new TrustedCaller();
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
@@ -664,6 +666,23 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalStateException("dataDirectory fehlt");
             }
             return new Harvester(this);
+        }
+    }
+
+    /**
+     * Richtlinie ohne eigene Vorgabe: Die Bibliothek läuft im Vertrauensbereich des einbettenden Programms, der
+     * Aufrufer sieht alles, was die Zugangsdaten der Quellen sehen, auch quellenweit.
+     */
+    private static final class TrustedCaller implements AccessPolicy {
+
+        @Override
+        public AccessDecision decide(AccessContext context, ResourceScope scope, AccessKind kind) {
+            return AccessDecision.ALLOW;
+        }
+
+        @Override
+        public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+            return AccessDecision.ALLOW;
         }
     }
 }

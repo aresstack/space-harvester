@@ -5,7 +5,6 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
-
 import java.util.Objects;
 import java.util.Set;
 
@@ -30,5 +29,11 @@ public final class LocalOperatorPolicy implements AccessPolicy {
     public AccessDecision decide(AccessContext context, ResourceScope scope, AccessKind kind) {
         return operator.equals(context) && sourceIds.contains(scope.sourceId())
                 ? AccessDecision.ALLOW : AccessDecision.DENY;
+    }
+
+    /** Die Zugangsdaten sind die des Bedieners: er sieht alles, was sie sehen. */
+    @Override
+    public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+        return operator.equals(context) && sourceIds.contains(sourceId) ? AccessDecision.ALLOW : AccessDecision.DENY;
     }
 }

@@ -207,16 +207,24 @@ public class Assets {
     }
 
     /**
-     * Die abgelegten Bytes in genau dieser Version, gegen {@code sha256} geprüft; liest nie von der Quelle.
+     * Die abgelegten Bytes zu {@code sha256}, dagegen geprüft; liest nie von der Quelle. Der Inhalt liegt nach seinem
+     * Hash ab, daher auch ohne Version der Quelle und auch dann, wenn inzwischen eine neuere Version abgelegt ist.
      *
      * @return leer, wenn nichts oder etwas anderes abgelegt ist
      */
     public Optional<byte[]> stored(String sourceId, String attachmentId, String version, String sha256) {
-        Optional<Asset> asset = store.find(sourceId, attachmentId, version);
-        if (asset.isEmpty() || !asset.get().sha256().equals(sha256)) {
+        if (sha256 == null) {
             return Optional.empty();
         }
-        byte[] content = store.read(asset.get());
+        Asset asset = store.find(sourceId, attachmentId, version).filter(found -> found.sha256().equals(sha256))
+                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
+                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        byte[] content;
+        try {
+            content = store.read(asset);
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
         return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
     }
 
@@ -448,7 +456,7 @@ public class Assets {
         };
     }
 
-    static String sha256(byte[] content) {
+    public static String sha256(byte[] content) {
         try {
             return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
         } catch (NoSuchAlgorithmException e) {

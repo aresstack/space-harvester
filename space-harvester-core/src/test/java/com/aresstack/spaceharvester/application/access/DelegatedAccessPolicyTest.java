@@ -117,6 +117,13 @@ class DelegatedAccessPolicyTest {
         assertThat(ALICE.toString()).doesNotContain("alice-token");
     }
 
+    @Test
+    void endUsersNeverSeeWhatOnlyTheSourceCredentialSees() {
+        assertThat(policy.decideSourceWide(ALICE_VIA_ASSISTANT, "wiki", AccessKind.CONTENT))
+                .isEqualTo(AccessDecision.DENY);
+        assertThat(source.asked).isEmpty();
+    }
+
     private static final class FakeSource implements DelegatedSourceAccess {
 
         Set<ResourceScope> visible = Set.of();
