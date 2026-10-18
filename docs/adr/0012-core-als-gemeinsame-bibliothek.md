@@ -53,7 +53,7 @@ Daraus folgt:
    wenn es Kapitel, Inhaltsverzeichnis, Tabellen, Bilder und Links mindestens so gut abbildet wie der Export des
    Clients.
 3. Wo der Client eine ausgereifte Implementierung hat, ist die Übernahme (als unveränderte Kopie wie
-   `enterprise-ai-sources` oder als Kopie in ein eigenes Modul wie `:docx-export`) der Normalfall. Eine
+   `enterprise-ai-sources` oder als Kopie in ein eigenes Modul wie `:document-export`) der Normalfall. Eine
    Neuimplementierung braucht eine Begründung in der PR-Beschreibung und einen Paritätsnachweis.
 4. [docs/PARITY.md](../PARITY.md) ist die Liste der Fähigkeiten mit Fundstellen in beiden Repositories. Jede Lücke
    hat dort ein Issue. Eine Lücke gilt erst als geschlossen, wenn ihr Vergleichstest (PARITY.md, Abschnitt
