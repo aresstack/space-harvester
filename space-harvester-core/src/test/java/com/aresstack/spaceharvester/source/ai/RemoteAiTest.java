@@ -24,7 +24,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** {@code /models}, {@code /embeddings}, {@code /rerank} und {@code /chat/completions} gegen einen lokalen OpenAI-kompatiblen Dienst. */
+/**
+ * {@code /models}, {@code /embeddings}, {@code /rerank} und {@code /chat/completions} gegen einen lokalen
+ * OpenAI-kompatiblen Dienst.
+ */
 class RemoteAiTest {
 
     private static final String KEY = "sk-test-geheim-0815";

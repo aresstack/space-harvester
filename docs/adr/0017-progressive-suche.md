@@ -80,9 +80,9 @@ sein Ziel nie und endet mit `ALL_VARIANTS_DONE` oder `BUDGET_EXHAUSTED`.
 
 ## Umsetzung (zweiter Schritt: Varianten vom Modell)
 
-`AiQueryExpansion` lässt das Chat-Modell des KI-Dienstes (`ai.chat-model`, `POST /chat/completions`) Varianten
-derselben Frage formulieren. Die Reihenfolge geht nach abnehmender Genauigkeit: zuerst möglichst viele Begriffe des
-Nutzers, dann schrittweise weniger. Das Modell liefert nur Suchbegriffe, keine CQL und keine Operatoren, als JSON
+`AiQueryExpansion` lässt das Chat-Modell des KI-Dienstes (`ai.chat-model`, `POST /chat/completions` über den
+kopierten `OpenAiCompatibleChatAdapter` des Enterprise AI Client) Varianten derselben Frage formulieren. Die
+Reihenfolge geht nach abnehmender Genauigkeit: zuerst möglichst viele Begriffe des Nutzers, dann schrittweise weniger. Das Modell liefert nur Suchbegriffe, keine CQL und keine Operatoren, als JSON
 `{"queries":[{"text":…,"priority":1},…]}`.
 
 - **Strenge Prüfung.** Die Antwort muss gültiges JSON sein; erlaubt ist das erste Objekt, auch hinter Text oder in
@@ -99,8 +99,8 @@ Nutzers, dann schrittweise weniger. Das Modell liefert nur Suchbegriffe, keine C
   wirksamen Konfiguration und baut die Verbindung je Einstellungsstand einmal.
 - **Datenschutz.** An den Dienst geht nur der Suchtext des Nutzers, nie Inhalt einer Quelle. Deshalb gilt dafür
   `external-processing` nicht, denn diese Einstellung regelt Quelleninhalte. Frage, Antwort und Key erscheinen in
-  keinem Log und keiner Meldung. Der Aufruf nutzt dieselbe Proxy-Route (fail-closed), dasselbe Vertrauen und
-  denselben Bearer-Token wie die übrigen Aufrufe. Die Antwort ist auf 256 KiB begrenzt.
+  keinem Log und keiner Meldung; Fehler nennen nur Art und Status. Der Aufruf nutzt dieselbe Proxy-Route
+  (fail-closed), dasselbe Vertrauen und denselben Bearer-Token wie die übrigen Aufrufe.
 
 ## Folgen
 
