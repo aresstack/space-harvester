@@ -104,6 +104,43 @@ class ConfigurationManagerTest {
     }
 
     @Test
+    void backgroundFillIsOnByDefaultAndCanBeSwitchedOffGloballyOrPerSource() {
+        HarvesterConfiguration defaults = HarvesterConfiguration.fromProperties(new Properties()).orThrow();
+
+        assertThat(defaults.sync().backgroundFill()).isTrue();
+        assertThat(defaults.sync().backgroundParallelism()).isEqualTo(SyncSettings.DEFAULT_BACKGROUND_PARALLELISM);
+        assertThat(defaults.syncFor("wiki").backgroundFill()).isTrue();
+
+        Properties properties = new Properties();
+        properties.setProperty("space-harvester.sync.background-parallelism", "4");
+        properties.setProperty("space-harvester.sync.sources.wiki.background-fill", "false");
+        properties.setProperty("space-harvester.sync.sources[team].mode", "catalog-only");
+        HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
+
+        assertThat(read.sync().backgroundParallelism()).isEqualTo(4);
+        assertThat(read.syncFor("wiki").backgroundFill()).isFalse();
+        assertThat(read.syncFor("team").backgroundFill()).isTrue();
+        assertThat(read.syncFor("andere").backgroundFill()).isTrue();
+
+        Properties off = new Properties();
+        off.setProperty("sync.background-fill", "false");
+        off.setProperty("sync.sources.wiki.background-fill", "true");
+        HarvesterConfiguration globallyOff = HarvesterConfiguration.fromProperties(off).orThrow();
+
+        assertThat(globallyOff.sync().backgroundFill()).isFalse();
+        assertThat(globallyOff.syncFor("andere").backgroundFill()).isFalse();
+        assertThat(globallyOff.syncFor("wiki").backgroundFill()).isTrue();
+
+        for (String invalid : List.of("0", "17", "viele")) {
+            Properties broken = new Properties();
+            broken.setProperty("sync.background-parallelism", invalid);
+            broken.setProperty("sync.sources.wiki.background-fill", "vielleicht");
+            assertThat(HarvesterConfiguration.fromProperties(broken).problems()).extracting(ConfigurationProblem::key)
+                    .containsExactlyInAnyOrder("sync.background-parallelism", "sync.sources.wiki.background-fill");
+        }
+    }
+
+    @Test
     void sameConfigurationChangesNothing() {
         var activation = manager.apply(manager.current().configuration());
 

@@ -124,6 +124,8 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
 | Regelmäßige Bestandsinventur (nur Metadaten) | `sync.inventory-interval` (ohne: keine) | ja |
+| Hintergrundfüllung: Katalogseiten ohne oder mit veraltetem Inhalt in Leerlaufzeit laden (ADR 0016) | `sync.background-fill` (Standard `true`) | ja |
+| Parallelität der Hintergrundfüllung | `sync.background-parallelism` (Standard `2`, `1` bis `16`) | ja |
 | Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
@@ -142,12 +144,20 @@ globalen Werten oben. Modelle gelten immer global. Schlüssel `sync.sources.<Que
 | Erkennung | `events`, `catch-up-on-start`, `before-search`, `mode` | Webhooks, Nachholen beim Start, vor jeder Suche, Betriebsart |
 | Aktualisierung | `refresh-strategy`, `max-age` | Aktualität vorhandener Inhalte; ohne eigenes Zeitfenster gilt `cache.max-age` |
 | Bereinigung | `withheld-retention` | wie lange gesperrte Rohdaten bleiben |
+| Beschaffung | `background-fill` | Hintergrundfüllung nur für diese Quelle ab- (`false`) oder anschalten (global: `sync.background-fill`) |
 
 Im Core liefern `HarvesterConfiguration.syncFor(sourceId)` und `freshnessFor(sourceId)` die wirksamen Werte.
 
-Alle Änderungsquellen (`sync.*`) sind optional und standardmäßig aus. Ohne sie bleibt der Cache über die
+Alle Änderungsquellen (`sync.*` außer der Hintergrundfüllung) sind optional und standardmäßig aus. Ohne sie bleibt der Cache über die
 Aktualisierungsstrategie je Seite und die Beschaffung der Suchtreffer aktuell; Webhooks ergänzen das, wo ein
 Administrator sie registriert, sind aber nie Voraussetzung.
+
+Die Hintergrundfüllung hängt nicht an `sync.mode`: Die Betriebsart legt nur fest, was der Abgleich spiegelt oder
+entfernt. Ist die Füllung an, lädt sie mit technischen Zugangsdaten der Quelle Seiten des Katalogs, die noch keinen
+Inhalt haben (`NOT_LOADED`) oder deren Inhalt veraltet ist (`OUTDATED`), zuletzt geänderte zuerst; nie gesperrte
+Seiten (`WITHHELD`) und nie, was die Zugriffspolicy oder die KI-Freigabe der Quelle ausschließt. Abschalten geht
+global mit `sync.background-fill=false` oder je Quelle mit `sync.sources.<Quelle>.background-fill=false`; ein
+eigener Wert je Quelle geht dem globalen vor.
 
 Dauern als ISO-8601 (`PT6H`, `P1D`) oder in Spring-Kurzform (`30s`, `10m`, `6h`, `1d`).
 

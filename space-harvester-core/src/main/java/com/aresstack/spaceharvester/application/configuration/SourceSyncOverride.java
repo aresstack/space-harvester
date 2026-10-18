@@ -11,7 +11,8 @@ import java.time.Duration;
  *
  * <p>Gruppiert wie in der Oberfläche: <b>Erkennung</b> ({@link #changeSearchInterval}, {@link #inventoryInterval},
  * {@link #events}, {@link #catchUpOnStart}, {@link #beforeSearch}, {@link #mode}), <b>Aktualisierung</b>
- * ({@link #refreshStrategy}, {@link #maxAge}), <b>Bereinigung</b> ({@link #withheldRetention}).
+ * ({@link #refreshStrategy}, {@link #maxAge}), <b>Bereinigung</b> ({@link #withheldRetention}), <b>Beschaffung</b>
+ * ({@link #backgroundFill}).
  *
  * @param changeSearchInterval automatische Änderungssuche (CQL {@code lastmodified}) in diesem Abstand
  * @param inventoryInterval    regelmäßige Bestandsinventur (nur Metadaten) in diesem Abstand
@@ -22,10 +23,12 @@ import java.time.Duration;
  * @param refreshStrategy      Aktualität vorhandener Inhalte
  * @param maxAge               Zeitfenster der zeitbasierten Strategien
  * @param withheldRetention    wie lange gesperrte Rohdaten bleiben
+ * @param backgroundFill       Hintergrundfüllung für diese Quelle (ADR 0016); {@code false} schaltet sie nur hier ab
  */
 public record SourceSyncOverride(Duration changeSearchInterval, Duration inventoryInterval, Boolean events,
                                  Boolean catchUpOnStart, Boolean beforeSearch, SyncMode mode,
-                                 RefreshStrategy refreshStrategy, Duration maxAge, Duration withheldRetention) {
+                                 RefreshStrategy refreshStrategy, Duration maxAge, Duration withheldRetention,
+                                 Boolean backgroundFill) {
 
     /** Unterschlüssel unter {@code sync.sources.<Quelle>.}. */
     public static final String CHANGE_SEARCH_INTERVAL = "interval";
@@ -37,10 +40,19 @@ public record SourceSyncOverride(Duration changeSearchInterval, Duration invento
     public static final String REFRESH_STRATEGY = "refresh-strategy";
     public static final String MAX_AGE = "max-age";
     public static final String WITHHELD_RETENTION = "withheld-retention";
+    public static final String BACKGROUND_FILL = "background-fill";
 
     /** Übernimmt alles global. */
     public static final SourceSyncOverride NONE = new SourceSyncOverride(null, null, null, null, null, null, null, null,
-            null);
+            null, null);
+
+    /** Ohne Abweichung bei der Hintergrundfüllung. */
+    public SourceSyncOverride(Duration changeSearchInterval, Duration inventoryInterval, Boolean events,
+                              Boolean catchUpOnStart, Boolean beforeSearch, SyncMode mode,
+                              RefreshStrategy refreshStrategy, Duration maxAge, Duration withheldRetention) {
+        this(changeSearchInterval, inventoryInterval, events, catchUpOnStart, beforeSearch, mode, refreshStrategy,
+                maxAge, withheldRetention, null);
+    }
 
     /** Schlüssel eines Felds dieser Quelle, z. B. {@code sync.sources.wiki.interval}. */
     public static String key(String sourceId, String field) {
