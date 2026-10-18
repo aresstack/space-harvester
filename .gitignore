@@ -9,3 +9,5 @@ bin/
 *.log
 # Lokale, nicht eingecheckte Konfiguration (Zugangsdaten gehören nie ins Repository)
 config/application-local.yml
+# Laufzeitdaten (Standard-Datenverzeichnis des Servers)
+/data/

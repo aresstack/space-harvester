@@ -64,6 +64,8 @@ tasks.withType(AbstractArchiveTask).configureEach {
 tasks.named('test') {
     useJUnitPlatform()
     workingDir = rootProject.projectDir
+    // Bilder der Folgeaufträge nie ins Arbeitsverzeichnis (Standard data/assets); Tests mit eigenem Ordner gewinnen.
+    systemProperty 'space-harvester.assets.directory', layout.buildDirectory.dir('test-assets').get().asFile.path
 }
 
 // Das einfache (nicht ausführbare) Jar wird nicht gebraucht; bootJar ist das Artefakt.
