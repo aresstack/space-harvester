@@ -73,7 +73,7 @@ Nicht angebunden sind:
 | URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | `Harvester.addresses()` (`PageAddresses`), `pageByUrl`, REST `GET /api/v1/addresses` (#239); dazu Lesezeichen `space-harvester://…` | gleich (Vergleichstest Adressen) |
 | Paginierung, Wiederholung bei 429/5xx mit Backoff, Fehlerabbildung, HTML-statt-Datei-Erkennung | `#paged`, `#retryable`, `#statusFailure`, `HtmlResponseDiagnosis` | Kopie; `maxRetries=2`, `InFlightLimit`, `SourceAccessException.Reason` | gleich |
 | Anmeldung none / Basic / PAT, nur mTLS | `ConfluenceAuthorization`, `ClientCertificates` | `core/source/ConfluenceSourceAdapter`, `ConfiguredClientCertificates` (+ Thumbprint und Gültigkeit) | gleich |
-| Einmalcode (2FA) und Web-Session für Downloads | `conf/OneTimeCodeForm`, `ConfluenceWebSession`, `DownloadAccess`; `know/UnlockingDocumentReader` | Kopie vorhanden, nicht angebunden | fehlt → #185 |
+| Einmalcode (2FA) und Web-Session für Downloads | `conf/OneTimeCodeForm`, `ConfluenceWebSession`, `DownloadAccess`; `know/UnlockingDocumentReader`, `OneTimeCodePrompt` | Erkennung, „Code erneut senden“ und Sitzung je Quelle unverändert im kopierten Confluence-Adapter; `KnowledgeSourceHarvestSource` meldet die Abfrage als `SignInRequiredException` mit `SignInChallenge`; ein Auftrag wartet in der Phase „Wartet auf Anmeldung“ an derselben Stelle und lädt nach der Annahme dieselbe Datei neu (`Harvester.signIns()` → `SignInRequests`: `pending()`, `waiting(jobId)`, `submit(id, char[])` → `ACCEPTED`/`REJECTED`/`FAILED`/`GONE`, `resend`, `decline`, `onChange`); `Builder.signInWait` Standard 0 (wartet nie), empfohlen `SignInRequests.DEFAULT_WAIT` 15 min; ohne Anmeldung fehlen die übrigen Dateien mit `SIGN_IN_REQUIRED` und `ExportConversions.collectImages` holt sie nach; der Code wird nur an die Quelle gegeben und danach überschrieben (#303, ADR 0018). Offen: Eingabemaske in der App (L) | gleich, SH+: auch ein laufender Export fragt nach dem Einmalcode, im EAC gilt die Abfrage dort als fehlendes Bild |
 | Delegierte Anmeldung (Benutzertoken je Anfrage) | keine | `DelegatedConfluenceHttp`, `DelegatedAccessPolicy` | SH+ |
 | Querverweise und ausgehende Links | `#crossReferences`, `#discoverLinks`, `#visiblePageTitles` | `PageNavigation#references`: ausgehend, eingehend wenn die Quelle sie vollständig kennt; dazu Linkumschreibung im Export | gleich (Vergleichstest, ausgehend) |
 
@@ -135,7 +135,7 @@ Nicht angebunden sind:
 | Bildreferenzen im Storage (`ac:image`, `ri:attachment`, `ri:url`) | — | `StorageParser#image` | SH+ |
 | Bilder der Leseansicht (Inline, Vorschaubilder, draw.io-Vorschau; ohne Emoticons) | `conf/ConfluencePageView`, `#viewImage`, `#loadViewImage` | keine | in Arbeit (Strang Q, Runde 7: Bildreferenzen aus Anhängen und `PageViewSource`) |
 | Authentifizierter Abruf, dauerhafte, versionierte Ablage, Wiederverwendung | `doc/ExportGraphics`, `exedra/…/reader/ReaderImageStore` (flüchtig) | `Assets`, `core/persistence/files/FileSystemAssetStore` (SHA-256, versioniert) | SH+ |
-| Bilder beim Herunterladen mitbeschaffen, Asset-Manifest im Datenbestand | `know/KnowledgeExportUseCase#figures` | keine | in Arbeit (Strang Q, Runde 7) |
+| Bilder beim Herunterladen mitbeschaffen, Asset-Manifest im Datenbestand | `know/KnowledgeExportUseCase#figures` | eigener Auftrag „Bilder beschaffen“ nach jedem Export (`ExportAssetCollection`, #200), SHA-256-adressiert, `assets.json` (`ExportAssetManifest`) mit Status je Datei, darunter `SIGN_IN_REQUIRED` und `REDUNDANT` (#303); Nachholen über `ExportConversions.collectImages` | gleich (#200, #303) |
 | Dateityp am Inhalt erkennen (Magic Bytes) | `deigma/document-tika/…/TikaContentDetector`, `ExportGraphics#decode` | nur Medientyp der Quelle und Endung (`AssetKind`, `SimpleContentDetector`) | teilweise → #183 |
 | Bildbeschreibung durch ein Vision-Modell | `astu/acropolis/…/image/SourceImageAnalysisUseCase`, `ImageAnalysisCache` | Port `ImageDescriber` und Ablage, aber keine Implementierung | teilweise → #184 |
 
@@ -155,6 +155,7 @@ Nicht angebunden sind:
 | draw.io erkennen (Makro, Revision, `inc-drawio`) | `ConfluencePageView#drawioPreviews`, `#storageDrawioPreviews` | `StorageParser`, `AssetKind.DIAGRAM`, auch `inc-drawio` (#210) | gleich |
 | draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | `core/application/diagrams/Diagrams`; in Word, PDF und Markdown gezeichnet (#210) | gleich; gezeichnete Diagramme liegen als Rendition im Datenbestand (#220) |
 | draw.io-XML und SVG textuell erhalten | — | Asset-Ernte bevorzugt `DIAGRAM` > `VECTOR` > `IMAGE` | SH+ |
+| draw.io-Vorschau-PNG nicht doppelt laden | lädt Quelldaten und Vorschau | Ist das Diagramm aus den Quelldaten gezeichnet, wird die PNG-Vorschau des Plugins nicht geladen (`REDUNDANT`, Grund `drawio-preview` in `assets.json`, zählt nicht als fehlend); nur bei unlesbaren oder nicht darstellbaren Quelldaten ist sie der Ersatz (#303, ADR 0018) | SH+ |
 | Mermaid erkennen (Confluence-Makros) | nur Markdown-Fences | `StorageParser` (`mermaid`, `mermaid-cloud`, `mermaid-macro`) → Codeblock | SH+ |
 | Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | `Diagrams`; in Word, PDF und Markdown als Grafik (#206) | gleich; Leseansicht der App mit Diagrammen in Arbeit (L) |
 | PlantUML, Gliffy | — | Codeblock bzw. Hinweis | SH+ |
@@ -188,7 +189,7 @@ Lücke mehr.
 | Markdown: eine Datei, Bilder als PNG-Data-URI eingebettet, Mermaid als Code und Grafik, fehlende Bilder gemeldet | `doc/MarkdownExportWriter` | `MarkdownConverter`: Sprungmarken und interne Seitenlinks (besser als EAC, bleiben), Bilder nur als `attachment:`-Verweis, Mermaid nur als Code | in Arbeit (Strang R, „Export-Parität: Markdown, Word, PDF und Bilder“, gemeinsamer Dokumentbaum) |
 | Verlinktes Inhaltsverzeichnis in Markdown | — | — | in keinem; keine Paritätslücke |
 | Exportumfang einzelne Seite oder Teilbaum | `KnowledgeExportUseCase` | nur ganze Spaces (`ExportScope`) | fehlt → #186 |
-| Portables ZIP (JSON + Bilder) | — | — | in Arbeit (Q, Runde 7, nachrangig) |
+| Portables ZIP (JSON + Bilder) | — | Format `json-package` (`JsonPackageConverter`): ZIP mit `pages.json`, `assets.json` mit relativen Pfaden, `assets/<Seiten-ID>/` mit Bildern und Anhängen, draw.io-Original, gezeichnetem SVG und `<Name>.graph.json` (Knoten und Verbindungen für KI-Systeme); keine Base64-Einbettung, nicht abgelegte Dateien nur mit Status; `json` bleibt unverändert (#306, ADR 0018) | SH+ |
 
 ## 11. Semantische Suche
 
@@ -267,7 +268,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
 | #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
 | #184 | `ImageDescriber` über den externen KI-Dienst | Q |
-| #185 | Einmalcode-Anmeldung (2FA) als Port | Q |
+| #185 | Einmalcode-Anmeldung (2FA) als Port | Q; im Export umgesetzt (#303), Eingabemaske L |
 | #186 | Export einzelner Seiten und Teilbäume | Q |
 | #187 | Quellen ohne Partitionen und weitere Quelltypen des EAC | Q |
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
@@ -283,7 +284,6 @@ Rückmeldungen an den Upstream (Enterprise AI Client):
 
 In Arbeit und deshalb ohne neues Issue:
 
-- Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
 - Leseansicht der App mit Bildern und Diagrammen (L, #192).
 
 ## Vergleichstests
