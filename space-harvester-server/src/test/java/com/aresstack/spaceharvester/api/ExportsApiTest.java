@@ -232,6 +232,9 @@ class ExportsApiTest {
         assertThat(markdown.headers().firstValue("Content-Disposition")).hasValueSatisfying(
                 value -> assertThat(value).startsWith("attachment").contains(".md"));
         assertThat(new String(markdown.body(), StandardCharsets.UTF_8)).contains("<a id=\"page-101\"></a>");
+        // Die Converter melden (noch) nichts: Zahl 0, keine Arten.
+        assertThat(markdown.headers().firstValue("X-Conversion-Notices")).hasValue("0");
+        assertThat(markdown.headers().firstValue("X-Conversion-Notice-Kinds").orElse("")).isEmpty();
         HttpResponse<byte[]> docx = send("GET", "/api/v1/exports/" + id + "/conversions/docx", null);
         assertThat(docx.body()).startsWith((byte) 'P', (byte) 'K');
         // Unbekanntes Format, fremder Client: wie beim Export.

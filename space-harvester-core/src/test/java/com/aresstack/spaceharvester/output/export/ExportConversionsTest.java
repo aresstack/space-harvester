@@ -5,6 +5,9 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
+import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetDamagedException;
@@ -22,6 +25,7 @@ import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -91,6 +95,55 @@ class ExportConversionsTest {
             assertThat(files.map(path -> path.getFileName().toString())).hasSize(2)
                     .noneMatch(name -> name.endsWith(".part"));
         }
+    }
+
+    @Test
+    void notesOfTheConverterComeWithTheFileOncePerKindAndPlace() throws IOException {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        ExportConverter noting = new ExportConverter() {
+            @Override
+            public String format() {
+                return "notiz";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public String mediaType() {
+                return "text/plain";
+            }
+
+            @Override
+            public String fileName() {
+                return "notiz.txt";
+            }
+
+            @Override
+            public void convert(ConversionInput input, OutputStream out) throws IOException {
+                input.forEachPage(page -> {
+                    input.report(new ConversionNotice(page.header().key().pageId(),
+                            ConversionNotice.Kind.MISSING_IMAGE, "a.png", "missing"));
+                    input.report(new ConversionNotice(page.header().key().pageId(),
+                            ConversionNotice.Kind.MISSING_IMAGE, "a.png", "missing"));
+                });
+                input.report(new ConversionNotice("100", ConversionNotice.Kind.MISSING_DIAGRAM, "mermaid",
+                        "render-failed"));
+                out.write('x');
+            }
+        };
+        ExportConversions conversions = new ExportConversions(jobs, writer, new ExportConverters(List.of(
+                new JsonArrayConverter(), noting), ExportConverters.DEFAULT_MAX_BYTES));
+
+        ExportConversions.ConvertedFile file = conversions.convert(exportId, "client-a", "notiz", downloads);
+
+        assertThat(file.noticeCount()).isEqualTo(4);
+        assertThat(file.notices()).extracting(ConversionNotice::pageId).containsExactly("100", "101", "200", "100");
+        assertThat(file.notices().get(3).kind()).isEqualTo(ConversionNotice.Kind.MISSING_DIAGRAM);
+        assertThat(conversions.convert(exportId, "client-a", "json", downloads).notices()).isEmpty();
     }
 
     @Test
