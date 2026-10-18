@@ -41,7 +41,8 @@ import java.util.Map;
  * (Tooltip mit Namen, Strg+1 … Strg+6): links die Arbeitsbereiche Suche, Inhalte, Aufträge und Status,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
- * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}). Navigation und
+ * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}), sonst der globale
+ * Fortschritt der Aufträge. Navigation und
  * Explorer sind getrennte Bausteine. {@link #content} baut den Inhalt ohne Fenster (für Bildschirmfotos und Tests).
  */
 public final class MainWindow implements AppContext.Navigator {
@@ -62,6 +63,8 @@ public final class MainWindow implements AppContext.Navigator {
     private final JPanel actionDeck = new JPanel(actionCards);
     private final javax.swing.JSplitPane split = new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT);
     static final int SIDEBAR_WIDTH = 280;
+    /** Karte der Aktionszeile mit dem globalen Fortschritt der Aufträge. */
+    private static final String JOBS = "jobs";
     private final JLabel status = Comic.muted(" ");
     private final JPanel top = new JPanel(new BorderLayout(12, 0));
     private final StatusView statusView;
@@ -92,8 +95,10 @@ public final class MainWindow implements AppContext.Navigator {
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
         actionDeck.setOpaque(false);
+        // Der Fortschritt der Aufträge ist global: jeder Bereich ohne eigene Aktionszeile zeigt ihn.
+        actionDeck.add(activities.actions(), JOBS);
         views.forEach((section, view) -> {
-            if (view.actions() != null) {
+            if (view.actions() != null && view != activities) {
                 actionDeck.add(view.actions(), section.name());
             }
         });
@@ -205,7 +210,6 @@ public final class MainWindow implements AppContext.Navigator {
 
         actionDeck.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0,
                 Comic.LINE), BorderFactory.createEmptyBorder(6, 16, 6, 16)));
-        actionDeck.setVisible(false);
 
         JPanel foot = new JPanel(new BorderLayout());
         foot.setOpaque(false);
@@ -261,11 +265,7 @@ public final class MainWindow implements AppContext.Navigator {
     public void show(AppContext.Section section) {
         cards.show(deck, section.name());
         View view = views.get(section);
-        boolean actions = view.actions() != null;
-        if (actions) {
-            actionCards.show(actionDeck, section.name());
-        }
-        actionDeck.setVisible(actions);
+        actionCards.show(actionDeck, view.actions() != null && view != activities ? section.name() : JOBS);
         ComposerToggleButton button = nav.get(section);
         if (button != null) {
             button.setSelected(true);

@@ -617,48 +617,43 @@ public final class Explorer {
      * Eine Zeile über die volle Breite: links Symbol und Titel je Ebene (Datenbank für Quellen, Ordner für Spaces, Seite
      * für Seiten; Hinweise gedämpft), rechtsbündig das Download-Symbol im Stil der Space-Aktionen ({@link RoundHover}).
      */
-    private final class Renderer extends JPanel implements javax.swing.tree.TreeCellRenderer {
+    private final class Renderer extends javax.swing.tree.DefaultTreeCellRenderer {
 
-        private final javax.swing.tree.DefaultTreeCellRenderer label = new javax.swing.tree.DefaultTreeCellRenderer();
-        private final JLabel action = new JLabel(ComposerIcons.download());
+        private final javax.swing.Icon download = ComposerIcons.download();
+        private boolean action;
         private int row = -1;
         private int width;
 
         Renderer() {
-            super(new BorderLayout());
-            setOpaque(false);
-            label.setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
-            label.setBorderSelectionColor(null);
-            action.setHorizontalAlignment(JLabel.CENTER);
-            action.setPreferredSize(new java.awt.Dimension(ACTION_WIDTH, RoundHover.SIZE));
-            add(label, BorderLayout.WEST);
-            add(action, BorderLayout.EAST);
+            setBackgroundNonSelectionColor(new java.awt.Color(0, 0, 0, 0));
+            setBorderSelectionColor(null);
         }
 
         @Override
         public java.awt.Component getTreeCellRendererComponent(JTree tree, Object value, boolean selected,
                                                                boolean expanded, boolean leaf, int row,
                                                                boolean focus) {
-            label.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
+            super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, focus);
             Item item = value instanceof Node node ? node.item() : null;
-            label.setForeground(selected ? label.getTextSelectionColor() : Comic.INK);
+            setForeground(selected ? getTextSelectionColor() : Comic.INK);
             switch (item) {
-                case SourceItem ignored -> label.setIcon(MainWindow.database());
-                case SpaceItem ignored -> label.setIcon(SidebarIcons.folder());
-                case PageItem ignored -> label.setIcon(SidebarIcons.page());
+                case SourceItem ignored -> setIcon(MainWindow.database());
+                case SpaceItem ignored -> setIcon(SidebarIcons.folder());
+                case PageItem ignored -> setIcon(SidebarIcons.page());
                 case MoreItem ignored -> {
-                    label.setIcon(null);
-                    label.setForeground(Comic.BLUE);
+                    setIcon(null);
+                    setForeground(Comic.BLUE);
                 }
                 case null, default -> {
-                    label.setIcon(null);
-                    label.setForeground(Comic.MUTED);
+                    setIcon(null);
+                    setForeground(Comic.MUTED);
                 }
             }
-            action.setVisible(downloadable(item));
+            action = downloadable(item);
             this.row = row;
             int depth = value instanceof Node node ? node.getLevel() : 1;
-            width = Math.max(label.getPreferredSize().width + ACTION_WIDTH,
+            int text = super.getPreferredSize().width;
+            width = Math.max(text + (action ? ACTION_WIDTH : 0),
                     tree.getParent() == null ? 0 : tree.getParent().getWidth() - indent(depth) - 4);
             return this;
         }
@@ -666,14 +661,26 @@ public final class Explorer {
         @Override
         public java.awt.Dimension getPreferredSize() {
             java.awt.Dimension size = super.getPreferredSize();
-            return new java.awt.Dimension(width, Math.max(size.height, RoundHover.SIZE));
+            return new java.awt.Dimension(Math.max(size.width, width), Math.max(size.height, RoundHover.SIZE));
         }
 
         @Override
-        protected void paintComponent(java.awt.Graphics graphics) {
-            super.paintComponent(graphics);
-            if (action.isVisible() && row == hoverRow) {
-                RoundHover.paint(graphics, action.getX(), 0, action.getWidth(), getHeight(), false);
+        public void paint(java.awt.Graphics graphics) {
+            super.paint(graphics);
+            if (!action) {
+                return;
+            }
+            int x = getWidth() - ACTION_WIDTH;
+            if (row == hoverRow) {
+                RoundHover.paint(graphics, x, 0, ACTION_WIDTH, getHeight(), false);
+            }
+            java.awt.Graphics2D g = (java.awt.Graphics2D) graphics.create();
+            try {
+                g.setColor(Comic.INK);
+                download.paintIcon(this, g, x + (ACTION_WIDTH - download.getIconWidth()) / 2,
+                        (getHeight() - download.getIconHeight()) / 2);
+            } finally {
+                g.dispose();
             }
         }
     }
