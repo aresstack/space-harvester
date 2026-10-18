@@ -573,6 +573,10 @@ public final class ActivitiesView implements View {
                     .add("Datenbestand", "JSON vorhanden")
                     .add("Bilder", images(dataset.images()), dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
                             ? Comic.RED : Comic.INK);
+            if (dataset.media().total() > 0) {
+                result.add("Medien", media(dataset.media()), dataset.media().missing()
+                        + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
+            }
         }
         Consumer<Feedback> conversion = converted.get(export.status().id());
         if (conversion != null) {
@@ -622,8 +626,9 @@ public final class ActivitiesView implements View {
         }
         renderNotices();
         cardTitle.setText("Export · " + dataset.spaceKey());
-        cardImages.setText(cardImages(dataset.images()));
-        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE ? Comic.RED : Comic.INK);
+        cardImages.setText(cardImages(dataset.images(), dataset.media()));
+        cardImages.setForeground(dataset.images() == ExportDatasetInfo.Images.INCOMPLETE
+                || dataset.media().missing() + dataset.media().signInRequired() > 0 ? Comic.RED : Comic.INK);
         cardLine.setText(Texts.count(dataset.pages(), "Seite", "Seiten") + " · JSON-Datenbestand vorhanden"
                 + (dataset.complete() ? "" : " · unvollständig"));
     }
@@ -764,6 +769,30 @@ public final class ActivitiesView implements View {
             case COMPLETE -> "Bilder: vollständig";
             case INCOMPLETE -> "Bilder: unvollständig · fehlende Bilder nennt das Dokument";
         };
+    }
+
+    /** Wie {@link #cardImages(ExportDatasetInfo.Images)}, dazu die Zählung der Medien, sobald welche bekannt sind. */
+    static String cardImages(ExportDatasetInfo.Images images, ExportDatasetInfo.Media media) {
+        String line = cardImages(images);
+        return media.total() == 0 ? line : line + "\nMedien: " + media(media);
+    }
+
+    /** Die Medien eines Downloads in Worten; nur Zähler über null erscheinen. */
+    static String media(ExportDatasetInfo.Media media) {
+        List<String> parts = new ArrayList<>();
+        if (media.stored() > 0) {
+            parts.add(media.stored() + " gesichert");
+        }
+        if (media.missing() > 0) {
+            parts.add(media.missing() + (media.missing() == 1 ? " fehlt" : " fehlen"));
+        }
+        if (media.signInRequired() > 0) {
+            parts.add(media.signInRequired() + " Anmeldung erforderlich");
+        }
+        if (media.redundant() > 0) {
+            parts.add(media.redundant() + " bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+        }
+        return parts.isEmpty() ? "keine" : String.join(" · ", parts);
     }
 
     private static String images(ExportDatasetInfo.Images images) {

@@ -47,6 +47,18 @@ class JobStepTest {
     }
 
     @Test
+    void theCardCountsStoredMissingSignInAndDeliberatelySkippedMediaInPlainWords() {
+        ExportDatasetInfo.Media media = new ExportDatasetInfo.Media(7, 2, 1, 3);
+        assertThat(ActivitiesView.media(media)).isEqualTo("7 gesichert · 2 fehlen · 1 Anmeldung erforderlich · "
+                + "3 bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+        assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(1, 1, 0, 0))).isEqualTo("1 gesichert · 1 fehlt");
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE, media))
+                .startsWith("Bilder: unvollständig").endsWith("\nMedien: " + ActivitiesView.media(media));
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED, ExportDatasetInfo.Media.NONE))
+                .isEqualTo(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED));
+    }
+
+    @Test
     void aSyncWithoutPhaseStillShowsItsPages() {
         assertThat(ActivitiesView.Step.of(JobType.SYNC, null, new JobProgress(10, 3, 3, 0)).text())
                 .isEqualTo("3 von 10 Seiten geladen oder geprüft");
