@@ -404,12 +404,58 @@ class PageQueriesTest {
 
     @Test
     void aCachedPageTheCallerMayNotReadIsNotFetchedEither() {
-        cache.publish("wiki", "OPS", confirmed("g1"), List.of(page("wiki", "OPS", "p90", null)));
+        PageSnapshot cached = page("wiki", "OPS", "p90", null);
+        cache.publish("wiki", "OPS", confirmed("g1"), List.of(cached));
+        when(live.pageMetadata("p90")).thenReturn(cached.metadata());
         AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
                 ? AccessDecision.ALLOW : AccessDecision.DENY;
 
         assertThatThrownBy(() -> filling(devOnly).page(CALLER, "wiki", "p90", false))
                 .isInstanceOf(CacheMissException.class);
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void aPlainReadChecksTheVersionLiveAndFetchesANewerOne() {
+        PageSnapshot old = page("wiki", "DEV", "p91", null);
+        cache.publish("wiki", "DEV", confirmed("g1"), List.of(old));
+        when(live.pageMetadata("p91")).thenReturn(version(old, "DEV", "8"));
+        fetchAnswer = page("wiki", "DEV", "p91", null, "{\"v\":8}".getBytes(StandardCharsets.UTF_8));
+
+        DeliveredPage page = filling(ALLOW_ALL).page(CALLER, "wiki", "p91", false);
+
+        assertThat(page.snapshot()).isSameAs(fetchAnswer);
+        assertThat(fetched).containsExactly("p91");
+        assertThat(stored).containsExactly(fetchAnswer);
+    }
+
+    @Test
+    void aPlainReadOfTheSameVersionDeliversTheCacheAfterTheLiveCheck() {
+        PageSnapshot cached = page("wiki", "DEV", "p92", null);
+        cache.publish("wiki", "DEV", confirmed("g1"), List.of(cached));
+        when(live.pageMetadata("p92")).thenReturn(cached.metadata());
+
+        DeliveredPage page = filling(ALLOW_ALL).page(CALLER, "wiki", "p92", false);
+
+        assertThat(page.refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
+        assertThat(page.live()).isFalse();
+        assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void anUnreachableSourceFallsBackToTheCacheOnlyForReadersAndNeverOnRefresh() {
+        PageSnapshot cached = page("wiki", "OPS", "p93", null);
+        cache.publish("wiki", "OPS", confirmed("g1"), List.of(cached));
+        when(live.pageMetadata("p93")).thenThrow(
+                new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "aus", null));
+        AccessPolicy devOnly = (context, scope, kind) -> scope.spaceKey() == null || "DEV".equals(scope.spaceKey())
+                ? AccessDecision.ALLOW : AccessDecision.DENY;
+
+        assertThat(filling(ALLOW_ALL).page(CALLER, "wiki", "p93", false).refresh()).isNull();
+        assertThatThrownBy(() -> filling(devOnly).page(CALLER, "wiki", "p93", false))
+                .isInstanceOf(CacheMissException.class);
+        assertThatThrownBy(() -> filling(ALLOW_ALL).page(CALLER, "wiki", "p93", true))
+                .isInstanceOf(SourceAccessException.class);
         assertThat(fetched).isEmpty();
     }
 

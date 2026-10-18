@@ -52,7 +52,8 @@ import java.util.regex.Pattern;
  * ist nicht {@code complete}, auch in allen Folgestapeln desselben Cursors. Quellen ohne eigene Suche stehen dort als {@link SourceState.Status#NOT_SUPPORTED},
  * statt still „keine Treffer“ zu melden. Je Quelle reicht die Suche höchstens {@value #MAX_DEPTH} Treffer tief.
  *
- * <p>Nur Schlagworte, keine semantische Suche ({@code SemanticSearch} beschreibt die geplante Erweiterung).
+ * <p>Nur Schlagworte; die experimentelle semantische Suche ist
+ * {@link com.aresstack.spaceharvester.application.ranking.RelevanceSearch}.
  */
 public class KeywordSearch {
 

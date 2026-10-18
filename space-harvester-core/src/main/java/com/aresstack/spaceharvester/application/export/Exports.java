@@ -108,6 +108,12 @@ public class Exports {
         purgeQuietly();
     }
 
+    /**
+     * Das Standardformat eines Exports (Angelo, 17.10.): JSON. REST und Desktop-App fordern es an, wenn niemand ein
+     * Format wählt; Markdown, DOCX und PDF sind zusätzlich wählbar. Das Raw-First-Artefakt entsteht immer.
+     */
+    public static final String DEFAULT_FORMAT = "json";
+
     /** Verfügbare Formate über das Raw-First-Artefakt hinaus. */
     public List<String> formats() {
         return converters.formats().stream().sorted().toList();

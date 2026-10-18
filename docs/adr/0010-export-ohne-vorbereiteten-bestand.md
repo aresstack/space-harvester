@@ -54,9 +54,13 @@ zwischengespeichert.
 7. **Zähler.** Während des Einlesens bleiben die Zähler stehen (siehe 5.); danach zählt der Export jede lesbare Seite
    einmal. Die Phasen selbst macht die Auftragsdiagnose sichtbar (Folge-PR).
 
-8. **Seite lesen ist transparent gecacht.** `PageQueries.page` liefert einen Treffer aus dem Cache; fehlt die Seite,
-   lädt sie sie über `PageFreshness` nach, wie bei `refresh=true`. Die Rechte prüft sie an den live gelesenen
-   Kopfdaten, **bevor** der Inhalt geladen wird; eine nicht lesbare Seite wird gar nicht geladen und antwortet wie eine
+8. **Seite lesen prüft jedes Mal live, der Cache spart nur den Inhaltsabruf** (Angelo, 17.10.; für jede Anmeldeart
+   gleich). `PageQueries.page` liest zuerst die Kopfdaten der Seite live und prüft an ihnen in einem Schritt Recht
+   und Version (`PageFreshness`): gleiche Version im Cache ⇒ der Cache-Stand wird ausgeliefert (`current`), sonst
+   wird die Seite geholt, abgelegt und ausgeliefert. Ohne `refresh` unterscheidet sich der Ablauf nur, wenn die Quelle
+   für die Prüfung nicht erreichbar ist (`unavailable`, `rate-limited`): dann kommt der Cache-Stand ungeprüft, aber
+   nur, wenn die Zugriffspolicy die Seite für den Aufrufer freigibt; sonst „nicht gefunden“. `refresh=true` liefert
+   nie ungeprüft. Die Rechte gelten **vor** dem Inhaltsabruf; eine nicht lesbare Seite wird gar nicht geladen und antwortet wie eine
    unbekannte. Einen neuen Inhalt (fehlende Seite oder neue Revision bei `refresh=true`) legt der Port
    `PageCacheFill` im gemeinsamen Cache ab und berechnet seine Anreicherungen (`EnrichingCacheFill`), danach ist die
    Seite auch in Suche und Export sichtbar. Abgelegt wird nur, was die Quelle mit der Quellenidentität geliefert hat,
@@ -64,7 +68,8 @@ zwischengespeichert.
    gleichzeitige Einzelablagen nacheinander zum Zug kommen: Schreibt gerade ein Abgleich, wird die Seite nur
    ausgeliefert (`origin: live`), und der Abgleich bzw. der nächste Abruf legt sie ab. Die Generation des Space
    ändert sich dadurch nicht; Löschungen leitet weiter nur ein bestätigter Abgleich ab. Eine nicht erreichbare Quelle
-   ist `source-unavailable` und wird nie durch „nicht gefunden“ oder einen alten Stand ersetzt. Dasselbe gilt für die
+   ist bei einer fehlenden Seite und bei `refresh=true` `source-unavailable` und wird nie durch „nicht gefunden“
+   ersetzt. Dasselbe gilt für die
    Confluence-kompatible Einzelseite, die denselben Anwendungsfall nutzt.
 
 9. **Suche ist Schlagwortsuche in den Quellen** (Angelo, 17.10. 23:41). `KeywordSearch` ist die Suche über Titel

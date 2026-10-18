@@ -94,14 +94,15 @@ public class ExportsController {
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
             @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
-            @Parameter(description = "Zusätzliche Formate, wiederholbar; ohne nur das Raw-First-Artefakt",
-                    example = "json")
+            @Parameter(description = "Formate neben dem Raw-First-Artefakt, wiederholbar; ohne Angabe json "
+                    + "(Standardformat)", example = "json")
             @RequestParam(name = "format", required = false) List<String> formats,
             @Parameter(description = "true: vor dem Export gegen die Quelle abgleichen; sonst eine bestätigte "
                     + "Generation wiederverwenden und nur einlesen, wenn keine vorliegt")
             @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
         requireExport(caller, sourceId, spaceKey);
-        JobStatus job = exports.start(ExportRequest.of(sourceId, spaceKey, owner(caller), formats)
+        List<String> requested = formats == null || formats.isEmpty() ? List.of(Exports.DEFAULT_FORMAT) : formats;
+        JobStatus job = exports.start(ExportRequest.of(sourceId, spaceKey, owner(caller), requested)
                 .withRefresh(refresh)
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))

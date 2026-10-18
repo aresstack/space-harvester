@@ -7,15 +7,15 @@ import java.time.Instant;
 import java.util.Objects;
 
 /**
- * Eine Einzelseite, wie die API sie ausliefert: aus dem Cache oder nach {@code refresh=true} aus der Prüfung gegen die
- * Quelle.
+ * Eine Einzelseite, wie die API sie ausliefert: nach der Prüfung gegen die Quelle (ADR 0010, Punkt 8) aus dem Cache oder
+ * neu geholt; nur wenn die Quelle für die Prüfung nicht erreichbar ist, ungeprüft aus dem Cache.
  *
  * @param header     gültige Kopfdaten
  * @param snapshot   auszuliefernde Payload
  * @param generation Cache-Generation, aus der die Seite stammt, oder {@code null}, wenn sie nicht im Cache liegt
  * @param live       {@code true}, wenn Kopfdaten oder Payload live aus der Quelle stammen und vom Cache abweichen
- * @param refresh    Ergebnis der Prüfung gegen die Quelle oder {@code null} ohne {@code refresh=true}
- * @param checkedAt  Zeitpunkt der Prüfung oder {@code null} ohne {@code refresh=true}
+ * @param refresh    Ergebnis der Prüfung gegen die Quelle oder {@code null}, wenn ungeprüft aus dem Cache ausgeliefert
+ * @param checkedAt  Zeitpunkt der Prüfung oder {@code null}, wenn ungeprüft aus dem Cache ausgeliefert
  */
 public record DeliveredPage(PageHeader header, PageSnapshot snapshot, CacheGeneration generation, boolean live,
                             PageFreshness.Outcome refresh, Instant checkedAt) {
@@ -28,7 +28,7 @@ public record DeliveredPage(PageHeader header, PageSnapshot snapshot, CacheGener
         }
     }
 
-    /** Aus dem Cache, ohne Prüfung gegen die Quelle. */
+    /** Ungeprüft aus dem Cache, wenn die Quelle für die Prüfung nicht erreichbar ist. */
     public static DeliveredPage cached(CachedPage page) {
         return new DeliveredPage(page.header(), page.snapshot(), page.generation(), false, null, null);
     }

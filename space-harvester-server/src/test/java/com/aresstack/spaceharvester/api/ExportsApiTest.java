@@ -134,8 +134,9 @@ class ExportsApiTest {
         assertThat(done.path("state").asString()).isEqualTo("completed");
         assertThat(done.path("progress").path("written").asLong()).isEqualTo(3);
         assertThat(done.path("artifact").path("complete").asBoolean()).isTrue();
+        // Ohne format das Standardformat JSON neben dem Raw-First-Artefakt.
         assertThat(done.path("artifact").path("files")).extracting(file -> file.path("name").asString())
-                .containsExactly("pages.ndjson", "tree.json", "manifest.json");
+                .containsExactly("pages.ndjson", "tree.json", "pages.json", "manifest.json");
 
         HttpResponse<byte[]> pages = send("GET", "/api/v1/exports/" + id + "/artifact/pages.ndjson", null);
         assertThat(pages.statusCode()).isEqualTo(200);
