@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.enrichment;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -87,6 +88,21 @@ public class Enrichments {
                 });
         executor.allowCoreThreadTimeOut(true);
         return executor;
+    }
+
+    /**
+     * Beendet einen Hintergrund aus {@link #background}: Wartendes entfällt, Laufendes endet ohne Unterbrechung, denn
+     * ein Interrupt mitten im Schreiben schlösse die Dateikanäle des Lucene-Index und machte dessen Sperre ungültig.
+     * Erst nach der Frist wird unterbrochen.
+     */
+    public static void stop(ExecutorService background, Duration timeout) throws InterruptedException {
+        if (background instanceof ThreadPoolExecutor pool) {
+            pool.getQueue().clear();
+        }
+        background.shutdown();
+        if (!background.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            background.shutdownNow();
+        }
     }
 
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */

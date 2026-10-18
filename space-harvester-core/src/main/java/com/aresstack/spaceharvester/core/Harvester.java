@@ -46,6 +46,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -61,6 +62,7 @@ import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -256,8 +258,7 @@ public final class Harvester implements AutoCloseable {
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
-                    started.shutdownNow();
-                    started.awaitTermination(10, TimeUnit.SECONDS);
+                    Enrichments.stop(started, Duration.ofSeconds(10));
                 });
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
@@ -294,20 +295,11 @@ public final class Harvester implements AutoCloseable {
             if (builder.prefetchSearchHits) {
                 // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
+                        key -> cache.findHeader(key).map(PageHeader::metadata),
                         (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                        SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200));
+                        SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200), SearchHitPrefetch.DEFAULT_WAIT,
+                        builder.searchWait);
                 opened.add(prefetch);
-            }
-            this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch);
-            PageRenewal renewal = null;
-            if (embedding != null) {
-                // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
-                ExecutorService renewals = Enrichments.background(100);
-                opened.add(() -> {
-                    renewals.shutdownNow();
-                    renewals.awaitTermination(10, TimeUnit.SECONDS);
-                });
-                renewal = new PageRenewal(pages, renewals);
             }
             SearchReranker reranker = builder.reranker;
             SwappableReranker swappable = null;
@@ -319,6 +311,29 @@ public final class Harvester implements AutoCloseable {
                 // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
                 reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
                         builder.userAgent).reranker(), builder.ai::mayProcessExternally);
+            }
+            // #154: mit Cross-Encoder lädt die Schlagwortsuche die vielversprechendsten Funde zuerst; mit
+            // Konfiguration folgt die Bewertung dem jeweils eingestellten Rerank-Modell.
+            ExcerptPriority excerpts;
+            if (!builder.excerptRanking) {
+                excerpts = ExcerptPriority.off();
+            } else if (swappable != null) {
+                SwappableReranker live = swappable;
+                excerpts = ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
+                        ? cross.excerptPriority() : ExcerptPriority.off());
+            } else {
+                excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+            }
+            this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
+                    excerpts, builder.searchLoads);
+            PageRenewal renewal = null;
+            if (embedding != null) {
+                // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
+                ExecutorService renewals = Enrichments.background(100);
+                opened.add(() -> {
+                    Enrichments.stop(renewals, Duration.ofSeconds(10));
+                });
+                renewal = new PageRenewal(pages, renewals);
             }
             // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
             SemanticPreparation preparation = embedding == null || prefetch == null ? null
@@ -1016,6 +1031,10 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
+        private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
+        private boolean excerptRanking = true;
+        private int searchLoads = KeywordSearch.DEFAULT_LOADS;
+        private Duration searchWait = Duration.ZERO;
         private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
         private Duration withheldRetention = SpaceSync.DEFAULT_WITHHELD_RETENTION;
         private Path pdfFont;
@@ -1280,6 +1299,61 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder prefetchSearchHits(boolean prefetchSearchHits) {
             this.prefetchSearchHits = prefetchSearchHits;
+            return this;
+        }
+
+        /**
+         * Höchstens so viele Anfragen schickt die Schlagwortsuche je Quelle für eine Frage (ADR 0013, Fortschreibung):
+         * Eine Frage mit mehr als {@value com.aresstack.spaceharvester.application.query.SearchTerms#MAX_QUERY_WORDS}
+         * Wörtern geht als ihre stärksten wörtlichen Begriffe und ihre Schlüsselwörter an die Quelle, ein knapper
+         * Suchausdruck unverändert. Standard {@value KeywordSearch#DEFAULT_MAX_QUERIES} wie im Enterprise AI Client; 1
+         * schickt immer den Suchtext unverändert.
+         */
+        public Builder discoveryQueries(int maxQueries) {
+            if (maxQueries < 1 || maxQueries > KeywordSearch.MAX_QUERIES) {
+                throw new IllegalArgumentException("maxQueries muss zwischen 1 und " + KeywordSearch.MAX_QUERIES
+                        + " liegen");
+            }
+            this.discoveryQueries = maxQueries;
+            return this;
+        }
+
+        /**
+         * Wie viele Funde je Stapel die Schlagwortsuche in den Cache lädt (1 bis {@value KeywordSearch#MAX_LIMIT},
+         * Standard alle): in der Rangfolge nach Titel und Auszug, die besten zuerst. Alle Funde erscheinen sofort als
+         * vorläufige Treffer ({@link KeywordSearch.Results#found()}); die Suche wartet nicht auf das Laden.
+         */
+        public Builder searchLoads(int searchLoads) {
+            if (searchLoads < 1 || searchLoads > KeywordSearch.MAX_LIMIT) {
+                throw new IllegalArgumentException("searchLoads muss zwischen 1 und " + KeywordSearch.MAX_LIMIT
+                        + " liegen");
+            }
+            this.searchLoads = searchLoads;
+            return this;
+        }
+
+        /**
+         * Wie lange die Schlagwortsuche für technische Aufrufer auf das Laden ihrer Funde wartet (Standard gar nicht):
+         * Was in der Zeit fertig wird, steht schon in den Treffern, der Rest läuft weiter und meldet sich über {@link
+         * KeywordSearch.Results#progress()}. Delegierte Benutzer warten wie bisher höchstens fünf Sekunden.
+         */
+        public Builder searchWait(Duration searchWait) {
+            if (searchWait == null || searchWait.isNegative()) {
+                throw new IllegalArgumentException("searchWait darf nicht negativ sein");
+            }
+            this.searchWait = searchWait;
+            return this;
+        }
+
+        /**
+         * Ob der Cross-Encoder des KI-Dienstes (#181) die Funde der Schlagwortsuche nach Titel und Auszug bewertet, um
+         * nur die besten in den Cache zu laden (#154, {@link ExcerptPriority}); Standard {@code true},
+         * wirksam nur mit {@code rerank-model} oder einem {@link ModelReranker} über {@link #reranker}. Texte gehen nur
+         * aus Quellen mit Freigabe für externe Verarbeitung hinaus. Ohne Bewertung laden die ersten in der
+         * Reihenfolge der Quellen.
+         */
+        public Builder excerptRanking(boolean excerptRanking) {
+            this.excerptRanking = excerptRanking;
             return this;
         }
 

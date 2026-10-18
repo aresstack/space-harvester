@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -151,11 +152,22 @@ class HarvesterFullTextTest {
     }
 
     @Test
-    void foundPagesAreInTheCacheWhenTheSearchAnswers() {
+    void foundPagesAppearAtOnceAndAreInTheCacheWhenTheSearchIsComplete() throws InterruptedException {
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
-            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
-                    null, 10).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102");
+            KeywordSearch.Query query = KeywordSearch.Query.of("Nachtlauf");
+            KeywordSearch.Results first = harvester.keywordSearch().search(harvester.caller(), query, null, 10);
 
+            // Sofort da, ohne aufs Laden zu warten: der Fund der Quelle mit Titel und Auszug.
+            assertThat(first.ranked()).extracting(KeywordSearch.Hit::pageId).containsExactly("102");
+            assertThat(first.progress()).isNotNull();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (!harvester.keywordSearch().progress(first.progress().id()).orElseThrow().done()
+                    && System.nanoTime() < deadline) {
+                TimeUnit.MILLISECONDS.sleep(20);
+            }
+
+            assertThat(harvester.keywordSearch().search(harvester.caller(), query, null, 10).hits())
+                    .extracting(KeywordSearch.Hit::pageId).containsExactly("102");
             assertThat(cached(harvester)).isTrue();
         }
     }
@@ -196,7 +208,8 @@ class HarvesterFullTextTest {
     }
 
     private Harvester files(Harvester.Builder builder) {
-        return builder.source(new SourceSettingsConfig("docs", "files", "Dokumente", null, null,
+        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt.
+        return builder.searchWait(Duration.ofSeconds(10)).source(new SourceSettingsConfig("docs", "files", "Dokumente", null, null,
                 Map.of("directory", files.toString()))).dataDirectory(data).build();
     }
 

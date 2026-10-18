@@ -38,6 +38,7 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     public static final Duration DEFAULT_WAIT = Duration.ofSeconds(10);
 
     private static final int PARALLEL = 4;
+    private static final long POLL_MILLIS = 25;
 
     private final KeywordSearch keywords;
     private final Function<PageKey, Optional<PageSnapshot>> snapshots;
@@ -61,8 +62,13 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
     @Override
     public int prepare(AccessContext caller, PageSearchQuery query, String text) {
         long deadline = System.nanoTime() + wait.toNanos();
-        KeywordSearch.Results found = keywords.search(caller, new KeywordSearch.Query(shortened(text),
-                query.sourceId(), query.sourceIds(), query.spaceKeys()), null, MAX_PAGES);
+        KeywordSearch.Query keywordQuery = new KeywordSearch.Query(shortened(text), query.sourceId(),
+                query.sourceIds(), query.spaceKeys());
+        KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES);
+        if (awaitLoading(found.progress(), deadline)) {
+            // Die Schlagwortsuche wartet nicht aufs Laden; erst danach findet der Volltextindex die Seiten.
+            found = keywords.search(caller, keywordQuery, null, MAX_PAGES);
+        }
         int pending = found.loading() + (lostCandidates(found) ? 1 : 0);
         List<PageSnapshot> missing = new ArrayList<>();
         for (KeywordSearch.Hit hit : found.hits()) {
@@ -114,6 +120,26 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
             LOG.log(System.Logger.Level.INFO, "Embeddings nicht dauerhaft gemacht ({0})", e.getClass().getName());
         }
         return pending;
+    }
+
+    /** Wartet bis zur Frist, bis die Funde der Suche geladen sind; {@code true}, wenn etwas zu laden war. */
+    private boolean awaitLoading(KeywordSearch.Progress progress, long deadline) {
+        if (progress == null || progress.done() || progress.cancelled()) {
+            return false;
+        }
+        while (System.nanoTime() < deadline) {
+            Optional<KeywordSearch.Progress> now = keywords.progress(progress.id());
+            if (now.isEmpty() || now.get().done() || now.get().cancelled()) {
+                break;
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(POLL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return true;
     }
 
     /** Nur ein aktuelles, gelungenes Embedding gilt als vorbereitet; ein gescheitertes wird neu versucht. */

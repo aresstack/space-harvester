@@ -42,3 +42,18 @@ Zusammenführen von Ergebnislisten sollte gerade wegfallen, weil ohnehin alles i
 - Die Schlagwortsuche wird auf die Cache-Pipeline umgebaut (Finden, Laden, Suchen im Volltextindex); der Vorlauf der
   Treffer wird ein seitenweiser Worker. Frische-Einstellungen und der Haken als Anfrageschalter folgen in eigenen PRs.
 - docs/PARITY.md führt die fehlende Fusion als gewollte Abweichung.
+
+## Fortschreibung: suchgetriebenes Finden (18.10.2026)
+
+Das Finden folgt dem Enterprise AI Client (`ResearchQueries`, `SearchDrivenIndexingUseCase`, `ExcerptRanking`):
+Eine Frage mit mehr als sechs Wörtern geht als wörtliche Begriffe und Schlüsselwörter an die native Suche jeder
+Quelle (`SearchTerms`, höchstens `space-harvester.search.discovery.max-queries`, Standard 4), parallel; die Funde
+werden je Quelle reihum ohne Dopplung zusammengeführt. Der Cursor zählt Positionen in dieser Zusammenführung; weil
+jede Anfrage in jedem Stapel ab dem ersten Treffer tiefer gesucht wird, ist sie ein Anfang der nächsten. Mit
+Cross-Encoder bewertet `ExcerptPriority` Titel und Auszug der Funde und bestimmt nur die Ladereihenfolge
+(`space-harvester.search.excerpt-ranking`, Standard an): Sie verwirft nichts, fällt bei jedem Fehler auf die
+Reihenfolge der Quellen zurück und schickt wie `ModelReranker` nur Texte aus Quellen mit Freigabe für externe
+Verarbeitung. Die Punkte 1 und 3 gelten weiter für die Treffer: Ihre Rangfolge kommt allein aus BM25 über den
+Cache, ohne Fusion; der Cross-Encoder ordnet in der Schlagwortsuche nur das Laden, nie die Treffer.
+Rechte prüft weiterhin die Suche an den Kandidaten und an der Ergebnisliste des Caches; die Bewertung fügt keine
+eigene Prüfung hinzu.

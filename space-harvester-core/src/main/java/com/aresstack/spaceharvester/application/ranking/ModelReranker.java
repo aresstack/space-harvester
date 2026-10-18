@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.ranking;
 
+import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import java.util.ArrayList;
@@ -41,6 +42,14 @@ public final class ModelReranker implements SearchReranker {
         this.modelId = Objects.requireNonNull(modelId, "modelId");
         this.scorer = Objects.requireNonNull(scorer, "scorer");
         this.mayProcessExternally = Objects.requireNonNull(mayProcessExternally, "mayProcessExternally");
+    }
+
+    /**
+     * Die Ladereihenfolge der Schlagwortsuche nach Titel und Auszug (#154) mit demselben Dienst und derselben Freigabe
+     * für externe Verarbeitung.
+     */
+    public ExcerptPriority excerptPriority() {
+        return new ExcerptPriority(scorer::score, mayProcessExternally);
     }
 
     @Override

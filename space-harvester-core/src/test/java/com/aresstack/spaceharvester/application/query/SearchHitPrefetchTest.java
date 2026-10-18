@@ -29,7 +29,11 @@ class SearchHitPrefetchTest {
         IntStream.range(10, 30).forEach(i -> hits.add(hit(String.valueOf(i), "1")));
 
         try (SearchHitPrefetch prefetch = prefetch(Duration.ofSeconds(10), null)) {
-            assertThat(prefetch.prefetch(APP, hits)).isEqualTo(KeywordSearch.Prefetch.Fill.NONE);
+            KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, hits);
+            assertThat(fill.pending()).isEmpty();
+            assertThat(fill.failed()).isZero();
+            assertThat(fill.progress().done()).isTrue();
+            assertThat(prefetch.progress(fill.progressId())).contains(fill.progress());
         }
 
         // Nicht nur die ersten zehn: jede gefundene Seite des Stapels, die gleiche Version nicht noch einmal.

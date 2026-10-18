@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -18,16 +19,20 @@ import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -86,17 +91,38 @@ class QueryConfiguration {
 
     /**
      * Die Schlagwortsuche über den Cache (ADR 0013): die Quellen finden, gefundene Seiten werden geladen, der
-     * Volltextindex sucht; ohne Cache die Treffer der Quellen selbst.
+     * Volltextindex sucht; ohne Cache die Treffer der Quellen selbst. {@code space-harvester.search.discovery.max-queries}
+     * (Standard 4, 1 bis 8) begrenzt die Anfragen je Quelle, die aus einer längeren Frage entstehen; 1 schickt den
+     * Suchtext unverändert. {@code space-harvester.search.excerpt-ranking} (Standard {@code true}) lässt mit
+     * {@code rerank-model} den Cross-Encoder die Funde nach Titel und Auszug bewerten, um die vielversprechendsten zuerst
+     * zu laden (nur Quellen in {@code external-processing-sources}). {@code space-harvester.search.loads} (Standard
+     * {@value KeywordSearch#DEFAULT_LOADS}, alle) begrenzt, wie viele Funde je Stapel in den Cache laden, die besten
+     * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
-                                SearchHitPrefetch prefetch) {
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch);
+                                SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
+                                @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
+                                @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
+                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
+        SearchReranker current = reranker.getIfUnique();
+        ExcerptPriority excerpts;
+        if (!excerptRanking) {
+            excerpts = ExcerptPriority.off();
+        } else if (current instanceof SwappableReranker live) {
+            // Folgt dem Reranker der wirksamen Konfiguration (ADR 0015).
+            excerpts = ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
+                    ? cross.excerptPriority() : ExcerptPriority.off());
+        } else {
+            excerpts = current instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+        }
+        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts, loads);
     }
 
     /**
      * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013): vier Abrufe zugleich, höchstens 200 wartende;
-     * ohne Cache nichts. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
+     * ohne Cache nichts. Technische Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
+     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
      * verdrängt.
      */
     @Bean(destroyMethod = "close")
@@ -108,8 +134,9 @@ class QueryConfiguration {
             return SearchHitPrefetch.disabled();
         }
         return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
+                key -> available.findHeader(key).map(PageHeader::metadata),
                 (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                SearchHitPrefetch.background(4, 200));
+                SearchHitPrefetch.background(4, 200), SearchHitPrefetch.DEFAULT_WAIT, Duration.ZERO);
     }
 
     /**

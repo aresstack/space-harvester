@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -11,6 +12,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -29,12 +31,13 @@ import java.util.function.Function;
  * Lädt die gefundenen Seiten einer Schlagwortsuche in den Cache (ADR 0013, wie {@code KnowledgePrefetchService} im
  * Enterprise AI Client): jede sichtbare Seite eines Stapels, deren Version nicht im Cache liegt, geht an den
  * Beschaffungs-Use-Case ({@link PageQueries#page}, mit den Rechten des Aufrufers); der legt sie ab, und Volltextindex
- * und Anreicherungen folgen von selbst. Die Suche wartet höchstens {@link #DEFAULT_WAIT} darauf und sucht dann im
- * Cache.
+ * und Anreicherungen folgen von selbst. Welche Seiten das sind, wählt die Suche aus (nur die besten eines Stapels).
  *
- * <p>Was danach noch lädt, lädt für technische Aufrufer weiter und erscheint mit dem nächsten Stapel. Delegierte
- * Benutzer laden nur während ihres Aufrufs: ihre Anmeldung soll die Anfrage nicht überdauern, darum entfallen ihre
- * noch wartenden Abrufe am Ende der Wartezeit; ein schon laufender Abruf endet regulär.
+ * <p>Technische Aufrufer (Desktop-App, Dienstkonto) warten höchstens {@code technicalWait}, Standard so lange wie
+ * delegierte; mit {@link Duration#ZERO} kehrt die Suche sofort zurück, die Seiten laden im Hintergrund weiter, und
+ * {@link #progress} zählt mit ({@link KeywordSearch.Progress}). Delegierte Benutzer laden nur während ihres Aufrufs:
+ * ihre Anmeldung soll die Anfrage nicht überdauern, darum warten sie höchstens {@code wait}, und ihre noch wartenden
+ * Abrufe entfallen danach; ein schon laufender Abruf endet regulär.
  */
 public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoCloseable {
 
@@ -43,12 +46,24 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     /** So lange wartet die Suche höchstens auf die Seiten eines Stapels. */
     public static final Duration DEFAULT_WAIT = Duration.ofSeconds(5);
 
+    private final Function<PageKey, Optional<PageMetadata>> cachedMetadata;
     private final Function<PageKey, Optional<String>> cachedVersion;
     private final BiConsumer<AccessContext, PageKey> load;
     private final ExecutorService background;
     private final Duration wait;
+    private final Duration technicalWait;
     private final AutoCloseable stop;
     private final Map<PageKey, CompletableFuture<Boolean>> running = new ConcurrentHashMap<>();
+    /** Fortschritt der letzten Stapel, ältester zuerst verdrängt. */
+    private final Map<String, Batch> batches = new LinkedHashMap<>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Batch> eldest) {
+            return size() > MAX_TRACKED;
+        }
+    };
+
+    /** So viele Stapel behält {@link #progress}. */
+    static final int MAX_TRACKED = 256;
 
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
@@ -63,18 +78,43 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     /** @param wait so lange wartet die Suche höchstens auf die Seiten eines Stapels */
     public SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
                              BiConsumer<AccessContext, PageKey> load, ExecutorService background, Duration wait) {
+        this(cachedVersion, load, background, wait, wait);
+    }
+
+    /**
+     * @param wait          so lange wartet die Suche delegierter Benutzer höchstens auf die Seiten eines Stapels
+     * @param technicalWait so lange wartet die Suche technischer Aufrufer; {@link Duration#ZERO}: gar nicht
+     */
+    public SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
+                             BiConsumer<AccessContext, PageKey> load, ExecutorService background, Duration wait,
+                             Duration technicalWait) {
+        this(cachedVersion, key -> Optional.empty(), load, background, wait, technicalWait);
+    }
+
+    /**
+     * @param cachedMetadata Kopfdaten der Seite im Cache, leer, wenn sie dort fehlt; damit braucht ein geladener Fund
+     *                       keine zweite Rückfrage bei der Quelle
+     */
+    public SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
+                             Function<PageKey, Optional<PageMetadata>> cachedMetadata,
+                             BiConsumer<AccessContext, PageKey> load, ExecutorService background, Duration wait,
+                             Duration technicalWait) {
+        this.cachedMetadata = Objects.requireNonNull(cachedMetadata, "cachedMetadata");
         this.cachedVersion = Objects.requireNonNull(cachedVersion, "cachedVersion");
         this.load = Objects.requireNonNull(load, "load");
         this.background = Objects.requireNonNull(background, "background");
         this.wait = Objects.requireNonNull(wait, "wait");
+        this.technicalWait = Objects.requireNonNull(technicalWait, "technicalWait");
         this.stop = stopping(background);
     }
 
     private SearchHitPrefetch() {
+        this.cachedMetadata = key -> Optional.empty();
         this.cachedVersion = key -> Optional.empty();
         this.load = (caller, key) -> { };
         this.background = null;
         this.wait = Duration.ZERO;
+        this.technicalWait = Duration.ZERO;
         this.stop = () -> { };
     }
 
@@ -114,8 +154,9 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                     }
                 });
                 done.whenComplete((ignored, failure) -> {
-                    if (done.isCancelled()) {
-                        task.cancel(false);
+                    // Nur ein noch wartender Abruf entfällt; ein laufender schreibt zu Ende und gibt die Seite
+                    // erst dann frei, damit dieselbe Seite nicht doppelt lädt.
+                    if (done.isCancelled() && task.cancel(false)) {
                         running.remove(key, done);
                     }
                 });
@@ -126,7 +167,15 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 pending.add(hit);
             }
         }
-        long deadline = System.nanoTime() + wait.toNanos();
+        Batch batch = new Batch(UUID.randomUUID().toString(), waiting.size() + pending.size(), own);
+        pending.forEach(hit -> batch.finished(false));
+        waiting.values().forEach(future -> future.whenComplete((stored, failure) ->
+                batch.finished(failure == null && Boolean.TRUE.equals(stored))));
+        synchronized (batches) {
+            batches.put(batch.id, batch);
+        }
+        boolean delegated = caller.credential() != null;
+        long deadline = System.nanoTime() + (delegated ? wait : technicalWait).toNanos();
         int failed = 0;
         for (Map.Entry<KeywordSearch.Hit, CompletableFuture<Boolean>> entry : waiting.entrySet()) {
             CompletableFuture<Boolean> future = entry.getValue();
@@ -136,7 +185,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 }
             } catch (TimeoutException e) {
                 pending.add(entry.getKey());
-                if (caller.credential() != null && own.contains(future)) {
+                if (delegated && own.contains(future)) {
                     // Die Anmeldung des Benutzers bleibt in seinem Aufruf.
                     future.cancel(false);
                 }
@@ -150,7 +199,77 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 pending.add(entry.getKey());
             }
         }
-        return new Fill(pending, failed);
+        return new Fill(pending, failed, batch.id, batch.snapshot());
+    }
+
+    @Override
+    public Optional<PageMetadata> cachedMetadata(PageKey key) {
+        try {
+            return cachedMetadata.apply(key);
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public boolean cancel(String id) {
+        Batch batch;
+        synchronized (batches) {
+            batch = batches.get(id);
+        }
+        if (batch == null) {
+            return false;
+        }
+        batch.cancel();
+        return true;
+    }
+
+    @Override
+    public Optional<KeywordSearch.Progress> progress(String id) {
+        synchronized (batches) {
+            Batch batch = batches.get(id);
+            return batch == null ? Optional.empty() : Optional.of(batch.snapshot());
+        }
+    }
+
+    /** Wie weit die Seiten eines Stapels geladen sind; zählt jede Seite genau einmal. */
+    private static final class Batch {
+
+        private final String id;
+        private final int total;
+        /** Abrufe, die dieser Stapel gestartet hat; nur sie bricht {@link #cancel()} ab. */
+        private final Set<CompletableFuture<Boolean>> own;
+        private int loaded;
+        private int failed;
+        private boolean cancelled;
+
+        private Batch(String id, int total, Set<CompletableFuture<Boolean>> own) {
+            this.id = id;
+            this.total = total;
+            this.own = Set.copyOf(own);
+        }
+
+        /** Wartendes entfällt; ein schon laufender Abruf endet regulär. */
+        private void cancel() {
+            synchronized (this) {
+                cancelled = true;
+            }
+            own.forEach(future -> future.cancel(false));
+        }
+
+        private synchronized void finished(boolean stored) {
+            if (loaded + failed < total) {
+                if (stored) {
+                    loaded++;
+                } else {
+                    failed++;
+                }
+            }
+        }
+
+        private synchronized KeywordSearch.Progress snapshot() {
+            return new KeywordSearch.Progress(id, total, loaded, failed, cancelled);
+        }
     }
 
     /** Lädt nichts, etwa ohne Cache. */
