@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
+import com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.CrossReferences;
@@ -51,6 +52,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -58,6 +60,7 @@ import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.regex.Pattern;
 
 /** {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}. */
 final class KnowledgeSourceHarvestSource implements HarvestSource {
@@ -129,6 +132,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof SearchableKnowledgeSource) {
             capabilities.add(SourceCapability.LIVE_SEARCH);
         }
+        if (port instanceof AddressableKnowledgeSource || port instanceof ResourceMetadataSource
+                || LocalFilesSourceAdapter.TYPE.equals(type)) {
+            capabilities.add(SourceCapability.ADDRESSES);
+        }
         return capabilities;
     }
 
@@ -151,6 +158,75 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     hit.revision().modifiedAt().orElse(null)));
         }
         return List.copyOf(matches.values());
+    }
+
+    @Override
+    public boolean addressable(String address) {
+        String value = address == null ? "" : address.trim();
+        return !value.isEmpty() && (byResourceId(value).isPresent() || pattern(value) != null);
+    }
+
+    /**
+     * Zuerst Ressourcen-IDs und Bookmarks der Quelle ({@code confluence:<Ort>/page/123},
+     * {@code confluence://<Ort>/page/123}, bei Dateiquellen {@code files:<Quelle>/<Seiten-ID>}), dann die
+     * Adressauflösung der Quelle selbst ({@link AddressableKnowledgeSource}, im Enterprise AI Client dieselbe).
+     * Unbekannte und für das Konto gesperrte Seiten sind leer, nicht ein Fehler.
+     */
+    @Override
+    public Optional<String> resolveAddress(String address) {
+        String value = address == null ? "" : address.trim();
+        Optional<String> byId = byResourceId(value);
+        if (byId.isPresent()) {
+            return byId;
+        }
+        AddressableKnowledgeSource addressable = pattern(value);
+        if (addressable == null) {
+            return Optional.empty();
+        }
+        KnowledgeResourceId resolved;
+        try {
+            resolved = addressable.resolveAddress(value);
+        } catch (KnowledgeSourceException e) {
+            if (e.kind() == KnowledgeSourceException.Kind.NOT_FOUND
+                    || e.kind() == KnowledgeSourceException.Kind.ACCESS_DENIED) {
+                return Optional.empty();
+            }
+            throw accessFailure(e);
+        }
+        return resolved == null ? Optional.empty() : Optional.of(nativeId(resolved));
+    }
+
+    /** Die Quelle, wenn ihr Adressmuster auf die ganze Eingabe passt; sonst {@code null}. */
+    private AddressableKnowledgeSource pattern(String value) {
+        if (value.isEmpty() || !(port instanceof AddressableKnowledgeSource addressable)) {
+            return null;
+        }
+        Pattern pattern = addressable.addressPattern();
+        return pattern != null && pattern.matcher(value).matches() ? addressable : null;
+    }
+
+    private Optional<String> byResourceId(String value) {
+        if (LocalFilesSourceAdapter.TYPE.equals(type)) {
+            String prefix = FILES_SCHEME + ":" + id + "/";
+            boolean own = value.startsWith(prefix) && value.length() > prefix.length()
+                    && value.indexOf('/', prefix.length()) < 0;
+            return own ? Optional.of(value.substring(prefix.length())) : Optional.empty();
+        }
+        if (!(port instanceof ResourceMetadataSource single)) {
+            return Optional.empty();
+        }
+        KnowledgeResourceId resourceId;
+        try {
+            // Ein Bookmark hat nach dem Schema immer //, eine Ressourcen-ID nie (KnowledgeBookmarkIds).
+            int separator = value.indexOf("://");
+            resourceId = separator > 0
+                    ? KnowledgeResourceId.of(value.substring(0, separator), value.substring(separator + 3))
+                    : KnowledgeResourceId.of(value);
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+        String local = single.localId(resourceId);
+        return local == null || local.isEmpty() ? Optional.empty() : Optional.of(local);
     }
 
     @Override

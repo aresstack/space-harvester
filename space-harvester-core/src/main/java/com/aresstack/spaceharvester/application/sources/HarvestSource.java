@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.sources;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -114,6 +115,31 @@ public interface HarvestSource {
     default List<SourceSearchMatch> searchPages(String text, int limit) {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann nicht selbst suchen", null);
+    }
+
+    /**
+     * Ob die Eingabe eine Adresse dieser Quelle sein kann (Muster der Quelle, ohne Abfrage). Nur dann lohnt
+     * {@link #resolveAddress}; eine passende Adresse kann trotzdem auf keine Seite zeigen, etwa eine andere Instanz.
+     */
+    default boolean addressable(String address) {
+        return false;
+    }
+
+    /**
+     * Die Seiten-ID hinter einer Adresse dieser Quelle (#178): Seitenadressen mit und ohne ID, bei Confluence auch
+     * {@code display/KEY/Titel}, {@code viewpage.action?spaceKey=…&title=…}, die Startseite {@code display/KEY},
+     * Bookmarks {@code confluence://…} und Ressourcen-IDs der Quelle. Titel und Startseite fragt die Quelle mit ihren
+     * eigenen Zugangsdaten nach; Rechte je Seite klärt der Aufrufer am Ergebnis. Nur mit
+     * {@link SourceCapability#ADDRESSES}.
+     *
+     * @return die Seiten-ID oder leer, wenn die Adresse nicht zu dieser Quelle gehört oder keine Seite bezeichnet
+     *         (auch eine Seite, die die Quelle nicht kennt oder nicht zeigt)
+     * @throws SourceAccessException {@code UNSUPPORTED} für eine Quelle ohne diese Fähigkeit, sonst wie
+     *                               {@link #partitions()}
+     */
+    default Optional<String> resolveAddress(String address) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle kann Adressen nicht auflösen", null);
     }
 
     /**

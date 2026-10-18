@@ -356,7 +356,8 @@ space-harvester:
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/children[?cursor=…]` | Direkte Kindseiten einer Seite live, wie oben (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/ancestors` | Breadcrumbs: Space mit Namen, Vorfahren von oben nach unten, die Seite selbst; live (#177) |
 | `GET /api/v1/sources/{sourceId}/pages/{pageId}/links` | Querverweise auf andere Seiten der Quelle (ausgehend; eingehend nur, wenn die Quelle sie vollständig kennt, `incomingSupported`); verlangt `content`, Ziele ohne Freigabe fehlen (#177) |
-| `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre URL (`?pageId=…`, `/spaces/KEY/pages/ID`, Kurzlink `/x/…`) |
+| `GET /api/v1/sources/{sourceId}/pages?url=…` | Dieselbe Seite über ihre Adresse: URL mit Seiten-ID, `/display/KEY/Titel`, Space-Startseite, `confluence://…`, Ressourcen-ID oder Lesezeichen `space-harvester://…` (#178) |
+| `GET /api/v1/addresses?address=…` | Eine Adresse über alle Quellen auflösen; je Treffer Seite und Lesezeichen (#178) |
 | `POST /api/v1/sources/{sourceId}/pages/{pageId}/enrichments[?processor=…]` | Anreicherungen einer Seite aus dem Cache neu berechnen (alle oder ein Prozessor); verlangt `content` |
 | `POST /api/v1/sources/{sourceId}/spaces/{spaceKey}/syncs` | Abgleich eines Space mit der Quelle als Hintergrundauftrag starten (202, `Location` auf den Status); der erste Abgleich auf leerem Cache ist die Ernte des Space (#10). Vor der Annahme: ungültiger Space-Key 400 (`invalid-request`), Space, den die Quelle nicht kennt, 404 (`source-object-not-found`) |
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
@@ -434,8 +435,10 @@ Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
 `source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
 antwortet `refresh=true` mit `refresh-unavailable` (501). Seiten lassen sich auch über ihre URL abrufen
-(`…/pages?url=…`), sofern sie die Seiten-ID enthält; Formen ohne ID (`/display/KEY/Titel`) ergeben 400, eine URL eines
-anderen Servers als der bekannten Seiten-URL `cache-miss`. Der Cache ist transparent
+(`…/pages?url=…`): mit Seiten-ID, über Space und Titel (`/display/KEY/Titel`, live bei der Quelle), als Space-Startseite
+(`/display/KEY`), als Bookmark `confluence://…`, als Ressourcen-ID der Quelle oder als Lesezeichen
+`space-harvester://<Quelle>/page/<ID>[?version=…]` (#178). Eine Adresse, die auf keine lesbare Seite der Quelle zeigt
+(anderer Server, unbekannter Titel, keine Freigabe), ist `cache-miss`; keine Adresse ist 400. Der Cache ist transparent
 ([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md)): Liegt eine Seite nicht im Cache, wird sie auch ohne
 `refresh` von der Quelle geladen, sofern der Aufrufer sie lesen darf (geprüft an den live gelesenen Kopfdaten, bevor
 der Inhalt geladen wird), im gemeinsamen Cache abgelegt, angereichert und ausgeliefert. `cache-miss` (404) heißt

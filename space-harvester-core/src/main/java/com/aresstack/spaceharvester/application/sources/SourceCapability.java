@@ -20,5 +20,10 @@ public enum SourceCapability {
     /** Volltextsuche in der Quelle selbst über Titel und Inhalt ({@link HarvestSource#searchPages}). */
     LIVE_SEARCH,
     /** Seitenbaum live und Querverweise ({@link HarvestSource#children}, {@link HarvestSource#position}, #177). */
-    NAVIGATION
+    NAVIGATION,
+    /**
+     * Adressen der Quelle auflösen, auch ohne Seiten-ID (Titel, Startseite des Space, Bookmarks und Ressourcen-IDs
+     * der Quelle; {@link HarvestSource#resolveAddress}, #178).
+     */
+    ADDRESSES
 }
