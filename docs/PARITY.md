@@ -63,7 +63,7 @@ Nicht angebunden sind:
 | Spaces auflisten, einzelner Space mit Startseite | `conf/ConfluenceRestClient#spaces`, `#space` | Kopie über `KnowledgeSourceHarvestSource#partitions`; `server/api/SourcesController` | gleich |
 | Seiten eines Space flach, paginiert (Cursor, ≤ 100) | `conf/ConfluenceKnowledgeSource#resources` | Kopie über `pageMetadata(partition, cursor, limit)`; `core/application/sync/InventoryCollector` | gleich |
 | Seite in `body.storage` mit Version, Space, Vorfahren, Labels, History | `#storedPage`, `SNAPSHOT_EXPAND` | Kopie, sync und async (`core/source/confluence/WebClientConfluenceTransport`), byte-genau als `NativePayload` | gleich |
-| Gerenderte Ansicht `body.view` / `export_view` (Makros von Confluence ausgeführt, Jira-Platzhalter, Lese-HTML) | `#readingPage`, `conf/ConfluencePageView`, `conf/ConfluenceHtmlText`, `#pageView` | keine; Core rechnet Text selbst aus `storage` (`core/output/convert/StorageParser`) | fehlt → #176 |
+| Gerenderte Ansicht `body.view` / `export_view` (Makros von Confluence ausgeführt, Jira-Platzhalter, Lese-HTML) | `#readingPage`, `conf/ConfluencePageView`, `conf/ConfluenceHtmlText`, `#pageView` | `core/application/reading/ReadingViews` (#176), REST `GET …/pages/{pageId}/reading-view`, Ablage `reading-view/v1`; im Vergleichstest gleich (Seiten, Lesetext, Bilder) | gleich |
 | Labels samt Vollständigkeit | `#toPage`, `LABELS_COMPLETE` | Kopie; `attributesHash` | gleich |
 | Anhangsliste, Download mit Bytegrenze | `#storedAttachments`, `#loadAttachmentFile` | Kopie; `core/application/assets/Assets`; fremde Weiterleitungen bewusst aus (SSRF, #90) | gleich |
 | Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` | keine | fehlt → #183 |
@@ -106,7 +106,7 @@ Nicht angebunden sind:
 | Rechteprüfung | `chalco/tamias/…/ClientResourceAccessPolicy` (Einbenutzer) | `AccessGuard`, `CorpusReleasePolicy`, `DelegatedAccessPolicy` je Seite | SH+ |
 | Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1` | SH+ |
 | Quelle nicht erreichbar → Cache-Stand | Prefetch | `PageQueries#page` liefert Cache bei `UNAVAILABLE`/`RATE_LIMITED` | gleich |
-| Text der Seite zum Lesen und für KI | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`; ausgeführte Makros wie `include`, `children`, Jira fehlen) | teilweise → #176 |
+| Text der Seite zum Lesen und für KI | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`; ausgeführte Makros wie `include`, `children`, Jira fehlen); der Lesetext aus `body.view` liegt mit #176 in `ReadingViews` vor, Konverter und KI-Text nutzen ihn noch nicht | teilweise (Strang R bzw. Folge-Issue) |
 
 ## 5. Cache
 
@@ -282,11 +282,13 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 1. **Referenzen des Enterprise AI Client:** `parity-tests/eac/generate.sh [pfad-zum-checkout]` baut den
    Enterprise AI Client am Commit aus `src/test/resources/eac/COMMIT`, exportiert den Paritäts-Space über
    `KnowledgeExportUseCase.subtree` als Word, PDF und Markdown und legt `parity.{docx,pdf,md}` samt
-   `problems-<format>.txt` (Meldungen von `ExportGraphics`) unter `src/test/resources/eac/` ab. Die CI von Space
+   `problems-<format>.txt` (Meldungen von `ExportGraphics`) unter `src/test/resources/eac/` ab, dazu je Seite den
+   Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/`. Die CI von Space
    Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
-2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, exportiert denselben Space über
-   `Harvester.export(…, docx, pdf, markdown)` und vergleicht mit den Referenzen. Bericht:
+2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
+   aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
+   vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -308,12 +310,10 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Externe Links | alle | Ziele des Maßstabs ⊆ Core |
 | Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
+| Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 
-Stand nach #175 (Word über `:document-export`): Der Enterprise AI Client verliert die Ziele externer Links in allen
-Formaten, der Core behält sie. Tabellen, Text, Inhaltsverzeichnis und Felder in Word sind gleich. Offen (in
-`known-gaps.properties`): Space-Name als oberstes Kapitel (wartet auf den Space-Namen im Konvertier-Eingang),
-Inhaltsverzeichnisseite, Seitenzahlen und Lesezeichen im PDF (#202), eingebettete Bilder in allen Formaten (Strang R,
-Asset-Manifest aus Runde 7).
+Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
+Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core behält sie.
 
 Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
 Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht, `text` zählt
@@ -336,7 +336,7 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 ### Noch nicht abgedeckt
 
-Suche, Navigation, Anhänge und Leseansicht vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen:
-Leseansicht #176, Navigation mit Breadcrumbs #177, Space-Filter der Suche in der Anfrage #179, Text aus Anhängen
+Suche, Navigation und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen:
+Navigation mit Breadcrumbs #177, Space-Filter der Suche in der Anfrage #179, Text aus Anhängen
 #183, Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf hier mehr): interne
 Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.

@@ -36,6 +36,14 @@ class ParityComparisonTest {
         assertThat(finding(eac, core, "ebenen").verdict()).isEqualTo(Verdict.GLEICH);
     }
 
+    @Test
+    void aPageWithoutReadingViewInTheCoreIsAGap() {
+        List<Finding> findings = ParityComparison.readingViews(java.util.Map.of("1", "Text eins", "2", "Text zwei"),
+                java.util.Map.of("1", "Text eins"), java.util.Map.of("1", 1, "2", 0), java.util.Map.of("1", 1));
+        assertThat(findings).filteredOn(f -> f.check().equals("seiten")).singleElement()
+                .extracting(Finding::verdict).isEqualTo(Verdict.CORE_WENIGER);
+    }
+
     private static DocumentOutline withHeadings(List<DocumentOutline.Heading> headings) {
         return new DocumentOutline("md", headings, false, false, false, 0, 0, 0, List.of(), Set.of(), 0, 0, "");
     }

@@ -22,6 +22,8 @@ public final class ParitySpace {
     public static final String SPACE = "PARITY";
     public static final String SPACE_NAME = "Paritätsprüfung";
     public static final String HOME = "1001";
+    /** Alle Seiten des Space, für den Vergleich der Leseansicht. */
+    public static final String[] PAGES = {"1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008"};
 
     /** Sätze, die in jedem Export vorkommen müssen; je Seite einer. */
     public static final String[] SENTENCES = {
