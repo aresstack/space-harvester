@@ -60,7 +60,7 @@ import java.util.Optional;
  */
 public final class PageDetailPanel extends JPanel {
 
-    private static final String READ = "Inhalt";
+    private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
@@ -175,8 +175,8 @@ public final class PageDetailPanel extends JPanel {
         advanced.add(Comic.row(refresh, saveRaw), BorderLayout.NORTH);
         advanced.add(advancedTabs, BorderLayout.CENTER);
 
-        tabs.tab(READ, readerPanel)
-                .tab(READING, readingPane)
+        tabs.tab(READING, readingPane)
+                .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(ADVANCED, advanced);
@@ -272,6 +272,8 @@ public final class PageDetailPanel extends JPanel {
         this.readingLoaded = false;
         this.page = null;
         readingPane.clear(" ");
+        // Jede neu geöffnete Seite zeigt zuerst die gerenderte Leseansicht.
+        tabs.select(READING);
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
