@@ -41,6 +41,7 @@ public final class ExportsView implements View {
     private final ComposerButton remove = Comic.button("Ausgewählten entfernen", "Markierten Eintrag aus der Sammlung entfernen");
     private final ComposerButton clear = Comic.button("Alle entfernen", "Gesamte Sammlung leeren");
     private final Feedback feedback = new Feedback();
+    private boolean starting;
 
     public ExportsView(AppContext context) {
         this.context = context;
@@ -140,12 +141,11 @@ public final class ExportsView implements View {
     private void render() {
         model.set(new ArrayList<>(queued));
         int amount = queued.size();
+        long sources = queued.stream().map(QueuedSpace::sourceId).distinct().count();
         hint.setText(amount == 0 ? "Noch keine Spaces gesammelt."
-                : Texts.count(amount, "Space", "Spaces") + " aus "
-                + queued.stream().map(QueuedSpace::sourceId).distinct().count()
-                + (queued.stream().map(QueuedSpace::sourceId).distinct().count() == 1
-                ? " Quelle gesammelt." : " Quellen gesammelt."));
-        start.setEnabled(amount > 0);
+                : Texts.count(amount, "Space", "Spaces") + " aus " + sources
+                + (sources == 1 ? " Quelle gesammelt." : " Quellen gesammelt."));
+        start.setEnabled(!starting && amount > 0);
         remove.setEnabled(table.getSelectedRow() >= 0);
         clear.setEnabled(amount > 0);
     }
@@ -166,6 +166,7 @@ public final class ExportsView implements View {
             return;
         }
 
+        starting = true;
         start.setEnabled(false);
         feedback.working(entries.size() == 1 ? "Download wird gestartet …" : "Downloads werden gestartet …");
         Background.run(() -> {
@@ -182,6 +183,7 @@ public final class ExportsView implements View {
             }
             return new Started(started, accepted, failed);
         }, result -> {
+            starting = false;
             queued.removeAll(result.accepted());
             render();
             if (result.failed().isEmpty()) {
@@ -197,6 +199,7 @@ public final class ExportsView implements View {
                 context.navigator().showJob(result.jobs().get(0).id());
             }
         }, error -> {
+            starting = false;
             render();
             feedback.problem(error);
         });
