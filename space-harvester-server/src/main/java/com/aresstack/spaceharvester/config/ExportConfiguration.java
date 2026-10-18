@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -22,6 +23,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
@@ -92,14 +94,22 @@ class ExportConfiguration {
     }
 
     @Bean
+    SignInRequests signInRequests(@Value("${space-harvester.export.sign-in-wait:PT0S}") Duration wait) {
+        // ADR 0018: ohne Wartezeit (Standard) wartet kein Auftrag; mit Wartezeit beantwortet ein Client die
+        // Anforderung über /api/v1/sign-ins.
+        return new SignInRequests(wait, Clock.systemUTC());
+    }
+
+    @Bean
     ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
-                                                Assets assets, Exports exports, AccessGuard access) {
+                                                Assets assets, Exports exports, AccessGuard access,
+                                                SignInRequests signIns) {
         // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
         // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
         ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
                 (owner, sourceId) -> technicalClient(owner)
                         .filter(client -> access.permitsSourceWide(client, sourceId, AccessKind.CONTENT))
-                        .isPresent());
+                        .isPresent(), signIns);
         exports.onPublished(images::start);
         return images;
     }
