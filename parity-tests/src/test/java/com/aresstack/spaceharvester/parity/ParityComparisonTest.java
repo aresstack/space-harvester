@@ -103,6 +103,8 @@ class ParityComparisonTest {
 
         assertThat(findings).extracting(Finding::verdict)
                 .containsExactly(Verdict.GLEICH, Verdict.CORE_WENIGER, Verdict.CORE_MEHR);
+        assertThat(ParityComparison.addresses(Map.of("unknown-title", "-"), Map.of()).get(0).verdict())
+                .isEqualTo(Verdict.CORE_WENIGER);
     }
 
     private static DocumentOutline outline(String text, int images, int notes) {

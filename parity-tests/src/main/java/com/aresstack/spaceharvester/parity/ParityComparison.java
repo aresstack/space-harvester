@@ -169,7 +169,8 @@ public final class ParityComparison {
         for (Map.Entry<String, String> entry : eac.entrySet()) {
             String expected = entry.getValue();
             String actual = core.getOrDefault(entry.getKey(), "fehlt");
-            Verdict verdict = expected.equals(actual) ? Verdict.GLEICH
+            Verdict verdict = !core.containsKey(entry.getKey()) ? Verdict.CORE_WENIGER
+                    : expected.equals(actual) ? Verdict.GLEICH
                     : expected.equals("-") ? Verdict.CORE_MEHR : Verdict.CORE_WENIGER;
             findings.add(new Finding("adressen", entry.getKey(), "Adresse " + entry.getKey(), expected, actual,
                     verdict, verdict == Verdict.CORE_WENIGER ? "andere oder keine Seite im Core" : ""));

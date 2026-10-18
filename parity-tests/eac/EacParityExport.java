@@ -115,6 +115,12 @@ public final class EacParityExport {
                     String resolved = id(resource);
                     page = resolved == null ? "-" : resolved;
                 } catch (com.aresstack.enterpriseai.source.api.KnowledgeSourceException e) {
+                    // Nur "führt auf keine Seite" zählt als "-"; Netz- oder Antwortfehler brechen die Erzeugung ab,
+                    // damit eine gestörte Referenz keine Lücke des Core verdeckt
+                    if (e.kind() == com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind.UNAVAILABLE
+                            || e.kind() == com.aresstack.enterpriseai.source.api.KnowledgeSourceException.Kind.INVALID_RESPONSE) {
+                        throw e;
+                    }
                     page = "-";
                 }
                 out.println(form[0] + "=" + page);
