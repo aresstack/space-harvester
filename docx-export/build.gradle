@@ -1,0 +1,46 @@
+// Word-Ausgabe des Enterprise AI Client (DocxExportWriter, MarkdownDocxRenderer, ExportGraphics) als eigene
+// Bibliothek ohne Swing; angepasste Kopie, Herkunft und Abweichungen in UPSTREAM.md. Der Core hängt nur von diesem
+// Modul ab, nie vom Enterprise AI Client selbst.
+plugins {
+    id 'java-library'
+}
+
+description = 'Word-Export (DOCX) mit Inhaltsverzeichnis, aus dem Enterprise AI Client übernommen.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // api: XWPFDocument und die Absätze erscheinen in der öffentlichen Schnittstelle von MarkdownDocxRenderer
+    api libs.poi.ooxml
+    implementation libs.flexmark
+    implementation libs.flexmark.ext.tables
+    implementation libs.flexmark.ext.autolink
+    implementation libs.flexmark.ext.gfm.strikethrough
+
+    testImplementation platform(libs.spring.boot.dependencies)
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    systemProperty 'java.awt.headless', 'true'
+}
+
+// Eigene Publikation, damit die Core-POM keine unveröffentlichte Projektabhängigkeit nennt (docs/MODULES.md).
+ext.publishedArtifactId = 'space-harvester-docx-export'
+apply from: rootProject.file('gradle/publishing.gradle')

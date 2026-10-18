@@ -28,6 +28,9 @@ dependencies {
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst
     runtimeOnly platform(libs.spring.boot.dependencies)
     runtimeOnly 'ch.qos.logback:logback-classic'
+    // Apache POI (Word-Export) protokolliert über die Log4j-API; ohne Brücke meldete Log4j beim ersten Export einen
+    // fehlenden Logging-Anbieter auf der Konsole
+    runtimeOnly 'org.apache.logging.log4j:log4j-to-slf4j'
 
     testImplementation platform(libs.spring.boot.dependencies)
     testImplementation 'org.junit.jupiter:junit-jupiter'
