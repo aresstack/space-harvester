@@ -152,49 +152,22 @@ class RelevanceSearchTest {
     }
 
     @Test
-    void withTheFullTextIndexTheOrderIsTheRankFusionOfFullTextAndCosine() {
-        // Kosinus: 21, 11, 12, 10, 20. Volltext: 20, 10. RRF (k = 60): 20 und 10 nach vorn.
-        RelevanceSearch.RelevanceResults results = hybrid(ALLOW_ALL, List.of(match("OPS", "20"), match("DEV", "10")))
-                .search(CALLER, query(null), "nächtlicher Betrieb", 10);
-
-        assertThat(ids(results)).containsExactly("20", "10", "21", "11", "12");
-        assertThat(results.reranker()).isEqualTo("rrf(fulltext,embedding-cosine@" + processor.version() + ")");
-        assertThat(results.hits().getFirst().relevance()).isNotNull();
-    }
-
-    @Test
-    void aFullTextHitWithoutEmbeddingIsACandidateWithoutSimilarity() {
+    void theFullTextIndexNeverAddsCandidatesOrChangesTheOrder() {
+        // ADR 0013: keine zweite Ergebnisliste, keine Fusion. 13 hat kein Embedding und ist nur ein Volltexttreffer.
         index.publish("wiki", STATE, List.of(
                 entry(page("DEV", "10", "Architektur-Übersicht", "3"), confirmed("g1")),
-                entry(page("DEV", "13", "Wartungsfenster", "1"), confirmed("g1"))));
+                entry(page("DEV", "11", "Nachtbetrieb", "5"), confirmed("g1")),
+                entry(page("DEV", "12", "Betrieb Handbuch", "2"), confirmed("g1")),
+                entry(page("DEV", "13", "Wartungsfenster", "1"), confirmed("g1")),
+                entry(page("OPS", "20", "Urlaubsplanung", "1"), confirmed("g2")),
+                entry(page("OPS", "21", "Geheimer Betrieb", "1"), confirmed("g2"))));
 
-        RelevanceSearch.RelevanceResults results = hybrid(ALLOW_ALL, List.of(match("DEV", "13")))
-                .search(CALLER, query(null), "Wartungsfenster Architektur", 10);
-
-        // Beide haben je einen ersten Rang; der Gleichstand behält die Reihenfolge der Kandidaten.
-        assertThat(ids(results)).containsExactly("10", "13");
-        assertThat(results.hits().get(1).relevance()).isNull();
-    }
-
-    @Test
-    void aFullTextRankNeedsContentAccess() {
-        AccessPolicy noOpsContent = (context, scope, kind) -> kind == AccessKind.CONTENT
-                && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
-
-        RelevanceSearch.RelevanceResults results = hybrid(noOpsContent, List.of(match("OPS", "20")))
-                .search(CALLER, query(null), "nächtlicher Betrieb", 10);
-
-        assertThat(ids(results)).containsExactly("11", "12", "10");
-        assertThat(results.reranker()).isEqualTo("embedding-cosine@" + processor.version());
-    }
-
-    @Test
-    void aFailingFullTextIndexLeavesThePureSemanticSearch() {
-        RelevanceSearch.RelevanceResults results = hybrid(ALLOW_ALL, null)
-                .search(CALLER, query(null), "nächtlicher Betrieb", 10);
+        RelevanceSearch.RelevanceResults results = withTexts(ALLOW_ALL, List.of(match("DEV", "13"), match("OPS", "20"),
+                match("DEV", "10"))).search(CALLER, query(null), "nächtlicher Betrieb", 10);
 
         assertThat(ids(results)).containsExactly("21", "11", "12", "10", "20");
         assertThat(results.reranker()).isEqualTo("embedding-cosine@" + processor.version());
+        assertThat(results.hits()).allSatisfy(hit -> assertThat(hit.relevance()).isNotNull());
     }
 
     @Test
@@ -222,40 +195,12 @@ class RelevanceSearchTest {
         AccessPolicy noOpsContent = (context, scope, kind) -> kind == AccessKind.CONTENT
                 && "OPS".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
 
-        hybrid(noOpsContent, List.of(), recording).search(CALLER, query("betrieb"), "nächtlicher Betrieb", 10);
+        withTexts(noOpsContent, List.of(), recording).search(CALLER, query(null), "nächtlicher Betrieb", 10);
 
         assertThat(texts).containsExactly("nächtlicher Betrieb");
-        // Der Text ist kürzer als das Fenster: ganz; ohne content nur der Titel.
-        assertThat(documents).containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12")
-                .containsEntry("21", "Geheimer Betrieb");
-    }
-
-    @Test
-    void rankFusionSumsReciprocalRanksAndKeepsUnrankedCandidatesInOrder() {
-        var hits = index.search(query(null), "i1", null, 10);
-        List<SearchHit> fused = ReciprocalRankFusion.DEFAULT.fuse(hits, List.of(hits.get(3), hits.get(1)),
-                List.of(hits.get(1), hits.get(3), hits.get(1)));
-
-        // 1 und 3 haben beide 1/61 + 1/62; Gleichstand behält die Reihenfolge der Kandidaten.
-        assertThat(fused).containsExactly(hits.get(1), hits.get(3), hits.get(0), hits.get(2), hits.get(4));
-
-        // Mit doppeltem Volltextgewicht gewinnt der erste Volltextrang.
-        assertThat(new ReciprocalRankFusion(2, 1, 60).fuse(hits, List.of(hits.get(3), hits.get(1)),
-                List.of(hits.get(1), hits.get(3)))).startsWith(hits.get(3), hits.get(1));
-        assertThatThrownBy(() -> new ReciprocalRankFusion(1, 1, 0)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new ReciprocalRankFusion(-1, 1, 60)).isInstanceOf(IllegalArgumentException.class);
-    }
-
-    @Test
-    void fusionWeightsAndKAreConfigurableAndNamedInTheResult() {
-        RelevanceSearch.RelevanceResults results = hybrid(ALLOW_ALL, List.of(match("OPS", "20"), match("DEV", "10")))
-                .withFusion(new ReciprocalRankFusion(0, 1, 60))
-                .search(CALLER, query(null), "nächtlicher Betrieb", 10);
-
-        // Ohne Volltextgewicht bleibt die Kosinus-Reihenfolge; die reinen Volltexttreffer folgen in ihrer Reihenfolge.
-        assertThat(ids(results)).containsExactly("21", "11", "12", "20", "10");
-        assertThat(results.reranker()).isEqualTo("rrf@k60,w0.0/1.0(fulltext,embedding-cosine@" + processor.version()
-                + ")");
+        // Der Text ist kürzer als das Fenster: ganz. OPS hat kein content, seine Seiten sind gar keine Kandidaten.
+        assertThat(documents).containsOnlyKeys("11", "12", "10")
+                .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
     }
 
     @Test
@@ -275,12 +220,11 @@ class RelevanceSearchTest {
         assertThat(ids(search(noOpsContent).search(CALLER, query(null), "Betrieb", 10)))
                 .containsExactly("11", "12", "10");
 
-        // Als Titeltreffer bleibt sie sichtbar, aber ohne Ähnlichkeit und hinter allen Treffern mit Ähnlichkeit.
+        // Auch ihr Titel holt sie nicht herein: Titelwörter filtern nur (ADR 0013).
         RelevanceSearch.RelevanceResults byTitle = search(noOpsContent).search(CALLER, query("betrieb"), "Betrieb",
                 10);
-        assertThat(ids(byTitle)).containsExactly("12", "21");
-        assertThat(byTitle.hits().get(0).relevance()).isNotNull();
-        assertThat(byTitle.hits().get(1).relevance()).isNull();
+        assertThat(ids(byTitle)).containsExactly("12");
+        assertThat(byTitle.hits().getFirst().relevance()).isNotNull();
     }
 
     @Test
@@ -352,26 +296,16 @@ class RelevanceSearchTest {
                 .isInstanceOf(InvalidQueryException.class);
     }
 
-    @Test
-    void interleavingAlternatesAndDropsDuplicates() {
-        var a = index.search(query(null), "i1", null, 10);
-        List<String> mixed = RelevanceSearch.interleave(List.of(a.get(0), a.get(1), a.get(2)),
-                List.of(a.get(1), a.get(3))).stream().map(hit -> hit.page().pageId()).toList();
-
-        assertThat(mixed).containsExactly(a.get(0).page().pageId(), a.get(1).page().pageId(),
-                a.get(3).page().pageId(), a.get(2).page().pageId());
-    }
-
     private RelevanceSearch search(AccessPolicy policy) {
         return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store, processor);
     }
 
     /** Mit Volltextindex, der für jede Anfrage {@code matches} liefert oder ohne sie scheitert. */
-    private RelevanceSearch hybrid(AccessPolicy policy, List<PageTextIndex.Match> matches) {
-        return hybrid(policy, matches, SearchReranker.NONE);
+    private RelevanceSearch withTexts(AccessPolicy policy, List<PageTextIndex.Match> matches) {
+        return withTexts(policy, matches, SearchReranker.NONE);
     }
 
-    private RelevanceSearch hybrid(AccessPolicy policy, List<PageTextIndex.Match> matches, SearchReranker reranker) {
+    private RelevanceSearch withTexts(AccessPolicy policy, List<PageTextIndex.Match> matches, SearchReranker reranker) {
         PageTextIndex texts = new PageTextIndex() {
             @Override
             public void put(Entry entry) {

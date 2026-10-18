@@ -105,7 +105,7 @@ class HarvesterFullTextTest {
     }
 
     @Test
-    void aPageOpenedWithoutAnySyncIsFoundByTheHybridRelevanceSearch() throws InterruptedException {
+    void aLiveHitLoadedIntoTheCacheIsFoundByTheSemanticSearchWithoutAnySync() throws InterruptedException {
         EmbeddingProvider model = new EmbeddingProvider() {
             @Override
             public String modelId() {
@@ -122,20 +122,25 @@ class HarvesterFullTextTest {
                 return texts.stream().map(text -> new float[] {1, 0}).toList();
             }
         };
-        try (Harvester harvester = files(Harvester.builder().embeddings(model))) {
-            harvester.pages().page(harvester.caller(), "docs", id("betrieb.md"), false);
-            PageSearchQuery docs = PageSearchQuery.of("docs", List.of(), null, null, null, null, null, null,
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).embeddings(model).build()) {
+            harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null, 10);
+            PageSearchQuery wiki = PageSearchQuery.of("wiki", List.of(), null, null, null, null, null, null,
                     SearchSort.TITLE);
 
-            // Kein Abgleich: die geöffnete Seite liegt im Cache und im Volltextindex.
+            // Kein Abgleich: der Treffer der Quellensuche liegt im Cache und bekommt sein Embedding.
             RelevanceSearch.RelevanceResults results = null;
             Instant deadline = Instant.now().plusSeconds(10);
             while ((results == null || results.hits().isEmpty()) && Instant.now().isBefore(deadline)) {
-                results = harvester.relevance().search(harvester.caller(), docs, "Nachtlauf", 10);
+                try {
+                    results = harvester.relevance().search(harvester.caller(), wiki, "Nachtlauf", 10);
+                } catch (RuntimeException e) {
+                    // Noch nichts im Index der Quelle.
+                }
                 Thread.sleep(50);
             }
-            assertThat(results.hits()).extracting(hit -> hit.hit().page().pageId()).containsExactly(id("betrieb.md"));
-            assertThat(results.reranker()).startsWith("rrf(fulltext,");
+            assertThat(results).isNotNull();
+            assertThat(results.hits()).extracting(hit -> hit.hit().page().pageId()).containsExactly("102");
+            assertThat(results.reranker()).startsWith("embedding-cosine@");
         }
     }
 

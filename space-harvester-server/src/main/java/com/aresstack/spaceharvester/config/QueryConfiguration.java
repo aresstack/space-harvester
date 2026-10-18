@@ -29,7 +29,6 @@ import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -39,7 +38,6 @@ import org.springframework.context.annotation.Configuration;
  * {@code cache-unavailable}.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(RelevanceProperties.class)
 class QueryConfiguration {
 
     @Bean
@@ -106,21 +104,20 @@ class QueryConfiguration {
      * {@code sort=relevance} (#89, ADR 0011): nur mit Embedding-Dienst und Anreicherungen im Lucene-Cache (der zugleich
      * Ablage und Vektorsuche ist); sonst {@code semantic-search-unavailable}. Mit dem Hintergrund
      * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach. Mit dem
-     * Volltextindex über den Cache ist sie hybrid (#181, RRF aus Volltext und Kosinus); mit {@code rerank-model}
-     * ordnet danach der Cross-Encoder des Dienstes um.
+     * Volltextindex über den Cache sieht ein Reranker den Lesetext; Kandidaten sind nur Vektortreffer, ohne Fusion
+     * (ADR 0013). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
      */
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
                                     ObjectProvider<EmbeddingProcessor> embedding, PageQueries pages,
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
-                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
-                                    RelevanceProperties relevance) {
+                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker) {
         ExecutorService background = renewals.getIfAvailable();
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
                 store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique(),
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique()).withFusion(relevance.fusion());
+                texts.getIfUnique());
     }
 }

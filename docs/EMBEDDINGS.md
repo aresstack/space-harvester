@@ -28,10 +28,6 @@ space-harvester:
     external-processing-sources: confluence,wiki2   # Standard: keine
     embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
     rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
-  relevance:                            # nur Server, optional (#181): Reciprocal Rank Fusion
-    keyword-weight: 1.0
-    semantic-weight: 1.0
-    rank-constant: 60
 ```
 
 Die Desktop-App liest dieselben Namen unter `space-harvester.ai` aus ihrer Datei, bis auf `embedding-chunk-chars`
@@ -60,7 +56,7 @@ werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet.
 
 Die Seiten kommen über die normale Beschaffung in den Cache: Jede gelesene Seite, auch ein vorgeladener Treffer der
 nativen Schlagwortsuche, landet im Volltextindex und bekommt ihre Embeddings im Hintergrund. Für `sort=relevance` ist
-also kein vollständiger Abgleich nötig (`HarvesterFullTextTest.aPageOpenedWithoutAnySyncIsFoundByTheHybridRelevanceSearch`).
+also kein vollständiger Abgleich nötig (`HarvesterFullTextTest.aLiveHitLoadedIntoTheCacheIsFoundByTheSemanticSearchWithoutAnySync`).
 
 ## Ablage der Vektoren
 
@@ -90,27 +86,21 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Die Anfrage geht über `POST /embeddings` an den Dienst (wie die Seiten, ohne Präfixe; das Modell bestimmt der Dienst).
 - Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle (ohne `sourceId`: aller freigegebenen Quellen zusammen, eine
   Einbettung der Anfrage und eine Vektorsuche, #114) unter genau der aktuellen Prozessorversion, zu Seiten
-  (`sourceId + pageId`) zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
+  (`sourceId + pageId`) zusammengefasst, höchstens 100 Seiten. Es gibt keine Volltext- oder Titelkandidaten und keine
+  Fusion von Ergebnislisten (ADR 0013); `title` filtert nur die Kandidaten der Vektorsuche. Alle
   Filter (`spaceKey`, `title`, `parentPageId`, Zeitgrenzen …) gelten auch für Kandidaten der Vektorsuche.
 - Rechte: wie die übrige Suche `metadata` für Quelle bzw. Spaces und jeden Treffer. Ähnlichkeiten sind aus dem Inhalt
-  abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Ein
-  Titeltreffer ohne `content` bleibt sichtbar, bekommt aber keine Ähnlichkeit und steht hinter allen anderen. Der
+  abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Der
   Reranker sieht nur diese freigegebenen Treffer und darf sie nur umordnen.
 - Live-Prüfung je Treffer (ADR 0011, Punkt 7): Vor der Auslieferung liest die Suche die Kopfdaten jedes Treffers bei
   der Quelle und prüft an ihnen Recht (aktueller Space) und Version. Gesperrte oder verschwundene Seiten fallen weg,
   weitere Kandidaten rücken nach. Eine neuere Version wird im Hintergrund nachgeladen und neu eingebettet; der Treffer
   heißt bis dahin `stale`. Ein nicht prüfbarer Kandidat fehlt, und die Antwort trägt `complete: false`.
 - Reihenfolge: Kosinusähnlichkeit der Anfrage zum ähnlichsten Abschnitt jeder Seite (`reranker:
-  embedding-cosine@<Prozessorversion>`); Treffer ohne Ähnlichkeit folgen in ihrer Reihenfolge.
-- Hybrid (#181): Der Volltextindex über den Cache (#180, BM25 über Titel und Text) liefert weitere Kandidaten; sie
-  brauchen `content`, denn ihr Rang stammt aus dem Inhalt. Gibt es Volltexttreffer im Fenster, entsteht die Reihenfolge
-  per Reciprocal Rank Fusion (wie `ReciprocalRankFusion` mit `RetrievalSettings` im Enterprise AI Client) aus der
-  Volltext- und der Kosinus-Rangfolge (`reranker: rrf(fulltext,embedding-cosine@<Prozessorversion>)`); Treffer ohne
-  beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch. Gewichte und `k` sind einstellbar,
-  im Server unter `space-harvester.relevance` (`keyword-weight`, `semantic-weight` je 0 bis 10, Standard 1;
-  `rank-constant` 1 bis 1000, Standard 60), im Core über `Harvester.builder().rankFusion(…)`; abweichende Werte stehen
-  in der Kennung (`rrf@k30,w2.0/1.0(…)`). Anders als dort fusioniert der Core je Seite, nicht je Stück: Der
-  Volltextindex kennt Seiten, und die Antwort listet Seiten; für die Kosinus-Rangfolge zählt das ähnlichste Stück.
+  embedding-cosine@<Prozessorversion>`).
+- Keine hybride Suche (ADR 0013): Die Schlagwortsuche läuft ohne Haken über den Volltextindex des Caches, die
+  semantische Suche nur mit Haken über die Vektoren. Ergebnislisten werden nie zusammengeführt (keine Reciprocal Rank
+  Fusion); das ist eine gewollte Abweichung vom Enterprise AI Client.
 - Cross-Encoder (#181, wie `KipitzRerankAdapter` und `CrossEncoderRanking` im Enterprise AI Client): Mit
   `rerank-model` bewertet der Dienst über `POST <base-url>/rerank` jeden Treffer einzeln gegen den Anfragetext und
   ordnet die Treffer der Antwort danach um (`reranker: …+cross-encoder@<Modell>`). Er kommt erst nach der
