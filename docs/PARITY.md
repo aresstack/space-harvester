@@ -20,6 +20,7 @@ ob der Core es gleichwertig, teilweise oder gar nicht kann, und welches Issue di
 | **in Arbeit** | Strang Q, R oder L baut es gerade; nur Verweis |
 | **EAC** | gehört nach ADR 0012, Punkt 4, nicht in die Bibliothek |
 | **bewusst nicht** | durch Angelos Entscheidung ausgeschlossen; Ersatzweg genannt |
+| **gewollt anders** | bewusst andere Umsetzung mit Begründung; Ersatzweg genannt |
 
 **Pfadkürzel EAC**
 
@@ -106,7 +107,9 @@ Nicht angebunden sind:
 | Rechteprüfung | `chalco/tamias/…/ClientResourceAccessPolicy` (Einbenutzer) | `AccessGuard`, `CorpusReleasePolicy`, `DelegatedAccessPolicy` je Seite | SH+ |
 | Versionsabgleich und Aktualität | `KnowledgePrefetchService#seenRevision`, `ContentHasher` | `core/application/sync/PageFreshness`, `refresh=true`, Hashes `page-metadata/v1`, `page-attributes/v1` | SH+ |
 | Quelle nicht erreichbar → Cache-Stand | Prefetch | `PageQueries#page` liefert Cache bei `UNAVAILABLE`/`RATE_LIMITED` | gleich |
-| Text der Seite zum Lesen und für KI | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`; ausgeführte Makros wie `include`, `children`, Jira fehlen); der Lesetext aus `body.view` liegt mit #176 in `ReadingViews` vor, Konverter und KI-Text nutzen ihn noch nicht | teilweise → #218 |
+| Text der Seite zum Lesen | `know/LoadKnowledgeDocumentUseCase`, `KnowledgeDocumentReader` (aus `body.view`) | `ReadingViews` (#176): Lesetext aus `body.view` mit ausgeführten Makros | gleich (Vergleichstest Leseansicht) |
+| Ausgeführte Makros (`include`, `excerpt-include`, `children`) in Word, PDF und Markdown | über `body.view` im Export | Leseansicht im Datenbestand (`views/`, `export-reading-view/v1`, `ConversionInput#readingView`, Q #222), dann in den Konvertern (R) | in Arbeit → #218 |
+| Text für die KI-Anreicherung | `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`) | gewollt anders: fremd gerendert eingebundene Inhalte wären in der gemeinsamen Anreicherung ein Rechteleck; wer die Seite lesen darf, bekommt den Lesetext über `ReadingViews` |
 
 ## 5. Cache
 
@@ -141,7 +144,7 @@ Nicht angebunden sind:
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | draw.io erkennen (Makro, Revision, `inc-drawio`) | `ConfluencePageView#drawioPreviews`, `#storageDrawioPreviews` | `StorageParser`, `AssetKind.DIAGRAM`, auch `inc-drawio` (#210) | gleich |
-| draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | `core/application/diagrams/Diagrams`; in Word, PDF und Markdown gezeichnet (#210) | gleich; gerenderte Diagramme als Asset im Datenbestand fehlen noch (Q) |
+| draw.io als Grafik (mxfile → SVG, sonst PNG-Vorschau) | `conf/DrawioDiagramRenderer`, `doc/ExportGraphics` | `core/application/diagrams/Diagrams`; in Word, PDF und Markdown gezeichnet (#210) | gleich; gezeichnete Diagramme liegen als Rendition im Datenbestand (#220) |
 | draw.io-XML und SVG textuell erhalten | — | Asset-Ernte bevorzugt `DIAGRAM` > `VECTOR` > `IMAGE` | SH+ |
 | Mermaid erkennen (Confluence-Makros) | nur Markdown-Fences | `StorageParser` (`mermaid`, `mermaid-cloud`, `mermaid-macro`) → Codeblock | SH+ |
 | Mermaid als Grafik | `doc/ExportGraphics#mermaid`, `exedra/ui/markdown/AresStackMermaidImageRenderer` | `Diagrams`; in Word, PDF und Markdown als Grafik (#206) | gleich; Leseansicht der App mit Diagrammen in Arbeit (L) |
@@ -256,12 +259,12 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #190 | draw.io- und Mermaid-Rendering im Core | R |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
-| #218 | Lesetext aus `body.view` für Konverter und KI-Text | Q, dann R |
+| #218 | Ausgeführte Makros aus der Leseansicht in den Konvertern (KI-Text bleibt auf `storage`) | Q, dann R |
 
 In Arbeit und deshalb ohne neues Issue:
 
 - Konvertierung aus dem Datenbestand, Asset-Manifest und Bildbeschaffung beim Herunterladen (Q, Runde 7),
-- gerenderte Diagramme als Asset im Datenbestand (Q) und Leseansicht der App mit Bildern und Diagrammen (L, #192),
+- Leseansicht der App mit Bildern und Diagrammen (L, #192),
 - Auftragskarte und Ausgabeordner (L).
 
 ## Vergleichstests
