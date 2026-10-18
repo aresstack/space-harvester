@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
@@ -193,6 +194,8 @@ public final class AppRuntime implements AutoCloseable {
                                              SessionSecrets secrets, boolean withAi) {
         Harvester.Builder builder = Harvester.builder()
                 .sources(sources)
+                // Die App bedient Einmalcodes (SignInSlot); ohne Wartezeit fehlten solche Dateien sofort.
+                .signInWait(SignInRequests.DEFAULT_WAIT)
                 .dataDirectory(storage.dataDirectory())
                 .exportDirectory(storage.exportDirectory())
                 .assetDirectory(storage.assetDirectory())
