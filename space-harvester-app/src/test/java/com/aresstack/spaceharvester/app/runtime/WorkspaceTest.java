@@ -251,6 +251,12 @@ class WorkspaceTest {
                 settings.cache(), settings.setupCompleted(), Map.of("handbuch", new SourceSyncOverride(null, null,
                 null, null, null, null, null, null, java.time.Duration.ofDays(3))), settings.sync());
         assertThat(AppRuntime.liveChange(settings, live)).isTrue();
+        AppSettings keePass = new AppSettings(live.file(), live.sources(), live.proxy(), live.asyncTransport(),
+                live.trustStores(), live.storage(), live.jobLimits(), live.ai(), live.outputDirectory(),
+                live.problems(), live.disabledSources(), live.tls(), live.cache(), live.setupCompleted(),
+                live.syncRules(), live.sync(), new com.aresstack.spaceharvester.app.settings.AiAccess(
+                com.aresstack.spaceharvester.app.settings.AiAccess.Mode.KEEPASS, "Enterprise AI API"));
+        assertThat(AppRuntime.liveChange(keePass, keePass)).as("ein gespeicherter Bezug des API-Keys").isTrue();
         assertThat(runtime.reconfigure(live, secrets, "test")).isEqualTo(AppRuntime.Reconfiguration.APPLIED);
         assertThat(runtime.configurationVersion()).isGreaterThan(before);
         assertThat(runtime.settings()).isSameAs(live);
