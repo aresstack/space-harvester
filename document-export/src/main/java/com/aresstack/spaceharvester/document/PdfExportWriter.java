@@ -659,7 +659,7 @@ public final class PdfExportWriter {
             float inner = frame.width - 2 * CELL_PADDING;
             y -= CODE_SIZE * 0.3f;
             for (String raw : body.split("\n", -1)) {
-                for (String line : breakChars(fit(raw.replace("\t", "    "), font), font, CODE_SIZE, inner)) {
+                for (String line : breakChars(fit(raw.replace("\t", "    "), font), font, CODE_SIZE, inner, inner)) {
                     ensure(lineHeight);
                     fill(CODE_FILL, frame.x, y - lineHeight, frame.width, lineHeight);
                     text(line, font, CODE_SIZE, TEXT, frame.x + CELL_PADDING, y - CODE_SIZE);
@@ -979,7 +979,7 @@ public final class PdfExportWriter {
                         used = tokenWidth;
                         continue;
                     }
-                    for (String piece : breakChars(token, run.font, run.size, width - used)) {
+                    for (String piece : breakChars(token, run.font, run.size, width - used, width)) {
                         float pieceWidth = width(piece, run.font, run.size);
                         if (used + pieceWidth > width && !line.isEmpty()) {
                             lines.add(line);
@@ -997,8 +997,12 @@ public final class PdfExportWriter {
             return lines;
         }
 
-        /** Cut {@code text} into pieces; the first fits {@code firstWidth}, the others a full line where possible. */
-        private List<String> breakChars(String text, PDFont font, float size, float firstWidth) throws IOException {
+        /**
+         * Cut {@code text} into pieces; the first fits {@code firstWidth}, the others {@code width} (Space Harvester:
+         * the width of the frame, a table cell or an indented block, instead of the whole page width).
+         */
+        private List<String> breakChars(String text, PDFont font, float size, float firstWidth, float width)
+                throws IOException {
             List<String> pieces = new ArrayList<String>();
             float limit = Math.max(size, firstWidth);
             StringBuilder piece = new StringBuilder();
@@ -1011,7 +1015,7 @@ public final class PdfExportWriter {
                     pieces.add(piece.toString());
                     piece.setLength(0);
                     used = 0f;
-                    limit = Math.max(size, contentWidth());
+                    limit = Math.max(size, width);
                 }
                 piece.append(text, i, end);
                 used += charWidth;

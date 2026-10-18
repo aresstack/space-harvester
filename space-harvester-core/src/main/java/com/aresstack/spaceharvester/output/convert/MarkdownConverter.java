@@ -266,8 +266,10 @@ public final class MarkdownConverter implements ExportConverter {
                                 .append(')');
                     } else if (safeTarget(reference)) {
                         // Externe Bilder nur als Verweis: ein eingebettetes Bild lädt der Betrachter ungefragt nach.
-                        text.append('[').append(escape(image.alt().isEmpty() ? "Bild" : image.alt())).append("](")
-                                .append(destination(reference)).append(')');
+                        // Sie gelten als nicht verfügbar, wie Anhänge ohne Bilddaten.
+                        text.append("*\\[Abbildung nicht verfügbar: ")
+                                .append(escape(image.alt().isEmpty() ? "Bild" : image.alt())).append("\\]* ([Adresse](")
+                                .append(destination(reference)).append("))");
                     } else {
                         text.append(escape(image.alt()));
                     }

@@ -84,6 +84,10 @@ class PdfConverterTest {
                     + "<ac:image><ri:attachment ri:filename=\"bild.png\" /></ac:image>"
                     + "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">architektur"
                     + "</ac:parameter></ac:structured-macro>"
+                    + "<p><ac:image ac:alt=\"logo\"><ri:url ri:value=\"https://example.org/logo.png\" />"
+                    + "</ac:image></p>"
+                    + "<table><tbody><tr><td>" + "https://example.org/".repeat(12) + "</td><td>b</td></tr>"
+                    + "</tbody></table>"
                     + "<p>" + "Wortohneleerzeichen".repeat(30) + "</p>"),
             storagePage("101", "100", 1, "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body>"
                     + "<![CDATA[line 1\n\tline <2> " + "x".repeat(300) + "]]></ac:plain-text-body>"
@@ -108,6 +112,8 @@ class PdfConverterTest {
             assertThat(text).contains("Chinesisch: ??.");
             // Nur verlinkte Bilder gelten nicht als eingebettet.
             assertThat(text).doesNotContain("[Bild:");
+            // Externe Bilder ebenso: Hinweis, die Adresse bleibt als Link
+            assertThat(text).contains("[Abbildung nicht verfügbar: logo] (Adresse)");
             // Jedes Kapitel beginnt auf einer neuen PDF-Seite.
             assertThat(new PDFTextStripper() {
                 {
@@ -163,6 +169,28 @@ class PdfConverterTest {
                     .extracting(annotation -> pdf.getPages().indexOf(((PDPageDestination) ((PDAnnotationLink)
                             annotation).getDestination()).getPage()))
                     .containsExactly(1, 2, 3, 4);
+        }
+    }
+
+    @Test
+    void longTokensInTableCellsStayInsideTheirCell() throws Exception {
+        try (PDDocument pdf = Loader.loadPDF(convert(PAGES))) {
+            List<float[]> right = new ArrayList<>();
+            PDFTextStripper stripper = new PDFTextStripper() {
+                @Override
+                protected void writeString(String line, List<TextPosition> positions) {
+                    if (line.contains("example.org/https")) {
+                        TextPosition last = positions.get(positions.size() - 1);
+                        right.add(new float[] {last.getXDirAdj() + last.getWidthDirAdj()});
+                    }
+                }
+            };
+            stripper.setStartPage(3);
+            stripper.setEndPage(3);
+            stripper.getText(pdf);
+            // Jedes Stück der langen Zelle endet vor der Mitte der Seite (zweite Spalte beginnt dort)
+            assertThat(right).hasSizeGreaterThan(1).allSatisfy(x -> assertThat(x[0])
+                    .isLessThan(pdf.getPage(2).getMediaBox().getWidth() / 2f));
         }
     }
 
