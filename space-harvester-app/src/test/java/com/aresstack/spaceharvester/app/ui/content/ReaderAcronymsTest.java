@@ -177,13 +177,26 @@ class ReaderAcronymsTest {
                 .orElseThrow();
     }
 
+    /**
+     * Öffnet die Seite und wartet auf ihre fertige Akronym-Analyse: Nach einem Abgleich läuft die Anreicherung als
+     * Folgeauftrag; bis sie fertig ist, zeigt die Seite noch keine Fundstellen. Dann wird die Seite erneut geöffnet.
+     */
     private ReaderDocument open(PageDetailPanel panel, String sourceId, String pageId, boolean refresh)
             throws Exception {
-        onEdt(() -> {
-            panel.load(sourceId, pageId, refresh);
-            return null;
-        });
-        return await(panel, document -> document != null);
+        ReaderDocument shown = null;
+        for (int attempt = 0; attempt < 60; attempt++) {
+            onEdt(() -> {
+                panel.load(sourceId, pageId, refresh);
+                return null;
+            });
+            shown = await(panel, document -> document != null);
+            if (shown.acronyms().state() == PageAcronyms.State.CURRENT
+                    && shown.acronyms().result().key().sourceId().equals(sourceId)) {
+                return shown;
+            }
+            Thread.sleep(250);
+        }
+        return shown;
     }
 
     private static ReaderDocument await(PageDetailPanel panel, Predicate<ReaderDocument> ready) throws Exception {
