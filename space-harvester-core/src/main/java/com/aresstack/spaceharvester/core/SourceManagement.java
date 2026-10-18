@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
@@ -48,18 +49,20 @@ public final class SourceManagement {
     private final Jobs jobs;
     private final LucenePageCache cache;
     private final LuceneEnrichmentStore enrichments;
+    private final LucenePageTextIndex texts;
     private final FileSystemAssetStore assets;
     private final ExportArtifactWriter exports;
     private final Clock clock;
     private final SourceDiagnostics diagnostics;
 
     SourceManagement(ConfiguredSourceCatalog catalog, Jobs jobs, LucenePageCache cache,
-                     LuceneEnrichmentStore enrichments, FileSystemAssetStore assets, ExportArtifactWriter exports,
-                     Clock clock) {
+                     LuceneEnrichmentStore enrichments, LucenePageTextIndex texts, FileSystemAssetStore assets,
+                     ExportArtifactWriter exports, Clock clock) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.cache = Objects.requireNonNull(cache, "cache");
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
+        this.texts = Objects.requireNonNull(texts, "texts");
         this.assets = Objects.requireNonNull(assets, "assets");
         this.exports = Objects.requireNonNull(exports, "exports");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -194,6 +197,7 @@ public final class SourceManagement {
         stopJobs(sourceId);
         cache.removeSource(sourceId);
         enrichments.removeSource(sourceId);
+        texts.removeSource(sourceId);
         int blobs = assets.removeSource(sourceId, exportImages()::contains, start);
         LOG.log(System.Logger.Level.INFO, "Daten der Quelle {0} entfernt ({1} Asset-Inhalte)", sourceId, blobs);
     }

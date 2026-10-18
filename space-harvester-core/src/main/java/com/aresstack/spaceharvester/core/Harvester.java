@@ -36,10 +36,12 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
-import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
+import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
+import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
@@ -62,8 +64,10 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -209,6 +213,11 @@ public final class Harvester implements AutoCloseable {
             }
             this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
                     clock, background);
+            // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
+            LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
+            opened.add(textIndex);
+            PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
+                    new LocalFilesTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
@@ -218,13 +227,22 @@ public final class Harvester implements AutoCloseable {
             this.spaceKeys = new SpaceKeyCheck(sources);
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
-                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments),
+                    new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
                     builder.maxTreeNodes);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
-            this.keywordSearch = new KeywordSearch(catalog, access);
+            SearchHitPrefetch prefetch = null;
+            if (builder.prefetchSearchHits) {
+                // #180: sichtbare Live-Treffer begrenzt im Hintergrund in den Cache laden.
+                ExecutorService prefetches = Enrichments.background(100);
+                prefetch = new SearchHitPrefetch(key -> cache.findHeader(key)
+                        .map(header -> header.metadata().version()), new PageRenewal(pages, prefetches)::renew,
+                        SearchHitPrefetch.stopping(prefetches));
+                opened.add(prefetch);
+            }
+            this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch);
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -238,7 +256,7 @@ public final class Harvester implements AutoCloseable {
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, builder.reranker);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs)));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
@@ -253,7 +271,7 @@ public final class Harvester implements AutoCloseable {
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
             exports.onPublished(images::start);
             this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
-            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, assetStore,
+            this.sourceManagement = new SourceManagement(catalog, jobs, cache, enrichmentStore, textIndex, assetStore,
                     exportWriter, clock);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
@@ -600,6 +618,7 @@ public final class Harvester implements AutoCloseable {
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
+        private boolean prefetchSearchHits = true;
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
@@ -802,6 +821,14 @@ public final class Harvester implements AutoCloseable {
 
         public Builder maxTreeNodes(int maxTreeNodes) {
             this.maxTreeNodes = maxTreeNodes;
+            return this;
+        }
+
+        /**
+         * Ob die Schlagwortsuche sichtbare Live-Treffer im Hintergrund in den Cache lädt (#180); Standard {@code true}.
+         */
+        public Builder prefetchSearchHits(boolean prefetchSearchHits) {
+            this.prefetchSearchHits = prefetchSearchHits;
             return this;
         }
 

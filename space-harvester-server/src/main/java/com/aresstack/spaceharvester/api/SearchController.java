@@ -61,12 +61,15 @@ public class SearchController {
     @Operation(summary = "Seiten einer oder aller Quellen nach Titel und Metadaten suchen, stapelweise",
             description = "Mit text: Schlagwortsuche über Titel und Inhalt in der Suche jeder Quelle des Umfangs "
                     + "(Confluence: CQL siteSearch über /rest/api/search, wie die Websuche), ohne vorherigen Abgleich "
-                    + "und ohne Nachladen von Seiten (origin=source, Antwort KeywordResponse). Jeder Treffer trägt "
+                    + "und ohne Warten auf Seiteninhalte (origin=source, Antwort KeywordResponse). Jeder Treffer trägt "
                     + "Titel, Textauszug (snippet), url, Version, Quelle und Space; seine Kopfdaten liest der "
                     + "Harvester live und prüft an ihnen metadata für genau diese Seite, bei delegierten Benutzern "
                     + "über die Quelle. Die Quellen liefern reihum; nextCursor lädt weitere (höchstens "
-                    + KeywordSearch.MAX_DEPTH + " je Quelle). sources nennt je Quelle searched, not-supported (kann "
-                    + "nicht selbst suchen) oder unavailable (mit reason); eine nicht erreichbare Quelle verwirft "
+                    + KeywordSearch.MAX_DEPTH + " je Quelle). Quellen ohne eigene Suche sucht mit Cache der "
+                    + "Volltextindex (sources: indexed, Treffer verlangen zusätzlich content); sichtbare Live-Treffer "
+                    + "lädt danach ein begrenzter Hintergrund in den Cache. sources nennt je Quelle searched, indexed, "
+                    + "not-supported (kann nicht selbst suchen, kein Index) oder unavailable (mit reason); eine nicht "
+                    + "erreichbare Quelle verwirft "
                     + "die anderen nicht, complete ist dann false. sourceId, sourceIds und spaceKey gelten wie unten; "
                     + "andere Filter und sort gibt es mit text nicht. Ohne text: Titel- und Metadatensuche im Index "
                     + "(origin=cache). Mit sourceId nur diese Quelle (scope=source), ohne "
@@ -286,11 +289,12 @@ public class SearchController {
     /**
      * Ob eine Quelle gesucht hat.
      *
-     * @param status {@code searched}, {@code not-supported} (kann nicht selbst suchen) oder {@code unavailable}
+     * @param status {@code searched}, {@code indexed} (kann nicht selbst suchen, gesucht hat der Volltextindex des
+     *               Caches), {@code not-supported} (kann nicht selbst suchen, kein Index) oder {@code unavailable}
      * @param reason bei {@code unavailable} der Grund, z. B. {@code UNAVAILABLE} oder {@code ACCESS_DENIED}
      */
     public record SourceStateResponse(String sourceId,
-                                      @Schema(allowableValues = {"searched", "not-supported", "unavailable"})
+                                      @Schema(allowableValues = {"searched", "indexed", "not-supported", "unavailable"})
                                       String status, @Schema(nullable = true) String reason) {
 
         static SourceStateResponse of(KeywordSearch.SourceState state) {

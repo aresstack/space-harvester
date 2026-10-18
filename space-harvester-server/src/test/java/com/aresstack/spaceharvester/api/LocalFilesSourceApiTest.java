@@ -29,10 +29,12 @@ import org.springframework.test.context.DynamicPropertySource;
 class LocalFilesSourceApiTest {
 
     private static final Path DIR;
+    private static final Path CACHE;
 
     static {
         try {
             DIR = Files.createTempDirectory("files-source");
+            CACHE = Files.createTempDirectory("files-cache");
             Files.writeString(DIR.resolve("start.md"), "# Start\n", StandardCharsets.UTF_8);
             Files.createDirectories(DIR.resolve("handbuch"));
             Files.writeString(DIR.resolve("handbuch/betrieb.txt"), "Betrieb\n", StandardCharsets.UTF_8);
@@ -50,6 +52,7 @@ class LocalFilesSourceApiTest {
         registry.add("space-harvester.sources[0].type", () -> "files");
         registry.add("space-harvester.sources[0].title", () -> "Handbücher");
         registry.add("space-harvester.sources[0].options.directory", DIR::toString);
+        registry.add("space-harvester.cache.directory", CACHE::toString);
     }
 
     private final HttpClient http = HttpClient.newHttpClient();
@@ -115,6 +118,18 @@ class LocalFilesSourceApiTest {
 
         assertThat(page.payload()).isEqualTo("# Start\n".getBytes(StandardCharsets.UTF_8));
         assertThat(page.nativeFormat()).isEqualTo("file");
+    }
+
+    @Test
+    void theKeywordSearchFindsCachedFilesInTheFullTextIndex() throws Exception {
+        assertThat(get("/api/v1/sources/docs/pages/" + pageId("handbuch/betrieb.txt")).statusCode()).isEqualTo(200);
+
+        HttpResponse<String> response = get("/api/v1/search?text=betrieb");
+
+        // Dateien haben keine eigene Suche (#180): gesucht hat der Volltextindex des Caches.
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"status\":\"indexed\"",
+                "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"").doesNotContain(DIR.toString());
     }
 
     private HttpResponse<String> get(String path) throws Exception {
