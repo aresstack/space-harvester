@@ -31,7 +31,7 @@ Optionen:
 | `--version` | Version ausgeben |
 
 Die App öffnet mit der Suche. Ohne Quelle begrüßt **Status** mit der Weltraumszene und **Erste Wissensquelle hinzufügen …**;
-das öffnet denselben Assistenten wie **Wissensquellen › Quelle hinzufügen …** (siehe
+das öffnet denselben Assistenten wie **Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …** (siehe
 [Quellen-Assistent](#quellen-assistent)). Alternativ legt **Einstellungen › Beispiel anlegen** eine kommentierte
 Beispieldatei an und öffnet sie im Standardeditor; nach dem Speichern **Neu laden** wählen.
 
@@ -66,7 +66,7 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
 
 ## Quellen-Assistent
 
-**Wissensquellen › Quelle hinzufügen …** legt eine Quelle in der Konfigurationsdatei an:
+**Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …** legt eine Quelle in der Konfigurationsdatei an:
 
 1. **Quelle:** zuerst Art und Adresse (Basis-URL ohne `/rest`) bzw. Ordner und Dateimuster. Daraus schlägt der
    Assistent **Anzeigename** (wie die Quelle in der App heißt) und **Technische Kennung** (Kleinbuchstaben, Ziffern,
