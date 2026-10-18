@@ -332,11 +332,11 @@ public final class Harvester implements AutoCloseable {
                 opened.add(fillQueue);
             }
             // ADR 0016: eine Warteschlange für Suche und Hintergrund, über denselben Beschaffungsweg wie jeder Abruf.
-            AcquisitionScheduler scheduler = new AcquisitionScheduler(
-                    (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
+            AcquisitionScheduler scheduler = new AcquisitionScheduler(pages::acquire,
                     new AcquisitionScheduler.Limits(SEARCH_FILL_PARALLEL,
                             fillQueue != null ? backgroundParallelism : 0,
-                            AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()));
+                            AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()),
+                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
             opened.add(scheduler);
             this.acquisition = scheduler;
             SearchHitPrefetch prefetch = null;

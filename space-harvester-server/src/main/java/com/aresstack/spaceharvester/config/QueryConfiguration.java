@@ -215,10 +215,10 @@ class QueryConfiguration {
                         : AccessDecision.DENY), freshness, fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes,
                 live::freshnessFor, Clock.systemUTC());
         AcquisitionScheduler.Limits defaults = AcquisitionScheduler.Limits.DEFAULT;
-        return new AcquisitionScheduler((caller, key) -> (caller == BACKGROUND ? technical : pages)
-                .page(caller, key.sourceId(), key.pageId(), false),
+        return new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
+                .acquire(caller, key, background),
                 new AcquisitionScheduler.Limits(defaults.foreground(), live.current().sync().backgroundParallelism(),
-                        defaults.perSource(), defaults.capacity()));
+                        defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
     }
 
     /**

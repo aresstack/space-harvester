@@ -104,7 +104,23 @@ public final class AcquisitionScheduler implements AutoCloseable {
                          long promoted, AcquisitionStatus.Pause pause) {
     }
 
-    private final BiConsumer<AccessContext, PageKey> load;
+    /**
+     * Der Beschaffungsweg einer Seite.
+     */
+    @FunctionalInterface
+    public interface Load {
+
+        /**
+         * Lädt eine Seite mit den Rechten von {@code caller} in den Cache und kehrt danach zurück; eine Ausnahme heißt
+         * „nicht geladen“.
+         *
+         * @param background ob der Hintergrund die Seite braucht: Dann zählt nur, was jetzt bei der Quelle geprüft und
+         *                   abgelegt ist, nie ein Rückfall auf den alten Cache-Stand, wenn die Quelle nicht antwortet
+         */
+        void load(AccessContext caller, PageKey key, boolean background);
+    }
+
+    private final Load load;
     private volatile Limits limits;
     private final long resumeDelayNanos;
     /** Letzte Aktion des Vordergrunds ({@link System#nanoTime()}), anfangs lange her. */
@@ -144,6 +160,16 @@ public final class AcquisitionScheduler implements AutoCloseable {
     /** @param resumeDelay so lange nach der letzten Aktion des Vordergrunds bleibt der Hintergrund still */
     public AcquisitionScheduler(BiConsumer<AccessContext, PageKey> load, Limits limits, Executor executor,
                                 Duration resumeDelay) {
+        this(adapt(load), limits, executor, resumeDelay);
+    }
+
+    /**
+     * Mit einem Beschaffungsweg, der weiß, ob der Hintergrund die Seite braucht ({@link Load}).
+     *
+     * @param executor    {@code null}: eigene virtuelle Threads
+     * @param resumeDelay so lange nach der letzten Aktion des Vordergrunds bleibt der Hintergrund still
+     */
+    public AcquisitionScheduler(Load load, Limits limits, Executor executor, Duration resumeDelay) {
         this.load = Objects.requireNonNull(load, "load");
         this.limits = Objects.requireNonNull(limits, "limits");
         if (resumeDelay == null || resumeDelay.isNegative()) {
@@ -158,6 +184,11 @@ public final class AcquisitionScheduler implements AutoCloseable {
             this.owned = null;
             this.executor = executor;
         }
+    }
+
+    private static Load adapt(BiConsumer<AccessContext, PageKey> load) {
+        Objects.requireNonNull(load, "load");
+        return (caller, key, background) -> load.accept(caller, key);
     }
 
     public Limits limits() {
@@ -251,7 +282,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         if (closed) {
             return AcquisitionStatus.Pause.CLOSED;
         }
-        if (foregroundRunning > 0 || !foregroundQueue.isEmpty()) {
+        if (foregroundRunning > 0 || !foregroundQueue.isEmpty() || foregroundSharing()) {
             return AcquisitionStatus.Pause.FOREGROUND;
         }
         if (pauses > 0) {
@@ -283,6 +314,16 @@ public final class AcquisitionScheduler implements AutoCloseable {
             }
             dispatch();
         };
+    }
+
+    /** Ob der Vordergrund auf einen Abruf wartet, der auf einem Platz des Hintergrunds läuft. Unter {@link #lock}. */
+    private boolean foregroundSharing() {
+        for (Entry entry : entries.values()) {
+            if (entry.running && entry.slot == Priority.BACKGROUND && !entry.foreground.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private LinkedHashSet<Entry> queue(Priority priority) {
@@ -368,13 +409,14 @@ public final class AcquisitionScheduler implements AutoCloseable {
         entry.slot = slot;
         // Technisch vor delegiert: so bleibt keine Benutzeranmeldung länger als nötig im Spiel.
         entry.caller = entry.technical != null ? entry.technical : entry.foreground.values().iterator().next();
+        entry.strict = !entry.background.isEmpty();
         count(entry, 1);
     }
 
     private void run(Entry entry) {
         boolean stored = false;
         try {
-            load.accept(entry.caller, entry.key);
+            load.load(entry.caller, entry.key, entry.strict);
             stored = true;
         } catch (RuntimeException e) {
             // Ohne Seiten-ID.
@@ -389,7 +431,7 @@ public final class AcquisitionScheduler implements AutoCloseable {
         List<Ticket> tickets;
         synchronized (lock) {
             entries.remove(entry.key, entry);
-            if (entry.slot == Priority.FOREGROUND) {
+            if (entry.slot == Priority.FOREGROUND || !entry.foreground.isEmpty()) {
                 lastForeground = System.nanoTime();
             }
             count(entry, -1);
@@ -454,6 +496,8 @@ public final class AcquisitionScheduler implements AutoCloseable {
         private AccessContext caller;
         /** Der technische Aufrufer des Hintergrunds, wenn der die Seite auch braucht. */
         private AccessContext technical;
+        /** Ob der laufende Abruf für den Hintergrund zählt ({@link Load}). */
+        private boolean strict;
         private final Map<Ticket, AccessContext> foreground = new LinkedHashMap<>();
         private final List<Ticket> background = new ArrayList<>();
 

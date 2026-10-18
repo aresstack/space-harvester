@@ -48,9 +48,17 @@ class BackgroundFillTest {
         }
     }
 
+    /** Seiten, deren Abruf jedes Mal scheitert, und wie oft er versucht wurde. */
+    private final Set<String> failing = ConcurrentHashMap.newKeySet();
+    private final Map<String, Integer> attempts = new ConcurrentHashMap<>();
+
     private AcquisitionScheduler scheduler(int background) {
         AcquisitionScheduler scheduler = new AcquisitionScheduler((caller, key) -> {
             running.computeIfAbsent(key.pageId(), id -> new CountDownLatch(1)).countDown();
+            attempts.merge(key.pageId(), 1, Integer::sum);
+            if (failing.contains(key.pageId())) {
+                throw new IllegalStateException("Quelle drosselt");
+            }
             CountDownLatch gate = gates.get(key.pageId());
             if (gate != null) {
                 try {
@@ -140,6 +148,47 @@ class BackgroundFillTest {
         assertThat(loaded).containsExactly("x");
         assertThat(fill.status().sources()).extracting(AcquisitionStatus.SourceCounts::sourceId)
                 .containsExactly("other");
+    }
+
+    @Test
+    void switchingOffASourceWithdrawsItsWaitingRequests() throws Exception {
+        AcquisitionScheduler scheduler = scheduler(1);
+        AutoCloseable pause = scheduler.pauseBackground();
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill fill = fill(scheduler, queue, catalog(GAPS), true);
+        eventually(() -> fill.status().inFlight() == 2);
+
+        // sync.sources.wiki.background-fill=false: die Konfiguration ruft enabled(true), weil global noch an.
+        eligible.remove("wiki");
+        fill.enabled(true);
+
+        assertThat(fill.status().inFlight()).isZero();
+        assertThat(scheduler.status().backgroundQueued()).isZero();
+        pause.close();
+        eventually(() -> queue.size() == 0);
+        TimeUnit.MILLISECONDS.sleep(100);
+        assertThat(loaded).isEmpty();
+    }
+
+    @Test
+    void permanentFailuresDoNotBlockTheRestOfAnOverfullCatalog() throws Exception {
+        failing.add("kaputt");
+        List<BackgroundFill.Gap> gaps = List.of(
+                new BackgroundFill.Gap(new PageKey("wiki", "kaputt"), BackgroundFill.Kind.OUTDATED,
+                        Instant.parse("2026-02-01T00:00:00Z")),
+                new BackgroundFill.Gap(new PageKey("wiki", "gut"), BackgroundFill.Kind.OUTDATED,
+                        Instant.parse("2026-01-01T00:00:00Z")));
+        // Eine Seite je Suche im Katalog: die Schlange ist übervoll.
+        BackgroundFill fill = new BackgroundFill(scheduler(1), BackgroundFill.FillQueue.inMemory(), catalog(gaps),
+                SERVER, eligible::contains, new BackgroundFill.Timing(Duration.ZERO, Duration.ofHours(1), 1), true);
+        open.add(fill);
+        fill.start();
+
+        eventually(() -> loaded.contains("gut"));
+        TimeUnit.MILLISECONDS.sleep(300);
+        // Die gescheiterte Seite kommt erst nach der Wartezeit wieder, nicht in einer Schleife.
+        assertThat(attempts.get("kaputt")).isEqualTo(1);
+        assertThat(fill.status().failed()).isEqualTo(1);
     }
 
     @Test
