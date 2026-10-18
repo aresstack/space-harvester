@@ -488,20 +488,13 @@ final class SourceWizard {
         com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
         AppRuntime.SessionSecrets secrets = sessionSecrets(source);
         Background.run(() -> {
-            if (aiDraft != null) {
-                // Ohne gemessene Dimension bleibt die semantische Suche aus; die Quelle wird trotzdem gespeichert.
-                AiDraft measured = AiSettingsPanel.measure(context, runtime, aiDraft, aiKey).draft();
-                // Vor der Quelle: Scheitert die Quelle danach, schreibt ein zweiter Versuch denselben Block erneut,
-                // statt die Quelle doppelt anzuhängen.
-                AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
-            }
-            ConfigFileEditor.Draft written = write(source);
             if (runtime != null) {
-                // Prüfung des Core (#188), u. a. dasselbe Ziel unter neuer ID; vor dem Schreiben, damit nichts landet.
-                // Ohne Geheimnis der Sitzung prüft erst der Neustart (dann fragt die App es ab).
+                // Prüfung des Core (#188), u. a. dasselbe Ziel unter neuer ID; vor jedem Schreiben (auch des
+                // KI-Dienstes), damit bei einem Problem nichts landet. Ohne Geheimnis der Sitzung prüft erst der
+                // Neustart (dann fragt die App es ab).
                 SourceSettingsConfig config = null;
                 try {
-                    config = AppRuntime.config(written.settings(), source.id(), secrets);
+                    config = AppRuntime.config(write(source).settings(), source.id(), secrets);
                 } catch (IllegalStateException missingSecret) {
                     // siehe oben
                 }
@@ -511,6 +504,15 @@ final class SourceWizard {
                     throw new IllegalArgumentException(String.join("\n", problems));
                 }
             }
+            if (aiDraft != null) {
+                // Ohne gemessene Dimension bleibt die semantische Suche aus; die Quelle wird trotzdem gespeichert.
+                AiDraft measured = AiSettingsPanel.measure(context, runtime, aiDraft, aiKey).draft();
+                // Vor der Quelle: Scheitert die Quelle danach, schreibt ein zweiter Versuch denselben Block erneut,
+                // statt die Quelle doppelt anzuhängen.
+                AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
+            }
+            // Nach dem KI-Block neu lesen, damit er im Eintrag der Quelle erhalten bleibt.
+            ConfigFileEditor.Draft written = write(source);
             SourceSaving.store(context, editor, editing, source, written, value);
             if (editing != null && runtime != null) {
                 // Zeigt die Quelle jetzt auf ein anderes Ziel, entfernt der Core ihre bisherigen Daten (#188).
