@@ -16,6 +16,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -131,6 +132,43 @@ class SearchViewTest {
     }
 
     @Test
+    void theSemanticCheckboxIsTheRelevanceSearchOnceAnEmbeddingServiceIsConfigured() throws Exception {
+        HttpServer service = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        service.createContext("/v1/embeddings", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            byte[] body = """
+                    {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0]}]}"""
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        });
+        service.start();
+        servers.add(service);
+        start(false, """
+                  ai:
+                    base-url: "http://127.0.0.1:%d/v1"
+                    embedding-model: "text-embedding-3-small"
+                    embedding-dimensions: 3
+                """.formatted(service.getAddress().getPort()));
+
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
+        assertThat(view[0].semantic.isEnabled()).isTrue();
+        assertThat(view[0].semantic.isSelected()).as("Vorgabe bleibt die Schlagwortsuche").isFalse();
+        SwingUtilities.invokeAndWait(() -> {
+            view[0].semantic.setSelected(true);
+            view[0].search("Betrieb der Plattform");
+        });
+
+        // Leerer Cache: ein erfolgreiches, leeres Ergebnis der Relevanzsuche statt eines Fehlers oder Titeltreffern.
+        await(() -> view[0].statusText().contains("semantisch"));
+        assertThat(view[0].statusText()).startsWith("0 Treffer");
+    }
+
+    @Test
     void allSourcesCanBeRestrictedToChosenSources() throws Exception {
         start(false);
         SearchView[] view = new SearchView[1];
@@ -175,6 +213,11 @@ class SearchViewTest {
     }
 
     private void start(boolean withOffline) throws Exception {
+        start(withOffline, "");
+    }
+
+    /** @param ai ein {@code ai:}-Block unter {@code space-harvester} oder leer */
+    private void start(boolean withOffline, String ai) throws Exception {
         StringBuilder sources = new StringBuilder();
         for (String id : List.of("alpha", "beta")) {
             FakeConfluence confluence = new FakeConfluence();
@@ -207,8 +250,8 @@ class SearchViewTest {
                 space-harvester-app:
                   data-directory: %s
                 space-harvester:
-                  sources:
-                %s""".formatted(home.resolve("data"), sources));
+                %s  sources:
+                %s""".formatted(home.resolve("data"), ai, sources));
         context = new AppContext(new AppSettingsLoader(new Placeholders(name -> null), home), config, "test");
         CountDownLatch started = new CountDownLatch(1);
         SwingUtilities.invokeAndWait(() -> context.reload(started::countDown));

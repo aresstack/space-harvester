@@ -178,6 +178,8 @@ class SettingDialogsTest {
             assertThat(panel[0].feedback.text()).contains("http://");
             panel[0].baseUrl.setText("https://ki.example.invalid/v1");
             panel[0].embeddingModel.setText("text-embedding-3-small");
+            // Mit Dimension misst Speichern nichts beim (hier nicht erreichbaren) Dienst.
+            panel[0].dimensions.setText("1536");
             panel[0].released.get("wiki").setSelected(true);
             panel[0].apiKey.setText("sk-geheim");
             panel[0].save.doClick();
@@ -200,6 +202,74 @@ class SettingDialogsTest {
                 .isEqualTo("sk-geheim");
         assertThat(context.aiKeyAvailable()).isTrue();
         SwingUtilities.invokeAndWait(() -> assertThat(panel[0].apiKey.getPassword()).isEmpty());
+    }
+
+    @Test
+    void modelsComeFromTheServiceAndSavingMeasuresTheDimension() throws Exception {
+        List<String> authorizations = new java.util.concurrent.CopyOnWriteArrayList<>();
+        com.sun.net.httpserver.HttpServer service = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        service.createContext("/v1/models", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            respond(exchange, """
+                    {"object":"list","data":[
+                      {"id":"text-embedding-3-small","capabilities":["embeddings"]},
+                      {"id":"gpt-x","capabilities":["chat"]}]}""");
+        });
+        service.createContext("/v1/embeddings", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            exchange.getRequestBody().readAllBytes();
+            respond(exchange, """
+                    {"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.6,0.8,0.0]}]}""");
+        });
+        service.start();
+        try {
+            AiSettingsPanel[] panel = new AiSettingsPanel[1];
+            SwingUtilities.invokeAndWait(() -> {
+                panel[0] = new AiSettingsPanel(context);
+                assertThat(panel[0].pickEmbedding.isEnabled()).as("erst nach „Modelle laden“").isFalse();
+                panel[0].baseUrl.setText("http://127.0.0.1:" + service.getAddress().getPort() + "/v1");
+                panel[0].apiKey.setText("sk-geheim");
+                panel[0].loadModels.doClick();
+            });
+            awaitFeedback(panel[0], "Modelle geladen");
+            SwingUtilities.invokeAndWait(() -> {
+                assertThat(panel[0].choices(com.aresstack.spaceharvester.ai.AiModel.EMBEDDING))
+                        .extracting(com.aresstack.spaceharvester.ai.AiModel::id)
+                        .containsExactly("text-embedding-3-small");
+                assertThat(panel[0].pickEmbedding.isEnabled()).isTrue();
+                panel[0].choose(panel[0].embeddingModel, "text-embedding-3-small");
+                panel[0].choose(panel[0].chatModel, "gpt-x");
+                panel[0].save.doClick();
+            });
+            awaitFeedback(panel[0], "übernommen");
+
+            assertThat(Files.readString(config)).contains("embedding-model: \"text-embedding-3-small\"",
+                    "chat-model: \"gpt-x\"", "embedding-dimensions: 3").doesNotContain("sk-geheim");
+            assertThat(context.settings().ai().embeddingDimensions()).isEqualTo(3);
+            assertThat(authorizations).hasSize(2).containsOnly("Bearer sk-geheim");
+            assertThat(context.runtime().workspace().semanticSearch()).as("Dienst, Modell und Dimension").isTrue();
+        } finally {
+            service.stop(0);
+        }
+    }
+
+    private static void awaitFeedback(AiSettingsPanel panel, String expected) throws Exception {
+        long until = System.currentTimeMillis() + 30_000;
+        String[] text = {""};
+        while (!text[0].contains(expected) && System.currentTimeMillis() < until) {
+            Thread.sleep(50);
+            SwingUtilities.invokeAndWait(() -> text[0] = panel.feedback.text());
+        }
+        assertThat(text[0]).contains(expected);
+    }
+
+    private static void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws java.io.IOException {
+        byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.sendResponseHeaders(200, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
     }
 
     private SourceDraft.Editable editable() {
