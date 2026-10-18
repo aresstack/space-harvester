@@ -42,6 +42,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
@@ -253,8 +254,14 @@ public final class Harvester implements AutoCloseable {
                 });
                 renewal = new PageRenewal(pages, renewals);
             }
+            SearchReranker reranker = builder.reranker;
+            if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
+                // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
+                reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
+                        builder.userAgent).reranker(), builder.ai::mayProcessExternally);
+            }
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, builder.reranker, textIndex);
+                    renewal, reranker, textIndex);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
@@ -678,7 +685,8 @@ public final class Harvester implements AutoCloseable {
         /**
          * Ein Reranker des einbettenden Programms (#188), etwa ein Cross-Encoder: ordnet bei der semantischen Suche das
          * nach Ähnlichkeit sortierte Fenster freigegebener Treffer neu; er darf nur umordnen, nie Treffer entfernen oder
-         * hinzufügen. Standard ohne.
+         * hinzufügen. Standard ohne; dann ordnet mit {@code space-harvester.ai.rerank-model} der Cross-Encoder des
+         * KI-Dienstes um (#181).
          */
         public Builder reranker(SearchReranker reranker) {
             this.reranker = Objects.requireNonNull(reranker, "reranker");

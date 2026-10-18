@@ -13,16 +13,17 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * Key Vault), nie im Klartext in einer eingecheckten Datei.
  *
  * @param embeddingChunkChars höchstens so viele Zeichen je eingebettetem Stück
+ * @param rerankModel         Rerank-Modell des Dienstes ({@code POST /rerank}, #181) oder leer
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                            Integer embeddingDimensions, @DefaultValue("30s") Duration timeout, String trustBundle,
                            @DefaultValue Set<String> externalProcessingSources,
-                           @DefaultValue("1500") int embeddingChunkChars) {
+                           @DefaultValue("1500") int embeddingChunkChars, String rerankModel) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
-                trustBundle, externalProcessingSources);
+                trustBundle, externalProcessingSources, rerankModel);
     }
 
     /** Ohne API-Key. */

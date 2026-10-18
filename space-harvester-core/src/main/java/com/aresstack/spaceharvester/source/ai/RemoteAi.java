@@ -7,14 +7,17 @@ import com.aresstack.enterpriseai.embedding.api.EmbeddingException;
 import com.aresstack.enterpriseai.embedding.openai.OpenAiCompatibleEmbeddingAdapter;
 import com.aresstack.enterpriseai.embedding.openai.OpenAiCompatibleEmbeddingConfiguration;
 import com.aresstack.enterpriseai.model.api.ModelCatalogException;
+import com.aresstack.enterpriseai.model.api.RerankException;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogAdapter;
 import com.aresstack.enterpriseai.model.kipitz.KipitzModelCatalogConfig;
+import com.aresstack.enterpriseai.model.kipitz.KipitzRerankAdapter;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.ai.AiModel;
 import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.security.GeneralSecurityException;
@@ -102,6 +105,28 @@ public final class RemoteAi {
     }
 
     /**
+     * Der Cross-Encoder des Dienstes ({@code POST /rerank}, #181) über den unveränderten {@code KipitzRerankAdapter}.
+     * Scheitert ein Aufruf, meldet der Bewerter {@link AiServiceException} ohne Anfrage- oder Dokumenttext.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Rerank-Modell
+     */
+    public ModelReranker.Scorer reranker() {
+        if (!settings.reranking()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Rerank-Modell fehlt");
+        }
+        KipitzRerankAdapter adapter = new KipitzRerankAdapter(catalogConfig());
+        String model = settings.rerankModel();
+        return (query, documents) -> {
+            try {
+                return adapter.rerank(model, query, documents);
+            } catch (RerankException e) {
+                // Die Meldung des Adapters nennt nur Status und Ausnahmeklasse, nie Texte oder den Key.
+                throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, e.getMessage());
+            }
+        };
+    }
+
+    /**
      * Die Modelle des Dienstes ({@code GET /models}).
      *
      * @throws AiServiceException ohne Dienst oder wenn er nicht wie erwartet antwortet
@@ -110,21 +135,9 @@ public final class RemoteAi {
         if (!settings.configured()) {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein KI-Dienst eingerichtet");
         }
-        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.baseUrl())
-                .routes(routes)
-                .userAgent(userAgent)
-                .connectTimeoutMillis(timeoutMillis())
-                .readTimeoutMillis(timeoutMillis());
-        if (settings.apiKey() != null) {
-            String key = settings.apiKey();
-            config.bearerToken(() -> key);
-        }
-        if (tls != null) {
-            config.sslSocketFactory(tls);
-        }
         List<ModelDescriptor> descriptors;
         try {
-            descriptors = new KipitzModelCatalogAdapter(config.build()).models();
+            descriptors = new KipitzModelCatalogAdapter(catalogConfig()).models();
         } catch (ModelCatalogException e) {
             throw catalogFailure(e);
         }
@@ -155,6 +168,23 @@ public final class RemoteAi {
         } catch (EmbeddingException e) {
             throw serviceFailure(e);
         }
+    }
+
+    /** Verbindung zum Katalog der Enterprise-API: Route, TLS und Token wie die übrigen Aufrufe. */
+    private KipitzModelCatalogConfig catalogConfig() {
+        KipitzModelCatalogConfig.Builder config = KipitzModelCatalogConfig.builder(settings.baseUrl())
+                .routes(routes)
+                .userAgent(userAgent)
+                .connectTimeoutMillis(timeoutMillis())
+                .readTimeoutMillis(timeoutMillis());
+        if (settings.apiKey() != null) {
+            String key = settings.apiKey();
+            config.bearerToken(() -> key);
+        }
+        if (tls != null) {
+            config.sslSocketFactory(tls);
+        }
+        return config.build();
     }
 
     private OpenAiCompatibleEmbeddingAdapter adapter(String model, int dimension) {

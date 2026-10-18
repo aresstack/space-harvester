@@ -101,6 +101,9 @@ public class RelevanceSearch {
     /** Gleichzeitige Metadatenabrufe der Live-Prüfung je Suche. */
     static final int PARALLEL_CHECKS = 6;
 
+    /** Längster Auszug des Lesetexts, den ein Reranker je Treffer als Dokument bekommt (#181). */
+    static final int MAX_DOCUMENT_CHARS = 2000;
+
     /** Längster Anfragetext. */
     public static final int MAX_TEXT_LENGTH = 500;
 
@@ -245,7 +248,8 @@ public class RelevanceSearch {
         }
         if (this.reranker != SearchReranker.NONE) {
             Reranking custom = new Reranking(this.reranker);
-            ordered = custom.apply(query, ordered);
+            ordered = custom.apply(new SearchReranker.Request(query, queryText, ordered,
+                    hit -> document(caller, hit, scores.get(hit))));
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
         Set<PageKey> contentRanked = new LinkedHashSet<>();
@@ -554,6 +558,34 @@ public class RelevanceSearch {
         Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
                 : Freshness.STALE;
         return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness);
+    }
+
+    /**
+     * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, ein Auszug des
+     * Lesetexts aus dem Volltextindex, um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
+     */
+    private String document(AccessContext caller, SearchHit hit, Score score) {
+        String title = hit.page().header().metadata().title();
+        title = title == null ? "" : title.strip();
+        if (texts == null || !permits(caller, hit, AccessKind.CONTENT)) {
+            return title;
+        }
+        String text;
+        try {
+            text = texts.text(hit.page().header().key()).orElse("");
+        } catch (RuntimeException e) {
+            return title;
+        }
+        int start = score == null ? 0 : Math.clamp(score.charStart(), 0, text.length());
+        int end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
+            // Das Stück mittig, soweit der Text reicht.
+            int spare = MAX_DOCUMENT_CHARS - (Math.min(score.charEnd(), text.length()) - start);
+            start = Math.max(0, start - spare / 2);
+            end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        }
+        String excerpt = text.substring(start, end).strip();
+        return title.isEmpty() ? excerpt : excerpt.isEmpty() ? title : title + "\n" + excerpt;
     }
 
     private boolean permits(AccessContext caller, SearchHit hit, AccessKind kind) {
