@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.docx;
+package com.aresstack.spaceharvester.document;
 
 import org.apache.poi.xwpf.usermodel.BreakType;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;

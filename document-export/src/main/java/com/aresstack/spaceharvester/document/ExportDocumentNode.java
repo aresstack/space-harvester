@@ -1,4 +1,4 @@
-package com.aresstack.spaceharvester.docx;
+package com.aresstack.spaceharvester.document;
 
 import java.util.ArrayList;
 import java.util.Collections;

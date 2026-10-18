@@ -25,8 +25,10 @@ import org.apache.pdfbox.pdmodel.interactive.action.PDActionGoTo;
 import org.apache.pdfbox.pdmodel.interactive.action.PDActionURI;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotation;
 import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink;
+import org.apache.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination;
 import org.apache.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -82,6 +84,10 @@ class PdfConverterTest {
                     + "<ac:image><ri:attachment ri:filename=\"bild.png\" /></ac:image>"
                     + "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">architektur"
                     + "</ac:parameter></ac:structured-macro>"
+                    + "<p><ac:image ac:alt=\"logo\"><ri:url ri:value=\"https://example.org/logo.png\" />"
+                    + "</ac:image></p>"
+                    + "<table><tbody><tr><td>" + "https://example.org/".repeat(12) + "</td><td>b</td></tr>"
+                    + "</tbody></table>"
                     + "<p>" + "Wortohneleerzeichen".repeat(30) + "</p>"),
             storagePage("101", "100", 1, "<ac:structured-macro ac:name=\"code\"><ac:plain-text-body>"
                     + "<![CDATA[line 1\n\tline <2> " + "x".repeat(300) + "]]></ac:plain-text-body>"
@@ -100,11 +106,15 @@ class PdfConverterTest {
             String text = new PDFTextStripper().getText(pdf);
 
             assertThat(text).containsSubsequence("Seite 100", "Teil & Ganzes", "Grüße, ein fetter Text",
-                    "1.", "eins", "zwei-a", "Name", "Wert", "Warnung", "Achtung", "[Bild: bild.png",
+                    "1.", "eins", "zwei-a", "Name", "Wert", "Warnung", "Achtung", "[Abbildung nicht verfügbar: bild.png]",
                     "draw.io) „architektur“", "Seite 101", "line 1", "Seite 200", "zweite Wurzel");
             // Standardschrift ohne chinesische Zeichen: sichtbar ersetzt, nicht verschluckt.
             assertThat(text).contains("Chinesisch: ??.");
-            // Jede Wurzel beginnt auf einer neuen PDF-Seite.
+            // Nur verlinkte Bilder gelten nicht als eingebettet.
+            assertThat(text).doesNotContain("[Bild:");
+            // Externe Bilder ebenso: Hinweis, die Adresse bleibt als Link
+            assertThat(text).contains("[Abbildung nicht verfügbar: logo] (Adresse)");
+            // Jedes Kapitel beginnt auf einer neuen PDF-Seite.
             assertThat(new PDFTextStripper() {
                 {
                     setStartPage(pdf.getNumberOfPages());
@@ -116,7 +126,10 @@ class PdfConverterTest {
     @Test
     void outlineFollowsThePageTreeAndLinksJump() throws Exception {
         try (PDDocument pdf = Loader.loadPDF(convert(PAGES))) {
-            PDOutlineItem first = pdf.getDocumentCatalog().getDocumentOutline().getFirstChild();
+            PDOutlineItem space = pdf.getDocumentCatalog().getDocumentOutline().getFirstChild();
+            assertThat(space.getTitle()).isEqualTo("Space DEV (wiki)");
+            assertThat(space.getNextSibling()).isNull();
+            PDOutlineItem first = space.getFirstChild();
             assertThat(first.getTitle()).isEqualTo("Seite 100");
             assertThat(first.getFirstChild().getTitle()).isEqualTo("Seite 101");
             assertThat(first.getNextSibling().getTitle()).isEqualTo("Seite 200");
@@ -127,10 +140,97 @@ class PdfConverterTest {
                     links.add((PDAnnotationLink) annotation);
                 }
             }
-            assertThat(links).anySatisfy(link -> assertThat(link.getAction()).isInstanceOf(PDActionGoTo.class));
+            // Der Verweis von Seite 100 auf Seite 101 springt an den Anfang ihres Kapitels (PDF-Seite 4).
+            assertThat(pdf.getPage(2).getAnnotations()).map(annotation -> ((PDAnnotationLink) annotation).getAction())
+                    .filteredOn(PDActionGoTo.class::isInstance)
+                    .extracting(action -> pdf.getPages().indexOf(((PDPageDestination) ((PDActionGoTo) action)
+                            .getDestination()).getPage()))
+                    .isNotEmpty().containsOnly(3);
             assertThat(links).map(PDAnnotationLink::getAction).filteredOn(PDActionURI.class::isInstance)
                     .extracting(action -> ((PDActionURI) action).getURI()).contains("https://example.org/x");
         }
+    }
+
+    @Test
+    void visibleTableOfContentsWithHierarchyPageNumbersAndJumps() throws Exception {
+        try (PDDocument pdf = Loader.loadPDF(convert(PAGES))) {
+            PDFTextStripper first = new PDFTextStripper();
+            first.setStartPage(1);
+            first.setEndPage(1);
+            String toc = first.getText(pdf);
+            // Titel und Seitenzahl je Kapitel, in Baumreihenfolge; Raum, Wurzelseiten, Kinder
+            assertThat(toc).containsSubsequence("Inhalt", "Space DEV (wiki) 2", "Seite 100 3", "Seite 101 4",
+                    "Seite 200 5");
+            // Einrückung nach Hierarchie: das Kind steht weiter rechts als sein Elternteil
+            assertThat(x(pdf, 1, "Seite 101")).isGreaterThan(x(pdf, 1, "Seite 100"));
+            assertThat(x(pdf, 1, "Seite 100")).isGreaterThan(x(pdf, 1, "Space DEV"));
+            // Jeder Eintrag springt zu seinem Kapitel
+            assertThat(pdf.getPage(0).getAnnotations())
+                    .extracting(annotation -> pdf.getPages().indexOf(((PDPageDestination) ((PDAnnotationLink)
+                            annotation).getDestination()).getPage()))
+                    .containsExactly(1, 2, 3, 4);
+        }
+    }
+
+    @Test
+    void longTokensInTableCellsStayInsideTheirCell() throws Exception {
+        try (PDDocument pdf = Loader.loadPDF(convert(PAGES))) {
+            List<float[]> right = new ArrayList<>();
+            PDFTextStripper stripper = new PDFTextStripper() {
+                @Override
+                protected void writeString(String line, List<TextPosition> positions) {
+                    if (line.contains("example.org/https")) {
+                        TextPosition last = positions.get(positions.size() - 1);
+                        right.add(new float[] {last.getXDirAdj() + last.getWidthDirAdj()});
+                    }
+                }
+            };
+            stripper.setStartPage(3);
+            stripper.setEndPage(3);
+            stripper.getText(pdf);
+            // Jedes Stück der langen Zelle endet vor der Mitte der Seite (zweite Spalte beginnt dort)
+            assertThat(right).hasSizeGreaterThan(1).allSatisfy(x -> assertThat(x[0])
+                    .isLessThan(pdf.getPage(2).getMediaBox().getWidth() / 2f));
+        }
+    }
+
+    @Test
+    void footerNumbersEveryPage() throws Exception {
+        try (PDDocument pdf = Loader.loadPDF(convert(PAGES))) {
+            int total = pdf.getNumberOfPages();
+            for (int i = 1; i <= total; i++) {
+                PDFTextStripper page = new PDFTextStripper();
+                page.setStartPage(i);
+                page.setEndPage(i);
+                assertThat(page.getText(pdf)).contains(i + " / " + total);
+            }
+        }
+    }
+
+    @Test
+    void singleSpaceWithoutPagesHasNoTableOfContents() throws Exception {
+        try (PDDocument pdf = Loader.loadPDF(convert(List.of()))) {
+            assertThat(pdf.getNumberOfPages()).isEqualTo(1);
+            assertThat(new PDFTextStripper().getText(pdf)).doesNotContain("Inhalt").contains("Space DEV (wiki)");
+        }
+    }
+
+    /** Linke Kante der ersten Zeile auf {@code page}, die mit {@code text} beginnt. */
+    private static float x(PDDocument pdf, int page, String text) throws Exception {
+        float[] found = {Float.NaN};
+        PDFTextStripper stripper = new PDFTextStripper() {
+            @Override
+            protected void writeString(String line, List<TextPosition> positions) {
+                if (Float.isNaN(found[0]) && line.startsWith(text)) {
+                    found[0] = positions.get(0).getXDirAdj();
+                }
+            }
+        };
+        stripper.setStartPage(page);
+        stripper.setEndPage(page);
+        stripper.getText(pdf);
+        assertThat(found[0]).as("Zeile „%s“", text).isNotNaN();
+        return found[0];
     }
 
     @Test

@@ -16,6 +16,8 @@ java {
 dependencies {
     // api: XWPFDocument und die Absätze erscheinen in der öffentlichen Schnittstelle von MarkdownDocxRenderer
     api libs.poi.ooxml
+    // PDF-Ausgabe (PdfExportWriter)
+    api libs.pdfbox
     implementation libs.flexmark
     implementation libs.flexmark.ext.tables
     implementation libs.flexmark.ext.autolink
@@ -42,5 +44,5 @@ tasks.named('test') {
 }
 
 // Eigene Publikation, damit die Core-POM keine unveröffentlichte Projektabhängigkeit nennt (docs/MODULES.md).
-ext.publishedArtifactId = 'space-harvester-docx-export'
+ext.publishedArtifactId = 'space-harvester-document-export'
 apply from: rootProject.file('gradle/publishing.gradle')
