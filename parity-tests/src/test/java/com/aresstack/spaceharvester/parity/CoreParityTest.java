@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.parity;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.jobs.JobType;
@@ -15,6 +16,7 @@ import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
@@ -340,6 +342,18 @@ class CoreParityTest {
                         + finding.core() + "; " + finding.detail() + ")");
             }
         }
+        Map<String, String> eacTypes = eacProperties("documents/types.properties");
+        Map<String, String> coreTypes = new LinkedHashMap<>();
+        Map<String, String> coreTexts = new LinkedHashMap<>();
+        Map<String, String> eacTexts = documentTexts(eacTypes, coreTypes, coreTexts);
+        List<Finding> documents = ParityComparison.documents(eacTypes, coreTypes, eacTexts, coreTexts);
+        report.append('\n').append(ParityReport.section("Dokumenttext", documents, gaps));
+        for (Finding finding : documents) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
         Path file = reportFile();
         Files.createDirectories(file.getParent());
         Files.writeString(file, report, StandardCharsets.UTF_8);
@@ -440,6 +454,32 @@ class CoreParityTest {
             images.put(page, Integer.parseInt(properties.getProperty(page, "0").strip()));
         }
         return images;
+    }
+
+    /**
+     * Dokumenttext (#183): jede Datei aus {@code documents/} und die Referenzexporte {@code parity.docx} und
+     * {@code parity.pdf} durch {@link TikaDocumentText}, mit demselben Typ, mit dem der Enterprise AI Client extrahiert
+     * hat ({@code <datei>.type}). Füllt Typ nach dem Inhalt und Text des Core und liefert die Texte des Maßstabs.
+     */
+    private static Map<String, String> documentTexts(Map<String, String> eacTypes, Map<String, String> coreTypes,
+                                                     Map<String, String> coreTexts) throws Exception {
+        List<Path> files = new ArrayList<>();
+        try (var listing = Files.list(Path.of(CoreParityTest.class.getResource("/documents").toURI()))) {
+            listing.forEach(files::add);
+        }
+        files.add(reference("parity.docx"));
+        files.add(reference("parity.pdf"));
+        files.sort(java.util.Comparator.comparing(path -> path.getFileName().toString()));
+        DocumentText documents = TikaDocumentText.shared();
+        Map<String, String> eacTexts = new LinkedHashMap<>();
+        for (Path path : files) {
+            String name = path.getFileName().toString();
+            byte[] content = Files.readAllBytes(path);
+            eacTexts.put(name, Files.readString(reference("documents/" + name + ".txt")));
+            coreTypes.put(name + ".content-type", documents.detect(content).orElse("-"));
+            coreTexts.put(name, documents.extract(name, eacTypes.get(name + ".type"), content).text());
+        }
+        return eacTexts;
     }
 
     /** Bericht unter {@code build/reports/parity/} (Gradle setzt {@code parity.report}), sonst im Arbeitsordner. */
