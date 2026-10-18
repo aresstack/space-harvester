@@ -228,7 +228,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Secrets: DPAPI, je Sitzung abgefragt | `app/security/DpapiSecretStore`, `AskedSecretProvider` | App `SecretVault`, `SessionSecrets` | gleich |
 | Secrets: KeePassRPC | `proasteion/platform/security-keepassrpc/…/KeePassRpcSecretProvider` | keine eigene; einhängbar über `Harvester.builder().secretProvider(SourceSecrets)` (#226) | gleich über den Port; der KeePassRPC-Adapter bleibt im EAC |
 | Secrets: Azure Key Vault | — | Server-Profil `azure-keyvault` | SH+ |
-| Verbindungsdiagnose mit Ursache (Zertifikat, Proxy, DNS) und Stufentest | `app/net/ConnectionDiagnosis`, `exedra/…/settings/ConnectionProbe` | Spaces laden als Test; Diagnose aus `JobEvent` (docs/DIAGNOSTICS.md) | teilweise → #189 |
+| Verbindungsdiagnose mit Ursache (Zertifikat, Proxy, DNS) und Stufentest | `app/net/ConnectionDiagnosis`, `exedra/…/settings/ConnectionProbe` | `SourceManagement.diagnose` → `SourceDiagnosis` mit Stufen Proxy-Route, DNS, TCP, TLS, Anmeldung, API, REST `GET /api/v1/sources/{id}/diagnosis` (#238); Ursache je Auftrag aus `JobEvent` (docs/DIAGNOSTICS.md) | gleich |
 | HTTP-Kopfzeilen | `NetworkConfig`: nur der User-Agent, keine frei konfigurierbaren Kopfzeilen | `userAgent`, global gesetzt | gleich |
 
 ## 14. Desktop-App
@@ -255,7 +255,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #186 | Export einzelner Seiten und Teilbäume | Q |
 | #187 | Quellen ohne Partitionen und weitere Quelltypen des EAC | Q |
 | #188 | `Harvester.builder()` erweiterbar; Quellenverwaltung zur Laufzeit | Q |
-| #189 | Verbindungsdiagnose mit Stufen (Proxy-Anmeldung, PAC-Skript, Vertrauen und Kopfzeilen erledigt in #234) | Q |
+| #189 | Netzwerk: Proxy-Anmeldung, PAC-Skript, Vertrauen, Kopfzeilen (#234), Verbindungsdiagnose (#238) | Q, erledigt |
 | #190 | draw.io- und Mermaid-Rendering im Core | R |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
