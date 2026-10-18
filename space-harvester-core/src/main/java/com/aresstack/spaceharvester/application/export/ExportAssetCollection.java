@@ -369,7 +369,7 @@ public class ExportAssetCollection {
                 if (image.attachmentId() != null && attachmentIds.contains(image.attachmentId())) {
                     continue;
                 }
-                if (image.attachmentId() == null && preview(fileName(image), drawn)) {
+                if (image.attachmentId() == null && preview(Assets.viewFileName(image), drawn)) {
                     // Die Vorschau eines gezeichneten Diagramms, wie die Ansicht sie zeigt: ebenso überflüssig.
                     continue;
                 }
@@ -538,36 +538,6 @@ public class ExportAssetCollection {
             }
         }
         return false;
-    }
-
-    /**
-     * Der Dateiname eines Ansichtsbilds: der letzte Pfadteil der Adresse (Confluence setzt als Titel die Beschriftung
-     * des Diagramms, die Adresse endet auf {@code <Name>.png}), sonst sein Titel.
-     */
-    private static String fileName(HarvestSource.ViewImage image) {
-        String fromSrc = srcName(image.src());
-        if (!fromSrc.isBlank()) {
-            return fromSrc;
-        }
-        return image.title() == null ? "" : image.title();
-    }
-
-    private static String srcName(String value) {
-        String src = value == null ? "" : value;
-        int end = src.length();
-        for (char c : new char[] {'?', '#'}) {
-            int at = src.indexOf(c);
-            if (at >= 0) {
-                end = Math.min(end, at);
-            }
-        }
-        String path = src.substring(0, end);
-        String name = path.substring(path.lastIndexOf('/') + 1);
-        try {
-            return java.net.URLDecoder.decode(name.replace("+", "%2B"), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
-            return name;
-        }
     }
 
     /**

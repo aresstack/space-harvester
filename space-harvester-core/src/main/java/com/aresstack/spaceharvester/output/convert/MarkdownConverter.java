@@ -74,12 +74,18 @@ public final class MarkdownConverter implements ExportConverter {
 
     @Override
     public void convert(ConversionInput input, OutputStream out) throws IOException {
+        write(input, out, MarkdownExportWriter.FigureLinks.EMBEDDED, VERSION);
+    }
+
+    /** {@code pages.md} mit den Abbildungen dort, wohin {@code links} sie legt ({@link MarkdownPackageConverter}). */
+    static void write(ConversionInput input, OutputStream out, MarkdownExportWriter.FigureLinks links, String version)
+            throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         ExportGraphics graphics = ExportGraphics.rendering();
-        MarkdownExportWriter markdown = new MarkdownExportWriter(graphics);
+        MarkdownExportWriter markdown = new MarkdownExportWriter(graphics, links);
         Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
         String title = ExportChapters.title(input);
-        writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, VERSION), List.of(), 1));
+        writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, version), List.of(), 1));
         try {
             input.forEachPage(page -> {
                 try {

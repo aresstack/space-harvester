@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.diagrams;
 
 import com.aresstack.spaceharvester.document.AresStackMermaidImageRenderer;
 import com.aresstack.spaceharvester.document.DrawioDiagramRenderer;
+import com.aresstack.spaceharvester.document.SvgImageRenderer;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -23,6 +24,8 @@ public final class Diagrams {
     private static final String DRAWIO_SUFFIX = ".drawio";
     /** Breite, in der Mermaid gezeichnet wird (wie {@code ExportGraphics}). */
     private static final int MERMAID_WIDTH = 1200;
+    /** Wie SVG-Bilder im Export ({@code ExportGraphics.SVG_WIDTH}). */
+    private static final int DRAWIO_WIDTH = 1200;
 
     private Diagrams() {
     }
@@ -84,6 +87,24 @@ public final class Diagrams {
         }
     }
 
+    /**
+     * draw.io als PNG, für Oberflächen ohne SVG (Swing): das SVG von {@link #drawio}, gerastert mit Batik wie SVG-Bilder
+     * im Export ({@link SvgImageRenderer}, gleiche Breite).
+     */
+    public static Rendering drawioPng(byte[] mxfile) {
+        Rendering svg = drawio(mxfile);
+        if (!svg.drawn()) {
+            return svg;
+        }
+        BufferedImage image;
+        try {
+            image = new SvgImageRenderer().render(new String(svg.content(), StandardCharsets.UTF_8), DRAWIO_WIDTH);
+        } catch (RuntimeException | LinkageError e) {
+            return Rendering.notDrawn("draw.io nicht rasterbar (" + e.getClass().getSimpleName() + ")");
+        }
+        return png(image, "draw.io nicht rasterbar");
+    }
+
     /** Mermaid als PNG. */
     public static Rendering mermaid(String source) {
         BufferedImage image;
@@ -92,14 +113,18 @@ public final class Diagrams {
         } catch (RuntimeException | LinkageError e) {
             return Rendering.notDrawn("Mermaid nicht darstellbar (" + e.getClass().getSimpleName() + ")");
         }
+        return png(image, "Mermaid nicht darstellbar");
+    }
+
+    private static Rendering png(BufferedImage image, String problem) {
         if (image == null) {
-            return Rendering.notDrawn("Mermaid nicht darstellbar");
+            return Rendering.notDrawn(problem);
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {
             ImageIO.write(image, "png", out);
         } catch (IOException e) {
-            return Rendering.notDrawn("Mermaid nicht darstellbar (" + e.getClass().getSimpleName() + ")");
+            return Rendering.notDrawn(problem + " (" + e.getClass().getSimpleName() + ")");
         }
         return Rendering.drawn(PNG, out.toByteArray());
     }

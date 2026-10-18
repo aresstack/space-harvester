@@ -12,6 +12,8 @@
 - Server: `GET /api/v1/sign-ins`, `POST /api/v1/sign-ins/{id}/code` (`{"code": "…"}`), `POST …/resend`,
   `DELETE /api/v1/sign-ins/{id}`; nur Anforderungen, auf die ein eigener Auftrag wartet. Wartezeit
   `space-harvester.export.sign-in-wait` (Standard `PT0S`: nie).
+- Markdown mit Medienordner: Format `markdown-package` (ZIP mit `pages.md` und `assets/<sha256>.png`, relative
+  Verweise). Medienstand je Export als Zahl: `ExportDatasetInfo.media()`.
 - Offen: Eingabemaske in der App (Strang L), Ansichtsbild der Vorschau doppelt, wenn das
   Diagramm nicht zeichenbar ist.
 - Bezüge: Paritäts-Issues #185 (2FA beim Download), #190 (Diagramme), #184 (nur Textfassung von Diagrammen);
