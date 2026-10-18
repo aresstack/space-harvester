@@ -70,8 +70,9 @@ public final class SearchView implements View {
     /** Relevanzsuche ({@code sort=relevance}); nur mit eingerichtetem Embedding-Dienst aktivierbar. */
     final JCheckBox semantic = checkBox("Semantische Suche (experimentell)",
             "Sucht nach Bedeutung in den bereits eingebetteten Seiten freigegebener Quellen");
-    private final JLabel semanticHint = Comic.muted(UNAVAILABLE);
-    private final JPanel sourcesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+    /** Seitenleiste: Wissensquellen untereinander, darunter der Space als Filter. */
+    private final JPanel side = new JPanel(new BorderLayout(0, 8));
+    private final JPanel sourcesRow = new JPanel();
     private final JCheckBox all = checkBox("Alle", "Alle freigegebenen Quellen durchsuchen (ohne sourceIds)");
     private final Map<String, JCheckBox> boxes = new LinkedHashMap<>();
     private final ComposerButton run = Comic.primary("Suchen", "In den angehakten Quellen suchen (Titel und Inhalt)");
@@ -83,7 +84,8 @@ public final class SearchView implements View {
     /** Schmale Zeile unter dem Suchfeld, solange gefundene Seiten in den Cache laden: Balken und Zähler. */
     final JProgressBar progress = new JProgressBar();
     final JLabel progressText = Comic.muted(" ");
-    private final JPanel progressRow = new JPanel(new BorderLayout(10, 0));
+    /** Aktionszeile über der Statusleiste: Fortschritt über die volle Breite, Zeile mit Stand, Abbrechen und „Weitere laden“. */
+    private final JPanel actions = new JPanel(new BorderLayout(12, 4));
     final ComposerButton cancel = Comic.button("Abbrechen", "Das Laden der gefundenen Seiten abbrechen; Geladenes "
             + "bleibt im Cache");
     /** Fragt den Ladestand ab; steigt er, wird derselbe Stapel neu geordnet ({@link #refresh}). */
@@ -124,15 +126,15 @@ public final class SearchView implements View {
         more.setEnabled(false);
         poll.setRepeats(false);
         cancel.addActionListener(e -> cancelLoading());
-        progress.setPreferredSize(new java.awt.Dimension(160, 8));
-        progressRow.setOpaque(false);
-        progressRow.add(progress, BorderLayout.WEST);
-        progressRow.add(progressText, BorderLayout.CENTER);
-        progressRow.add(cancel, BorderLayout.EAST);
-        progressRow.setVisible(false);
+        progress.setPreferredSize(new java.awt.Dimension(160, 6));
+        progress.setVisible(false);
+        cancel.setVisible(false);
+        more.setVisible(false);
         semantic.setSelected(false);
         semantic.setEnabled(false);
+        semantic.setToolTipText(UNAVAILABLE);
         all.addActionListener(e -> restrictTo(List.of()));
+        sourcesRow.setLayout(new javax.swing.BoxLayout(sourcesRow, javax.swing.BoxLayout.Y_AXIS));
         sourcesRow.setOpaque(false);
         context.onChange(ignored -> refreshSources());
         refreshSources();
@@ -146,43 +148,68 @@ public final class SearchView implements View {
                 }
             }
         });
+        table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte");
 
-        JPanel bar = Comic.row(Comic.caption("Suche"), query, Comic.caption("Space"), picker.spaceBox(), run);
-        JPanel lines = new JPanel(new BorderLayout(0, 6));
-        lines.setOpaque(false);
-        JPanel barAndProgress = new JPanel(new BorderLayout(0, 4));
-        barAndProgress.setOpaque(false);
-        barAndProgress.add(bar, BorderLayout.NORTH);
-        barAndProgress.add(progressRow, BorderLayout.SOUTH);
-        lines.add(barAndProgress, BorderLayout.NORTH);
-        JPanel scope = new JPanel(new BorderLayout(8, 0));
-        scope.setOpaque(false);
-        scope.add(Comic.caption("Quellen"), BorderLayout.WEST);
-        scope.add(sourcesRow, BorderLayout.CENTER);
-        lines.add(scope, BorderLayout.CENTER);
-        JPanel experimental = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        experimental.setOpaque(false);
-        experimental.add(semantic);
-        experimental.add(semanticHint);
-        lines.add(experimental, BorderLayout.SOUTH);
-        JPanel head = new JPanel(new BorderLayout(0, 6));
+        // Eine Suchleiste, daneben die semantische Suche; Erklärungen stehen im Tooltip des Infosymbols.
+        JLabel info = new JLabel(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.info());
+        info.setToolTipText("<html>Schlagwortsuche über Titel und Inhalt, direkt in den angehakten Quellen.<br>"
+                + "Eine Seitenadresse oder ein Lesezeichen (space-harvester://…) im Suchfeld öffnet die Seite direkt."
+                + "<br>Doppelklick auf einen Treffer öffnet ihn unter Inhalte.</html>");
+        info.getAccessibleContext().setAccessibleName("Hinweise zur Suche");
+        JPanel bar = new JPanel(new BorderLayout(10, 0));
+        bar.setOpaque(false);
+        bar.add(query, BorderLayout.CENTER);
+        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        options.setOpaque(false);
+        options.add(semantic);
+        options.add(info);
+        options.add(run);
+        bar.add(options, BorderLayout.EAST);
+        JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
-        head.add(lines, BorderLayout.NORTH);
-        head.add(Comic.note("Schlagwortsuche über Titel und Inhalt, direkt in den angehakten Quellen. "
-                + "Doppelklick öffnet die Seite unter Inhalte. Eine Seitenadresse oder ein Lesezeichen "
-                + "(space-harvester://…) im Suchfeld öffnet die Seite direkt."), BorderLayout.CENTER);
+        head.add(bar, BorderLayout.NORTH);
         head.add(feedback, BorderLayout.SOUTH);
-        JPanel body = new JPanel(new BorderLayout(0, 6));
-        body.setOpaque(false);
-        body.add(Comic.scroll(table), BorderLayout.CENTER);
-        JPanel foot = new JPanel(new BorderLayout(12, 0));
-        foot.setOpaque(false);
-        foot.add(status, BorderLayout.CENTER);
-        foot.add(more, BorderLayout.EAST);
-        body.add(foot, BorderLayout.SOUTH);
-        root.add(Comic.plate("Globale Suche", Comic.BLUE, head), BorderLayout.NORTH);
-        root.add(body, BorderLayout.CENTER);
+        root.add(head, BorderLayout.NORTH);
+        root.add(Comic.scroll(table), BorderLayout.CENTER);
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
+
+        JPanel sources = new JPanel(new BorderLayout(0, 6));
+        sources.setOpaque(false);
+        sources.add(Comic.caption("Wissensquellen"), BorderLayout.NORTH);
+        sources.add(sourcesRow, BorderLayout.CENTER);
+        JPanel space = new JPanel(new BorderLayout(0, 6));
+        space.setOpaque(false);
+        space.add(Comic.caption("Space"), BorderLayout.NORTH);
+        space.add(picker.spaceBox(), BorderLayout.CENTER);
+        JPanel filters = new JPanel(new BorderLayout(0, 16));
+        filters.setOpaque(false);
+        filters.add(sources, BorderLayout.NORTH);
+        filters.add(space, BorderLayout.CENTER);
+        side.setOpaque(false);
+        side.add(filters, BorderLayout.NORTH);
+
+        actions.setOpaque(false);
+        actions.add(progress, BorderLayout.NORTH);
+        JPanel line = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        line.setOpaque(false);
+        line.add(progressText);
+        line.add(status);
+        actions.add(line, BorderLayout.CENTER);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.setOpaque(false);
+        buttons.add(cancel);
+        buttons.add(more);
+        actions.add(buttons, BorderLayout.EAST);
+    }
+
+    @Override
+    public JComponent sidebar() {
+        return side;
+    }
+
+    @Override
+    public JComponent actions() {
+        return actions;
     }
 
     @Override
@@ -226,8 +253,8 @@ public final class SearchView implements View {
         if (!available) {
             semantic.setSelected(false);
         }
-        semanticHint.setText(available ? "Embeddings über den KI-Dienst; nur Seiten freigegebener Quellen, die "
-                + "schon im Cache liegen" : UNAVAILABLE);
+        semantic.setToolTipText(available ? "Sucht nach Bedeutung: Embeddings über den KI-Dienst, nur Seiten "
+                + "freigegebener Quellen, die schon im Cache liegen" : UNAVAILABLE);
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
         boxes.clear();
         sourcesRow.removeAll();
@@ -280,13 +307,15 @@ public final class SearchView implements View {
         // Das Laden der vorigen Suche endet; ihr Nachfragen darf die Adressauflösung nicht überholen.
         stopLoading();
         run.setEnabled(false);
-        more.setEnabled(false);
-        feedback.working("Adresse wird aufgelöst …");
+        more.setVisible(false);
+        feedback.clear();
+        starting("Adresse wird aufgelöst …");
         Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
             if (id != request) {
                 return;
             }
             run.setEnabled(true);
+            stopLoading();
             states.clear();
             List<Hit> hits = resolution.matches().stream().map(Hit::of).toList();
             model.set(hits);
@@ -310,6 +339,7 @@ public final class SearchView implements View {
                 return;
             }
             run.setEnabled(true);
+            stopLoading();
             feedback.problem(error);
         });
     }
@@ -351,8 +381,9 @@ public final class SearchView implements View {
         stopLoading();
         int id = ++request;
         run.setEnabled(false);
-        more.setEnabled(false);
-        feedback.working("Suche läuft …");
+        more.setVisible(false);
+        feedback.clear();
+        starting("Suche läuft …");
         Background.run(() -> runtime.workspace().keywordSearch(q, null, LIMIT), results -> {
             if (id != request) {
                 return;
@@ -412,8 +443,9 @@ public final class SearchView implements View {
         stopLoading();
         int id = ++request;
         run.setEnabled(false);
-        more.setEnabled(false);
-        feedback.working("Semantische Suche läuft …");
+        more.setVisible(false);
+        feedback.clear();
+        starting("Semantische Suche läuft …");
         Background.run(() -> runtime.workspace().relevance(q, text, Reranking.MAX_WINDOW), results -> {
             if (id != request) {
                 return;
@@ -461,9 +493,10 @@ public final class SearchView implements View {
         poll.stop();
         progressId = null;
         int id = ++request;
-        more.setEnabled(false);
+        more.setVisible(false);
         run.setEnabled(false);
-        feedback.working("Weitere Treffer werden geladen …");
+        feedback.clear();
+        starting("Weitere Treffer werden geladen …");
         Background.run(() -> runtime.workspace().keywordSearch(q, cursor, LIMIT), results -> {
             if (id != request) {
                 return;
@@ -591,7 +624,9 @@ public final class SearchView implements View {
         String id = progressId;
         poll.stop();
         progressId = null;
-        progressRow.setVisible(false);
+        progress.setVisible(false);
+        cancel.setVisible(false);
+        progressText.setText("");
         if (runtime != null && id != null) {
             Background.run(() -> runtime.workspace().cancelKeywordSearch(id), ignored -> { }, ignored -> { });
         }
@@ -615,7 +650,7 @@ public final class SearchView implements View {
         nextCursor = null;
         shownCursor = null;
         stopLoading();
-        more.setEnabled(false);
+        updateMore();
         status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer"));
         status.setForeground(Comic.MUTED);
     }
@@ -630,7 +665,7 @@ public final class SearchView implements View {
                 == KeywordSearch.SourceState.Status.UNAVAILABLE);
         // Folgestapel nennen nur noch offene Quellen; ein späterer Ausfall ersetzt den früheren Zustand.
         results.sources().forEach(state -> states.put(state.sourceId(), state));
-        more.setEnabled(nextCursor != null);
+        updateMore();
         StringBuilder line = new StringBuilder(Texts.count(model.rows.size(), "Treffer", "Treffer"));
         if (results.progress() != null && !results.progress().done()) {
             line.append(" · Seiten laden in den Cache, geladene rücken nach vorn");
@@ -668,22 +703,41 @@ public final class SearchView implements View {
             finished(state.cancelled());
             return;
         }
+        // Unbestimmt, bis der Core einen Gesamtumfang nennt.
+        progress.setIndeterminate(state.total() <= 0);
         progress.setMaximum(Math.max(1, state.total()));
         progress.setValue(state.loaded() + state.failed());
         progressText.setText(progressLine(state.loaded(), state.total(), model.rows.size()));
+        progress.setVisible(true);
         cancel.setVisible(true);
-        progressRow.setVisible(true);
+        updateMore();
         poll.restart();
     }
 
     /** Ende der Zeile: „Die Suche ist abgeschlossen“ mit der Zahl der Treffer, nach einem Abbruch als solcher. */
     private void finished(boolean cancelled) {
-        progress.setMaximum(1);
-        progress.setValue(1);
+        progress.setIndeterminate(false);
+        progress.setVisible(false);
         progressText.setText((cancelled ? "Laden abgebrochen" : DONE) + " · "
                 + Texts.count(model.rows.size(), "Treffer", "Treffer"));
         cancel.setVisible(false);
-        progressRow.setVisible(true);
+        updateMore();
+    }
+
+    /** Sofort beim Start: unbestimmter Balken, bis der Core antwortet. */
+    private void starting(String text) {
+        progress.setIndeterminate(true);
+        progress.setVisible(true);
+        progressText.setText(text);
+        cancel.setVisible(false);
+        more.setVisible(false);
+    }
+
+    /** „Weitere laden“ nur nach Abschluss des Ladens und nur, wenn der Core weitere Treffer kennt. */
+    private void updateMore() {
+        boolean available = nextCursor != null && progressId == null;
+        more.setVisible(available);
+        more.setEnabled(available);
     }
 
     /** „12 von 25 Seiten im Cache · 7 Treffer“: geladene gegen gefundene Seiten dieser Suche. */
