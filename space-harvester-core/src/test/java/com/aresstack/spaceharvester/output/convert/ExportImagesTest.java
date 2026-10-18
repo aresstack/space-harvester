@@ -50,6 +50,7 @@ class ExportImagesTest {
     private static final byte[] PNG = png();
     private static final String EXTERNAL = "https://images.example.org/logo.png";
     private static final String UNKNOWN = "https://tracker.example/p.gif";
+    private static final String BROKEN_MERMAID = "das ist kein Diagramm ((( --> ]]";
 
     private static final String STORAGE = "<p>Vorher</p>"
             + "<ac:image ac:alt=\"Systembild\"><ri:attachment ri:filename=\"system.png\" /></ac:image>"
@@ -114,7 +115,7 @@ class ExportImagesTest {
     }
 
     /** Die abgelegten Bytes; zählt, wie oft gelesen wird. */
-    private static final class Stored implements ExportAssets {
+    private static class Stored implements ExportAssets {
         final List<String> read = new ArrayList<>();
 
         @Override
@@ -147,8 +148,12 @@ class ExportImagesTest {
     }
 
     private static Input input(ExportAssets assets) {
+        return input(STORAGE, assets);
+    }
+
+    private static Input input(String storage, ExportAssets assets) {
         byte[] payload = JSON.writeValueAsBytes(JSON.createObjectNode().put("id", "100").set("body",
-                JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", STORAGE))));
+                JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", storage))));
         PageSnapshot snapshot = page("wiki", "DEV", "100", null, payload);
         return new Input(List.of(new ConvertiblePage(snapshot.header(), snapshot, 0)), assets, new ArrayList<>());
     }
@@ -252,6 +257,29 @@ class ExportImagesTest {
                     new ConversionNotice("100", Kind.MISSING_DIAGRAM, "ablauf", "not-collected"),
                     new ConversionNotice("100", Kind.MISSING_DIAGRAM, "fremd", "not-collected"),
                     new ConversionNotice("100", Kind.MISSING_IMAGE, EXTERNAL, "not-collected"));
+        }
+    }
+
+    @Test
+    void diagramsThatCannotBeDrawnAreReportedInEveryFormat() throws Exception {
+        // draw.io, das JGraphX nicht lesen kann und für das keine Vorschau abgelegt ist; Mermaid, das nicht zeichnet
+        String storage = "<ac:structured-macro ac:name=\"drawio\"><ac:parameter ac:name=\"diagramName\">kaputt"
+                + "</ac:parameter></ac:structured-macro>"
+                + "<ac:structured-macro ac:name=\"mermaid\"><ac:plain-text-body><![CDATA[" + BROKEN_MERMAID
+                + "]]></ac:plain-text-body></ac:structured-macro>";
+        ExportAssets withoutPreview = new Stored() {
+            @Override
+            public Optional<ExportAssetManifest> manifest() {
+                return Optional.of(new ExportAssetManifest(false, ENTRIES.stream()
+                        .filter(e -> !"kaputt.png".equals(e.reference().filename())).toList()));
+            }
+        };
+        for (ExportConverter converter : List.of(new DocxConverter(), new PdfConverter(), new MarkdownConverter())) {
+            Input input = input(storage, withoutPreview);
+            convert(converter, input);
+            assertThat(input.reported()).as(converter.format()).containsExactlyInAnyOrder(
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "kaputt", "render-failed"),
+                    new ConversionNotice("100", Kind.MISSING_DIAGRAM, "mermaid", "render-failed"));
         }
     }
 
