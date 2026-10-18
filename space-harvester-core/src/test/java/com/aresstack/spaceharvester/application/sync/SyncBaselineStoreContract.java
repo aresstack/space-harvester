@@ -179,7 +179,8 @@ public abstract class SyncBaselineStoreContract {
         BaselineEntry child = new BaselineEntry("2", "DOC", "1", null, "sha256:m", "sha256:a");
         SyncBaseline listed = baseline("wiki", "DOC", 1, Set.of("2"), entry(root), child);
         SyncBaseline first = new SyncBaseline(listed.sourceId(), listed.spaceKey(), listed.generation(),
-                listed.confirmedAt(), listed.pages(), listed.stalePageIds(), new TreeSet<>(Set.of("3")));
+                listed.confirmedAt(), listed.pages(), listed.stalePageIds(), new TreeSet<>(Set.of("3")),
+                new TreeMap<>(Map.of("4", Instant.parse("2026-10-01T08:00:00Z"))));
         commit(fixture, first, root);
 
         Fixture reopened = reopen(fixture);
@@ -188,6 +189,7 @@ public abstract class SyncBaselineStoreContract {
         assertThat(read).isEqualTo(first);
         assertThat(read.spaceFingerprint()).isEqualTo(first.spaceFingerprint());
         assertThat(read.missingPageIds()).containsExactly("3");
+        assertThat(read.withheldPageIds()).containsEntry("4", Instant.parse("2026-10-01T08:00:00Z"));
         assertThat(read.complete()).isFalse();
         assertThat(reopened.snapshots().find(root.key())).contains(root);
     }

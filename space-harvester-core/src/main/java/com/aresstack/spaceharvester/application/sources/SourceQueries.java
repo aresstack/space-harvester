@@ -72,6 +72,15 @@ public class SourceQueries {
     }
 
     /**
+     * Ob „nicht gefunden“ bei dieser Quelle eine Löschung bestätigt ({@link HarvestSource#confirmsDeletion()}).
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public boolean confirmsDeletion(String sourceId) {
+        return source(sourceId).confirmsDeletion();
+    }
+
+    /**
      * Die vollständige Anhangsliste einer Seite, live aus der Quelle (#9), mit dem aktuellen Space der Seite für die
      * Rechteprüfung. Lädt keine Dateien.
      *

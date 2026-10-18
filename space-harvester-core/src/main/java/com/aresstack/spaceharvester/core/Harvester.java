@@ -56,6 +56,7 @@ import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -276,7 +277,7 @@ public final class Harvester implements AutoCloseable {
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, reranker, textIndex, preparation);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), builder.withheldRetention);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
@@ -640,6 +641,7 @@ public final class Harvester implements AutoCloseable {
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
         private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
+        private Duration withheldRetention = SpaceSync.DEFAULT_WITHHELD_RETENTION;
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
@@ -877,6 +879,21 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder cacheFreshness(CacheFreshness cacheFreshness) {
             this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
+            return this;
+        }
+
+        /**
+         * Wie lange der Abgleich die Rohdaten einer gesperrten Seite behält (ADR 0014): Meldet die Quelle dem technischen
+         * Konto „nicht gefunden“, ohne die Löschung zu bestätigen, ist die Seite sofort für jede Ausgabe gesperrt und
+         * aus den Indizes genommen; nach dieser Frist entfernt ein Abgleich auch die Rohdaten. Standard
+         * {@link SpaceSync#DEFAULT_WITHHELD_RETENTION}.
+         */
+        public Builder withheldRetention(Duration withheldRetention) {
+            Objects.requireNonNull(withheldRetention, "withheldRetention");
+            if (withheldRetention.isNegative()) {
+                throw new IllegalArgumentException("withheldRetention darf nicht negativ sein");
+            }
+            this.withheldRetention = withheldRetention;
             return this;
         }
 

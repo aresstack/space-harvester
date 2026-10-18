@@ -109,6 +109,12 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return title;
     }
 
+    /** Lokale Dateien: Eine fehlende Datei in einem lesbaren Verzeichnis ist gelöscht (ADR 0014). */
+    @Override
+    public boolean confirmsDeletion() {
+        return LocalFilesSourceAdapter.TYPE.equals(type);
+    }
+
     @Override
     public Set<SourceCapability> capabilities() {
         Set<SourceCapability> capabilities = EnumSet.of(SourceCapability.PARTITIONS);

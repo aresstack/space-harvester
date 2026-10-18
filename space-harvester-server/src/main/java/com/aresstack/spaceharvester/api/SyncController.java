@@ -270,7 +270,10 @@ public class SyncController {
      * @param metadataChanged   neue Metadaten bei gleicher Revision (umbenannt, verschoben)
      * @param attributesChanged nur neue Attribute (Labels)
      * @param unchanged         unveränderte Seiten
-     * @param removed           entfernte Seiten (gelöscht oder nicht mehr sichtbar)
+     * @param removed           entfernte Seiten, deren Löschung die Quelle bestätigt hat
+     * @param withheld          gesperrte Seiten: für das technische Konto „nicht gefunden“ ohne bestätigte Löschung,
+     *                          ab sofort ohne Ausgabe und Index (ADR 0014)
+     * @param purged            gesperrte Seiten, deren Rohdaten nach Ablauf der Frist entfernt wurden
      * @param movedOut          in einen anderen Space verschobene Seiten
      * @param unverified        fehlende Seiten, deren Fehlen nicht bestätigt werden konnte; bleiben als veraltet
      * @param failed            Anzahl der Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet
@@ -285,7 +288,8 @@ public class SyncController {
     public record SummaryResponse(
             @Schema(allowableValues = {"complete", "incomplete", "inconsistent"}) String inventory, int listed,
             int added, int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
-            int movedOut, int unverified, int failed, @Schema(nullable = true) List<String> failedPageIds,
+            int withheld, int purged, int movedOut, int unverified, int failed,
+            @Schema(nullable = true) List<String> failedPageIds,
             int missing, @Schema(nullable = true) Long generation, boolean complete,
             @Schema(nullable = true) String spaceFingerprint,
             @Schema(nullable = true, allowableValues = {"inventory-incomplete", "inventory-inconsistent",
@@ -294,8 +298,8 @@ public class SyncController {
         static SummaryResponse of(SyncSummary summary, boolean pageIds) {
             return new SummaryResponse(summary.inventory().name().toLowerCase(Locale.ROOT), summary.listed(),
                     summary.added(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(),
-                    summary.unchanged(), summary.removed(), summary.movedOut(), summary.unverified(),
-                    summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
+                    summary.unchanged(), summary.removed(), summary.withheld(), summary.purged(), summary.movedOut(),
+                    summary.unverified(), summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
                     summary.missingPageIds().size(), summary.generation(), summary.complete(),
                     summary.spaceFingerprint(), notConfirmed(summary));
         }

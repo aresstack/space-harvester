@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -99,16 +101,77 @@ class SpaceSyncTest {
 
     @Test
     void aDeletedPageIsRemovedOnlyAfterTheSourceConfirmsIt() {
+        source.confirmingDeletion();
         firstRun();
         source.remove("2");
 
         SyncPlan plan = sync.plan("wiki", "DOC");
 
         assertThat(only(plan, "2").kind()).isEqualTo(PageChange.Kind.MISSING);
-        assertThat(plan.removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.GONE);
+        assertThat(plan.removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.DELETED);
         SyncBaseline next = sync.confirm(plan, Set.of());
         assertThat(next.pages()).containsOnlyKeys("1", "3");
         assertThat(next.stalePageIds()).isEmpty();
+        assertThat(next.withheldPageIds()).isEmpty();
+    }
+
+    @Test
+    void notFoundWithoutConfirmedDeletionWithholdsThePageSinceThisRun() {
+        firstRun();
+        source.remove("2");
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(plan.removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.INACCESSIBLE);
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsOnlyKeys("1", "3");
+        assertThat(next.withheldPageIds()).containsExactlyEntriesOf(Map.of("2", FakeSource.CLOCK.instant()));
+        assertThat(next.complete()).isTrue();
+    }
+
+    @Test
+    void aWithheldPageStaysWithheldUntilItsRetentionEndsAndIsThenPurged() {
+        firstRun();
+        source.remove("2");
+        sync.confirm(sync.plan("wiki", "DOC"), Set.of());
+
+        SyncPlan within = sync.plan("wiki", "DOC");
+        assertThat(within.purges()).isEmpty();
+        assertThat(sync.confirm(within, Set.of()).withheldPageIds()).containsOnlyKeys("2");
+
+        SpaceSync expired = new SpaceSync(source.queries(), store, FakeSource.CLOCK, Duration.ZERO);
+        SyncPlan due = expired.plan("wiki", "DOC");
+        assertThat(due.purges()).containsExactly("2");
+        assertThat(expired.confirm(due, Set.of()).withheldPageIds()).isEmpty();
+    }
+
+    @Test
+    void aWithheldPageThatReappearsIsNewAgain() {
+        firstRun();
+        source.remove("2");
+        sync.confirm(sync.plan("wiki", "DOC"), Set.of());
+        source.put("2", "DOC", "1", "1", null);
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(only(plan, "2").kind()).isEqualTo(PageChange.Kind.NEW);
+        assertThat(plan.purges()).isEmpty();
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsKey("2");
+        assertThat(next.withheldPageIds()).isEmpty();
+    }
+
+    @Test
+    void accessDeniedForTheTechnicalAccountChangesNothing() {
+        firstRun();
+        source.remove("2").failSinglePage("2", SourceAccessException.Reason.ACCESS_DENIED);
+
+        SyncPlan plan = sync.plan("wiki", "DOC");
+
+        assertThat(plan.removals().get("2").verdict()).isEqualTo(RemovalCheck.Verdict.UNVERIFIED);
+        SyncBaseline next = sync.confirm(plan, Set.of());
+        assertThat(next.pages()).containsKey("2");
+        assertThat(next.withheldPageIds()).isEmpty();
     }
 
     @Test

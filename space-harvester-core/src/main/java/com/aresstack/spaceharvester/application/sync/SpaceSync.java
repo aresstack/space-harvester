@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.sync;
 
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -13,8 +14,9 @@ import java.util.Set;
  * <ol>
  *   <li>{@link #plan}: bestätigte Generation lesen, vollständig inventarisieren, abgleichen und fehlende Seiten
  *       einzeln nachprüfen (nur bei bestätigter Inventur).</li>
- *   <li>{@link #run}: Inhalte laden, Metadaten und Attribute aktualisieren und bestätigt fehlende Seiten entfernen,
- *       alles vorgemerkt und erst zusammen mit der nächsten Generation sichtbar.</li>
+ *   <li>{@link #run}: Inhalte laden, Metadaten und Attribute aktualisieren, bestätigt gelöschte Seiten entfernen,
+ *       nicht mehr sichtbare sperren und gesperrte nach Ablauf der Frist entfernen (ADR 0014), alles vorgemerkt und
+ *       erst zusammen mit der nächsten Generation sichtbar.</li>
  * </ol>
  *
  * <p>Ein abgebrochener Lauf veröffentlicht nichts; die bisherige Generation bleibt gültig, und ein neuer Lauf beginnt
@@ -22,20 +24,43 @@ import java.util.Set;
  */
 public class SpaceSync {
 
+    /** Standardfrist, nach der ein Lauf die Rohdaten einer gesperrten Seite entfernt (ADR 0014). */
+    public static final Duration DEFAULT_WITHHELD_RETENTION = Duration.ofDays(30);
+
     private final SyncBaselineStore store;
     private final InventoryCollector collector;
     private final RemovalCheck removalCheck;
     private final Clock clock;
+    private final Duration withheldRetention;
 
     public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock) {
-        this(store, new InventoryCollector(queries, clock), new RemovalCheck(queries), clock);
+        this(queries, store, clock, DEFAULT_WITHHELD_RETENTION);
+    }
+
+    /**
+     * @param withheldRetention wie lange eine gesperrte Seite ({@link RemovalCheck.Verdict#INACCESSIBLE}) ihre
+     *                          Rohdaten behält, bevor ein Lauf sie endgültig entfernt; {@code 0} entfernt sie im
+     *                          nächsten Lauf
+     */
+    public SpaceSync(SourceQueries queries, SyncBaselineStore store, Clock clock, Duration withheldRetention) {
+        this(store, new InventoryCollector(queries, clock), new RemovalCheck(queries), clock, withheldRetention);
     }
 
     SpaceSync(SyncBaselineStore store, InventoryCollector collector, RemovalCheck removalCheck, Clock clock) {
+        this(store, collector, removalCheck, clock, DEFAULT_WITHHELD_RETENTION);
+    }
+
+    SpaceSync(SyncBaselineStore store, InventoryCollector collector, RemovalCheck removalCheck, Clock clock,
+              Duration withheldRetention) {
         this.store = Objects.requireNonNull(store, "store");
         this.collector = Objects.requireNonNull(collector, "collector");
         this.removalCheck = Objects.requireNonNull(removalCheck, "removalCheck");
         this.clock = Objects.requireNonNull(clock, "clock");
+        Objects.requireNonNull(withheldRetention, "withheldRetention");
+        if (withheldRetention.isNegative()) {
+            throw new IllegalArgumentException("Frist für gesperrte Seiten darf nicht negativ sein");
+        }
+        this.withheldRetention = withheldRetention;
     }
 
     public SyncPlan plan(String sourceId, String spaceKey) {
@@ -45,7 +70,8 @@ public class SpaceSync {
             return plan;
         }
         Map<String, RemovalCheck.Result> removals = removalCheck.verify(plan);
-        return removals.isEmpty() ? plan : plan.withRemovals(removals);
+        SyncPlan checked = removals.isEmpty() ? plan : plan.withRemovals(removals);
+        return checked.withPurgesDue(clock.instant().minus(withheldRetention));
     }
 
     /**

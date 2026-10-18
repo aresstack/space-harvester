@@ -20,7 +20,8 @@ import java.util.Objects;
 /**
  * Hält die Anreicherungen nach jedem bestätigten Abgleich nach: Für jede Seite der Inventur mit Inhalt im Cache werden
  * fehlende oder veraltete Ergebnisse berechnet ({@link Enrichments#refresh}; aktuelle kosten nur die Projektion, so
- * erreichen auch neue Prozessorversionen jede Seite), für entfernte Seiten werden sie gelöscht. Seiten, deren Abgleich
+ * erreichen auch neue Prozessorversionen jede Seite), für gelöschte und gesperrte Seiten (ADR 0014) werden sie
+ * gelöscht. Seiten, deren Abgleich
  * scheiterte oder die die Inventur nicht sah, bleiben unberührt.
  *
  * <p>Mit {@link Jobs} läuft das als eigener Auftrag {@link JobType#ENRICHMENT} für den Auslöser des Abgleichs oder
@@ -31,8 +32,9 @@ import java.util.Objects;
  * die Auftragsverwaltung nichts mehr an, entfällt die Anreicherung dieses Laufs ebenso bis zum nächsten.
  *
  * <p>Mit {@link PageTextIndexing} hält derselbe Auftrag vor den Prozessoren den Volltextindex nach (#180, Phase
- * {@code Volltextindex}): neue und geänderte Projektionen hinein, entfernte Seiten heraus; er zählt nicht in
- * {@code discovered}.
+ * {@code Volltextindex}): neue und geänderte Projektionen hinein; er zählt nicht in
+ * {@code discovered}. Gelöschte und gesperrte Seiten (ADR 0014) nimmt schon der Aufruf nach dem Commit aus Volltext und
+ * Anreicherungen, bevor er den Auftrag einplant.
  */
 public class EnrichmentsAfterSync implements SyncCommitted {
 
@@ -78,40 +80,50 @@ public class EnrichmentsAfterSync implements SyncCommitted {
         }
         String sourceId = run.plan().inventory().sourceId();
         String spaceKey = run.plan().inventory().spaceKey();
+        // Gelöschte und gesperrte Seiten sofort aus den Indizes nehmen, nicht erst im Auftrag: Ein abgelehnter oder
+        // abgebrochener Auftrag holte das nie nach, weil die Seite in keiner späteren Generation mehr vorkommt.
+        int removed = deindex(run);
         if (jobs == null) {
-            refresh(run, null);
+            refresh(run, null, removed);
             return;
         }
         try {
             jobs.submit(JobType.ENRICHMENT, sourceId, spaceKey, owner, JobTask.blocking(context -> refresh(run,
-                    context)));
+                    context, removed)));
         } catch (JobCapacityExceededException | IllegalStateException e) {
             LOG.log(System.Logger.Level.INFO, "Anreicherung nach Abgleich {0}/{1} nicht eingeplant ({2}); der "
                     + "nächste Abgleich holt sie nach", sourceId, spaceKey, e.getClass().getSimpleName());
         }
     }
 
-    private void refresh(SpaceSync.SyncRun run, JobContext context) {
+    /** Entfernt Anreicherungen und Volltext der gelöschten und gesperrten Seiten (ADR 0014); Anzahl der Seiten. */
+    private int deindex(SpaceSync.SyncRun run) {
+        String sourceId = run.plan().inventory().sourceId();
+        int removed = 0;
+        for (PageChange change : run.plan().changes(PageChange.Kind.MISSING)) {
+            RemovalCheck.Result removal = run.plan().removals().get(change.pageId());
+            if (removal != null && (removal.verdict() == RemovalCheck.Verdict.DELETED
+                    || removal.verdict() == RemovalCheck.Verdict.INACCESSIBLE)) {
+                PageKey key = new PageKey(sourceId, change.pageId());
+                enrichments.remove(key);
+                if (texts != null) {
+                    texts.remove(key);
+                }
+                removed++;
+            }
+        }
+        return removed;
+    }
+
+    private void refresh(SpaceSync.SyncRun run, JobContext context, int removed) {
         String sourceId = run.plan().inventory().sourceId();
         List<PageKey> pages = new ArrayList<>();
-        int removed = 0;
         for (PageChange change : run.plan().changes()) {
-            PageKey key = new PageKey(sourceId, change.pageId());
-            if (change.kind() == PageChange.Kind.NOT_SEEN || run.failedPageIds().contains(change.pageId())) {
+            if (change.kind() == PageChange.Kind.NOT_SEEN || change.kind() == PageChange.Kind.MISSING
+                    || run.failedPageIds().contains(change.pageId())) {
                 continue;
             }
-            if (change.kind() == PageChange.Kind.MISSING) {
-                RemovalCheck.Result removal = run.plan().removals().get(change.pageId());
-                if (removal != null && removal.verdict() == RemovalCheck.Verdict.GONE) {
-                    enrichments.remove(key);
-                    if (texts != null) {
-                        texts.remove(key);
-                    }
-                    removed++;
-                }
-                continue;
-            }
-            pages.add(key);
+            pages.add(new PageKey(sourceId, change.pageId()));
         }
         if (texts != null) {
             index(pages, context);

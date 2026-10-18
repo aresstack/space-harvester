@@ -58,6 +58,11 @@ Sichtbarkeit für das technische Konto zusammen, weil Confluence beides mit 404 
 - Kleine PRs in dieser Reihenfolge: (a) `GONE` aufteilen und `INACCESSIBLE` sperren und deindizieren, (b) Abgleich
   ohne Erstbefüllung und zeitgesteuerter Auftrag je Space im Core und im Server, (c) dauerhafter Laufzustand,
   (d) Änderungssuche nach dem EAC-Port.
+- Weitere Entdeckungswege als Optionen, noch nicht umgesetzt (#181, issuecomment-6250576142): gezielter
+  Teilbaum-Abgleich über die vorhandene Navigation (`children(spaceKey, pageId, cursor)`, Confluence
+  `/child/page`), ein ganzer Teilbaum per CQL `ancestor = <ID>` und die Änderungssuche per CQL `lastmodified`. Sie
+  ergänzen die Inventur, ersetzen sie aber nicht: Löschungen, Verschiebungen und Vollständigkeit erkennt nur die
+  paginierte Metadateninventur. Ob sich ein getrennter Metadatenkatalog lohnt, klärt der REST-Benchmark.
 - REST: Zustand des Abgleichs je Space (letzter Lauf, Ergebnis, nächste Ausführung); der Auftrag erscheint in den
   bestehenden Aufträgen.
 - App: je Space ein Schalter „Regelmäßig abgleichen“ mit Intervall; Einstellung „Gesperrte Seiten entfernen nach“.

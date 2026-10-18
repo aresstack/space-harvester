@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -75,10 +76,17 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      */
     public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
                          Clock clock, List<SyncCommitted> afterCommit) {
+        this(jobs, queries, store, fetcher, clock, afterCommit, SpaceSync.DEFAULT_WITHHELD_RETENTION);
+    }
+
+    /** @param withheldRetention Frist für gesperrte Seiten, siehe {@link SpaceSync} */
+    public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
+                         Clock clock, List<SyncCommitted> afterCommit, Duration withheldRetention) {
         this.afterCommit = List.copyOf(afterCommit);
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.queries = Objects.requireNonNull(queries, "queries");
-        this.sync = store == null || fetcher == null ? null : new SpaceSync(queries, store, clock);
+        this.sync = store == null || fetcher == null ? null : new SpaceSync(queries, store, clock,
+                withheldRetention);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 

@@ -163,6 +163,27 @@ class SyncEnrichmentsTest {
     }
 
     @Test
+    void aWithheldPageLosesItsEnrichmentsEvenWhenTheEnrichmentJobNeverRuns() {
+        run(new EnrichmentsAfterSync(enrichments, store.repository));
+        assertThat(results.find(new PageKey("wiki", "2"))).hasSize(1);
+        source.remove("2");
+        SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, source.queries(), store, fetcher, FakeSource.CLOCK,
+                List.of(new EnrichmentsAfterSync(enrichments, store.repository, jobs)));
+        syncs.start("wiki", "DOC", "client:a");
+        while (!queued.isEmpty() && jobs.list("client:a", JobType.ENRICHMENT).isEmpty()) {
+            queued.poll().run();
+        }
+
+        jobs.cancel(jobs.list("client:a", JobType.ENRICHMENT).get(0).id(), "client:a");
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+
+        assertThat(store.confirmed("wiki", "DOC").orElseThrow().withheldPageIds()).containsOnlyKeys("2");
+        assertThat(results.find(new PageKey("wiki", "2"))).isEmpty();
+    }
+
+    @Test
     void provisioningCountsOnlyPagesTheCallerMayReadAndLeavesWritingToTheExport() {
         SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, source.queries(), store, fetcher, FakeSource.CLOCK, List.of());
         JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DOC", "client:a", com.aresstack.spaceharvester
