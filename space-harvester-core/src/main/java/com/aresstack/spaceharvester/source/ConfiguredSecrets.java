@@ -4,8 +4,10 @@ import com.aresstack.enterpriseai.adyton.SecretMaterial;
 import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * {@link SecretProvider} für Zugangsdaten aus der Konfiguration (YAML, Umgebungsvariablen). Jede Quelle mit
@@ -18,6 +20,24 @@ import java.util.Map;
 final class ConfiguredSecrets implements SecretProvider {
 
     private final Map<SecretRef, Credentials> credentials = new HashMap<>();
+    private final SourceSecrets fallback;
+
+    ConfiguredSecrets() {
+        this(null);
+    }
+
+    /**
+     * @param fallback Anbieter des einbettenden Programms (#188, etwa KeePassRPC oder ein Tresor), gefragt für jede
+     *                 Referenz ohne Zugangsdaten aus der Konfiguration; {@code null} ohne
+     */
+    ConfiguredSecrets(SourceSecrets fallback) {
+        this.fallback = fallback;
+    }
+
+    /** Ob Zugangsdaten, die in der Konfiguration fehlen, vom Anbieter des einbettenden Programms kommen. */
+    boolean external() {
+        return fallback != null;
+    }
 
     static SecretRef refFor(String sourceId) {
         return SecretRef.of("source:" + sourceId);
@@ -43,11 +63,34 @@ final class ConfiguredSecrets implements SecretProvider {
     @Override
     public SecretMaterial resolve(SecretRef ref) throws SecretUnavailableException {
         Credentials found = credentials.get(ref);
+        if (found == null && fallback != null) {
+            return external(ref);
+        }
         if (found == null) {
             throw new SecretUnavailableException(SecretUnavailableException.Reason.NOT_FOUND, ref,
                     "keine Zugangsdaten konfiguriert");
         }
         return new SecretMaterial(ref, found.principal(), found.secret().toCharArray());
+    }
+
+    private SecretMaterial external(SecretRef ref) throws SecretUnavailableException {
+        Optional<SourceSecrets.Credential> credential;
+        try {
+            credential = fallback.resolve(ref.id());
+        } catch (SourceSecrets.Unavailable e) {
+            throw new SecretUnavailableException(SecretUnavailableException.Reason.NOT_AVAILABLE, ref,
+                    "Anbieter der Zugangsdaten nicht bereit");
+        }
+        if (credential == null || credential.isEmpty()) {
+            throw new SecretUnavailableException(SecretUnavailableException.Reason.NOT_FOUND, ref,
+                    "keine Zugangsdaten beim Anbieter");
+        }
+        char[] secret = credential.get().secret();
+        try {
+            return new SecretMaterial(ref, credential.get().principal(), secret.clone());
+        } finally {
+            Arrays.fill(secret, '\0');
+        }
     }
 
     private record Credentials(String principal, String secret) {

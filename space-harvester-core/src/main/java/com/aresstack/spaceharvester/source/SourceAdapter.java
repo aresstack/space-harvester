@@ -26,6 +26,15 @@ public interface SourceAdapter {
     List<String> check(SourceSettingsConfig config);
 
     /**
+     * Wie {@link #check(SourceSettingsConfig)}; mit {@code externalSecrets} kommen fehlende Passwörter und Tokens vom
+     * {@code SecretProvider} des einbettenden Programms (#188) und sind kein Problem. Typen ohne Zugangsdaten
+     * überschreiben das nicht.
+     */
+    default List<String> check(SourceSettingsConfig config, boolean externalSecrets) {
+        return check(config);
+    }
+
+    /**
      * Öffnet die Quelle; Verbindungen entstehen erst bei der ersten Anfrage.
      *
      * @throws InvalidSourceConfigurationException mit den Problemen, wenn die Quelle so nicht betrieben werden kann
@@ -35,7 +44,8 @@ public interface SourceAdapter {
     /**
      * Was der Katalog allen Typen mitgibt.
      *
-     * @param secrets      Zugangsdaten der Quellen, je Quelle unter {@link ConfiguredSecrets#refFor}
+     * @param secrets      Zugangsdaten der Quellen, je Quelle unter {@link ConfiguredSecrets#refFor}; was dort fehlt,
+     *                     liefert der Anbieter des einbettenden Programms, sofern es einen gibt
      * @param routes       Proxy-Route je Ziel-URL
      * @param userAgent    User-Agent für HTTP-Aufrufe
      * @param trustBundles Vertrauensquellen für {@code trust-bundle}

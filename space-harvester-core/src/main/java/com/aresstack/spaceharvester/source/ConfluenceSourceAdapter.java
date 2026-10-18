@@ -51,12 +51,18 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
 
     @Override
     public List<String> check(SourceSettingsConfig config) {
+        return check(config, false);
+    }
+
+    /** Mit {@code externalSecrets} dürfen Passwort, Token und Zertifikatspasswort fehlen; sie kommen vom Anbieter. */
+    @Override
+    public List<String> check(SourceSettingsConfig config, boolean externalSecrets) {
         List<String> problems = new ArrayList<>();
         if (config.baseUrl() == null) {
             problems.add("base-url fehlt");
         }
-        problems.addAll(checkAuth(config.auth()));
-        problems.addAll(checkCertificate(config.clientCertificate()));
+        problems.addAll(checkAuth(config.auth(), externalSecrets));
+        problems.addAll(checkCertificate(config.clientCertificate(), externalSecrets));
         Map<String, String> credentials = new TreeMap<>(Map.of(
                 "auth.username", nullToEmpty(config.auth().username()),
                 "auth.password", nullToEmpty(config.auth().password()),
@@ -83,12 +89,22 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     public OpenedSource open(SourceSettingsConfig config, SourceAdapter.Context context) {
         ConfiguredSecrets secrets = context.secrets();
         switch (config.auth().type()) {
-            case BASIC -> secrets.put(config.id(), config.auth().username(), config.auth().password());
-            case PAT -> secrets.put(config.id(), null, config.auth().token());
+            // Ohne Passwort oder Token in der Konfiguration fragt die Quelle den Anbieter des Programms (#188).
+            case BASIC -> {
+                if (present(config.auth().password())) {
+                    secrets.put(config.id(), config.auth().username(), config.auth().password());
+                }
+            }
+            case PAT -> {
+                if (present(config.auth().token())) {
+                    secrets.put(config.id(), null, config.auth().token());
+                }
+            }
             case NONE -> { }
         }
         ClientCertificate certificate = config.clientCertificate();
-        if (certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12) {
+        if (certificate.enabled() && certificate.type() == CertificateStoreType.PKCS12
+                && present(certificate.password())) {
             secrets.put(ConfiguredSecrets.certificateRefFor(config.id()), null, certificate.password());
         }
         X509TrustManager trust;
@@ -120,7 +136,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         }
     }
 
-    private static List<String> checkAuth(SourceSettingsConfig.Auth auth) {
+    private static List<String> checkAuth(SourceSettingsConfig.Auth auth, boolean externalSecrets) {
         boolean username = present(auth.username());
         boolean password = present(auth.password());
         boolean token = present(auth.token());
@@ -136,7 +152,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
                 }
             }
             case BASIC -> {
-                if (!username || !password) {
+                if (externalSecrets ? password && !username : !username || !password) {
                     problems.add("auth.type basic braucht auth.username und auth.password");
                 }
                 if (token) {
@@ -144,7 +160,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
                 }
             }
             case PAT -> {
-                if (!token) {
+                if (!token && !externalSecrets) {
                     problems.add("auth.type pat braucht auth.token");
                 }
                 if (username || password) {
@@ -155,7 +171,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
         return problems;
     }
 
-    private static List<String> checkCertificate(ClientCertificate certificate) {
+    private static List<String> checkCertificate(ClientCertificate certificate, boolean externalSecrets) {
         List<String> problems = new ArrayList<>();
         boolean path = certificate.path() != null;
         boolean password = present(certificate.password());
@@ -173,7 +189,7 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
             if (!path) {
                 problems.add("client-certificate.type pkcs12 braucht client-certificate.path");
             }
-            if (!password) {
+            if (!password && !externalSecrets) {
                 problems.add("client-certificate.type pkcs12 braucht client-certificate.password");
             }
         }
