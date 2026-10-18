@@ -34,6 +34,8 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
+import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -57,7 +59,7 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class ExportMediaSignInTest {
 
-    private static final byte[] PNG = {(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10, 1, 2, 3};
+    private static final byte[] PNG = png();
     private static final byte[] MXFILE = ("<mxfile><diagram name=\"Ablauf\"><mxGraphModel><root><mxCell id=\"0\"/>"
             + "<mxCell id=\"1\" parent=\"0\"/><mxCell id=\"2\" value=\"Start\" vertex=\"1\" parent=\"1\">"
             + "<mxGeometry x=\"10\" y=\"10\" width=\"80\" height=\"40\" as=\"geometry\"/></mxCell>"
@@ -68,7 +70,7 @@ class ExportMediaSignInTest {
             Clock.systemUTC());
     private final InMemoryPageCache cache = new InMemoryPageCache();
     private final ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter(),
-            new JsonPackageConverter()), ExportConverters.DEFAULT_MAX_BYTES);
+            new JsonPackageConverter(), new MarkdownPackageConverter()), ExportConverters.DEFAULT_MAX_BYTES);
 
     @TempDir
     Path data;
@@ -122,6 +124,44 @@ class ExportMediaSignInTest {
                 .contains("\"label\":\"Start\"");
         // Deterministisch: dieselbe Datei beim zweiten Mal.
         assertThat(setup.conversions.convert(setup.export.id(), "client-a", JsonPackageConverter.FORMAT,
+                data.resolve("out")).sha256()).isEqualTo(zip.sha256());
+    }
+
+    @Test
+    void theMarkdownPackageLinksItsFiguresRelativelyInsteadOfEmbeddingThem() throws Exception {
+        Source source = new Source(false);
+        String storage = "<p>Foto</p><ac:image ac:alt=\\\"Foto\\\"><ri:attachment ri:filename=\\\"foto.png\\\" />"
+                + "</ac:image><ac:structured-macro ac:name=\\\"drawio\\\"><ac:parameter ac:name=\\\"diagramName\\\">"
+                + "ablauf</ac:parameter></ac:structured-macro><p>Noch einmal</p><ac:image ac:alt=\\\"Foto\\\">"
+                + "<ri:attachment ri:filename=\\\"foto.png\\\" /></ac:image>";
+        Setup setup = setup(source, SignInRequests.none(), page("confluence", "DEV", "100", null,
+                ("{\"id\":\"100\",\"type\":\"page\",\"body\":{\"storage\":{\"value\":\"" + storage
+                        + "\",\"representation\":\"storage\"}}}").getBytes(StandardCharsets.UTF_8)));
+        drain();
+
+        ExportConversions.ConvertedFile zip = setup.conversions.convert(setup.export.id(), "client-a",
+                MarkdownPackageConverter.FORMAT, data.resolve("out"));
+        Map<String, byte[]> files = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipInputStream in = new java.util.zip.ZipInputStream(
+                java.nio.file.Files.newInputStream(zip.path()))) {
+            for (java.util.zip.ZipEntry entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                files.put(entry.getName(), in.readAllBytes());
+            }
+        }
+        String markdown = new String(files.get("pages.md"), StandardCharsets.UTF_8);
+        assertThat(markdown).doesNotContain("data:image");
+        java.util.regex.Matcher links = java.util.regex.Pattern.compile("\\]\\((assets/[0-9a-f]{64}\\.png)\\)")
+                .matcher(markdown);
+        java.util.Set<String> linked = new java.util.LinkedHashSet<>();
+        while (links.find()) {
+            linked.add(links.group(1));
+        }
+        // Foto (zweimal verlinkt, einmal im Paket) und gezeichnetes draw.io-Diagramm.
+        assertThat(linked).hasSize(2);
+        assertThat(markdown.split("\\]\\(assets/", -1)).hasSize(4);
+        assertThat(files.keySet()).containsExactlyElementsOf(java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("pages.md"), linked.stream()).toList());
+        assertThat(setup.conversions.convert(setup.export.id(), "client-a", MarkdownPackageConverter.FORMAT,
                 data.resolve("out")).sha256()).isEqualTo(zip.sha256());
     }
 
@@ -261,6 +301,10 @@ class ExportMediaSignInTest {
     }
 
     private Setup setup(Source source, SignInRequests signIns) {
+        return setup(source, signIns, page("confluence", "DEV", "100", null));
+    }
+
+    private Setup setup(Source source, SignInRequests signIns, PageSnapshot page100) {
         FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(data.resolve("exports"));
         SourceCatalog catalog = new SourceCatalog() {
             @Override
@@ -280,7 +324,7 @@ class ExportMediaSignInTest {
         Exports exports = new Exports(jobs, cache, writer, converters, Clock.systemUTC());
         exports.onPublished(images::start);
         ExportConversions conversions = new ExportConversions(jobs, writer, converters, images);
-        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null)));
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page100));
         JobStatus export = exports.start("confluence", "DEV", "client-a", List.of("json"));
         return new Setup(writer, conversions, export);
     }
@@ -296,6 +340,18 @@ class ExportMediaSignInTest {
         synchronized (queued) {
             return queued.poll();
         }
+    }
+
+    private static byte[] png() {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(40, 20,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        try {
+            javax.imageio.ImageIO.write(image, "png", out);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+        return out.toByteArray();
     }
 
     /** Seite 100: draw.io mit Backup-PNG, ein Foto; mit {@code locked} verlangt jede Datei erst einen Einmalcode. */

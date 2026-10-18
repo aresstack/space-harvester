@@ -37,8 +37,21 @@ public final class MarkdownExportWriter {
     /** The deepest heading Markdown knows. */
     static final int MAX_LEVEL = 6;
 
+    /**
+     * Space Harvester: where a figure goes. The default embeds it as a PNG {@code data:} URI (upstream behaviour); a
+     * package export stores it next to the Markdown file and links it relatively.
+     */
+    public interface FigureLinks {
+
+        FigureLinks EMBEDDED = (graphic, caption) -> ExportGraphics.dataUri(graphic);
+
+        /** @return the link target of the drawn figure */
+        String link(ExportGraphics.Graphic graphic, String caption);
+    }
+
     private final Parser parser;
     private final ExportGraphics graphics;
+    private final FigureLinks links;
 
     public MarkdownExportWriter() {
         this(ExportGraphics.standard());
@@ -46,10 +59,19 @@ public final class MarkdownExportWriter {
 
     /** @param graphics the figures of this export; it also collects the ones that are missing */
     public MarkdownExportWriter(ExportGraphics graphics) {
+        this(graphics, FigureLinks.EMBEDDED);
+    }
+
+    /** @param links where the figures go, see {@link FigureLinks} */
+    public MarkdownExportWriter(ExportGraphics graphics, FigureLinks links) {
         if (graphics == null) {
             throw new IllegalArgumentException("graphics must not be null");
         }
+        if (links == null) {
+            throw new IllegalArgumentException("links must not be null");
+        }
         this.graphics = graphics;
+        this.links = links;
         MutableDataSet options = new MutableDataSet();
         options.set(Parser.EXTENSIONS, Collections.singletonList(TablesExtension.create()));
         this.parser = Parser.builder(options).build();
@@ -150,7 +172,7 @@ public final class MarkdownExportWriter {
                 if (diagram != null) {
                     int end = Math.min(out.length(), node.getEndOffset());
                     out.insert(end, (end > 0 && out.charAt(end - 1) == '\n' ? "" : "\n") + "\n![Mermaid-Diagramm]("
-                            + ExportGraphics.dataUri(diagram) + ")\n");
+                            + links.link(diagram, "Mermaid-Diagramm") + ")\n");
                 }
                 continue;
             }
@@ -163,7 +185,7 @@ public final class MarkdownExportWriter {
             ExportGraphics.Graphic graphic = graphics.image(src, caption);
             String replacement = graphic == null
                     ? "*[Abbildung nicht verfügbar" + (caption.isEmpty() ? "" : ": " + caption) + "]*"
-                    : "![" + caption + "](" + ExportGraphics.dataUri(graphic) + ")";
+                    : "![" + caption + "](" + links.link(graphic, caption) + ")";
             out.replace(image.getStartOffset(), image.getEndOffset(), replacement);
         }
         return out.toString();
