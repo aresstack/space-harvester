@@ -120,11 +120,10 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                 .append(",\"dimensions\":").append(provider.dimensions()).append(",\"chunks\":[");
         for (int i = 0; i < chunks.size(); i++) {
             Chunk chunk = chunks.get(i);
-            PageText.Section section = text.sectionAt(chunk.start);
             json.append(i == 0 ? "" : ",")
                     .append("{\"charStart\":").append(chunk.start)
                     .append(",\"charEnd\":").append(chunk.end)
-                    .append(",\"section\":").append(section == null ? "null" : JsonText.quote(section.heading()))
+                    .append(",\"section\":").append(chunk.section == null ? "null" : JsonText.quote(chunk.section))
                     .append(",\"vector\":");
             vector(json, vectors.get(i));
             json.append('}');
@@ -195,7 +194,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     }
 
     private void chunk(String text, Span span, List<Chunk> chunks) {
-        String heading = span.heading() == null || span.heading().isBlank() ? null : span.heading().strip();
+        String section = span.heading() == null || span.heading().isBlank() ? null : span.heading().strip();
+        String heading = section;
         if (heading != null && heading.length() > maxChunkChars / 4) {
             heading = heading.substring(heading.length() - maxChunkChars / 4);
         }
@@ -221,7 +221,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             int end = current.getLast()[1];
             // Beginnt das Stück mit der Überschrift selbst, braucht es sie nicht noch einmal davor.
             boolean headed = heading != null && start > span.start();
-            chunks.add(new Chunk(start, end, headed ? prefix : ""));
+            chunks.add(new Chunk(start, end, headed ? prefix : "", section));
             previous = current;
         }
     }
@@ -295,7 +295,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     /**
      * Ein Stück: Stelle in der Textprojektion und die Überschriftenkette, die beim Einbetten davor steht.
      */
-    record Chunk(int start, int end, String prefix) {
+    record Chunk(int start, int end, String prefix, String section) {
 
         String input(String text) {
             return prefix + text.substring(start, end);

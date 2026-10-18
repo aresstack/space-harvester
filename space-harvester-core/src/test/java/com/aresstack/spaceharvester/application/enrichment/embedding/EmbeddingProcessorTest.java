@@ -112,10 +112,13 @@ class EmbeddingProcessorTest {
                 new PageText.Section("Betrieb", 2, betrieb, text.length())));
         FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
 
-        new EmbeddingProcessor(provider, 600, SEGMENTS).process(page);
+        EnrichmentOutput output = new EmbeddingProcessor(provider, 600, SEGMENTS).process(page);
 
         assertThat(provider.calls.getFirst()).anySatisfy(input ->
                 assertThat(input).startsWith("Handbuch > Betrieb\n\nEin Satz"));
+        // Die Kette steht auch im Ergebnis, damit verwandte Abschnitte denselben Abschnitt erkennen.
+        assertThat(output.payloadJson()).contains("\"section\":\"Handbuch\"")
+                .contains("\"section\":\"Handbuch > Betrieb\"");
     }
 
     @Test

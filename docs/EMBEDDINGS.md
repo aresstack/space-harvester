@@ -47,7 +47,7 @@ Danach berechnet jeder bestätigte Abgleich die Anreicherung `embedding` für ne
 Hintergrund (ein Thread, höchstens 1000 wartende Seiten); Abgleich, Lesen und Export warten nicht darauf.
 `POST …/pages/{pageId}/enrichments` rechnet eine Seite sofort. Ergebnis je Seite:
 `{"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}` unter `enrichments` in
-`view=extended`.
+`view=extended`; `section` ist die Überschriftenkette des Abschnitts, z. B. `Handbuch > Betrieb`.
 
 Zerlegung (#181, wie `KnowledgeChunker` im Enterprise AI Client): Abschnitte der Textprojektion sind harte Grenzen.
 Innerhalb eines Abschnitts packt der Prozessor Sätze (`SentenceSplitter`) bis 350 Tokens (gezählt nach Wörtern und
