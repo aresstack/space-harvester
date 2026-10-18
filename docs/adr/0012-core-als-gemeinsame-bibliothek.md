@@ -122,12 +122,14 @@ Diese Festlegung ist die Empfehlung von Strang S und wartet auf Angelos Bestäti
 
 Angelos Festlegungen vom 18.10. (#181):
 
-1. **Synchronisierung über Ereignisse.** Confluence-Data-Center-Webhooks halten den Cache aktuell; Seiten aus
-   Ereignissen werden sofort mit Inhalt übernommen. CQL „geändert seit“ dient nur zum Nachholen (beim Start, manuell
-   mit Zeitangabe, optional per Zeitplan, optional vor jeder Suche, Standard aus). Alle übrigen Seiten beschafft
-   weiterhin die Suche (ADR 0013). Das ist eine Erweiterung gegenüber dem Client. Weil Confluence Webhook-Aufrufe bei
-   Ausfall oder Last auslassen darf und CQL `lastmodified` weder Löschungen noch Rechteänderungen sieht, bleibt die
-   Inventur nach ADR 0014 (Punkte 1 und 3) das Sicherheitsnetz für verpasste Löschungen.
+1. **Suche füllt den Index, Änderungsquellen sind optional** (präzisiert 18.10., 15:33). Wie im Client wird der
+   Lucene-Index vor der Antwort durch die Suche befüllt (ADR 0013), geantwortet wird aus dem Index. Änderungsquellen
+   sind optionale Erweiterungen, keine Voraussetzung und keine Erstbefüllung: Confluence-Data-Center-Webhooks, wo
+   jemand sie mit Administratorrechten einrichtet, sonst CQL „geändert seit“ (beim Start, manuell mit Zeitangabe,
+   optional per Zeitplan, optional vor jeder Suche, Standard aus). Die Aktualisierung einer Seite folgt einer
+   wählbaren Strategie, Standard ist die Versionsprüfung. Der Core behauptet keinen ständig aktuellen Gesamtbestand.
+   Weil Webhook-Aufrufe ausfallen dürfen und CQL `lastmodified` weder Löschungen noch Rechteänderungen sieht, bleibt
+   die Inventur nach ADR 0014 das Sicherheitsnetz für verpasste Löschungen.
 2. **Berechtigung nur am Ergebnis.** Geprüft wird die endgültige Trefferliste aus dem Cache, Seite für Seite gegen die
    Rechte des Benutzers, und nur bei delegierter Anmeldung, wenn der Dienst keine eigenen Zugangsdaten hat. Vor
    Reranker, Auszügen oder Embeddings wird nicht geprüft; frühere weitergehende Anforderungen gelten nicht. Damit ist
@@ -138,8 +140,8 @@ Angelos Festlegungen vom 18.10. (#181):
    wirken zur Laufzeit über eine Konfigurationsverwaltung im Core (geplant als ADR 0015 im Strang
    „Konfigurationsverwaltung zur Laufzeit“).
 4. **Suchgesteuerte Beschaffung.** Schlagworte aus der Frage (`ResearchQueries`, `LexicalDiscoveryStrategy`) und die
-   Ladereihenfolge nach Titel und Auszug (`ExcerptRanking`) werden gegen den Core geprüft; soweit sie die Beschaffung
-   steuern, gehören sie nach Punkt 4 in die Bibliothek, die Rechercheplanung des Agenten bleibt im Client.
+   Ladereihenfolge nach Titel und Auszug (`ExcerptRanking`) sind Pflichtparität: Sie steuern die Beschaffung und
+   gehören nach Punkt 4 in die Bibliothek; die Rechercheplanung des Agenten bleibt im Client.
 
 ## Alternativen
 
