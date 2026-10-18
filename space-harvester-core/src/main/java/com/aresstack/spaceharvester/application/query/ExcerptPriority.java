@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -156,6 +157,53 @@ public final class ExcerptPriority {
             order.set(slots.get(i), slots.get(ranking.get(i)));
         }
         return new Priority(order, true, null);
+    }
+
+    /**
+     * Bewertung jedes Treffers gegen die Anfrage, höher ist besser (ADR 0017: immer gegen die ursprüngliche Frage).
+     * {@link Double#NaN} für Treffer ohne Bewertung: ohne Bewerter, aus Quellen ohne Freigabe für externe
+     * Verarbeitung, ohne Titel und Auszug, oder wenn der Dienst scheitert oder Unbrauchbares liefert. Scheitert nie.
+     */
+    public double[] scores(String query, List<KeywordSearch.Hit> hits) {
+        int size = hits == null ? 0 : hits.size();
+        double[] result = new double[size];
+        Arrays.fill(result, Double.NaN);
+        if (scorer == null || size == 0 || query == null || query.isBlank()) {
+            return result;
+        }
+        List<Integer> slots = new ArrayList<>();
+        List<String> documents = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            KeywordSearch.Hit hit = hits.get(i);
+            if (mayProcessExternally.test(hit.sourceId())) {
+                String title = hit.title() == null ? "" : hit.title();
+                String snippet = hit.snippet() == null ? "" : hit.snippet();
+                String document = snippet.isBlank() ? title : title + "\n" + snippet;
+                if (!document.isBlank()) {
+                    slots.add(i);
+                    documents.add(document);
+                }
+            }
+        }
+        if (slots.isEmpty()) {
+            return result;
+        }
+        double[] scores;
+        try {
+            scores = scorer.score(query, List.copyOf(documents));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Bewertung der Auszüge nicht möglich ({0})", e.getClass().getName());
+            return result;
+        }
+        if (scores == null || scores.length != documents.size()) {
+            return result;
+        }
+        for (int i = 0; i < slots.size(); i++) {
+            if (!Double.isNaN(scores[i]) && !Double.isInfinite(scores[i])) {
+                result[slots.get(i)] = scores[i];
+            }
+        }
+        return result;
     }
 
     private static Priority fallback(List<Integer> sourceOrder, String reason) {

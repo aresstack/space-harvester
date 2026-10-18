@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -21,6 +23,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -59,6 +62,19 @@ class HarvesterSearchTest {
     @AfterAll
     static void stopServer() {
         SERVER.close();
+    }
+
+    @Test
+    void theProgressiveSearchStartsWithTheOriginalQueryAndEndsWithAReason() throws Exception {
+        try (Harvester harvester = harvester(Harvester.builder())) {
+            ProgressiveResult result = harvester.progressiveSearch().searchAsync(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), SearchProfile.defaults()).result().get(30, TimeUnit.SECONDS);
+
+            // ADR 0017: ohne Reranker keine Bewertung, also kein Qualitätsziel; eine Variante gibt es zu einem Wort nicht.
+            assertThat(result.variants()).extracting(variant -> variant.query().text()).containsExactly("Nachtlauf");
+            assertThat(result.hits()).extracting(hit -> hit.hit().pageId()).contains("102", "200");
+            assertThat(result.reason()).isEqualTo(ProgressiveResult.Completion.ALL_VARIANTS_DONE);
+        }
     }
 
     @Test
