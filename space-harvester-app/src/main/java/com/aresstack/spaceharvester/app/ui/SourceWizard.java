@@ -484,11 +484,14 @@ final class SourceWizard {
         boolean aiVault = context.aiVault().available();
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
+        com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
         Background.run(() -> {
             if (aiDraft != null) {
+                // Ohne gemessene Dimension bleibt die semantische Suche aus; die Quelle wird trotzdem gespeichert.
+                AiDraft measured = AiSettingsPanel.measure(context, runtime, aiDraft, aiKey).draft();
                 // Vor der Quelle: Scheitert die Quelle danach, schreibt ein zweiter Versuch denselben Block erneut,
                 // statt die Quelle doppelt anzuhängen.
-                AiSettingsPanel.store(context, aiDraft, aiVault ? aiKey.clone() : new char[0]);
+                AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
             }
             SourceSaving.store(context, editor, editing, source, write(source), value);
             return source.id();

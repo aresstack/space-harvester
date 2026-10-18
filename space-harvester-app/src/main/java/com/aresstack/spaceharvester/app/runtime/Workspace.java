@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.runtime;
 
+import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
@@ -164,6 +166,19 @@ public final class Workspace {
     /** Suche nach Relevanz ({@code sort=relevance}). */
     public RelevanceSearch.RelevanceResults relevance(PageSearchQuery query, String text, int limit) {
         return harvester.relevance().search(caller, query, text, limit);
+    }
+
+    /**
+     * Die Modelle des KI-Dienstes für „Modelle laden“, auch mit noch nicht gespeicherten Eingaben; über dieselbe
+     * Proxy-Route wie die Quellen.
+     */
+    public List<AiModel> aiModels(AiServiceSettings settings) {
+        return harvester.aiModels(settings);
+    }
+
+    /** Misst die Vektordimension eines Embedding-Modells für {@code embedding-dimensions}. */
+    public int aiEmbeddingDimension(AiServiceSettings settings, String embeddingModel) {
+        return harvester.aiEmbeddingDimension(settings, embeddingModel);
     }
 
     // ------------------------------------------------------------------ Abgleich

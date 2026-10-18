@@ -1,6 +1,10 @@
 package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
+import com.aresstack.spaceharvester.ai.AiModel;
+import com.aresstack.spaceharvester.ai.AiServiceException;
+import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AiDraft;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
@@ -8,12 +12,15 @@ import com.aresstack.spaceharvester.app.settings.SecretVault;
 
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
+import javax.swing.JPopupMenu;
 import javax.swing.JTextField;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
@@ -22,6 +29,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Einstellungen des KI-Dienstes (Reiter „KI“ unter Einstellungen, ADR 0011): Basisadresse eines OpenAI-kompatiblen
@@ -29,6 +37,11 @@ import java.util.Map;
  * an den Dienst gehen dürfen (Vorgabe keine). Adresse und Modelle stehen unter
  * {@code space-harvester.ai} in der Datei; der API-Key nur im Tresor der App (unter Windows DPAPI, sonst für die
  * Sitzung), nie in der Datei, im Protokoll oder in der Oberfläche. Die semantische Suche wird erst damit möglich.
+ *
+ * <p>„Modelle laden“ fragt die Modelle des Dienstes über die laufende Laufzeit ab (dieselbe Proxy-Route wie die
+ * Quellen), auch mit noch nicht gespeicherten Eingaben; „▾“ neben den Modellfeldern bietet sie zur Auswahl an. Ohne
+ * Dimension bleibt die semantische Suche aus, deshalb misst Speichern sie beim Dienst
+ * ({@code Harvester#aiEmbeddingDimension}), wenn das Feld leer ist oder das Embedding-Modell wechselt.
  */
 final class AiSettingsPanel {
 
@@ -55,6 +68,11 @@ final class AiSettingsPanel {
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen und neu starten");
     final ComposerButton removeKey = Comic.button("API-Key entfernen", "Gespeicherten API-Key löschen");
     final Feedback feedback = new Feedback();
+    final ComposerButton loadModels = Comic.button("Modelle laden", "Die Modelle des KI-Dienstes abfragen");
+    final ComposerButton pickChat = Comic.button("▾", "Text-Modell aus der Liste des Dienstes wählen");
+    final ComposerButton pickEmbedding = Comic.button("▾", "Embedding-Modell aus der Liste des Dienstes wählen");
+    /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
+    List<AiModel> models = List.of();
 
     AiSettingsPanel(AppContext context) {
         this(context, false);
@@ -71,9 +89,16 @@ final class AiSettingsPanel {
         Comic.style(apiKey);
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        rows.add("Text-Modell", chatModel, "Für spätere Suchbegriffe aus einer Frage; optional");
-        rows.add("Embedding-Modell", embeddingModel, "Für die semantische Suche, z. B. text-embedding-3-small");
-        rows.add("Dimension", dimensions, "Optional; leer übernimmt die Dimension aus der ersten Antwort");
+        rows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab; danach Auswahl über ▾");
+        rows.add("Text-Modell", Comic.row(chatModel, pickChat), "Für spätere Suchbegriffe aus einer Frage; optional");
+        rows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
+                "Für die semantische Suche, z. B. text-embedding-3-small");
+        rows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
+        pickChat.setEnabled(false);
+        pickEmbedding.setEnabled(false);
+        loadModels.addActionListener(e -> loadModels());
+        pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
+        pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         releasedPanel.setOpaque(false);
         if (wizard) {
             releaseThis.setOpaque(false);
@@ -199,10 +224,12 @@ final class AiSettingsPanel {
         save.setEnabled(false);
         feedback.working("Wird gespeichert …");
         boolean vault = context.aiVault().available();
+        AppRuntime runtime = context.runtime();
         Background.run(() -> {
-            store(context, draft, vault ? key : new char[0]);
-            return Boolean.TRUE;
-        }, ignored -> {
+            Measured measured = measure(context, runtime, draft, key);
+            store(context, measured.draft(), vault ? key.clone() : new char[0]);
+            return measured;
+        }, measured -> {
             if (!vault && key.length > 0) {
                 context.sessionAiKey(key);
             }
@@ -210,7 +237,11 @@ final class AiSettingsPanel {
             save.setEnabled(true);
             context.reload(() -> {
                 render();
-                feedback.success("KI-Einstellungen übernommen");
+                if (measured.problem() == null) {
+                    feedback.success("KI-Einstellungen übernommen");
+                } else {
+                    feedback.warning("Gespeichert, semantische Suche bleibt aus", measured.problem());
+                }
             });
         }, error -> {
             Arrays.fill(key, '\0');
@@ -253,6 +284,170 @@ final class AiSettingsPanel {
             }
             throw e;
         }
+    }
+
+    /** Die Eingaben mit Dimension, falls gemessen; {@code problem} sagt, warum nicht. */
+    record Measured(AiDraft draft, String problem) {
+    }
+
+    /**
+     * Misst die Dimension des Embedding-Modells, wenn sie fehlt oder das Modell gegenüber der Datei wechselt und die
+     * Dimension noch die alte ist. Läuft im Hintergrund (Tresor, Netz); scheitert die Messung, bleibt das Feld leer
+     * und die semantische Suche aus.
+     *
+     * @param key eingegebener API-Key oder leer für den gespeicherten; bleibt unverändert
+     */
+    static Measured measure(AppContext context, AppRuntime runtime, AiDraft draft, char[] key) {
+        String model = blankToNull(draft.embeddingModel());
+        if (model == null || blankToNull(draft.baseUrl()) == null) {
+            return new Measured(draft, null);
+        }
+        AppSettings settings = context.settings();
+        AppSettings.AiSettings saved = settings == null ? AppSettings.AiSettings.NONE : settings.ai();
+        String savedDimensions = saved.embeddingDimensions() == null ? null
+                : String.valueOf(saved.embeddingDimensions());
+        boolean stale = !model.equals(saved.embeddingModel())
+                && java.util.Objects.equals(blankToNull(draft.embeddingDimensions()), savedDimensions);
+        if (blankToNull(draft.embeddingDimensions()) != null && !stale) {
+            return new Measured(draft, null);
+        }
+        AiDraft without = withDimensions(draft, null);
+        if (runtime == null) {
+            return new Measured(without, "Die Dimension ließ sich nicht messen, weil die App nicht gestartet ist.");
+        }
+        char[] stored = key.length > 0 ? null : context.storedAiKey();
+        try {
+            int measured = runtime.workspace().aiEmbeddingDimension(service(without, key.length > 0 ? key : stored),
+                    model);
+            return new Measured(withDimensions(draft, String.valueOf(measured)), null);
+        } catch (AiServiceException e) {
+            return new Measured(without, "Die Dimension ließ sich nicht messen: " + reason(e) + ".");
+        } catch (RuntimeException e) {
+            return new Measured(without, "Die Dimension ließ sich nicht messen: " + Problems.describe(e).title()
+                    + ".");
+        } finally {
+            if (stored != null) {
+                Arrays.fill(stored, '\0');
+            }
+        }
+    }
+
+    private static AiDraft withDimensions(AiDraft draft, String dimensions) {
+        return new AiDraft(draft.baseUrl(), draft.chatModel(), draft.embeddingModel(), dimensions, draft.timeout(),
+                draft.externalProcessingSources());
+    }
+
+    /** Die Eingaben als Einstellungen des Core, mit dem API-Key nur im Speicher. */
+    static AiServiceSettings service(AiDraft draft, char[] key) {
+        return new AiServiceSettings(URI.create(draft.baseUrl().strip()), key == null || key.length == 0 ? null
+                : new String(key), blankToNull(draft.chatModel()), blankToNull(draft.embeddingModel()),
+                draft.dimensions(), draft.timeout(), null, Set.of());
+    }
+
+    /** {@code AiServiceException.Reason} verständlich, ohne Adresse oder Schlüssel. */
+    static String reason(AiServiceException e) {
+        return switch (e.reason()) {
+            case NOT_CONFIGURED -> "kein Dienst eingetragen";
+            case UNAUTHORIZED -> "API-Key abgelehnt";
+            case UNREACHABLE -> "Dienst nicht erreichbar";
+            case TIMEOUT -> "keine Antwort in der Frist";
+            case INVALID_RESPONSE -> "unerwartete Antwort des Dienstes";
+        };
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    /** Fragt die Modelle mit den aktuellen Eingaben ab; der API-Key bleibt im Speicher. */
+    private void loadModels() {
+        AiDraft draft = draft();
+        if (blankToNull(draft.baseUrl()) == null) {
+            feedback.warning("Basisadresse fehlt", "Erst die Adresse des KI-Dienstes eintragen.");
+            return;
+        }
+        if (!draft.problems().isEmpty()) {
+            feedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            return;
+        }
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            feedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Allgemein.");
+            return;
+        }
+        char[] typed = apiKey.getPassword();
+        loadModels.setEnabled(false);
+        feedback.working("Modelle werden geladen …");
+        Background.run(() -> {
+            char[] key = typed.length > 0 ? typed : context.storedAiKey();
+            try {
+                return runtime.workspace().aiModels(service(draft, key));
+            } finally {
+                if (key != null) {
+                    Arrays.fill(key, '\0');
+                }
+            }
+        }, loaded -> {
+            Arrays.fill(typed, '\0');
+            loadModels.setEnabled(true);
+            showModels(loaded);
+        }, error -> {
+            Arrays.fill(typed, '\0');
+            loadModels.setEnabled(true);
+            if (error instanceof AiServiceException ai) {
+                feedback.warning("Modelle nicht geladen", reason(ai) + ".");
+            } else {
+                feedback.problem(error);
+            }
+        });
+    }
+
+    /** Übernimmt eine geladene Liste; für Tests auch direkt. */
+    void showModels(List<AiModel> loaded) {
+        models = List.copyOf(loaded);
+        pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
+        pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
+        long embeddings = models.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
+        if (models.isEmpty()) {
+            feedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
+        } else {
+            feedback.success(Texts.count(models.size(), "Modell", "Modelle") + " geladen"
+                    + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über ▾");
+        }
+    }
+
+    /** Modelle für ein Feld: die passende Kategorie zuerst, Modelle ohne Kategorie danach. */
+    List<AiModel> choices(String category) {
+        List<AiModel> fitting = new ArrayList<>();
+        List<AiModel> unknown = new ArrayList<>();
+        for (AiModel model : models) {
+            if (model.categories().contains(category)) {
+                fitting.add(model);
+            } else if (model.categories().isEmpty()) {
+                unknown.add(model);
+            }
+        }
+        fitting.addAll(unknown);
+        return fitting;
+    }
+
+    private void pick(JComponent anchor, JTextField field, String category) {
+        JPopupMenu menu = new JPopupMenu();
+        for (AiModel model : choices(category)) {
+            JMenuItem item = new JMenuItem(model.displayName().equals(model.id()) ? model.id()
+                    : model.displayName() + " (" + model.id() + ")");
+            item.addActionListener(e -> choose(field, model.id()));
+            menu.add(item);
+        }
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    /** Setzt ein Modell; ein anderes Embedding-Modell leert die Dimension, damit Speichern sie neu misst. */
+    void choose(JTextField field, String id) {
+        if (field == embeddingModel && !id.equals(embeddingModel.getText().strip())) {
+            dimensions.setText("");
+        }
+        field.setText(id);
     }
 
     private void removeKey() {

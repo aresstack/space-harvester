@@ -3,6 +3,10 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.ranking.Reranking;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 
@@ -35,20 +39,25 @@ import java.util.TreeSet;
  * still „keine Treffer“ zu melden; ein unvollständiges Ergebnis ist so gekennzeichnet.
  * Unter der Suchzeile steht je Quelle ein Häkchen: „Alle“ (Vorgabe) sucht ohne {@code sourceIds}, eine einzelne Quelle
  * mit {@code sourceId}, mehrere mit {@code sourceIds} (ADR 0009). Die Space-Auswahl bietet die Spaces der angehakten
- * Quellen an. Die semantische Suche ist nur als deaktiviertes Häkchen vorgesehen.
+ * Quellen an. Das Häkchen „Semantische Suche (experimentell)“ ist die Relevanzsuche des Core ({@code sort=relevance},
+ * ADR 0011) über die bereits eingebetteten Seiten im Cache; es lässt sich erst setzen, wenn ein KI-Dienst mit
+ * Embedding-Modell und Dimension eingerichtet ist, und liefert einen Block ohne „Weitere laden“.
  * „Weitere laden“ folgt dem Cursor des Core, der nur für dieselbe Anfrage gilt. Nur die jeweils letzte Anfrage darf die
  * Liste ändern.
  */
 public final class SearchView implements View {
 
     private static final int LIMIT = KeywordSearch.MAX_LIMIT;
+    static final String UNAVAILABLE = "noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten";
 
     private final AppContext context;
     private final JPanel root = new JPanel(new BorderLayout(0, 12));
     private final JTextField query = Comic.field(30);
     private final SourcePicker picker;
-    /** Platzhalter für die spätere semantische Suche: sichtbar, aber deaktiviert und nie gesetzt. */
-    private final JCheckBox semantic = checkBox("Semantische Suche (experimentell)", "Noch nicht verfügbar");
+    /** Relevanzsuche ({@code sort=relevance}); nur mit eingerichtetem Embedding-Dienst aktivierbar. */
+    final JCheckBox semantic = checkBox("Semantische Suche (experimentell)",
+            "Sucht nach Bedeutung in den bereits eingebetteten Seiten freigegebener Quellen");
+    private final JLabel semanticHint = Comic.muted(UNAVAILABLE);
     private final JPanel sourcesRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
     private final JCheckBox all = checkBox("Alle", "Alle freigegebenen Quellen durchsuchen (ohne sourceIds)");
     private final Map<String, JCheckBox> boxes = new LinkedHashMap<>();
@@ -109,7 +118,7 @@ public final class SearchView implements View {
         JPanel experimental = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         experimental.setOpaque(false);
         experimental.add(semantic);
-        experimental.add(Comic.muted("noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten"));
+        experimental.add(semanticHint);
         lines.add(experimental, BorderLayout.SOUTH);
         JPanel head = new JPanel(new BorderLayout(0, 6));
         head.setOpaque(false);
@@ -166,6 +175,13 @@ public final class SearchView implements View {
     /** Ein Häkchen je laufender Quelle; entfernte Quellen fallen aus der Auswahl. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
+        boolean available = runtime != null && runtime.workspace().semanticSearch();
+        semantic.setEnabled(available);
+        if (!available) {
+            semantic.setSelected(false);
+        }
+        semanticHint.setText(available ? "Embeddings über den KI-Dienst; nur Seiten freigegebener Quellen, die "
+                + "schon im Cache liegen" : UNAVAILABLE);
         List<HarvestSource> sources = runtime == null ? List.of() : runtime.workspace().sources();
         boxes.clear();
         sourcesRow.removeAll();
@@ -217,6 +233,10 @@ public final class SearchView implements View {
             feedback.warning("Suchtext fehlt", "Ein oder mehrere Schlagwörter eingeben.");
             return;
         }
+        if (semantic.isSelected()) {
+            relevance(runtime, text);
+            return;
+        }
         KeywordSearch.Query q;
         try {
             // Eine angehakte Quelle sucht wie die Suche unter der Quelle (sourceId), mehrere mit sourceIds.
@@ -251,6 +271,58 @@ public final class SearchView implements View {
                 feedback.info("Keine Treffer", searched()
                         ? "Keine Quelle kennt eine passende Seite, die du lesen darfst."
                         : "Keine der gewählten Quellen konnte suchen; siehe Zeile unter der Liste.");
+            } else {
+                feedback.clear();
+            }
+        }, error -> {
+            if (id != request) {
+                return;
+            }
+            run.setEnabled(true);
+            model.set(List.of());
+            states.clear();
+            reset();
+            feedback.problem(error);
+        });
+    }
+
+    /**
+     * Semantische Suche: ein nach Ähnlichkeit geordneter Block aus dem Cache, ohne Cursor. Ohne Dienst meldet der Core
+     * {@code SemanticSearchUnavailableException}, nie still Titeltreffer.
+     */
+    private void relevance(AppRuntime runtime, String text) {
+        PageSearchQuery q;
+        try {
+            if (text.length() > RelevanceSearch.MAX_TEXT_LENGTH) {
+                throw new InvalidQueryException("höchstens " + RelevanceSearch.MAX_TEXT_LENGTH + " Zeichen");
+            }
+            String sourceId = chosen.size() == 1 ? chosen.iterator().next() : null;
+            String spaceKey = picker.spaceKey();
+            q = PageSearchQuery.of(sourceId, chosen.size() > 1 ? List.copyOf(chosen) : List.of(),
+                    spaceKey.isEmpty() ? List.of() : List.of(spaceKey), null, null, null, null, null, null,
+                    SearchSort.TITLE);
+        } catch (InvalidQueryException invalid) {
+            feedback.warning("Suche so nicht möglich", invalid.getMessage());
+            return;
+        }
+        int id = ++request;
+        run.setEnabled(false);
+        more.setEnabled(false);
+        feedback.working("Semantische Suche läuft …");
+        Background.run(() -> runtime.workspace().relevance(q, text, Reranking.MAX_WINDOW), results -> {
+            if (id != request) {
+                return;
+            }
+            run.setEnabled(true);
+            states.clear();
+            incomplete = false;
+            model.set(results.hits().stream().map(Hit::of).toList());
+            reset();
+            status.setText(Texts.count(model.rows.size(), "Treffer", "Treffer")
+                    + " · semantisch, nach Ähnlichkeit geordnet");
+            if (results.hits().isEmpty()) {
+                feedback.info("Keine Treffer", "Keine eingebettete Seite im Cache passt; die Schlagwortsuche ohne "
+                        + "Häkchen sucht direkt in den Quellen.");
             } else {
                 feedback.clear();
             }
@@ -385,6 +457,18 @@ public final class SearchView implements View {
 
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt());
+        }
+
+        /** Ein Treffer der semantischen Suche; statt eines Auszugs die Ähnlichkeit. */
+        static Hit of(RelevanceSearch.RankedHit ranked) {
+            var header = ranked.hit().page().header();
+            var metadata = header.metadata();
+            RelevanceSearch.Relevance relevance = ranked.relevance();
+            String snippet = relevance == null ? "Titeltreffer"
+                    : String.format(java.util.Locale.GERMANY, "Ähnlichkeit %.2f%s", relevance.similarity(),
+                    relevance.freshness() == RelevanceSearch.Freshness.STALE ? " (ältere Fassung)" : "");
+            return new Hit(header.key().sourceId(), header.key().pageId(), metadata.title(), metadata.partitionKey(),
+                    snippet, metadata.modifiedAt());
         }
     }
 

@@ -153,6 +153,22 @@ public final class AppContext {
         sessionAiKey = key == null || key.length == 0 ? null : key.clone();
     }
 
+    /**
+     * Der gespeicherte API-Key des KI-Dienstes aus Sitzung oder Tresor oder {@code null}; liest den Tresor, also nur im
+     * Hintergrund. Der Aufrufer leert das Feld nach Gebrauch.
+     */
+    char[] storedAiKey() {
+        char[] aiKey = sessionAiKey();
+        try {
+            if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
+                aiKey = aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
+            }
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
+        }
+        return aiKey;
+    }
+
     /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */
     public boolean aiKeyAvailable() {
         return sessionAiKey != null || aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
@@ -262,16 +278,8 @@ public final class AppContext {
 
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
-        char[] aiKey = sessionAiKey();
-        try {
-            if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
-                aiKey = aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
-            }
-        } catch (IOException | RuntimeException e) {
-            LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
-        }
         // Der Core bekommt den Key nur zur Laufzeit (ADR 0011).
-        secrets.aiKey(aiKey);
+        secrets.aiKey(storedAiKey());
         for (AppSettings.SourceEntry entry : loaded.sources()) {
             if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
                     || !vault.has(entry.id())) {
