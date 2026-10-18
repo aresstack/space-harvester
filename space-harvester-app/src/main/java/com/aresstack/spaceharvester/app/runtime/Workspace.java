@@ -146,6 +146,27 @@ public final class Workspace {
         return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
+    /**
+     * Das gezeichnete Mermaid-Diagramm einer Lese-Ansicht ({@link Assets#rendition}): einmal gezeichnet und abgelegt,
+     * dieselben Quelldaten werden nie erneut gezeichnet (#190). Leer, wenn es sich nicht zeichnen lässt.
+     */
+    public java.util.Optional<byte[]> mermaid(ReadingView view, String source) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE) {
+            throw new IllegalArgumentException("Ohne Lese-Ansicht keine Diagramme");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        Assets assets = harvester.assets();
+        Assets.Rendered rendered = assets.rendition(header.key().sourceId(), header.key().pageId(),
+                Assets.MERMAID_RENDITION, source.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (rendered.asset() == null) {
+            return java.util.Optional.empty();
+        }
+        return assets.stored(header.key().sourceId(), rendered.asset().attachmentId(), rendered.asset().version(),
+                rendered.asset().sha256());
+    }
+
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
     public DeliveredPage pageByUrl(String sourceId, String url, boolean refresh) {
         return harvester.pages().pageByUrl(caller, sourceId, url, refresh);
