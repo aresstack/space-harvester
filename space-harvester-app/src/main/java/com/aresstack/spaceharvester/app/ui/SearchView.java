@@ -220,9 +220,12 @@ public final class SearchView implements View {
         return box;
     }
 
-    /** Adressen, die das Suchfeld direkt öffnet statt zu suchen: Seiten-URL, Lesezeichen, Confluence-Bookmark. */
+    /**
+     * Adressen, die das Suchfeld direkt öffnet statt zu suchen: Seiten-URL, Lesezeichen, Confluence-Bookmark und die
+     * Ressourcen-ID aus den technischen Angaben einer Seite ({@code confluence:<host>/page/<ID>}, {@code files:…}).
+     */
     static final java.util.regex.Pattern ADDRESS = java.util.regex.Pattern.compile(
-            "(?i)(https?|space-harvester|confluence)://\\S+");
+            "(?i)(https?|space-harvester|confluence)://\\S+|(confluence|files):[^\\s:/][^\\s]*/\\S+");
 
     /**
      * Öffnet eine Adresse über die Adressauflösung des Core ({@code Harvester.addresses().resolve}, #178): eine Seite

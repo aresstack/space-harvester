@@ -225,6 +225,27 @@ public final class AppContext {
     }
 
     /**
+     * Merkt in der Datei, dass der Einrichtungsassistent lief ({@code space-harvester-app.setup-completed}); ohne
+     * Neustart der Laufzeit, denn nur die Oberfläche liest den Merker.
+     */
+    public void setupCompleted(Runnable done, Consumer<Throwable> failed) {
+        Background.run(() -> {
+            ConfigFileEditor editor = new ConfigFileEditor(loader);
+            String text = Files.isRegularFile(configFile)
+                    ? Files.readString(configFile, StandardCharsets.UTF_8) : "";
+            editor.save(configFile, editor.withSetupCompleted(configFile, new ConfigFileEditor.Draft(text, null)),
+                    !editor.fileHasPlaintextSecret(configFile));
+            return Boolean.TRUE;
+        }, ignored -> {
+            if (settings != null) {
+                settings = settings.withSetupCompleted();
+            }
+            fire();
+            done.run();
+        }, failed);
+    }
+
+    /**
      * Schaltet eine Quelle ab oder wieder ein: legt den Schalter in der Datei ab
      * ({@code space-harvester-app.disabled-sources}) und startet die Quellen neu; beim Start setzt die Laufzeit ihn im
      * Core ({@code SourceManagement.setEnabled}). Der Bestand der Quelle bleibt.

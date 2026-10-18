@@ -32,9 +32,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Einstellungen des KI-Dienstes (Reiter „KI“ unter Einstellungen, ADR 0011): Basisadresse eines OpenAI-kompatiblen
- * Dienstes, API-Key, Modelle für Text und Embeddings wie im Enterprise AI Client und die Wissensquellen, deren Inhalte
- * an den Dienst gehen dürfen (Vorgabe keine). Adresse und Modelle stehen unter
+ * Einstellungen des KI-Dienstes in zwei Reitern wie im Enterprise AI Client (ADR 0011): „KI-Dienst“
+ * ({@link #serviceComponent()}: Basisadresse eines OpenAI-kompatiblen Dienstes, API-Key und die Wissensquellen, deren
+ * Inhalte an den Dienst gehen dürfen, Vorgabe keine) und „Modelle“ ({@link #modelsComponent()}: zentral für alle
+ * Quellen Text-, Embedding- und Rerank-Modell, Dimension und die Zerlegung in Abschnitte für Embeddings). Beide
+ * speichern denselben Block. Adresse und Modelle stehen unter
  * {@code space-harvester.ai} in der Datei; der API-Key nur im Tresor der App (unter Windows DPAPI, sonst für die
  * Sitzung), nie in der Datei, im Protokoll oder in der Oberfläche. Die semantische Suche wird erst damit möglich.
  *
@@ -64,15 +66,25 @@ final class AiSettingsPanel {
     private final boolean wizard;
     /** Nur im Assistenten: Inhalte der neuen Quelle dürfen an den KI-Dienst gehen. */
     final JCheckBox releaseThis = new JCheckBox("Inhalte dieser Quelle an den KI-Dienst geben");
+    final JTextField rerankModel = Comic.field(24);
+    final JTextField chunkTokens = Comic.field(6);
+    final JTextField chunkOverlap = Comic.field(6);
     private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
+    private final SettingDialogs.Rows modelRows;
+    private final JPanel models = new JPanel(new BorderLayout(0, 10));
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen und neu starten");
+    final ComposerButton saveModels = Comic.primary("Speichern", "Modelle übernehmen und neu starten");
     final ComposerButton removeKey = Comic.button("API-Key entfernen", "Gespeicherten API-Key löschen");
+    /** Meldungen im Reiter „KI-Dienst“ (im Assistenten die einzige). */
     final Feedback feedback = new Feedback();
+    /** Meldungen im Reiter „Modelle“; im Assistenten dieselbe wie {@link #feedback}. */
+    final Feedback modelsFeedback;
     final ComposerButton loadModels = Comic.button("Modelle laden", "Die Modelle des KI-Dienstes abfragen");
     final ComposerButton pickChat = Comic.button("▾", "Text-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickEmbedding = Comic.button("▾", "Embedding-Modell aus der Liste des Dienstes wählen");
+    final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
     /** Die zuletzt geladenen Modelle; leer bis „Modelle laden“. */
-    List<AiModel> models = List.of();
+    List<AiModel> loaded = List.of();
 
     AiSettingsPanel(AppContext context) {
         this(context, false);
@@ -85,35 +97,52 @@ final class AiSettingsPanel {
     AiSettingsPanel(AppContext context, boolean wizard) {
         this.context = context;
         this.wizard = wizard;
+        this.modelsFeedback = wizard ? feedback : new Feedback();
+        // Im Assistenten stehen Dienst und Modelle auf einer Seite.
+        this.modelRows = wizard ? rows : new SettingDialogs.Rows();
         root.setOpaque(false);
         Comic.style(apiKey);
         rows.add("Basisadresse", baseUrl, "OpenAI-kompatibel, z. B. https://api.openai.com/v1");
         rows.add("API-Key", apiKey, " ");
-        rows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab; danach Auswahl über ▾");
-        rows.add("Text-Modell", Comic.row(chatModel, pickChat), "Für spätere Suchbegriffe aus einer Frage; optional");
-        rows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
+        modelRows.add("Modelle", loadModels, "Fragt die Modelle beim Dienst ab; danach Auswahl über ▾");
+        modelRows.add("Text-Modell", Comic.row(chatModel, pickChat),
+                "Für spätere Suchbegriffe aus einer Frage; optional");
+        modelRows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
-        rows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
+        modelRows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
+        if (!wizard) {
+            modelRows.add("Rerank-Modell", Comic.row(rerankModel, pickRerank),
+                    "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
+                            + "bleibt");
+            modelRows.add("Abschnittsgröße", chunkTokens, "Höchstens so viele Tokens je Abschnitt für Embeddings; "
+                    + "leer: 350");
+            modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1");
+        }
         pickChat.setEnabled(false);
         pickEmbedding.setEnabled(false);
+        pickRerank.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
+        pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
         releasedPanel.setOpaque(false);
         if (wizard) {
             releaseThis.setOpaque(false);
             releaseThis.setFont(Comic.regular(13f));
             releaseThis.setForeground(Comic.INK);
-            rows.add("Freigabe", releaseThis, "Weitere Quellen gibst du unter Einstellungen → KI frei; Vorgabe keine");
+            rows.add("Freigabe", releaseThis, "Weitere Quellen gibst du unter Einstellungen → KI-Dienst frei; "
+                    + "Vorgabe keine");
         } else {
             rows.add("Freigegebene Quellen", releasedPanel, "Nur Inhalte angehakter Wissensquellen gehen an den "
                     + "KI-Dienst; Vorgabe keine");
         }
         root.add(Comic.note(wizard
                 ? "Optional: Für die spätere semantische Suche (experimentell) einen KI-Dienst mit Embedding-Modell "
-                + "eintragen. Leer lassen und „Weiter“ überspringt diesen Schritt; nachholen unter Einstellungen → KI."
-                : "Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell. Der API-Key "
-                + "liegt nur im Tresor dieses Windows-Kontos, nie in der Konfigurationsdatei."),
+                + "eintragen. Leer lassen und „Weiter“ überspringt diesen Schritt; nachholen unter Einstellungen → "
+                + "KI-Dienst."
+                : "Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die Modelle "
+                + "wählst du unter „Modelle“. Der API-Key liegt nur im Tresor dieses Windows-Kontos, nie in der "
+                + "Konfigurationsdatei."),
                 BorderLayout.NORTH);
         rows.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
         root.add(rows, BorderLayout.CENTER);
@@ -124,13 +153,37 @@ final class AiSettingsPanel {
         }
         south.add(feedback, BorderLayout.SOUTH);
         root.add(south, BorderLayout.SOUTH);
-        save.addActionListener(e -> save());
+        save.addActionListener(e -> save(save, feedback));
         removeKey.addActionListener(e -> removeKey());
+        if (!wizard) {
+            models.setOpaque(false);
+            models.add(Comic.note("Modelle gelten zentral für alle Wissensquellen. „Modelle laden“ fragt den unter "
+                    + "„KI-Dienst“ eingetragenen Dienst ab."), BorderLayout.NORTH);
+            modelRows.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 8, 0));
+            models.add(modelRows, BorderLayout.CENTER);
+            JPanel modelsSouth = new JPanel(new BorderLayout(0, 6));
+            modelsSouth.setOpaque(false);
+            modelsSouth.add(Comic.row(saveModels), BorderLayout.NORTH);
+            modelsSouth.add(modelsFeedback, BorderLayout.SOUTH);
+            models.add(modelsSouth, BorderLayout.SOUTH);
+            saveModels.addActionListener(e -> save(saveModels, modelsFeedback));
+        }
         render();
     }
 
+    /** Im Assistenten: Dienst und Modelle auf einer Seite. */
     JComponent component() {
         return root;
+    }
+
+    /** Reiter „KI-Dienst“: Adresse, API-Key, freigegebene Quellen. */
+    JComponent serviceComponent() {
+        return root;
+    }
+
+    /** Reiter „Modelle“: zentrale Modellwahl nach Funktion und Zerlegung. */
+    JComponent modelsComponent() {
+        return models;
     }
 
     /** Übernimmt die Werte der Datei in die Felder; der API-Key erscheint nur als „gespeichert“ oder „fehlt“. */
@@ -141,6 +194,9 @@ final class AiSettingsPanel {
         chatModel.setText(current.chatModel() == null ? "" : current.chatModel());
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
+        rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
+        chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
+        chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         timeout = current.timeout();
         released.clear();
         releasedPanel.removeAll();
@@ -182,7 +238,7 @@ final class AiSettingsPanel {
         List<String> ids = released.entrySet().stream().filter(e -> e.getValue().isSelected())
                 .map(Map.Entry::getKey).toList();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, ids);
+                timeout, ids, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
     }
 
     /** Für den Assistenten: die Eingaben, mit der neuen Quelle unter den Freigaben, wenn angehakt. */
@@ -193,8 +249,7 @@ final class AiSettingsPanel {
         }
         List<String> ids = new ArrayList<>(draft.externalProcessingSources());
         ids.add(sourceId);
-        return new AiDraft(draft.baseUrl(), draft.chatModel(), draft.embeddingModel(), draft.embeddingDimensions(),
-                draft.timeout(), ids);
+        return draft.withService(draft.baseUrl(), ids);
     }
 
     /** Ob seit dem Öffnen etwas eingetragen wurde (Felder oder API-Key). */
@@ -204,7 +259,7 @@ final class AiSettingsPanel {
         return !draft().equals(current) || apiKey.getPassword().length > 0 || releaseThis.isSelected();
     }
 
-    private void save() {
+    private void save(ComposerButton save, Feedback feedback) {
         AiDraft draft = draft();
         if (!draft.problems().isEmpty()) {
             feedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
@@ -333,8 +388,8 @@ final class AiSettingsPanel {
     }
 
     private static AiDraft withDimensions(AiDraft draft, String dimensions) {
-        return new AiDraft(draft.baseUrl(), draft.chatModel(), draft.embeddingModel(), dimensions, draft.timeout(),
-                draft.externalProcessingSources());
+        return draft.withModels(draft.chatModel(), draft.embeddingModel(), dimensions, draft.rerankModel(),
+                draft.chunkTokens(), draft.chunkOverlapSentences());
     }
 
     /** Die Eingaben als Einstellungen des Core, mit dem API-Key nur im Speicher. */
@@ -363,21 +418,21 @@ final class AiSettingsPanel {
     private void loadModels() {
         AiDraft draft = draft();
         if (blankToNull(draft.baseUrl()) == null) {
-            feedback.warning("Basisadresse fehlt", "Erst die Adresse des KI-Dienstes eintragen.");
+            modelsFeedback.warning("Basisadresse fehlt", "Erst die Adresse des KI-Dienstes eintragen.");
             return;
         }
         if (!draft.problems().isEmpty()) {
-            feedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
+            modelsFeedback.warning("Bitte prüfen", String.join(" ", draft.problems()));
             return;
         }
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
-            feedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Allgemein.");
+            modelsFeedback.warning("Keine Laufzeit", "Die Konfiguration konnte nicht gestartet werden; siehe Allgemein.");
             return;
         }
         char[] typed = apiKey.getPassword();
         loadModels.setEnabled(false);
-        feedback.working("Modelle werden geladen …");
+        modelsFeedback.working("Modelle werden geladen …");
         Background.run(() -> {
             char[] key = typed.length > 0 ? typed : context.storedAiKey();
             try {
@@ -395,32 +450,39 @@ final class AiSettingsPanel {
             Arrays.fill(typed, '\0');
             loadModels.setEnabled(true);
             if (error instanceof AiServiceException ai) {
-                feedback.warning("Modelle nicht geladen", reason(ai) + ".");
+                modelsFeedback.warning("Modelle nicht geladen", reason(ai) + ".");
             } else {
-                feedback.problem(error);
+                modelsFeedback.problem(error);
             }
         });
     }
 
     /** Übernimmt eine geladene Liste; für Tests auch direkt. */
     void showModels(List<AiModel> loaded) {
-        models = List.copyOf(loaded);
+        this.loaded = List.copyOf(loaded);
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
-        long embeddings = models.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
-        if (models.isEmpty()) {
-            feedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
+        pickRerank.setEnabled(!choices(null).isEmpty());
+        long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
+        if (this.loaded.isEmpty()) {
+            modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");
         } else {
-            feedback.success(Texts.count(models.size(), "Modell", "Modelle") + " geladen"
+            modelsFeedback.success(Texts.count(this.loaded.size(), "Modell", "Modelle") + " geladen"
                     + (embeddings == 0 ? "" : ", davon " + embeddings + " für Embeddings") + "; Auswahl über ▾");
         }
     }
 
-    /** Modelle für ein Feld: die passende Kategorie zuerst, Modelle ohne Kategorie danach. */
+    /**
+     * Modelle für ein Feld: die passende Kategorie zuerst, Modelle ohne Kategorie danach; {@code null} (Rerank, der
+     * Dienst kennt keine eigene Kategorie dafür) bietet alle an.
+     */
     List<AiModel> choices(String category) {
+        if (category == null) {
+            return loaded;
+        }
         List<AiModel> fitting = new ArrayList<>();
         List<AiModel> unknown = new ArrayList<>();
-        for (AiModel model : models) {
+        for (AiModel model : loaded) {
             if (model.categories().contains(category)) {
                 fitting.add(model);
             } else if (model.categories().isEmpty()) {

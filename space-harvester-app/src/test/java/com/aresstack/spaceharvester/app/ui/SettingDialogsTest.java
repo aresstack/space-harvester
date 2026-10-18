@@ -254,12 +254,15 @@ class SettingDialogsTest {
                 assertThat(panel[0].pickEmbedding.isEnabled()).isTrue();
                 panel[0].choose(panel[0].embeddingModel, "text-embedding-3-small");
                 panel[0].choose(panel[0].chatModel, "gpt-x");
-                panel[0].save.doClick();
+                panel[0].rerankModel.setText("bge-reranker");
+                // Gespeichert im Reiter „Modelle“; derselbe Block wie im Reiter „KI-Dienst“.
+                panel[0].saveModels.doClick();
             });
             awaitFeedback(panel[0], "übernommen");
 
             assertThat(Files.readString(config)).contains("embedding-model: \"text-embedding-3-small\"",
-                    "chat-model: \"gpt-x\"", "embedding-dimensions: 3").doesNotContain("sk-geheim");
+                    "chat-model: \"gpt-x\"", "embedding-dimensions: 3", "rerank-model: \"bge-reranker\"")
+                    .doesNotContain("sk-geheim");
             assertThat(context.settings().ai().embeddingDimensions()).isEqualTo(3);
             assertThat(authorizations).hasSize(2).containsOnly("Bearer sk-geheim");
             assertThat(context.runtime().workspace().semanticSearch()).as("Dienst, Modell und Dimension").isTrue();
@@ -273,7 +276,7 @@ class SettingDialogsTest {
         String[] text = {""};
         while (!text[0].contains(expected) && System.currentTimeMillis() < until) {
             Thread.sleep(50);
-            SwingUtilities.invokeAndWait(() -> text[0] = panel.feedback.text());
+            SwingUtilities.invokeAndWait(() -> text[0] = panel.feedback.text() + "\n" + panel.modelsFeedback.text());
         }
         assertThat(text[0]).contains(expected);
     }
@@ -332,5 +335,28 @@ class SettingDialogsTest {
             }
         }
         return found;
+    }
+
+    @Test
+    void cacheDurationsAreReadLikeTheConfigurationFile() {
+        assertThat(SettingDialogs.duration("0")).isEqualTo(java.time.Duration.ZERO);
+        assertThat(SettingDialogs.duration(" 30m ")).isEqualTo(java.time.Duration.ofMinutes(30));
+        assertThat(SettingDialogs.duration("6H")).isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(SettingDialogs.duration("1d")).isEqualTo(java.time.Duration.ofDays(1));
+        assertThat(SettingDialogs.duration("bald")).isNull();
+        assertThat(SettingDialogs.duration("-1h")).isNull();
+        assertThat(SettingDialogs.days("30")).isEqualTo(java.time.Duration.ofDays(30));
+        assertThat(SettingDialogs.days("12h")).as("kürzere Fristen bleiben").isEqualTo(java.time.Duration.ofHours(12));
+    }
+
+    @Test
+    void theThreeRefreshStrategiesMapToCacheFreshness() {
+        java.time.Duration month = java.time.Duration.ofDays(30);
+        assertThat(SettingDialogs.refreshStrategy(com.aresstack.spaceharvester.app.settings.AppSettings.Cache.DEFAULT))
+                .isEqualTo(SettingDialogs.ALWAYS_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), false, month))).isEqualTo(SettingDialogs.TIMED_WITHOUT_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), true, month))).isEqualTo(SettingDialogs.TIMED_WITH_CHECK);
     }
 }

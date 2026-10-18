@@ -28,6 +28,7 @@ import javax.swing.JPanel;
 import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Frame;
 import java.awt.event.WindowAdapter;
@@ -113,6 +114,13 @@ public final class MainWindow implements AppContext.Navigator {
         frame.setVisible(true);
         show(AppContext.Section.SEARCH);
         return frame;
+    }
+
+    /** Öffnet beim ersten Start den Einrichtungsassistenten, solange die Datei keinen Abschluss kennt. */
+    public static void offerSetup(Component parent, AppContext context) {
+        if (SetupWizard.due(context)) {
+            SetupWizard.open(parent, context);
+        }
     }
 
     /**

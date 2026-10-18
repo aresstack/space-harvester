@@ -12,6 +12,9 @@ class SearchViewAddressTest {
         assertThat(SearchView.ADDRESS.matcher("https://wiki.firma.de/display/DEV/Start").matches()).isTrue();
         assertThat(SearchView.ADDRESS.matcher("space-harvester://wiki/page/102?version=3").matches()).isTrue();
         assertThat(SearchView.ADDRESS.matcher("confluence://wiki/102").matches()).isTrue();
+        assertThat(SearchView.ADDRESS.matcher("confluence:wiki.example.org/page/102").matches()).isTrue();
+        assertThat(SearchView.ADDRESS.matcher("files:handbuch/kapitel/start.md").matches()).isTrue();
+        assertThat(SearchView.ADDRESS.matcher("files: Handbuch").matches()).isFalse();
         assertThat(SearchView.ADDRESS.matcher("Release Notes").matches()).isFalse();
         assertThat(SearchView.ADDRESS.matcher("https://wiki.firma.de mit Text").matches()).isFalse();
     }

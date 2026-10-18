@@ -6,9 +6,11 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -188,7 +190,15 @@ public final class AppRuntime implements AutoCloseable {
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
                 .maxTreeNodes(storage.maxTreeNodes())
-                .pdfFont(storage.pdfFont());
+                .pdfFont(storage.pdfFont())
+                .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))
+                .withheldRetention(settings.cache().withheldRetention());
+        AppSettings.AiSettings ai = settings.ai();
+        if (ai.chunkTokens() != null || ai.chunkOverlapSentences() != null) {
+            builder.embeddingChunking(ai.chunkTokens() == null ? KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS
+                    : ai.chunkTokens(), ai.chunkOverlapSentences() == null
+                    ? KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES : ai.chunkOverlapSentences());
+        }
         builder.accessPolicy(policy);
         if (withAi) {
             builder.ai(aiService(settings.ai(), secrets.aiKey(), version));
@@ -228,6 +238,10 @@ public final class AppRuntime implements AutoCloseable {
         } catch (IllegalArgumentException e) {
             LOG.log(System.Logger.Level.WARNING, "KI-Dienst nicht nutzbar: {0}", e.getMessage());
             return AiServiceSettings.NONE;
+        }
+        if (ai.rerankModel() != null) {
+            // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
+            service = service.withRerankModel(ai.rerankModel());
         }
         if (service.embeddingModel() != null && service.embeddingDimensions() == null) {
             // Die Dimension steht in keinem Modellkatalog; der Reiter „KI“ misst sie mit Harvester#aiEmbeddingDimension.
