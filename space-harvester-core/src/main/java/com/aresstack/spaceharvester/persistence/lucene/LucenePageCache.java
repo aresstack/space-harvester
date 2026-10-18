@@ -405,6 +405,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                         PageCacheSchema.page(snapshot.header(), snapshot));
                 writer.updateDocument(PageCacheSchema.revisionTerm(snapshot.key(),
                         PageCacheSchema.revisionOf(snapshot)), PageCacheSchema.revision(snapshot));
+                // Eine wieder sichtbare Seite braucht keinen zurückgehaltenen Stand mehr (ADR 0014).
+                writer.deleteDocuments(PageCacheSchema.withheldTerm(snapshot.key()));
             });
         }
 
@@ -422,7 +424,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
         }
 
         /**
-         * Entfernt eine Seite samt Verlauf. Nur aus einem bestätigt vollständigen Abgleich aufrufen (#16).
+         * Entfernt eine Seite samt Verlauf und zurückgehaltenem Stand. Nur aus einem bestätigt vollständigen Abgleich
+         * aufrufen (#16).
          *
          * @return {@code true}, wenn die Seite bekannt war (bestätigt oder in diesem Lauf gespeichert)
          */
@@ -435,21 +438,29 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             write(() -> {
                 writer.deleteDocuments(PageCacheSchema.pageTerm(key));
                 writer.deleteDocuments(PageCacheSchema.revisionsOfPage(key));
+                writer.deleteDocuments(PageCacheSchema.withheldTerm(key));
             });
             return existed;
         }
 
         /**
-         * Sperrt eine Seite (ADR 0014, {@code INACCESSIBLE}): Der aktuelle Stand mit Kopfdaten und Payload fällt weg,
-         * damit keine Ausgabe, Titelsuche oder Auflistung sie mehr findet. Der Verlauf ihrer Revisionen bleibt bis zum
-         * endgültigen {@link #remove} erhalten; er hat keinen Ausgabeweg.
+         * Sperrt eine Seite (ADR 0014, {@code INACCESSIBLE}): Das Seitendokument fällt weg, damit keine Ausgabe,
+         * Titelsuche oder Auflistung sie mehr findet. Seine gespeicherten Felder samt Rohdaten bleiben als
+         * zurückgehaltener Stand ohne Lesepfad erhalten, ebenso der Verlauf, bis {@link #remove} nach Ablauf der Frist
+         * beides entfernt.
          */
         public void withhold(PageKey key) {
             Objects.requireNonNull(key, "key");
             requireActive();
+            Document existing = lookup(key);
             dirty = true;
             touchedSources.add(key.sourceId());
-            write(() -> writer.deleteDocuments(PageCacheSchema.pageTerm(key)));
+            write(() -> {
+                if (existing != null) {
+                    writer.updateDocument(PageCacheSchema.withheldTerm(key), PageCacheSchema.withheld(key, existing));
+                }
+                writer.deleteDocuments(PageCacheSchema.pageTerm(key));
+            });
         }
 
         /**

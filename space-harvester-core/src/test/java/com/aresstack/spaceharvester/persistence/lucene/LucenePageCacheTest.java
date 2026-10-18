@@ -235,9 +235,9 @@ class LucenePageCacheTest {
     }
 
     @Test
-    void withholdHidesThePageButKeepsItsHistoryUntilRemove() {
+    void withholdHidesThePageButKeepsItsRawDataAndHistoryUntilRemove() {
         LucenePageCache cache = open();
-        PageSnapshot snapshot = page("wiki", "101", "DEV", "100", "3", json("{}"));
+        PageSnapshot snapshot = page("wiki", "101", "DEV", "100", "3", json("{\"secret\":1}"));
         cache.save(snapshot);
 
         try (LucenePageCache.Batch batch = cache.begin()) {
@@ -247,10 +247,31 @@ class LucenePageCacheTest {
 
         assertThat(cache.find(snapshot.key())).isEmpty();
         assertThat(cache.findHeader(snapshot.key())).isEmpty();
+        assertThat(cache.spacePages("wiki", "DEV", null, 10)).isEmpty();
         assertThat(cache.revisions(snapshot.key())).hasSize(1);
+        // Suchgeneration, Verlauf und zurückgehaltener Stand mit Rohdaten.
+        assertThat(cache.documentCount()).isEqualTo(3);
 
         assertThat(cache.remove(snapshot.key())).isFalse();
         assertThat(cache.revisions(snapshot.key())).isEmpty();
+        assertThat(cache.documentCount()).isEqualTo(1);
+    }
+
+    @Test
+    void aWithheldPageSavedAgainDropsItsRetainedState() {
+        LucenePageCache cache = open();
+        PageSnapshot snapshot = page("wiki", "101", "DEV", "100", "3", json("{}"));
+        cache.save(snapshot);
+        try (LucenePageCache.Batch batch = cache.begin()) {
+            batch.withhold(snapshot.key());
+            batch.commit();
+        }
+
+        cache.save(snapshot);
+
+        assertThat(cache.find(snapshot.key())).contains(snapshot);
+        // Suchgeneration, Seite und Verlauf.
+        assertThat(cache.documentCount()).isEqualTo(3);
     }
 
     // --- Abfragen ohne Payload ------------------------------------------------------------------------------------
