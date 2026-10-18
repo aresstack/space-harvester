@@ -471,7 +471,7 @@ public final class ActivitiesView implements View {
             return;
         }
         JobStatus status = current.get();
-        title.setText(Texts.type(status.type()) + " " + status.sourceId() + " / " + status.partitionKey());
+        title.setText(Texts.type(status.type()) + " " + where(status));
         JobProgress p = status.progress();
         renderBar(status);
         Counters counters = Counters.of(status.type());
@@ -480,6 +480,7 @@ public final class ActivitiesView implements View {
                         waiting ? Comic.ORANGE : Comic.tone(Texts.tone(status.state())))
                 .add("Quelle", status.sourceId())
                 .add("Space", status.partitionKey())
+                .add("Startseite", startPage(status))
                 .add("Angelegt", Texts.time(status.createdAt()))
                 .add("Gestartet", Texts.time(status.startedAt()))
                 .add("Beendet", Texts.time(status.finishedAt()))
@@ -758,6 +759,20 @@ public final class ActivitiesView implements View {
     private static String name(Path directory) {
         Path name = directory.getFileName();
         return name == null ? directory.toString() : name.toString();
+    }
+
+    /** Quelle / Space eines Auftrags, bei einem Seiten-Download dazu „ab“ seiner Startseite. */
+    static String where(JobStatus status) {
+        String where = status.sourceId() + " / " + status.partitionKey();
+        return status.rootPageId() == null ? where : where + " ab „" + startPage(status) + "“";
+    }
+
+    /** Titel der Startseite, solange der Auftrag sie noch nicht gelesen hat ihre ID; „–“ für ganze Spaces. */
+    static String startPage(JobStatus status) {
+        if (status.rootPageId() == null) {
+            return "–";
+        }
+        return status.rootTitle() == null ? "Seite " + status.rootPageId() : status.rootTitle();
     }
 
     /** Zeile der Karte; Exportieren bleibt in jedem Stand möglich. */
@@ -1067,7 +1082,7 @@ public final class ActivitiesView implements View {
             JobStatus status = rows.get(row);
             return switch (column) {
                 case 0 -> Texts.type(status.type());
-                case 1 -> status.sourceId() + " / " + status.partitionKey();
+                case 1 -> where(status);
                 case 2 -> status.state();
                 case 3 -> (status.type() == JobType.EXPORT ? status.progress().written() : status.progress().processed())
                         + "/" + status.progress().discovered()

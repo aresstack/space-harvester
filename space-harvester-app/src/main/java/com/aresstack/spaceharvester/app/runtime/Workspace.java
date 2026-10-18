@@ -404,6 +404,17 @@ public final class Workspace {
         return status;
     }
 
+    /**
+     * Export einer Seite samt Unterseiten starten ({@code ExportRequest.withRoot}); {@code rootPageId == null} heißt
+     * ganzer Space. Eine unbekannte oder nicht lesbare Startseite lässt den Auftrag mit ROOT_NOT_FOUND scheitern.
+     */
+    public JobStatus startExport(String sourceId, String spaceKey, String rootPageId, List<String> formats) {
+        requireExport(sourceId, spaceKey);
+        JobStatus status = harvester.exports().start(sourceId, spaceKey, rootPageId, Harvester.OWNER, formats);
+        activities.remember(status.id());
+        return status;
+    }
+
     /** Artefakt eines fertigen Exports ({@code GET /exports/{id}}). */
     public Optional<ExportArtifact> exportArtifact(String exportId) {
         ownExport(exportId);

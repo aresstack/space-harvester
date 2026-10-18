@@ -2,8 +2,12 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -56,6 +60,21 @@ class JobStepTest {
                 .startsWith("Bilder: unvollständig").endsWith("\nMedien: " + ActivitiesView.media(media));
         assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED, ExportDatasetInfo.Media.NONE))
                 .isEqualTo(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED));
+    }
+
+    @Test
+    void aPageDownloadNamesItsStartPageOnceTheJobHasReadIt() {
+        assertThat(ActivitiesView.where(job(null, null))).isEqualTo("wiki / OPS");
+        assertThat(ActivitiesView.startPage(job(null, null))).isEqualTo("–");
+        assertThat(ActivitiesView.where(job("42", null))).isEqualTo("wiki / OPS ab „Seite 42“");
+        assertThat(ActivitiesView.where(job("42", "Betriebshandbuch"))).isEqualTo("wiki / OPS ab „Betriebshandbuch“");
+        assertThat(Explorer.downloadable(new Explorer.PageItem("wiki", "OPS", "42", "Betriebshandbuch", true)))
+                .isTrue();
+    }
+
+    private static JobStatus job(String rootPageId, String rootTitle) {
+        return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0),
+                null, false, Instant.EPOCH, null, null, rootPageId, rootTitle);
     }
 
     @Test

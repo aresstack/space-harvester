@@ -777,9 +777,9 @@ public final class Explorer {
         return 20 * depth;
     }
 
-    /** Herunterladen gibt es für Quellen und Spaces; Seiten folgen mit dem Download eines Teilbaums im Core. */
+    /** Herunterladen gibt es für Quellen, Spaces und Seiten (Seite samt Unterseiten). */
     static boolean downloadable(Item item) {
-        return item instanceof SourceItem || item instanceof SpaceItem;
+        return item instanceof SourceItem || item instanceof SpaceItem || item instanceof PageItem;
     }
 
     /** Startet den Download des Knotens sofort ({@link Downloads}); der Auftrag erscheint unter Aufträge. */
@@ -787,6 +787,7 @@ public final class Explorer {
         switch (item) {
             case SourceItem source -> context.navigator().download(source.sourceId(), List.of());
             case SpaceItem space -> context.navigator().download(space.sourceId(), space.spaceKey());
+            case PageItem page -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(), page.pageId());
             default -> {
             }
         }
