@@ -25,7 +25,7 @@ Stand `aresstack/enterprise-ai-client@7b719e31007edf8888dca60986bff238d01e7608` 
 | `ExportGraphics` | `proasteion/exedra/…/exedra/document/ExportGraphics.java` |
 | `MermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/MermaidImageRenderer.java` |
 | `AresStackMermaidImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/AresStackMermaidImageRenderer.java` (nur Paketzeile) |
-| `DrawioDiagramRenderer` | `proasteion/emporion/holkas/source-confluence/…/confluence/DrawioDiagramRenderer.java` (Stand wie `enterprise-ai-sources/UPSTREAM.sha256`; Klasse, `toSvg` und `Unsupported` öffentlich, damit der Core sie ohne die Quellenkopie nutzt) |
+| `DrawioDiagramRenderer` | `proasteion/emporion/holkas/source-confluence/…/confluence/DrawioDiagramRenderer.java` (Stand wie `enterprise-ai-sources/UPSTREAM.sha256`; Klasse, `toSvg` und `Unsupported` öffentlich, damit der Core sie ohne die Quellenkopie nutzt; `graphModel` paketweit für `DrawioGraph`, ADR 0018) |
 | `SvgImageRenderer` | `proasteion/exedra/…/exedra/ui/markdown/SvgImageRenderer.java` (nur Paketzeile) |
 | `ExportDocumentNode` | `astu/acropolis/…/acropolis/knowledge/ExportDocumentNode.java` |
 | `ExportImage` | `astu/acropolis/…/acropolis/knowledge/ExportImage.java` (nur Javadoc) |
