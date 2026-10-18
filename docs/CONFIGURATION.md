@@ -36,7 +36,7 @@ java -jar space-harvester.jar
   Spring Cloud (2026.0) bisher nur als Meilenstein; der Client ist schmal und durch `ConfigServerImportTest` gegen
   einen nachgebildeten Server geprüft. Bei 2026.0 GA wird die Version in `gradle/libs.versions.toml` umgestellt.
 
-## Konfiguration zur Laufzeit
+## Laufzeitkonfiguration im Server
 
 KI-Dienst, Suche, Synchronisierung und Speicherort bilden die Laufzeitkonfiguration (ADR 0015) mit fortlaufender
 Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvester.ai.*`, `space-harvester.search.*`,
