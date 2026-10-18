@@ -5,7 +5,6 @@ import com.aresstack.spaceharvester.app.ui.Background;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
-import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
@@ -49,8 +48,9 @@ import org.jsoup.parser.Tag;
 
 /**
  * Leseansicht einer Seite (#192): das gerenderte HTML der Quelle aus dem Core-Use-Case (#176) mit den Bildern, die die
- * Ansicht zeigt (aus dem AssetStore, sonst einmalig über die Anmeldung der Quelle abgelegt) und Mermaid-Diagrammen über
- * {@link Diagrams}. Eigene Abruf- oder Renderlogik gibt es hier nicht. Ein Bild, das sich nicht laden lässt, steht als
+ * Ansicht zeigt (aus dem AssetStore, sonst einmalig über die Anmeldung der Quelle abgelegt) und Mermaid-Diagrammen als
+ * abgelegte Grafik des Core (einmal gezeichnet, {@code Assets.rendition}). Eigene Abruf- oder Renderlogik gibt es hier
+ * nicht. Ein Bild, das sich nicht laden lässt, steht als
  * markierter Platzhalter im Text; ein Klick auf ein Bild zeigt es vergrößert.
  *
  * <p>Der Swing-HTML-Leser lädt nichts selbst: Jedes Bild steht vorab im Bildspeicher des Dokuments, alle anderen
@@ -167,10 +167,11 @@ final class ReadingPane extends JPanel {
     }
 
     /**
-     * Baut die Ansicht außerhalb des EDT: säubert das HTML, lädt die Bilder über {@code load} (Bytes aus dem Core) und
-     * zeichnet Mermaid. Ein Bild, das {@code load} nicht liefert oder das sich nicht lesen lässt, wird markiert.
+     * Baut die Ansicht außerhalb des EDT: säubert das HTML, lädt die Bilder über {@code load} und die Mermaid-Grafiken
+     * über {@code mermaid} (beides Bytes aus dem Core, {@code null} wenn es keine gibt). Ein Bild oder Diagramm, das sich nicht laden oder lesen lässt, wird markiert.
      */
-    static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, byte[]> load) {
+    static Prepared prepare(ReadingView view, Function<HarvestSource.ViewImage, byte[]> load,
+                            Function<String, byte[]> mermaid) {
         switch (view.status()) {
             case RESTRICTED -> {
                 return note("Diese Seite bindet Inhalte ein, die du nicht nachweislich lesen darfst. Die Leseansicht "
@@ -209,8 +210,13 @@ final class ReadingPane extends JPanel {
             if (source.isEmpty()) {
                 continue;
             }
-            Diagrams.Rendering rendering = Diagrams.mermaid(source);
-            BufferedImage decoded = rendering.drawn() ? read(rendering.content()) : null;
+            byte[] drawn;
+            try {
+                drawn = mermaid.apply(source);
+            } catch (RuntimeException e) {
+                drawn = null;
+            }
+            BufferedImage decoded = drawn == null ? null : read(drawn);
             if (decoded == null) {
                 Element marker = new Element(Tag.valueOf("p"), "");
                 missing(marker, "Diagramm nicht darstellbar");

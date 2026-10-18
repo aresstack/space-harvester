@@ -46,7 +46,7 @@ class ReadingPaneTest {
         ReadingPane.Prepared prepared = ReadingPane.prepare(view, image -> {
             asked.add(image);
             return image.equals(logo) ? png : null;
-        });
+        }, source -> null);
 
         assertThat(asked).containsExactly(logo, broken);
         assertThat(prepared.images()).isEqualTo(1);
@@ -61,14 +61,23 @@ class ReadingPaneTest {
     }
 
     @Test
-    void mermaidIsDrawnOrMarked() {
+    void mermaidComesFromTheCoreOrIsMarked() throws IOException {
         ReadingView view = available("<div class=\"mermaid\">graph TD; A--&gt;B;</div>"
                 + "<div class=\"mermaid\">das ist kein diagramm %%%</div>", List.of());
 
-        ReadingPane.Prepared prepared = ReadingPane.prepare(view, image -> null);
+        List<String> asked = new ArrayList<>();
+        byte[] png = png(40, 20);
 
-        assertThat(prepared.images() + prepared.missing()).isEqualTo(2);
-        assertThat(prepared.images()).isGreaterThanOrEqualTo(1);
+        ReadingPane.Prepared prepared = ReadingPane.prepare(view, image -> null, source -> {
+            asked.add(source);
+            return source.startsWith("graph") ? png : null;
+        });
+
+        assertThat(asked).containsExactly("graph TD; A-->B;", "das ist kein diagramm %%%");
+        assertThat(prepared.images()).isEqualTo(1);
+        assertThat(prepared.missing()).isEqualTo(1);
+        assertThat(prepared.html()).contains("http://reading.invalid/image/0", "[Diagramm nicht darstellbar]")
+                .contains("das ist kein diagramm");
     }
 
     @Test
@@ -78,9 +87,9 @@ class ReadingPaneTest {
         ReadingView unsupported = new ReadingView(HEADER, ReadingView.Status.UNSUPPORTED, "3", "", "", "",
                 List.of(), ForeignContent.NONE, false, null);
 
-        assertThat(ReadingPane.prepare(restricted, image -> null).html()).isEmpty();
-        assertThat(ReadingPane.prepare(restricted, image -> null).note()).contains("nicht nachweislich lesen");
-        assertThat(ReadingPane.prepare(unsupported, image -> null).note()).contains("keine Leseansicht");
+        assertThat(ReadingPane.prepare(restricted, image -> null, source -> null).html()).isEmpty();
+        assertThat(ReadingPane.prepare(restricted, image -> null, source -> null).note()).contains("nicht nachweislich lesen");
+        assertThat(ReadingPane.prepare(unsupported, image -> null, source -> null).note()).contains("keine Leseansicht");
     }
 
     private static ReadingView available(String html, List<HarvestSource.ViewImage> images) {

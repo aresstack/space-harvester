@@ -521,7 +521,8 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         Background.run(() -> {
             var view = runtime.workspace().readingView(source, id, false);
-            return ReadingPane.prepare(view, image -> runtime.workspace().viewImage(view, image).content());
+            return ReadingPane.prepare(view, image -> runtime.workspace().viewImage(view, image).content(),
+                    diagram -> runtime.workspace().mermaid(view, diagram).orElse(null));
         }, prepared -> {
             if (shown == page) {
                 readingPane.show(prepared);
