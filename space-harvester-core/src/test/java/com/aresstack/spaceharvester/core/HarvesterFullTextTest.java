@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.source.DocumentFixtures;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.IOException;
 import java.net.URI;
@@ -103,6 +104,23 @@ class HarvesterFullTextTest {
                     .containsExactly(tuple("docs", id("betrieb.md")));
             assertThat(after.hits().getFirst().snippet()).contains("Der Nachtlauf startet um zwei Uhr.");
             assertThat(after.complete()).isTrue();
+        }
+    }
+
+    @Test
+    void officeAndPdfFilesAreFoundByTheirTextOnceCached() throws IOException {
+        // #183: Text aus Word und PDF über Tika, wie im Enterprise AI Client.
+        Files.write(files.resolve("handbuch.docx"), DocumentFixtures.docx("Notstromaggregat wöchentlich prüfen"));
+        Files.write(files.resolve("plan.pdf"), DocumentFixtures.pdf("Schichtplan Kesselhaus"));
+        try (Harvester harvester = files(Harvester.builder())) {
+            harvester.pages().page(harvester.caller(), "docs", id("handbuch.docx"), false);
+            harvester.pages().page(harvester.caller(), "docs", id("plan.pdf"), false);
+
+            assertThat(harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Notstromaggregat"), null, 10).hits())
+                    .extracting(KeywordSearch.Hit::pageId).containsExactly(id("handbuch.docx"));
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Kesselhaus"),
+                    null, 10).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly(id("plan.pdf"));
         }
     }
 

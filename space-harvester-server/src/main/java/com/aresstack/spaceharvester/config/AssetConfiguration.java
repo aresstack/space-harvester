@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.source.TikaDocumentText;
 import java.nio.file.Path;
 import java.time.Clock;
 import org.springframework.beans.factory.ObjectProvider;
@@ -20,7 +21,8 @@ import org.springframework.util.unit.DataSize;
  * Download bricht schon im Transport an dieser Grenze ab. Alle Inhalte zusammen belegen höchstens
  * {@code space-harvester.assets.max-total-bytes} (Standard 20 GiB), sonst {@code asset-store-full}.
  * Bildbeschreibungen gibt es nur mit einer {@link ImageDescriber}-Bean; ohne sie antworten die Routen mit
- * {@code image-description-unavailable}.
+ * {@code image-description-unavailable}. Beim Ablegen prüft Apache Tika den Typ am Inhalt, und Dokument-Anhänge
+ * bekommen ihren Text als Anreicherung ({@link TikaDocumentText}, #183).
  */
 @Configuration(proxyBeanMethods = false)
 class AssetConfiguration {
@@ -35,6 +37,7 @@ class AssetConfiguration {
     @Bean
     Assets assets(SourceCatalog catalog, AssetStore store, ObjectProvider<ImageDescriber> describer,
                   @Value("${space-harvester.assets.max-size:50MB}") DataSize maxSize) {
-        return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable());
+        return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
+                TikaDocumentText.shared());
     }
 }

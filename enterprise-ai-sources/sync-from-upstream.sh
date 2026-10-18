@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Kopiert die Confluence-Quelle, die Dateiquelle, den Chat-Adapter (ADR 0017) und ihre Basismodule unverändert aus
-# aresstack/enterprise-ai-client in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
+# Kopiert die Confluence-Quelle, die Dateiquelle, den Chat-Adapter (ADR 0017), die Dokument-Extraktion (#183) und ihre
+# Basismodule unverändert aus aresstack/enterprise-ai-client in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
 #
 #   sync-from-upstream.sh sync <commit|tag|branch>   neu kopieren und UPSTREAM.sha256 schreiben
 #   sync-from-upstream.sh verify                     Kopie gegen den Upstream-Commit aus UPSTREAM.sha256 prüfen
@@ -21,6 +21,7 @@ modules=(
   source-api
   proasteion/emporion/holkas/source-confluence
   proasteion/emporion/deigma
+  proasteion/emporion/deigma/document-tika
   proasteion/emporion/holkas/source-localfiles
   embedding-api
   embedding-openai
@@ -29,11 +30,17 @@ modules=(
 )
 
 # Einzelne Klassen aus weiteren Modulen: <Modulpfad>:<Klassenpfad unter src/main/java ohne .java>.
-# SimpleContentDetector (nur JDK) erkennt Dateitypen für source-localfiles, ohne Apache Tika mitzunehmen.
+# Text aus Dateien (#183): SourceFileTextExtractor (Port aus astu/acropolis) und DocumentSourceFileTextExtractor (Dokumente
+# über document-tika, Bilder über die Bildbeschreibung); dessen Bildweg braucht ImageAnalysis, ImageAnalysisCache und
+# SourceImageAnalysisUseCase, die der Space Harvester nicht aufruft.
 # KipitzRerankAdapter (#181) liest Fehlermeldungen über KipitzSpeechAdapter.errorMessage; deshalb kommen der
 # Sprachadapter und seine drei Sprach-Schnittstellen mit, ohne dass der Space Harvester sie benutzt.
 module_classes=(
-  proasteion/emporion/deigma/document-tika:com/aresstack/enterpriseai/proasteion/emporion/deigma/tika/SimpleContentDetector
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/knowledge/SourceFileTextExtractor
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysis
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysisCache
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/SourceImageAnalysisUseCase
+  proasteion/application:com/aresstack/enterpriseai/proasteion/application/knowledge/DocumentSourceFileTextExtractor
   model-api:com/aresstack/enterpriseai/model/api/ModelCatalogPort
   model-api:com/aresstack/enterpriseai/model/api/ModelCatalogException
   model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelCatalogAdapter

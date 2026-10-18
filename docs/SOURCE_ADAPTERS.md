@@ -52,6 +52,37 @@ Darauf bauen:
 - `snapshot.SourceSnapshots`: `PageSnapshot` aus `storedPage`, zugleich `PageContentFetcher` der
   Synchronisierung (#16)
 
+## Dokumente: Typerkennung und Text (#183)
+
+Erkennung und Extraktion kommen wie die Adapter aus der Kopie (`deigma/document-tika`, `DocumentSourceFileTextExtractor`,
+Ablauf wie in der Composition Root des Enterprise AI Client): `DocumentExtraction.detector()` erkennt nach Endung und
+Angabe, sonst mit Apache Tika am Inhalt; `DocumentExtraction.registry()` liest Markdown und Klartext direkt, alles
+andere (PDF, Word, Excel, PowerPoint, OpenDocument, RTF, E-Mail) über Tika. Tika läuft in Version 3.3 statt 2.9.1
+wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark ist ausgeschlossen wie dort.
+`application.assets.DocumentText` ist der Port, `source.TikaDocumentText` die Umsetzung; nur sie kennt die Kopie.
+
+| Grenze | Wert | Folge |
+|---|---|---|
+| Größe je Datei | 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`, wie ADR 0002 und `maxFileMegabytes`) | kein Text, `document-text-too-large` |
+| Laufzeit je Datei | 30 s, eigener Thread, danach unterbrochen | `document-text-timeout`, später erneut |
+| gleichzeitige Läufe | 2; ein hängender Lauf hält seinen Platz | `document-text-busy`, später erneut |
+| Textlänge | 1 000 000 Zeichen, wie der Volltextindex je Seite | gekürzt, `truncated` |
+
+- **Lokale Dateien** (`type: files`): `LocalFilesSourceAdapter` übergibt Erkennung und Extraktoren an den Provider.
+  Den Lesetext für Volltextindex und Anreicherungen bildet `LocalFilesTextProjector` aus dem abgelegten Original:
+  Textdateien wie bisher als UTF-8 (`file-text/v1`), Dokumente über Tika (`file-document-text/v1`). Ein defektes,
+  verschlüsseltes oder zu großes Dokument hat keinen Text; eine Zeitüberschreitung lässt einen vorhandenen
+  Indexeintrag stehen.
+- **Anhänge im AssetStore:** Beim Ablegen prüft `Assets` den Typ am Inhalt (Magic Bytes). Ein Binärformat mit
+  Signatur (PDF, Office, Bild …) ersetzt eine abweichende Angabe der Quelle, ein erkannter Typ ersetzt eine fehlende
+  oder nichtssagende (`application/octet-stream`); Textformate (XML, JSON, Klartext) und bloße Behälter (ZIP, OLE2)
+  ändern die Angabe nicht, damit etwa draw.io-Daten Diagramme bleiben. Danach richtet sich `AssetKind`. Dokumente
+  (`AssetKind.OTHER`) bekommen beim Ablegen über `harvest` ihren Text als Anreicherung an der Datei (`AssetText`, je
+  Inhalt und Extraktion unter `texts/` im Asset-Verzeichnis, mit dem Inhalt entfernt); `Assets.text` liefert ihn
+  oder liest ihn nach. Fehler halten das Ablegen nicht auf und erscheinen nur als fester Code im Protokoll.
+- Offen in #183: Anhangstexte im Volltextindex und in der API, Vorschau und PDF-Konvertierung über Confluence
+  `documentConversion` als Asset-Variante.
+
 ## Einen Adapter ergänzen
 
 1. Fehlende Fähigkeiten upstream in `source-api` als optionale Capability-Interfaces ergänzen, nicht durch
@@ -66,4 +97,7 @@ Darauf bauen:
 - `KnowledgeSourceHarvestSourceTest`: Abbildung der Ressourcen, fehlende Fähigkeiten ergeben `UNSUPPORTED`.
 - `PageMetadataApiTest`, `SinglePageMetadataApiTest`, `NativeSnapshotSourceTest`: alle Wege über echtes HTTP gegen
   die Fake-Confluence aus den Test-Fixtures der Kopie.
+- `TikaDocumentTextTest`, `LocalFilesTextProjectorTest`, `AssetDocumentTextTest`: Text aus zur Laufzeit erzeugten
+  Dokumenten (`DocumentFixtures`: DOCX, XLSX, PPTX, PDF, ODT, RTF), Erkennung am Inhalt gegen eine falsche Angabe,
+  Grenzen; `HarvesterFullTextTest` findet Word und PDF lokaler Dateien im Volltextindex.
 - Upstream: `ConfluenceStoredContentTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
