@@ -48,4 +48,11 @@ public interface JobContext {
      */
     default void record(JobEvent.Draft event) {
     }
+
+    /**
+     * Nennt den Titel der Startseite eines Auftrags mit Startseite ({@link JobStatus#rootTitle()}), sobald der Auftrag
+     * sie gelesen hat; nur aufrufen, wenn der Auftraggeber die Seite lesen darf. Ohne Startseite wirkungslos.
+     */
+    default void rootTitle(String title) {
+    }
 }
