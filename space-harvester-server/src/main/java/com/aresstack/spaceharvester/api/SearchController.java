@@ -228,7 +228,8 @@ public class SearchController {
         static SearchResponse of(RelevanceSearch.RelevanceResults results) {
             return new SearchResponse(scope(results.sourceId()), results.sourceId(), "cache",
                     IndexResponse.of(results.index()), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
-                    results.hits().stream().map(HitResponse::of).toList(), null, true, results.reranker());
+                    results.hits().stream().map(HitResponse::of).toList(), null, results.complete(),
+                    results.reranker());
         }
 
         static String scope(String sourceId) {

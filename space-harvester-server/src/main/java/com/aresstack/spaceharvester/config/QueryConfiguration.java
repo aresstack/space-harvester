@@ -10,10 +10,13 @@ import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
+import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -47,14 +50,18 @@ class QueryConfiguration {
     }
 
     /**
-     * {@code sort=relevance} (#89): semantisch nur, wenn ein Embedding-Modell eingerichtet ist und die Anreicherungen im
-     * Lucene-Cache liegen (der zugleich Ablage und Vektorsuche ist); sonst nur Titeltreffer.
+     * {@code sort=relevance} (#89, ADR 0011): nur mit Embedding-Dienst und Anreicherungen im Lucene-Cache (der zugleich
+     * Ablage und Vektorsuche ist); sonst {@code semantic-search-unavailable}. Mit dem Hintergrund
+     * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach.
      */
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
-                                    ObjectProvider<EmbeddingProcessor> embedding) {
+                                    ObjectProvider<EmbeddingProcessor> embedding, PageQueries pages,
+                                    @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals) {
+        ExecutorService background = renewals.getIfAvailable();
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
-                store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique());
+                store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique(),
+                background == null ? null : new PageRenewal(pages, background));
     }
 }

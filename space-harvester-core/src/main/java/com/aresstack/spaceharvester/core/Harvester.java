@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
@@ -195,7 +196,18 @@ public final class Harvester implements AutoCloseable {
                     builder.maxTreeNodes);
             this.search = new PageSearch(catalog, index, access);
             this.keywordSearch = new KeywordSearch(catalog, access);
-            this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding);
+            PageRenewal renewal = null;
+            if (embedding != null) {
+                // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
+                ExecutorService renewals = Enrichments.background(100);
+                opened.add(() -> {
+                    renewals.shutdownNow();
+                    renewals.awaitTermination(10, TimeUnit.SECONDS);
+                });
+                renewal = new PageRenewal(pages, renewals);
+            }
+            this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
+                    renewal);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache)));
             this.exports = new Exports(jobs, reader,
