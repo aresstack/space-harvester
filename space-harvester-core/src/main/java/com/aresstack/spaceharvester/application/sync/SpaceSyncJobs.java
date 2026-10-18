@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -86,6 +87,17 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     /** @param withheldRetention Frist für gesperrte Seiten, siehe {@link SpaceSync} */
     public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
                          Clock clock, List<SyncCommitted> afterCommit, Duration withheldRetention) {
+        this(jobs, queries, store, fetcher, clock, afterCommit, SpaceSync.fixed(withheldRetention));
+    }
+
+    /**
+     * Wie oben, mit einer Frist je Quelle, die jeder Lauf neu liest (Konfiguration zur Laufzeit, ADR 0015).
+     *
+     * @param withheldRetention Frist für gesperrte Seiten je Quellen-ID
+     */
+    public SpaceSyncJobs(Jobs jobs, SourceQueries queries, SyncBaselineStore store, PageContentFetcher fetcher,
+                         Clock clock, List<SyncCommitted> afterCommit,
+                         Function<String, Duration> withheldRetention) {
         this.afterCommit = List.copyOf(afterCommit);
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.queries = Objects.requireNonNull(queries, "queries");
@@ -234,6 +246,36 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         });
     }
 
+    /**
+     * Vorschau eines Abgleichs in der Betriebsart {@code mode} ({@link SyncPreview}): Inventur und Einzelprüfungen
+     * fehlender Seiten, aber kein Laden und kein Schreiben. Läuft im Aufrufer, nicht als Auftrag.
+     *
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    public SyncPreview preview(String sourceId, String spaceKey, SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        return SyncPreview.of(sync.plan(sourceId, spaceKey, mode));
+    }
+
+    /**
+     * Bestand des Space im Cache ({@link SpaceCatalog}), ohne Quellenzugriff; ohne Cache-Speicher
+     * {@link SpaceCatalog.State#UNKNOWN}.
+     */
+    public SpaceCatalog catalog(String sourceId, String spaceKey) {
+        if (store == null) {
+            return SpaceCatalog.of(sourceId, spaceKey, null, 0, 0);
+        }
+        return SpaceCatalog.of(sourceId, spaceKey, store.confirmed(sourceId, spaceKey).orElse(null),
+                store.catalogedPages(sourceId, spaceKey), store.knownPages(sourceId, spaceKey).size());
+    }
+
     /** Alle Spaces mit bestätigter Generation ({@link SyncBaselineStore#confirmedSpaces()}). */
     public List<SyncBaselineStore.SpaceRef> confirmedSpaces() {
         return store == null ? List.of() : store.confirmedSpaces();
@@ -252,6 +294,17 @@ public class SpaceSyncJobs implements SpaceProvisioning {
 
     /** Wie {@link #catchUpAll(String)}, in der Betriebsart {@code mode}. */
     public List<JobStatus> catchUpAll(String owner, SyncMode mode) {
+        Objects.requireNonNull(mode, "mode");
+        return catchUpAll(owner, sourceId -> mode);
+    }
+
+    /**
+     * Wie {@link #catchUpAll(String)}, mit einer Betriebsart je Quelle (Regeln je Quelle, ADR 0015).
+     *
+     * @param modeBySource Betriebsart je Quellen-ID oder {@code null}, wenn die Quelle nicht nachholen soll
+     */
+    public List<JobStatus> catchUpAll(String owner, Function<String, SyncMode> modeBySource) {
+        Objects.requireNonNull(modeBySource, "modeBySource");
         if (!available()) {
             return List.of();
         }
@@ -259,7 +312,8 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         queries.sources().forEach(source -> sources.add(source.id()));
         List<JobStatus> started = new ArrayList<>();
         for (SyncBaselineStore.SpaceRef space : store.confirmedSpaces()) {
-            if (!sources.contains(space.sourceId())) {
+            SyncMode mode = sources.contains(space.sourceId()) ? modeBySource.apply(space.sourceId()) : null;
+            if (mode == null) {
                 continue;
             }
             try {

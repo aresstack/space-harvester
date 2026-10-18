@@ -1,8 +1,9 @@
 # ADR 0014: Abgleich, Berechtigung und Suche getrennt
 
 - Status: **Angenommen** (Strang Q, 18.10.2026; Entscheidung von Angelo, 18.10. 13:33, Review in #181
-  issuecomment-6250444078). **Fortgeschrieben** am 18.10. (Angelo 14:43–15:10, #181 issuecomment-6251484855):
-  Ereignisse der Quelle sind der Hauptweg, Abgleiche nur noch Nachholen; siehe „Fortschreibung“. Ergänzt
+  issuecomment-6250444078). **Fortgeschrieben** am 18.10. (Angelo 14:43–15:10, #181 issuecomment-6251484855),
+  ergänzt am 18.10. (Angelo 15:33–15:50): Die Suche entdeckt, aktualisiert wird je Seite nach Strategie,
+  Änderungsquellen (Webhooks, Nachholen, Zeitplan) sind optional; siehe „Fortschreibung“. Ergänzt
   [ADR 0013](0013-suche-ueber-den-cache.md), ohne die Suchpipeline zu ändern.
 - Bezüge: `SpaceSync`, `InventoryCollector`, `SyncPlanner`, `SyncBaseline`, `RemovalCheck`, `PageQueries` mit
   `CacheFreshness` (#256).

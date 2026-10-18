@@ -189,9 +189,12 @@ public class RelevanceSearch {
         this.embedding = semantic ? embedding : null;
     }
 
-    /** Ob ein Embedding-Dienst eingerichtet ist; ohne antwortet jede Suche mit einem Fehler. */
+    /**
+     * Ob ein Embedding-Dienst eingerichtet ist; ohne antwortet jede Suche mit einem Fehler. Kann sich mit der
+     * Konfiguration zur Laufzeit ändern (ADR 0015).
+     */
     public boolean semantic() {
-        return embedding != null;
+        return embedding != null && embedding.available();
     }
 
     /**
@@ -219,7 +222,7 @@ public class RelevanceSearch {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
         scope.requireKnown(catalog);
-        if (embedding == null) {
+        if (!semantic()) {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
@@ -276,12 +279,14 @@ public class RelevanceSearch {
             }
             next = end;
         }
-        if (this.reranker != SearchReranker.NONE) {
+        // Austauschbar (ADR 0015): einmal je Suche aufgelöst.
+        SearchReranker configured = SwappableReranker.resolve(this.reranker);
+        if (configured != SearchReranker.NONE) {
             // Erst nach der Live-Prüfung: An den Reranker gehen nur Texte von Seiten, die der Aufrufer jetzt lesen
             // darf, geprüft gegen ihren heutigen Space.
             Map<SearchHit, RankedHit> byHit = new IdentityHashMap<>();
             hits.forEach(hit -> byHit.put(hit.hit(), hit));
-            Reranking custom = new Reranking(this.reranker);
+            Reranking custom = new Reranking(configured);
             List<SearchHit> reranked = custom.apply(new SearchReranker.Request(query, queryText,
                     hits.stream().map(RankedHit::hit).toList(),
                     hit -> document(caller, hit, scores.get(hit), partitions.get(hit))));
@@ -308,7 +313,7 @@ public class RelevanceSearch {
         // Rechte zuerst: Wer die Quelle nicht lesen darf, erfährt nicht, ob ein Dienst eingerichtet ist.
         SearchScope.authorize(access, catalog, caller, PageSearchQuery.of(sourceId, List.of(), null, pageId, null,
                 null, null, null, SearchSort.PAGE_ID)).requireKnown(catalog);
-        if (embedding == null) {
+        if (!semantic()) {
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
         return new RelatedSections(catalog, index, access, store, vectors, embedding, this::checkLive)

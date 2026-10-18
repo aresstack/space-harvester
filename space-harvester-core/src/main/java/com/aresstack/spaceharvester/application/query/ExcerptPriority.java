@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Ladereihenfolge der gefundenen Seiten nach Titel und Auszug (wie {@code ExcerptRanking} im Enterprise AI Client,
@@ -51,6 +52,24 @@ public final class ExcerptPriority {
     /** Ohne Bewertung: die Reihenfolge der Quellen bleibt die Ladereihenfolge. */
     public static ExcerptPriority off() {
         return OFF;
+    }
+
+    /**
+     * Folgt einer wechselnden Bewertung (Konfiguration zur Laufzeit, ADR 0015): jede Suche fragt die jeweils aktuelle.
+     * Ohne Bewerter gilt keine Quelle als freigegeben, dann geht nichts an den Dienst.
+     */
+    public static ExcerptPriority following(Supplier<ExcerptPriority> current) {
+        Objects.requireNonNull(current, "current");
+        return new ExcerptPriority((query, documents) -> {
+            ExcerptPriority priority = current.get();
+            if (priority.scorer == null) {
+                throw new IllegalStateException("Keine Bewertung eingestellt");
+            }
+            return priority.scorer.score(query, documents);
+        }, sourceId -> {
+            ExcerptPriority priority = current.get();
+            return priority.scorer != null && priority.mayProcessExternally.test(sourceId);
+        });
     }
 
     /** Ob überhaupt bewertet werden kann. */

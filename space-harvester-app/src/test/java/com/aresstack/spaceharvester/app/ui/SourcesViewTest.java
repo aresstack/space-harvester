@@ -80,11 +80,15 @@ class SourcesViewTest {
         await(() -> spaces.getRowCount() == 1);
         assertThat(spaces.getSelectedRow()).isEqualTo(-1);
         assertThat(view[0].reconcile.isEnabled()).isFalse();
+        assertThat(view[0].initialize.isEnabled()).isFalse();
+        assertThat(view[0].checkChanges.isEnabled()).isFalse();
         assertThat(context.runtime().workspace().jobs()).isEmpty();
 
         // Mit gewähltem Space startet der Kreispfeil genau dessen Abgleich; die Auswahl übersteht den Klick.
         SwingUtilities.invokeAndWait(() -> spaces.setRowSelectionInterval(0, 0));
         assertThat(view[0].spaceTargets()).hasSize(1);
+        assertThat(view[0].initialize.isEnabled()).isTrue();
+        assertThat(view[0].checkChanges.isEnabled()).isTrue();
         SwingUtilities.invokeAndWait(() -> view[0].reconcile.doClick());
         await(() -> !context.runtime().workspace().jobs().isEmpty());
         assertThat(spaces.getSelectedRow()).isZero();

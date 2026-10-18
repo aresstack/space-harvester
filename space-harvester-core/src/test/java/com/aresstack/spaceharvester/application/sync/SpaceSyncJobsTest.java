@@ -117,6 +117,38 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void aPreviewShowsTheDeltaWithoutWritingAnything() {
+        syncs.start("wiki", "DOC", "client:a", SyncMode.FULL);
+        runQueued();
+        source.put("4", "DOC", "2", "1", null).put("2", "DOC", null, "1", null);
+
+        SyncPreview preview = syncs.preview("wiki", "DOC", SyncMode.SYNC_CACHE);
+
+        assertThat(preview.newPageIds()).containsExactly("4");
+        assertThat(preview.movedPageIds()).containsExactly("2");
+        assertThat(preview.summary().generation()).isNull();
+        assertThat(syncs.catalog("wiki", "DOC").knownPages()).isEqualTo(3);
+        assertThat(syncs.catalog("wiki", "DOC").generation()).isEqualTo(1);
+    }
+
+    @Test
+    void theCatalogCountsKnownPagesAndPagesWithContentWithoutAskingTheSource() {
+        assertThat(syncs.catalog("wiki", "DOC").state()).isEqualTo(SpaceCatalog.State.UNKNOWN);
+
+        syncs.start("wiki", "DOC", "client:a", SyncMode.CATALOG_ONLY);
+        runQueued();
+        SpaceCatalog cataloged = syncs.catalog("wiki", "DOC");
+        assertThat(cataloged.state()).isEqualTo(SpaceCatalog.State.CATALOGED);
+        assertThat(cataloged.knownPages()).isEqualTo(3);
+        assertThat(cataloged.cachedPages()).isZero();
+        assertThat(cataloged.generation()).isEqualTo(1);
+
+        syncs.start("wiki", "DOC", "client:a", SyncMode.FULL);
+        runQueued();
+        assertThat(syncs.catalog("wiki", "DOC").cachedPages()).isEqualTo(3);
+    }
+
+    @Test
     void aReconcileWithoutFirstLoadCompletesWithoutLoadingUnknownPages() {
         JobStatus accepted = syncs.start("wiki", "DOC", "client:a", false);
         runQueued();

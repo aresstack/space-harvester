@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 
 /**
@@ -36,7 +37,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._@/:-]{1,100}");
 
-    private final EmbeddingProvider provider;
+    private final Supplier<EmbeddingProvider> provider;
     private final int maxChunkChars;
     private final TextSegmentation segmentation;
     private final Predicate<String> sources;
@@ -44,7 +45,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     /** Für alle Quellen, im aufrufenden Thread (Tests, eingebettete Modelle). */
     public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation) {
-        this(provider, maxChunkChars, segmentation, sourceId -> true, false);
+        this(fixed(provider), maxChunkChars, segmentation, sourceId -> true, false);
     }
 
     /**
@@ -55,25 +56,66 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      */
     public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation,
                               Predicate<String> mayProcessExternally) {
+        this(fixed(provider), maxChunkChars, segmentation, mayProcessExternally, true);
+    }
+
+    /**
+     * Mit austauschbarem Modell (Konfiguration zur Laufzeit, ADR 0015): {@code provider} liefert das aktuelle Modell
+     * oder {@code null}, solange keines eingestellt ist; dann bettet der Prozessor nichts ein ({@link #available()}).
+     * Ein Wechsel ändert {@link #version()}: Die Vektoren des alten Modells gelten als veraltet und werden ohne neuen
+     * Abruf der Seiten aus dem Cache neu berechnet, sobald die Suche sie braucht. Wer das Modell setzt, prüft es vorher
+     * mit {@link #check(EmbeddingProvider)}.
+     *
+     * @param mayProcessExternally ob Inhalte der Quelle an den Dienst gehen dürfen; wird bei jeder Seite neu gefragt
+     */
+    public EmbeddingProcessor(Supplier<EmbeddingProvider> provider, int maxChunkChars, TextSegmentation segmentation,
+                              Predicate<String> mayProcessExternally) {
         this(provider, maxChunkChars, segmentation, mayProcessExternally, true);
     }
 
-    private EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation,
-                               Predicate<String> sources, boolean remote) {
+    private EmbeddingProcessor(Supplier<EmbeddingProvider> provider, int maxChunkChars,
+                               TextSegmentation segmentation, Predicate<String> sources, boolean remote) {
         this.segmentation = Objects.requireNonNull(segmentation, "segmentation");
         this.sources = Objects.requireNonNull(sources, "sources");
         this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
+        if (maxChunkChars < 100) {
+            throw new IllegalArgumentException("maxChunkChars muss mindestens 100 sein");
+        }
+        this.maxChunkChars = maxChunkChars;
+    }
+
+    private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
+        check(Objects.requireNonNull(provider, "provider"));
+        return () -> provider;
+    }
+
+    /**
+     * Prüft Modellkennung und Dimension eines Modells, bevor es eingesetzt wird.
+     *
+     * @throws IllegalArgumentException wenn Kennung oder Dimension unbrauchbar sind
+     */
+    public static void check(EmbeddingProvider provider) {
         if (!MODEL_ID.matcher(provider.modelId()).matches()) {
             throw new IllegalArgumentException("Ungültige Modellkennung");
         }
         if (provider.dimensions() < 1 || provider.dimensions() > 4096) {
             throw new IllegalArgumentException("Dimension muss zwischen 1 und 4096 liegen");
         }
-        if (maxChunkChars < 100) {
-            throw new IllegalArgumentException("maxChunkChars muss mindestens 100 sein");
+    }
+
+    /** Ob gerade ein Modell eingestellt ist. */
+    public boolean available() {
+        return provider.get() != null;
+    }
+
+    /** Das aktuelle Modell. */
+    private EmbeddingProvider provider() {
+        EmbeddingProvider current = provider.get();
+        if (current == null) {
+            throw new EmbeddingUnavailableException("Kein Embedding-Modell eingestellt");
         }
-        this.maxChunkChars = maxChunkChars;
+        return current;
     }
 
     @Override
@@ -83,12 +125,12 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     @Override
     public boolean appliesTo(PageKey key) {
-        return sources.test(key.sourceId());
+        return covers(key.sourceId());
     }
 
-    /** Ob Inhalte dieser Quelle eingebettet werden. */
+    /** Ob Inhalte dieser Quelle eingebettet werden; ohne Modell keine. */
     public boolean covers(String sourceId) {
-        return sources.test(sourceId);
+        return available() && sources.test(sourceId);
     }
 
     @Override
@@ -98,12 +140,19 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     @Override
     public String version() {
-        return FORMAT + "+" + provider.modelId() + "+" + provider.dimensions() + "+" + maxChunkChars + "+"
+        EmbeddingProvider current = provider.get();
+        return current == null ? "off" : version(current);
+    }
+
+    private String version(EmbeddingProvider current) {
+        return FORMAT + "+" + current.modelId() + "+" + current.dimensions() + "+" + maxChunkChars + "+"
                 + segmentation.id();
     }
 
     @Override
     public EnrichmentOutput process(PageText text) {
+        // Ein Modell für den ganzen Lauf, auch wenn es währenddessen gewechselt wird.
+        EmbeddingProvider provider = provider();
         List<Chunk> chunks = chunks(text);
         List<String> warnings = new ArrayList<>();
         if (chunks.size() > MAX_CHUNKS) {
@@ -125,7 +174,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                     .append(",\"charEnd\":").append(chunk.end)
                     .append(",\"section\":").append(chunk.section == null ? "null" : JsonText.quote(chunk.section))
                     .append(",\"vector\":");
-            vector(json, vectors.get(i));
+            vector(json, vectors.get(i), provider.dimensions());
             json.append('}');
         }
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
@@ -138,6 +187,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      */
     public float[] embedQuery(String text) {
         Objects.requireNonNull(text, "text");
+        EmbeddingProvider provider = provider();
         List<float[]> vectors = provider.embedQueries(List.of(text));
         float[] vector = vectors == null || vectors.size() != 1 ? null : vectors.get(0);
         if (vector == null || vector.length != provider.dimensions()) {
@@ -152,9 +202,9 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return vector.clone();
     }
 
-    private void vector(StringBuilder json, float[] vector) {
-        if (vector == null || vector.length != provider.dimensions()) {
-            throw new IllegalStateException("Vektor hat nicht die Dimension " + provider.dimensions());
+    private static void vector(StringBuilder json, float[] vector, int dimensions) {
+        if (vector == null || vector.length != dimensions) {
+            throw new IllegalStateException("Vektor hat nicht die Dimension " + dimensions);
         }
         json.append('[');
         for (int k = 0; k < vector.length; k++) {

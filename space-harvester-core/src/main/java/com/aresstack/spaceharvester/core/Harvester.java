@@ -10,6 +10,14 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.Swappable;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
@@ -51,6 +59,7 @@ import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
@@ -92,13 +101,18 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 /**
@@ -135,6 +149,7 @@ public final class Harvester implements AutoCloseable {
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
 
+    private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
     private static final Duration POLL = Duration.ofMillis(50);
     /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
     private static final int SEARCH_FILL_PARALLEL = 4;
@@ -164,6 +179,14 @@ public final class Harvester implements AutoCloseable {
     private final SourceManagement sourceManagement;
     private final TrustBundles trustBundles;
     private final String userAgent;
+    /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
+    private volatile HarvesterConfiguration settings;
+    /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
+    private final Swappable<Optional<EmbeddingProvider>> embeddingModel;
+    /** Austauschbarer Reranker; {@code null}, wenn er fest eingestellt ist. */
+    private final SwappableReranker liveReranker;
+    /** Die aus der Konfiguration eingeplanten Abgleiche je Space; eigene über {@link #reconcile} gehören nicht dazu. */
+    private final Map<String, ConfiguredSchedule> configuredSchedules = new LinkedHashMap<>();
 
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
@@ -177,6 +200,10 @@ public final class Harvester implements AutoCloseable {
             this.catalog = catalog;
             this.trustBundles = trustBundles;
             this.userAgent = builder.userAgent;
+            ConfigurationManager manager = builder.configuration;
+            this.settings = manager == null ? null : manager.current().configuration();
+            // Was der Builder nach configuration() selbst festlegt, bleibt fest; alles andere folgt der Konfiguration.
+            boolean liveAi = manager != null && !builder.aiFixed;
             Path cacheDirectory = builder.dataDirectory.resolve("cache");
             LucenePageCache cache = LucenePageCache.open(cacheDirectory.resolve("pages"));
             opened.add(cache);
@@ -202,7 +229,16 @@ public final class Harvester implements AutoCloseable {
             opened.add(enrichmentStore);
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
-            if (builder.embeddingProvider != null || builder.ai.embeddings()) {
+            Swappable<Optional<EmbeddingProvider>> model = null;
+            if (builder.embeddingProvider == null && liveAi) {
+                // ADR 0015: die Kette steht immer, das Modell wechselt mit der Konfiguration oder fehlt (aus).
+                Swappable<Optional<EmbeddingProvider>> current = Swappable.of(embeddingModel(builder.ai, catalog,
+                        trustBundles, builder.userAgent));
+                model = current;
+                embedding = new EmbeddingProcessor(() -> current.get().orElse(null), builder.maxChunkChars,
+                        KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
+                        sourceId -> this.settings.ai().mayProcessExternally(sourceId));
+            } else if (builder.embeddingProvider != null || builder.ai.embeddings()) {
                 // ADR 0011: über den externen Dienst oder das Modell des Programms (#188), im Hintergrund, nur für
                 // freigegebene Quellen.
                 AiServiceSettings ai = builder.ai;
@@ -212,6 +248,9 @@ public final class Harvester implements AutoCloseable {
                         : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
                                 .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
+            }
+            this.embeddingModel = model;
+            if (embedding != null) {
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -244,7 +283,7 @@ public final class Harvester implements AutoCloseable {
             this.freshness = new PageFreshness(sources, snapshots, clock);
             this.pages = new PageQueries(catalog, reader, access, freshness,
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
-                    builder.maxTreeNodes, builder.cacheFreshness, clock);
+                    builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
@@ -258,14 +297,28 @@ public final class Harvester implements AutoCloseable {
                 opened.add(prefetch);
             }
             SearchReranker reranker = builder.reranker;
-            if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
+            SwappableReranker swappable = null;
+            if (reranker == SearchReranker.NONE && liveAi) {
+                // ADR 0015: Modell und Option „umordnen“ wechseln zur Laufzeit; ohne beides ordnet nichts um.
+                swappable = new SwappableReranker(modelReranker(settings, catalog, trustBundles, builder.userAgent));
+                reranker = swappable;
+            } else if (reranker == SearchReranker.NONE && builder.ai.reranking()) {
                 // #181: Cross-Encoder des Dienstes, Texte nur aus freigegebenen Quellen.
                 reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
                         builder.userAgent).reranker(), builder.ai::mayProcessExternally);
             }
-            // #154: mit Cross-Encoder lädt die Schlagwortsuche die vielversprechendsten Funde zuerst.
-            ExcerptPriority excerpts = builder.excerptRanking && reranker instanceof ModelReranker model
-                    ? model.excerptPriority() : ExcerptPriority.off();
+            // #154: mit Cross-Encoder lädt die Schlagwortsuche die vielversprechendsten Funde zuerst; mit
+            // Konfiguration folgt die Bewertung dem jeweils eingestellten Rerank-Modell.
+            ExcerptPriority excerpts;
+            if (!builder.excerptRanking) {
+                excerpts = ExcerptPriority.off();
+            } else if (swappable != null) {
+                SwappableReranker live = swappable;
+                excerpts = ExcerptPriority.following(() -> live.current() instanceof ModelReranker cross
+                        ? cross.excerptPriority() : ExcerptPriority.off());
+            } else {
+                excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
+            }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
                     excerpts);
             PageRenewal renewal = null;
@@ -284,8 +337,9 @@ public final class Harvester implements AutoCloseable {
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, reranker, textIndex, preparation);
+            this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), builder.withheldRetention);
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
@@ -304,10 +358,204 @@ public final class Harvester implements AutoCloseable {
                     exportWriter, clock);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
+            if (manager != null) {
+                scheduleConfigured(plannedSchedules(settings, false));
+                catchUpOnStart();
+                ConfigurationManager.Registration registration = manager.register(this::prepare);
+                opened.add(registration::close);
+            }
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);
             throw e;
+        }
+    }
+
+    /** Aktualität je Quelle: aus der Konfiguration, wenn sie nicht fest eingestellt ist (ADR 0015). */
+    private Function<String, CacheFreshness> freshnessRule(Builder builder) {
+        if (builder.configuration == null || builder.freshnessFixed) {
+            CacheFreshness fixed = builder.cacheFreshness;
+            return sourceId -> fixed;
+        }
+        return sourceId -> settings.freshnessFor(sourceId);
+    }
+
+    /** Frist für gesperrte Seiten je Quelle: aus der Konfiguration, wenn sie nicht fest eingestellt ist. */
+    private Function<String, Duration> retentionRule(Builder builder) {
+        if (builder.configuration == null || builder.retentionFixed) {
+            Duration fixed = builder.withheldRetention;
+            return sourceId -> fixed;
+        }
+        return sourceId -> settings.syncFor(sourceId).withheldRetention();
+    }
+
+    /**
+     * Das Embedding-Modell des Dienstes oder leer ohne Embeddings.
+     *
+     * @throws IllegalArgumentException wenn Kennung oder Dimension unbrauchbar sind
+     */
+    private static Optional<EmbeddingProvider> embeddingModel(AiServiceSettings ai, ConfiguredSourceCatalog catalog,
+                                                              TrustBundles trustBundles, String userAgent) {
+        if (!ai.embeddings()) {
+            return Optional.empty();
+        }
+        EmbeddingProvider provider = RemoteAi.of(ai, catalog, trustBundles, userAgent).embeddings();
+        EmbeddingProcessor.check(provider);
+        return Optional.of(provider);
+    }
+
+    /** Der Cross-Encoder des Dienstes (#181), wenn die Konfiguration umordnen lässt; sonst keiner. */
+    private static SearchReranker modelReranker(HarvesterConfiguration configuration, ConfiguredSourceCatalog catalog,
+                                                TrustBundles trustBundles, String userAgent) {
+        if (!configuration.reranking()) {
+            return SearchReranker.NONE;
+        }
+        AiServiceSettings ai = configuration.ai();
+        return new ModelReranker(ai.rerankModel(), RemoteAi.of(ai, catalog, trustBundles, userAgent).reranker(),
+                ai::mayProcessExternally);
+    }
+
+    /**
+     * Bereitet einen Wechsel der Konfiguration vor (ADR 0015): baut Embedding-Modell, Reranker und Zeitplan neu, wo
+     * sich etwas geändert hat, und tauscht erst beim Aktivieren. Regeln je Quelle (Aktualität, Frist, Betriebsart)
+     * liest jeder Abruf und jeder Lauf aus der dann wirksamen Konfiguration; laufende Aufträge enden mit ihren.
+     */
+    private ConfigurationListener.Preparation prepare(ConfigurationChange change) {
+        HarvesterConfiguration next = change.next();
+        List<ConfiguredSchedule> planned = change.syncChanged() ? plannedSchedules(next, true) : null;
+        Optional<EmbeddingProvider> model = null;
+        if (embeddingModel != null && change.embeddingChanged()) {
+            try {
+                model = embeddingModel(next.ai(), catalog, trustBundles, userAgent);
+            } catch (RuntimeException e) {
+                throw new ConfigurationRejectedException("ai." + AiServiceSettings.EMBEDDING_MODEL,
+                        "Das Embedding-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
+            }
+        }
+        SearchReranker reranker = null;
+        if (liveReranker != null && change.rerankerChanged()) {
+            try {
+                reranker = modelReranker(next, catalog, trustBundles, userAgent);
+            } catch (RuntimeException e) {
+                throw new ConfigurationRejectedException("ai." + AiServiceSettings.RERANK_MODEL,
+                        "Das Rerank-Modell lässt sich nicht einsetzen (" + e.getClass().getSimpleName() + ")");
+            }
+        }
+        Optional<EmbeddingProvider> nextModel = model;
+        SearchReranker nextReranker = reranker;
+        return () -> {
+            settings = next;
+            if (nextModel != null) {
+                embeddingModel.swap(nextModel);
+            }
+            if (nextReranker != null) {
+                liveReranker.swap(nextReranker);
+            }
+            if (planned != null) {
+                scheduleConfigured(planned);
+            }
+        };
+    }
+
+    /** Ein Abgleich, den die Konfiguration einplant ({@code sync.spaces} mit dem Abstand der Quelle). */
+    private record ConfiguredSchedule(String sourceId, String spaceKey, Duration interval, SyncMode mode) {
+
+        String key() {
+            return sourceId + "/" + spaceKey;
+        }
+    }
+
+    /**
+     * Die Abgleiche aus {@code sync.spaces}: je Eintrag mit Abstand und Betriebsart seiner Quelle; ohne Abstand keiner.
+     *
+     * @param strict ob Probleme die Konfiguration ablehnen; sonst werden die Einträge übersprungen
+     * @throws ConfigurationRejectedException bei unbekannter Quelle oder zu kurzem Abstand, wenn {@code strict}
+     */
+    private List<ConfiguredSchedule> plannedSchedules(HarvesterConfiguration configuration, boolean strict) {
+        List<ConfiguredSchedule> planned = new ArrayList<>();
+        List<ConfigurationProblem> problems = new ArrayList<>();
+        for (String entry : configuration.sync().spaces()) {
+            int slash = entry.indexOf('/');
+            if (slash < 1 || slash == entry.length() - 1) {
+                problems.add(new ConfigurationProblem(SyncSettings.SPACES,
+                        "Jeder Eintrag hat die Form <Quelle>/<Space-Key>, nicht „" + entry + "“"));
+                continue;
+            }
+            String sourceId = entry.substring(0, slash);
+            SyncSettings rules = configuration.syncFor(sourceId);
+            if (rules.interval() == null) {
+                continue;
+            }
+            if (catalog.find(sourceId).isEmpty()) {
+                problems.add(new ConfigurationProblem(SyncSettings.SPACES, "Unbekannte Quelle „" + sourceId + "“"));
+                continue;
+            }
+            if (rules.interval().compareTo(Reconciliation.MIN_INTERVAL) < 0) {
+                problems.add(new ConfigurationProblem(SyncSettings.INTERVAL,
+                        "Der Abstand muss mindestens eine Minute betragen"));
+                continue;
+            }
+            planned.add(new ConfiguredSchedule(sourceId, entry.substring(slash + 1), rules.interval(),
+                    rules.mode()));
+        }
+        if (!problems.isEmpty()) {
+            if (strict) {
+                throw new ConfigurationRejectedException(problems.stream().distinct().toList());
+            }
+            LOG.log(System.Logger.Level.WARNING, "{0} Einträge des Zeitplans übersprungen", problems.size());
+        }
+        return planned;
+    }
+
+    /**
+     * Ersetzt die Abgleiche aus der Konfiguration; eigene Einplanungen über {@link #reconcile} bleiben und gehen einem
+     * Eintrag für denselben Space vor.
+     */
+    private void scheduleConfigured(List<ConfiguredSchedule> planned) {
+        synchronized (configuredSchedules) {
+            Set<String> own = new HashSet<>();
+            for (Reconciliation.Schedule schedule : reconciliation.schedules()) {
+                String key = schedule.sourceId() + "/" + schedule.spaceKey();
+                if (!configuredSchedules.containsKey(key)) {
+                    own.add(key);
+                }
+            }
+            for (ConfiguredSchedule previous : configuredSchedules.values()) {
+                reconciliation.cancel(previous.sourceId(), previous.spaceKey());
+            }
+            configuredSchedules.clear();
+            for (ConfiguredSchedule schedule : planned) {
+                if (own.contains(schedule.key()) || configuredSchedules.containsKey(schedule.key())) {
+                    continue;
+                }
+                reconciliation.schedule(schedule.sourceId(), schedule.spaceKey(), schedule.interval(),
+                        schedule.mode());
+                configuredSchedules.put(schedule.key(), schedule);
+            }
+        }
+    }
+
+    /** Ein Space gehört ab jetzt dem Aufrufer von {@link #reconcile} oder {@link #stopReconciling}. */
+    private void releaseConfigured(String sourceId, String spaceKey) {
+        synchronized (configuredSchedules) {
+            configuredSchedules.remove(sourceId + "/" + spaceKey);
+        }
+    }
+
+    /** Holt beim Start nach, wo die Regeln der Quelle es verlangen ({@code sync.catch-up-on-start}). */
+    private void catchUpOnStart() {
+        HarvesterConfiguration configuration = settings;
+        try {
+            List<JobStatus> started = syncs.catchUpAll(OWNER, sourceId -> {
+                SyncSettings rules = configuration.syncFor(sourceId);
+                return rules.catchUpOnStart() ? rules.mode() : null;
+            });
+            if (!started.isEmpty()) {
+                LOG.log(System.Logger.Level.INFO, "Nachholen beim Start: {0} Spaces", started.size());
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Nachholen beim Start nicht gestartet ({0})",
+                    e.getClass().getName());
         }
     }
 
@@ -490,6 +738,34 @@ public final class Harvester implements AutoCloseable {
         return syncs.catchUp(sourceId, spaceKey, OWNER, since);
     }
 
+    /**
+     * Vorschau eines Abgleichs („Bestand prüfen“, ADR 0014): was ein Lauf in der Betriebsart ändern würde, neue,
+     * geänderte, verschobene, gelöschte und gesperrte Seiten, ohne zu laden oder zu schreiben. Wartet auf die
+     * Inventur.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie {@code SYNC}
+     *                                                                               nicht freigibt
+     */
+    public com.aresstack.spaceharvester.application.sync.SyncPreview preview(String sourceId, String spaceKey,
+                                                                            SyncMode mode) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
+        return syncs.preview(sourceId, spaceKey, mode);
+    }
+
+    /**
+     * Bestand eines Space im Cache: Katalogstand, bekannte Seiten und Seiten mit Inhalt (ADR 0014). Fragt die Quelle
+     * nicht.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wenn die Richtlinie
+     *                                                                               {@code METADATA} nicht freigibt
+     */
+    public com.aresstack.spaceharvester.application.sync.SpaceCatalog catalog(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        requireActive(sourceId);
+        return syncs.catalog(sourceId, spaceKey);
+    }
+
     /** Wie {@link #catchUp(String, String, Instant)}, in der Betriebsart {@code mode}. */
     public JobStatus catchUp(String sourceId, String spaceKey, Instant since, SyncMode mode) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
@@ -534,6 +810,7 @@ public final class Harvester implements AutoCloseable {
                                              boolean loadUnknown) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
+        releaseConfigured(sourceId, spaceKey);
         return reconciliation.schedule(sourceId, spaceKey, interval, loadUnknown);
     }
 
@@ -541,12 +818,14 @@ public final class Harvester implements AutoCloseable {
     public Reconciliation.Schedule reconcile(String sourceId, String spaceKey, Duration interval, SyncMode mode) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         requireActive(sourceId);
+        releaseConfigured(sourceId, spaceKey);
         return reconciliation.schedule(sourceId, spaceKey, interval, mode);
     }
 
     /** Nimmt den Space aus dem regelmäßigen Abgleich; {@code false}, wenn er nicht eingeplant war. */
     public boolean stopReconciling(String sourceId, String spaceKey) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        releaseConfigured(sourceId, spaceKey);
         return reconciliation.cancel(sourceId, spaceKey);
     }
 
@@ -761,8 +1040,42 @@ public final class Harvester implements AutoCloseable {
         private EmbeddingProvider embeddingProvider;
         private Predicate<String> embeddingSources;
         private SearchReranker reranker = SearchReranker.NONE;
+        private ConfigurationManager configuration;
+        private boolean aiFixed;
+        private boolean freshnessFixed;
+        private boolean retentionFixed;
 
         private Builder() {
+        }
+
+        /**
+         * Konfiguration zur Laufzeit (ADR 0015): übernimmt aus {@link ConfigurationManager#current()} KI-Dienst,
+         * Aktualität vorhandener Inhalte, Frist für gesperrte Seiten und das Laden der Suchtreffer, und folgt danach
+         * jedem aktivierten Wechsel ohne Neustart:
+         * <ul>
+         *     <li>Aktualität ({@code freshnessFor}) und Frist ({@code syncFor}) je Quelle beim nächsten Abruf bzw.
+         *     Lauf;</li>
+         *     <li>Embedding-Modell und Reranker: neue Suchen nutzen die neuen, laufende behalten ihre; Vektoren des
+         *     alten Modells werden ohne neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht;</li>
+         *     <li>Zeitplan aus {@code sync.spaces} mit Abstand und Betriebsart je Quelle; eigene Einplanungen über
+         *     {@link Harvester#reconcile} bleiben;</li>
+         *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach.</li>
+         * </ul>
+         * Was nach diesem Aufruf mit {@link #ai}, {@link #cacheFreshness}, {@link #withheldRetention},
+         * {@link #embeddings} oder {@link #reranker} fest eingestellt wird, bleibt fest und folgt der Konfiguration
+         * nicht. Der Harvester meldet sich beim Schließen ab.
+         */
+        public Builder configuration(ConfigurationManager manager) {
+            this.configuration = Objects.requireNonNull(manager, "manager");
+            HarvesterConfiguration current = manager.current().configuration();
+            this.ai = current.ai();
+            this.cacheFreshness = current.search().cacheFreshness();
+            this.withheldRetention = current.sync().withheldRetention();
+            this.prefetchSearchHits = current.search().prefetchHits();
+            this.aiFixed = false;
+            this.freshnessFixed = false;
+            this.retentionFixed = false;
+            return this;
         }
 
         /**
@@ -858,6 +1171,7 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder ai(AiServiceSettings ai) {
             this.ai = Objects.requireNonNull(ai, "ai");
+            this.aiFixed = configuration != null;
             return this;
         }
 
@@ -1012,6 +1326,7 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder cacheFreshness(CacheFreshness cacheFreshness) {
             this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
+            this.freshnessFixed = configuration != null;
             return this;
         }
 
@@ -1027,6 +1342,7 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalArgumentException("withheldRetention darf nicht negativ sein");
             }
             this.withheldRetention = withheldRetention;
+            this.retentionFixed = configuration != null;
             return this;
         }
 

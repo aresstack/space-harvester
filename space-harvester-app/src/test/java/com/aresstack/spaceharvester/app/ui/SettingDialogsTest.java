@@ -153,6 +153,26 @@ class SettingDialogsTest {
     }
 
     @Test
+    void syncRulesOfOneSourceStartAsGlobalAndOnlyChangeThatSource() throws Exception {
+        SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
+        CountDownLatch done = new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(() -> {
+            shell[0] = SettingDialogs.syncRules(null, context, "wiki", done::countDown);
+            List<JComboBox> boxes = find(shell[0].body(), JComboBox.class);
+            assertThat(boxes).allMatch(box -> SettingDialogs.AS_GLOBAL.equals(box.getSelectedItem()));
+            List<JTextField> fields = find(shell[0].body(), JTextField.class);
+            assertThat(fields).allMatch(field -> field.getText().isEmpty());
+            fields.get(1).setText("1d");
+            boxes.get(0).setSelectedItem(SettingDialogs.SYNC_CACHE);
+            shell[0].save();
+        });
+        assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(Files.readString(config)).contains("    sources:", "\"wiki\":", "inventory-interval: 1d",
+                "mode: sync-cache", "# Kommentar bleibt stehen").doesNotContain("        interval:");
+        assertThat(context.settings().syncRule("wiki").inventoryInterval()).isEqualTo(java.time.Duration.ofDays(1));
+    }
+
+    @Test
     void proxyAppliesToAllSourcesAndRejectsIncompleteInput() throws Exception {
         SettingDialogs.Shell[] shell = new SettingDialogs.Shell[1];
         CountDownLatch done = new CountDownLatch(1);
