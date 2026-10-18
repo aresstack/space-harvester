@@ -92,6 +92,19 @@ class ParityComparisonTest {
                 .verdict()).isEqualTo(Verdict.CORE_WENIGER);
     }
 
+    @Test
+    void anAddressLeadingElsewhereIsAGapButOnlyInTheCoreIsMore() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("display-title", "1002");
+        eac.put("space-home", "1001");
+        eac.put("foreign-host", "-");
+        List<Finding> findings = ParityComparison.addresses(eac,
+                Map.of("display-title", "1002", "space-home", "-", "foreign-host", "1002"));
+
+        assertThat(findings).extracting(Finding::verdict)
+                .containsExactly(Verdict.GLEICH, Verdict.CORE_WENIGER, Verdict.CORE_MEHR);
+    }
+
     private static DocumentOutline outline(String text, int images, int notes) {
         return new DocumentOutline("md", List.of(), false, false, false, 0, images, notes, List.of(), Set.of(), 0, 0,
                 text);
