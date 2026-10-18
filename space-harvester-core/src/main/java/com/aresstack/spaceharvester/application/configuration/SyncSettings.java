@@ -25,10 +25,16 @@ import java.util.Map;
  *                          {@link SyncMode#CATALOG_ONLY}
  * @param inventoryInterval Abstand der regelmäßigen Bestandsinventur (nur Metadaten) oder {@code null} ohne
  * @param sources           abweichende Regeln je Quellen-ID; ohne Eintrag gilt alles hier global
+ * @param backgroundFill    Hintergrundfüllung (ADR 0016): lädt in Leerlaufzeit Seiten des Katalogs ohne oder mit
+ *                          veraltetem Inhalt; Standard an, unabhängig von {@code mode}; je Quelle abschaltbar
+ * @param backgroundParallelism so viele Seiten lädt der Hintergrund höchstens zugleich, 1 bis
+ *                          {@value #MAX_BACKGROUND_PARALLELISM}, Standard {@value #DEFAULT_BACKGROUND_PARALLELISM};
+ *                          gilt für alle Quellen zusammen
  */
 public record SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
                            Duration withheldRetention, boolean catchUpOnStart, SyncMode mode,
-                           Duration inventoryInterval, Map<String, SourceSyncOverride> sources) {
+                           Duration inventoryInterval, Map<String, SourceSyncOverride> sources,
+                           boolean backgroundFill, int backgroundParallelism) {
 
     public static final String EVENTS = "sync.events";
     public static final String INTERVAL = "sync.interval";
@@ -40,6 +46,13 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     public static final String INVENTORY_INTERVAL = "sync.inventory-interval";
     /** Präfix der Regeln je Quelle: {@code sync.sources.<Quelle>.<Feld>}. */
     public static final String SOURCES = "sync.sources";
+    public static final String BACKGROUND_FILL = "sync.background-fill";
+    public static final String BACKGROUND_PARALLELISM = "sync.background-parallelism";
+
+    /** Standard der Parallelität im Hintergrund. */
+    public static final int DEFAULT_BACKGROUND_PARALLELISM = 2;
+    /** Höchste Parallelität im Hintergrund. */
+    public static final int MAX_BACKGROUND_PARALLELISM = 16;
 
     /** Kleinster Abstand des Zeitplans, wie {@code Harvester.reconcile}. */
     public static final Duration MIN_INTERVAL = Duration.ofMinutes(1);
@@ -47,9 +60,20 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
     /** Wie SpaceSync.DEFAULT_WITHHELD_RETENTION. */
     public static final Duration DEFAULT_WITHHELD_RETENTION = Duration.ofDays(30);
 
-    /** Keine Änderungsquelle: keine Ereignisse, kein Nachholen beim Start, kein Zeitplan, nicht vor jeder Suche. */
+    /**
+     * Keine Änderungsquelle: keine Ereignisse, kein Nachholen beim Start, kein Zeitplan, nicht vor jeder Suche;
+     * Hintergrundfüllung an.
+     */
     public static final SyncSettings DEFAULT = new SyncSettings(false, null, List.of(), false,
             DEFAULT_WITHHELD_RETENTION, false, SyncMode.CATALOG_ONLY, null, Map.of());
+
+    /** Mit Hintergrundfüllung nach Standard (an, {@value #DEFAULT_BACKGROUND_PARALLELISM} zugleich). */
+    public SyncSettings(boolean events, Duration interval, List<String> spaces, boolean beforeSearch,
+                        Duration withheldRetention, boolean catchUpOnStart, SyncMode mode,
+                        Duration inventoryInterval, Map<String, SourceSyncOverride> sources) {
+        this(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode, inventoryInterval,
+                sources, true, DEFAULT_BACKGROUND_PARALLELISM);
+    }
 
     public SyncSettings {
         spaces = spaces == null ? List.of() : List.copyOf(spaces);
@@ -87,12 +111,19 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
                 o.withheldRetention() != null ? o.withheldRetention() : withheldRetention,
                 o.catchUpOnStart() != null ? o.catchUpOnStart() : catchUpOnStart,
                 o.mode() != null ? o.mode() : mode,
-                o.inventoryInterval() != null ? o.inventoryInterval() : inventoryInterval, Map.of());
+                o.inventoryInterval() != null ? o.inventoryInterval() : inventoryInterval, Map.of(),
+                o.backgroundFill() != null ? o.backgroundFill() : backgroundFill, backgroundParallelism);
     }
 
     public SyncSettings withInterval(Duration value) {
         return new SyncSettings(events, value, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
-                inventoryInterval, sources);
+                inventoryInterval, sources, backgroundFill, backgroundParallelism);
+    }
+
+    /** Mit Hintergrundfüllung an oder aus und dieser Parallelität. */
+    public SyncSettings withBackground(boolean fill, int parallelism) {
+        return new SyncSettings(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
+                inventoryInterval, sources, fill, parallelism);
     }
 
     public SyncSettings withSource(String sourceId, SourceSyncOverride override) {
@@ -103,6 +134,6 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
             next.put(sourceId, override);
         }
         return new SyncSettings(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
-                inventoryInterval, next);
+                inventoryInterval, next, backgroundFill, backgroundParallelism);
     }
 }

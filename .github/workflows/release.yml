@@ -198,7 +198,7 @@ jobs:
 
           1. \`$app\` herunterladen.
           2. Optional prüfen: \`certutil -hashfile $app SHA256\` muss \`$sum\` ergeben.
-          3. \`java -jar $app\` starten; beim ersten Start **Wissensquellen › Quelle hinzufügen …** wählen.
+          3. \`java -jar $app\` starten; beim ersten Start führt der Einrichtungsassistent durch die erste Quelle (später **Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …**).
 
           Tokens nur als Umgebungsvariable (\`setx CONFLUENCE_TOKEN …\`), nie in der Konfigurationsdatei.
           Anleitung: [docs/DESKTOP_APP.md](https://github.com/$GITHUB_REPOSITORY/blob/$ref/docs/DESKTOP_APP.md).

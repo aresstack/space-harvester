@@ -67,16 +67,20 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
     /**
      * @param sources abweichende Regeln je Quelle als Feld → Wert, Schlüssel wie unter
      *                {@code sync.sources.<Quelle>.<Feld>}
+     * @param backgroundFill        Hintergrundfüllung an (ADR 0016), {@code sync.background-fill}
+     * @param backgroundParallelism so viele Seiten lädt der Hintergrund zugleich, {@code sync.background-parallelism}
      */
     public record Sync(boolean events, String interval, List<String> spaces, boolean beforeSearch,
                        String withheldRetention, boolean catchUpOnStart, String mode, String inventoryInterval,
-                       Map<String, Map<String, String>> sources) {
+                       Map<String, Map<String, String>> sources, boolean backgroundFill,
+                       int backgroundParallelism) {
 
         static Sync of(SyncSettings s) {
             Map<String, Map<String, String>> sources = new TreeMap<>();
             s.sources().forEach((id, o) -> sources.put(id, ConfigurationOverlay.fields(o)));
             return new Sync(s.events(), text(s.interval()), s.spaces(), s.beforeSearch(), text(s.withheldRetention()),
-                    s.catchUpOnStart(), s.mode().key(), text(s.inventoryInterval()), sources);
+                    s.catchUpOnStart(), s.mode().key(), text(s.inventoryInterval()), sources, s.backgroundFill(),
+                    s.backgroundParallelism());
         }
     }
 

@@ -37,7 +37,7 @@ public final class ConfigurationOverlay {
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
             SyncSettings.WITHHELD_RETENTION, SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE,
-            SyncSettings.INVENTORY_INTERVAL,
+            SyncSettings.INVENTORY_INTERVAL, SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM,
             StorageSettings.DATA_DIRECTORY);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
@@ -90,6 +90,8 @@ public final class ConfigurationOverlay {
         put(properties, SyncSettings.CATCH_UP_ON_START, sync.catchUpOnStart());
         put(properties, SyncSettings.MODE, sync.mode().key());
         put(properties, SyncSettings.INVENTORY_INTERVAL, sync.inventoryInterval());
+        put(properties, SyncSettings.BACKGROUND_FILL, sync.backgroundFill());
+        put(properties, SyncSettings.BACKGROUND_PARALLELISM, sync.backgroundParallelism());
         sync.sources().forEach((id, override) -> fields(override)
                 .forEach((field, value) -> properties.setProperty(SourceSyncOverride.key(id, field), value)));
         put(properties, StorageSettings.DATA_DIRECTORY, configuration.storage().dataDirectory());
@@ -177,6 +179,7 @@ public final class ConfigurationOverlay {
                 : o.refreshStrategy().key());
         putField(fields, SourceSyncOverride.MAX_AGE, o.maxAge());
         putField(fields, SourceSyncOverride.WITHHELD_RETENTION, o.withheldRetention());
+        putField(fields, SourceSyncOverride.BACKGROUND_FILL, o.backgroundFill());
         return fields;
     }
 
