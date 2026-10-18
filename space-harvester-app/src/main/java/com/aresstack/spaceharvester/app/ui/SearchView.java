@@ -55,6 +55,8 @@ public final class SearchView implements View {
      * eine Suche nicht für jede Eingabe hundert Seiten in den Cache holt.
      */
     static final int LIMIT = 25;
+    /** Schluss der Fortschrittszeile, wenn nichts mehr nachlädt. */
+    static final String DONE = "Die Suche ist abgeschlossen";
     /** Pause zwischen zwei Nachfragen, solange gefundene Seiten noch in den Cache laden. */
     private static final int FOLLOW_MILLIS = 1000;
     static final String UNAVAILABLE = "noch nicht verfügbar, KI-Dienst unter Einstellungen → KI einrichten";
@@ -542,7 +544,14 @@ public final class SearchView implements View {
     private void progress(int loading) {
         if (loading <= 0 || nextCursor == null) {
             follow.stop();
-            progressRow.setVisible(false);
+            // Ende sichtbar machen: nach dem Nachladen oder wenn diese Suche nichts mehr zu holen hat.
+            boolean done = nextCursor == null || peak > 0 && loading <= 0;
+            if (done) {
+                progress.setMaximum(1);
+                progress.setValue(1);
+                progressText.setText(DONE + " · " + Texts.count(model.rows.size(), "Treffer", "Treffer"));
+            }
+            progressRow.setVisible(done);
             return;
         }
         peak = Math.max(peak, loading);

@@ -95,6 +95,9 @@ class SearchViewTest {
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
         assertThat(view[0].statusText()).doesNotContain("unvollständig");
+        await(() -> view[0].progressText.getText().startsWith(SearchView.DONE));
+        assertThat(view[0].progressText.getText()).isEqualTo("Die Suche ist abgeschlossen · "
+                + (2 * PAGES_PER_SOURCE) + " Treffer");
     }
 
     /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
