@@ -101,6 +101,7 @@ class ContentViewTest {
         });
 
         await(() -> view.detail().shownPage() != null);
+        assertThat(onEdt(() -> view.detail().selectedTab())).isEqualTo("Leseansicht");
         // Nachgeladen und sofort abgelegt (ADR 0010): die Anzeige kommt bereits aus dem Cache.
         assertThat(onEdt(() -> view.detail().shownPage().live())).isFalse();
         assertThat(new String(onEdt(() -> view.detail().shownPage().snapshot().payload().bytes()),
