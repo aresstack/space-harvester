@@ -39,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 
 /** {@link PageQueries} gegen den {@link InMemoryPageCache}: Paging, Baum, Rechte, Generationen, Refresh. */
@@ -372,6 +373,24 @@ class PageQueriesTest {
         // Abgerufen um 20:00, Fenster 1 h: um 22:00 einmal geprüft, dann bis 23:00 frisch.
         verify(live, times(1)).pageMetadata("p03");
         assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void aMoveWithoutNewVersionOpensNoWindowSoTheNextCallerIsCheckedAgainstTheNewSpace() {
+        cache.publish("wiki", "DEV", confirmed("g1"), devPages());
+        PageSnapshot stored = page("wiki", "DEV", "p03", "p01");
+        when(live.pageMetadata("p03")).thenReturn(version(stored, "OPS", stored.metadata().version()));
+        AtomicBoolean devOnly = new AtomicBoolean();
+        AccessPolicy policy = (context, scope, kind) -> !devOnly.get() || scope.spaceKey() == null
+                || "DEV".equals(scope.spaceKey()) ? AccessDecision.ALLOW : AccessDecision.DENY;
+        PageQueries queries = refreshing(policy, PageCacheFill.NONE, new CacheFreshness(Duration.ofHours(1), true));
+
+        assertThat(queries.page(CALLER, "wiki", "p03", false).refresh())
+                .isEqualTo(PageFreshness.Outcome.HEADER_CHANGED);
+        // Die neuen Kopfdaten liegen nicht im Cache: kein Zeitfenster, die Rechte gelten im neuen Space.
+        devOnly.set(true);
+        assertThatThrownBy(() -> queries.page(CALLER, "wiki", "p03", false)).isInstanceOf(CacheMissException.class);
+        verify(live, times(2)).pageMetadata("p03");
     }
 
     @Test

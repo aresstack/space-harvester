@@ -69,6 +69,9 @@ public class PageQueries {
     private final CacheFreshness cacheFreshness;
     private final Clock clock;
     /** Letzte Versionsprüfung ohne neuen Inhalt; die gespeicherten Kopfdaten tragen nur ihren eigenen Stand. */
+    /** So viele letzte Prüfungen merkt sich der Use-Case höchstens. */
+    static final int MAX_CHECKED = 10_000;
+
     private final Map<PageKey, Instant> checked = new ConcurrentHashMap<>();
 
     /**
@@ -277,6 +280,11 @@ public class PageQueries {
             }
             throw e;
         }
+        if (checked.outcome() != PageFreshness.Outcome.CURRENT) {
+            // Nur eine unveränderte Seite öffnet ein neues Zeitfenster: geänderte Kopfdaten (etwa ein anderer Space)
+            // liegen nicht im Cache, die Rechteprüfung im Zeitfenster sähe sonst die alten.
+            this.checked.remove(new PageKey(sourceId, pageId));
+        }
         // Rechte am Ergebnis der Quelle: eine verschobene Seite zählt in ihrem neuen Space. Nicht mehr vorhanden und
         // nicht freigegeben sehen gleich aus.
         if (checked.outcome() == PageFreshness.Outcome.GONE || !readable(caller, checked.header())) {
@@ -293,11 +301,12 @@ public class PageQueries {
                 live = false;
             }
         }
-        if (checked.outcome() == PageFreshness.Outcome.CURRENT
-                || checked.outcome() == PageFreshness.Outcome.HEADER_CHANGED) {
+        if (checked.outcome() == PageFreshness.Outcome.CURRENT && !cacheFreshness.maxAge().isZero()) {
+            if (this.checked.size() >= MAX_CHECKED) {
+                // Begrenzt: ohne Eintrag zählt das Zeitfenster ab Inhaltsabruf bzw. den Kopfdaten im Cache.
+                this.checked.clear();
+            }
             this.checked.put(checked.header().key(), checked.checkedAt());
-        } else {
-            this.checked.remove(checked.header().key());
         }
         return new DeliveredPage(checked.header(), checked.snapshot(), generation, live, checked.outcome(),
                 checked.checkedAt());
