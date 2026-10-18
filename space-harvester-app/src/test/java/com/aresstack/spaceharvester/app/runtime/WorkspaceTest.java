@@ -140,6 +140,10 @@ class WorkspaceTest {
         // Anreicherung und Bilder sind eigene Folgeaufträge und stehen mit in der Liste.
         assertThat(workspace.jobs()).extracting(JobStatus::type).contains(JobType.ENRICHMENT)
                 .filteredOn(type -> !type.followUp()).containsExactly(JobType.EXPORT, JobType.SYNC);
+        // Erst wenn auch die Folgeaufträge fertig sind, liegt alles auf der Platte, was zu durchsuchen ist.
+        for (JobStatus job : workspace.jobs()) {
+            assertThat(await(workspace, job).state().terminal()).isTrue();
+        }
         assertThat(CONFLUENCE.requestHeaders()).anySatisfy(headers ->
                 assertThat(headers.values()).contains("Bearer " + TOKEN));
         assertNoFileContains(home, TOKEN);
