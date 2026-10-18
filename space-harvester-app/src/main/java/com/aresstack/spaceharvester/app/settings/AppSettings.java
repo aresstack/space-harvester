@@ -20,12 +20,14 @@ import java.util.Objects;
  * @param file        gelesene Datei, {@code null} ohne Datei
  * @param sources     Quellen in Dateireihenfolge
  * @param trustStores Vertrauensquellen je Bundle-Name aus {@code spring.ssl.bundle.*}
+ * @param outputDirectory Ausgabeordner für Dateien, die der Benutzer aus einem Export erzeugt
+ *                        ({@code space-harvester-app.output-directory}, Vorgabe der Ordner Downloads)
  * @param problems    verständliche Hinweise auf Fehler der Datei; Quellen mit Fehlern fehlen in {@code sources}
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
-                          AiSettings ai, List<String> problems) {
+                          AiSettings ai, Path outputDirectory, List<String> problems) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -35,7 +37,19 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         Objects.requireNonNull(storage, "storage");
         Objects.requireNonNull(jobLimits, "jobLimits");
         ai = ai == null ? AiSettings.NONE : ai;
+        outputDirectory = outputDirectory == null ? defaultOutputDirectory() : outputDirectory;
         problems = List.copyOf(problems);
+    }
+
+    /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
+    public AppSettings withOutputDirectory(Path directory) {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
+                problems);
+    }
+
+    /** Vorgabe des Ausgabeordners: Downloads im Benutzerverzeichnis. */
+    public static Path defaultOutputDirectory() {
+        return Path.of(System.getProperty("user.home"), "Downloads");
     }
 
     /**

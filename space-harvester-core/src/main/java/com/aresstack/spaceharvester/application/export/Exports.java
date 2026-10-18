@@ -290,8 +290,9 @@ public class Exports {
      *
      * @param unrefreshed Seiten, deren Abruf beim Einlesen scheiterte; nur intern, nach außen zählen nur lesbare
      */
+    /** @param counted ob das Einlesen die lesbaren Seiten schon als gefunden und beschafft gezählt hat */
     private record Prepared(Instant startedAt, CacheGeneration generation, List<PageHeader> unrefreshed,
-                            List<String> warnings) {
+                            List<String> warnings, boolean counted) {
     }
 
     /**
@@ -309,13 +310,13 @@ public class Exports {
         if (reusable && !request.refresh()) {
             context.record(JobEvent.Draft.info(COMPONENT, "Bestätigte Generation " + current.get().id()
                     + " wird wiederverwendet"));
-            return new Prepared(startedAt, current.get(), List.of(), List.of());
+            return new Prepared(startedAt, current.get(), List.of(), List.of(), false);
         }
         if (!provisioning.available()) {
             if (current.isEmpty() || request.refresh()) {
                 throw new SyncUnavailableException("kein Einlesen");
             }
-            return new Prepared(startedAt, current.get(), List.of(), List.of());
+            return new Prepared(startedAt, current.get(), List.of(), List.of(), false);
         }
         List<String> warnings = new ArrayList<>();
         context.phase(COMPONENT, "Einlesen");
@@ -324,7 +325,7 @@ public class Exports {
                 + "eingelesen" : "Bestand nicht bestätigt (" + current.get().state() + "); der Space wird von der "
                 + "Quelle eingelesen"));
         SpaceProvisioning.Provisioned provisioned = provisioning.provision(
-                new SilentContext(context), sourceId, spaceKey);
+                new ProvisioningContext(context), sourceId, spaceKey, request.visible());
         context.checkpoint();
         if (!provisioned.confirmed()) {
             if (current.isEmpty() || request.refresh()) {
@@ -340,7 +341,7 @@ public class Exports {
         CacheGeneration generation = cache.currentGeneration(sourceId, spaceKey).orElseThrow(() ->
                 new JobFailedException("SYNC_INCOMPLETE", "Nach dem Einlesen liegt für Space " + spaceKey
                         + " der Quelle " + sourceId + " keine Generation vor"));
-        return new Prepared(startedAt, generation, provisioned.failedPages(), warnings);
+        return new Prepared(startedAt, generation, provisioned.failedPages(), warnings, true);
     }
 
     private void exportGeneration(JobContext context, ExportRequest request, Prepared prepared,
@@ -380,10 +381,14 @@ public class Exports {
                         hidden.add(listed.pageId());
                         continue;
                     }
-                    context.discovered(1);
+                    if (!prepared.counted()) {
+                        context.discovered(1);
+                    }
                     failedIds.remove(listed.pageId());
                     PageFailure failure = exportPage(session, listed, generation);
-                    context.processed(1);
+                    if (!prepared.counted()) {
+                        context.processed(1);
+                    }
                     if (failure == null) {
                         entries.add(new TreeEntry(listed.pageId(), listed.parentPageId()));
                         exported.put(listed.pageId(), listed);
@@ -395,7 +400,9 @@ public class Exports {
                 }
             } while (batch.size() == BATCH_SIZE);
             // Lesbar, aber ohne Stand im Cache: fehlt im Export und zählt als gescheitert.
-            context.discovered(failedIds.size());
+            if (!prepared.counted()) {
+                context.discovered(failedIds.size());
+            }
             context.failed(failedIds.size());
             context.checkpoint();
             PageTree tree = PageTreeBuilder.build(entries);
@@ -605,14 +612,16 @@ public class Exports {
     }
 
     /**
-     * Sicht des Einlesens auf den Exportauftrag: Abbruch und Laufzeitgrenze greifen, Zähler nicht. Gezählt werden nur
-     * die Seiten, die der Auftraggeber lesen darf, und das entscheidet erst der Export je Seite.
+     * Sicht des Einlesens auf den Exportauftrag: Abbruch, Laufzeitgrenze, Phasen und die Zähler „gefunden“
+     * ({@code discovered}) und „beschafft“ ({@code processed}) greifen. Das Einlesen zählt dabei nur Seiten, die der
+     * Auftraggeber lesen darf ({@link SpaceProvisioning#provision(JobContext, String, String, java.util.function.Predicate)}).
+     * „Geschrieben“ und „gescheitert“ gehören dem Export, damit keine Seite doppelt zählt.
      */
-    private static final class SilentContext implements JobContext {
+    private static final class ProvisioningContext implements JobContext {
 
         private final JobContext context;
 
-        SilentContext(JobContext context) {
+        ProvisioningContext(JobContext context) {
             this.context = context;
         }
 
@@ -633,10 +642,12 @@ public class Exports {
 
         @Override
         public void discovered(long pages) {
+            context.discovered(pages);
         }
 
         @Override
         public void processed(long pages) {
+            context.processed(pages);
         }
 
         @Override

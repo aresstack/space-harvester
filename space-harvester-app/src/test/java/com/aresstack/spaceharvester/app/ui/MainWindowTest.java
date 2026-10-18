@@ -84,7 +84,7 @@ class MainWindowTest {
             assertThat(png).isNotEmptyFile();
         }
         assertThat(buttonTexts(surface[0])).containsSubsequence("Suche", "Wissensquellen", "Inhalte",
-                "Exportieren", "Aufträge", "Status", "Einstellungen");
+                "Herunterladen", "Aufträge", "Status", "Einstellungen");
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
         assertThat(labelTexts(surface[0])).as("Status ist die Diagnose, nicht die Begrüßung")
                 .doesNotContain(AboutDialog.TAGLINE);

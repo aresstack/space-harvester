@@ -149,6 +149,25 @@ public class Jobs implements AutoCloseable {
     }
 
     /**
+     * Die eigenen Aufträge einer Art mit laufenden Zählern, neueste zuerst; so findet ein Client auch Aufträge, die
+     * nicht er selbst eingeplant hat, etwa die Anreicherung nach seinem Abgleich ({@link JobType#ENRICHMENT}).
+     */
+    public List<JobStatus> list(String owner, JobType type) {
+        List<JobStatus> result = new ArrayList<>();
+        for (JobStatus stored : store.all()) {
+            if (Objects.equals(stored.owner(), owner) && stored.type() == type) {
+                try {
+                    result.add(status(stored.id()));
+                } catch (UnknownJobException e) {
+                    // inzwischen gelöscht
+                }
+            }
+        }
+        result.sort(Comparator.comparing(JobStatus::createdAt).reversed());
+        return result;
+    }
+
+    /**
      * Wie {@link #cancel(String)}, aber nur für den eigenen Auftrag.
      *
      * @throws UnknownJobException wenn es keinen Auftrag mit dieser ID für diesen Client gibt
@@ -578,6 +597,11 @@ public class Jobs implements AutoCloseable {
         @Override
         public String jobId() {
             return id;
+        }
+
+        @Override
+        public String owner() {
+            return owner;
         }
 
         @Override

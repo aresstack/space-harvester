@@ -27,6 +27,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Predicate;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -53,16 +55,31 @@ class ExportProvisioningTest {
 
             @Override
             public Provisioned provision(JobContext context, String sourceId, String spaceKey) {
+                return provision(context, sourceId, spaceKey, header -> false);
+            }
+
+            @Override
+            public Provisioned provision(JobContext context, String sourceId, String spaceKey,
+                                         Predicate<PageHeader> counted) {
                 provisioned.add(sourceId + "/" + spaceKey);
+                ExportProvisioningTest.this.counted = counted;
                 return run.apply(context);
             }
         };
     }
 
+    private Predicate<PageHeader> counted = header -> false;
+
+    /** Zählt wie das echte Einlesen: Inventur und Beschaffung nur für Seiten, die der Auftraggeber lesen darf. */
+    private void count(JobContext context, List<PageSnapshot> inventory) {
+        long visible = inventory.stream().map(PageSnapshot::header).filter(counted).count();
+        context.discovered(visible);
+        context.processed(visible);
+    }
+
     private SpaceProvisioning publishing(String generation, List<PageSnapshot> pages, Set<String> failed) {
         return provisioning(context -> {
-            // Zähler des Einlesens zählen nicht: erst der Export weiß, welche Seiten der Auftraggeber lesen darf.
-            context.discovered(pages.size());
+            count(context, pages);
             cache.publish("confluence", "DEV", confirmed(generation), pages);
             return new SpaceProvisioning.Provisioned(true, false, pages.stream()
                     .filter(page -> failed.contains(page.key().pageId())).map(PageSnapshot::header).toList());
@@ -132,6 +149,7 @@ class ExportProvisioningTest {
         PageSnapshot missing = page("confluence", "DEV", "3", "1");
         JobStatus status = run(exports(provisioning(context -> {
             // Seite 3 stand in der Inventur, ihr erster Abruf scheiterte: kein Stand im Cache, keine Seitenliste.
+            count(context, List.of(twoPages().get(0), twoPages().get(1), missing));
             cache.publish("confluence", "DEV", confirmed("g1"), twoPages());
             return new SpaceProvisioning.Provisioned(true, false, List.of(missing.header()));
         })), dev());
@@ -139,13 +157,14 @@ class ExportProvisioningTest {
         ExportSummary summary = writer.published.get(status.id()).summary();
         assertThat(summary.complete()).isFalse();
         assertThat(summary.warnings()).anyMatch(w -> w.startsWith("1 Seiten ließen sich beim Einlesen nicht"));
-        assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(3, 2, 2, 1));
+        assertThat(jobs.status(status.id()).progress()).isEqualTo(new JobProgress(3, 3, 2, 1));
     }
 
     @Test
     void aMissingPageTheCallerMayNotReadIsNeverMentioned() {
         PageSnapshot missing = page("confluence", "DEV", "3", "1");
         JobStatus status = run(exports(provisioning(context -> {
+            count(context, List.of(twoPages().get(0), twoPages().get(1), missing));
             cache.publish("confluence", "DEV", confirmed("g1"), twoPages());
             return new SpaceProvisioning.Provisioned(true, false, List.of(missing.header()));
         })), dev().withVisible(header -> !header.key().pageId().equals("3")));
@@ -307,9 +326,10 @@ class ExportProvisioningTest {
 
     @Test
     void aPageRevokedBeforePublishingPublishesNothing() {
+        // Erste Prüfung zählt beim Einlesen, zweite wählt fürs Schreiben aus, die dritte vor dem Veröffentlichen.
         java.util.Map<String, Integer> checks = new java.util.HashMap<>();
         JobStatus status = run(exports(publishing("g1", twoPages(), Set.of())), dev().withVisible(header ->
-                checks.merge(header.key().pageId(), 1, Integer::sum) == 1 || !header.key().pageId().equals("2")));
+                checks.merge(header.key().pageId(), 1, Integer::sum) <= 2 || !header.key().pageId().equals("2")));
 
         assertThat(status.state()).isEqualTo(JobState.FAILED);
         assertThat(status.error().code()).isEqualTo("ACCESS_REVOKED");

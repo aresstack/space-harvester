@@ -209,7 +209,7 @@ public final class Harvester implements AutoCloseable {
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache)));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs)));
             this.exports = new Exports(jobs, reader,
                     new FileSystemExportArtifactWriter(builder.exportDirectory()),
                     new ExportConverters(List.of(new JsonArrayConverter(), new MarkdownConverter(),

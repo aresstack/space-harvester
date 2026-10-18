@@ -366,6 +366,36 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theOutputDirectoryIsDownloadsUntilSetAndStaysInTheAppBlock() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                # Kopf bleibt
+                space-harvester-app:
+                  data-directory: /daten   # Kommentar bleibt
+                space-harvester:
+                  sources: []
+                """);
+        assertThat(loader.load(file).outputDirectory()).isEqualTo(AppSettings.defaultOutputDirectory());
+        Path chosen = home.resolve("Ablage \"neu\"");
+
+        editor.save(file, editor.withOutputDirectory(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                chosen));
+
+        assertThat(Files.readString(file)).startsWith("# Kopf bleibt").contains("data-directory: /daten   # Kommentar",
+                "  output-directory: ");
+        assertThat(loader.load(file).outputDirectory()).isEqualTo(chosen);
+        // Erneut setzen ersetzt die Zeile, statt eine zweite anzulegen; null entfernt sie wieder.
+        editor.save(file, editor.withOutputDirectory(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                home));
+        assertThat(Files.readString(file).split("output-directory", -1)).hasSize(2);
+        editor.save(file, editor.withOutputDirectory(file, new ConfigFileEditor.Draft(Files.readString(file), null),
+                null));
+        assertThat(Files.readString(file)).doesNotContain("output-directory").contains("data-directory");
+        assertThat(ConfigFileEditor.outputDirectory("space-harvester:\n  sources: []\n", "/x"))
+                .startsWith("space-harvester-app:\n  output-directory: \"/x\"\n\nspace-harvester:");
+    }
+
+    @Test
     void writesTheAiBlockWithoutAKeyAndRemovesItWhenEmpty() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, """

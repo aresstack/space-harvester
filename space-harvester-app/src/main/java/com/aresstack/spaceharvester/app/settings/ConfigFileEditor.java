@@ -26,6 +26,7 @@ public final class ConfigFileEditor {
 
     // Schlüssel locker wie beim Laden: space-harvester, space_harvester, spaceHarvester; sources, Sources.
     private static final Pattern ROOT = Pattern.compile("([A-Za-z_-]+):\\s*(#.*)?");
+    private static final Pattern SCALAR_KEY = Pattern.compile("\\s*([A-Za-z_-]+):");
     private static final Pattern ROOT_INLINE = Pattern.compile("([A-Za-z_-]+):\\s*\\S.*");
     private static final Pattern SOURCES = Pattern.compile("( +)([A-Za-z_-]+):\\s*(\\[\\s*])?\\s*(#.*)?");
     private static final Pattern SOURCES_INLINE = Pattern.compile(" *([A-Za-z_-]+):\\s*\\S.*");
@@ -323,6 +324,67 @@ public final class ConfigFileEditor {
         }
         if (!ai.empty()) {
             add(lines, block >= 0 ? block : root + 1, ai.yaml(" ".repeat(childIndent)));
+        }
+        return String.join(newline, lines) + newline;
+    }
+
+    /**
+     * Setzt {@code space-harvester-app.output-directory}; {@code null} entfernt den Schlüssel, dann gilt Downloads.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withOutputDirectory(Path file, Draft base, Path directory) {
+        String text = outputDirectory(base.text(), directory == null ? null : directory.toAbsolutePath().toString());
+        AppSettings settings = loader.read(file, text);
+        Path expected = directory == null ? AppSettings.defaultOutputDirectory() : directory.toAbsolutePath();
+        if (!expected.equals(settings.outputDirectory())) {
+            throw new IllegalArgumentException("Der Ausgabeordner ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester-app.output-directory von Hand bearbeiten.");
+        }
+        return new Draft(text, settings);
+    }
+
+    /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
+    static String outputDirectory(String text, String directory) {
+        List<String> lines = new ArrayList<>(List.of(text.split("\r?\n", -1)));
+        String newline = text.contains("\r\n") ? "\r\n" : "\n";
+        if (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
+        }
+        String value = directory == null ? null
+                : "output-directory: \"" + directory.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        int root = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (isKey(ROOT, lines.get(i), 1, "spaceharvesterapp")) {
+                root = i;
+                break;
+            }
+            if (isKey(ROOT_INLINE, lines.get(i), 1, "spaceharvesterapp")) {
+                throw unsupported("space-harvester-app steht in einer Zeile");
+            }
+        }
+        if (root < 0) {
+            if (value != null) {
+                // Oben in der Datei, wie im Beispiel; der Rest bleibt unverändert.
+                lines.addAll(0, List.of("space-harvester-app:", "  " + value, ""));
+            }
+            return String.join(newline, lines) + newline;
+        }
+        int rootEnd = blockEnd(lines, root, 0);
+        int childIndent = childIndent(lines, root, rootEnd, 2);
+        int line = -1;
+        for (int i = root + 1; i < rootEnd && line < 0; i++) {
+            Matcher key = SCALAR_KEY.matcher(lines.get(i));
+            if (!blankOrComment(lines.get(i)) && indent(lines.get(i)) == childIndent && key.lookingAt()
+                    && AppSettingsLoader.normalize(key.group(1)).equals("outputdirectory")) {
+                line = i;
+            }
+        }
+        if (line >= 0) {
+            lines.subList(line, blockEnd(lines, line, childIndent)).clear();
+        }
+        if (value != null) {
+            lines.add(line >= 0 ? line : root + 1, " ".repeat(childIndent) + value);
         }
         return String.join(newline, lines) + newline;
     }

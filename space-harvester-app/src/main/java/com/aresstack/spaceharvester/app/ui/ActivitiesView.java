@@ -79,7 +79,7 @@ public final class ActivitiesView implements View {
         JPanel leftSouth = new JPanel(new BorderLayout(0, 6));
         leftSouth.setOpaque(false);
         leftSouth.add(Comic.row(deleteFinished), BorderLayout.NORTH);
-        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Exporte unter Exportieren. "
+        leftSouth.add(Comic.note("Abgleiche starten unter Wissensquellen oder Inhalte, Downloads unter Herunterladen. "
                 + "Beendete Aufträge bleiben sichtbar, bis die Aufbewahrungsfrist endet oder sie gelöscht werden."),
                 BorderLayout.SOUTH);
         left.add(leftSouth, BorderLayout.SOUTH);
@@ -359,8 +359,11 @@ public final class ActivitiesView implements View {
                 + " abbrechen? Bereits Gelesenes bleibt unbestätigt.", "Abbrechen")) {
             return;
         }
-        Background.run(() -> status.type() == JobType.SYNC ? runtime.workspace().cancelSync(status.id()).status()
-                : runtime.workspace().cancelExport(status.id()), s -> poll(), feedback::problem);
+        Background.run(() -> switch (status.type()) {
+            case SYNC -> runtime.workspace().cancelSync(status.id()).status();
+            case EXPORT -> runtime.workspace().cancelExport(status.id());
+            default -> runtime.workspace().cancelJob(status.id());
+        }, s -> poll(), feedback::problem);
     }
 
     static final String KEPT = "Exportdateien, die unter „Dateien speichern …“ abgelegt wurden, und der Seitenbestand "

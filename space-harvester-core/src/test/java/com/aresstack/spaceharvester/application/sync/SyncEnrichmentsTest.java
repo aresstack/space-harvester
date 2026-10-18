@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.jobs.InMemoryJobStore;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -110,6 +111,69 @@ class SyncEnrichmentsTest {
 
         assertThat(job.state()).isEqualTo(JobState.COMPLETED);
         assertThat(results.find(new PageKey("wiki", "1"))).isEmpty();
+    }
+
+    @Test
+    void enrichmentIsItsOwnJobAndTheSyncDoesNotWaitForIt() {
+        SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, source.queries(), store, fetcher, FakeSource.CLOCK,
+                List.of(new EnrichmentsAfterSync(enrichments, store.repository, jobs)));
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        boolean sawSyncDoneBeforeEnrichment = false;
+        while (!queued.isEmpty()) {
+            List<JobStatus> pending = jobs.list("client:a", JobType.ENRICHMENT);
+            if (jobs.status(accepted.id()).state() == JobState.COMPLETED && pending.size() == 1
+                    && !pending.get(0).state().terminal()) {
+                sawSyncDoneBeforeEnrichment = true;
+                assertThat(results.find(new PageKey("wiki", "1"))).isEmpty();
+            }
+            queued.poll().run();
+        }
+
+        assertThat(sawSyncDoneBeforeEnrichment).isTrue();
+        JobStatus enrichment = jobs.list("client:a", JobType.ENRICHMENT).get(0);
+        assertThat(enrichment.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(enrichment.sourceId()).isEqualTo("wiki");
+        assertThat(enrichment.partitionKey()).isEqualTo("DOC");
+        // drei Seiten mal ein Prozessor
+        assertThat(enrichment.progress().discovered()).isEqualTo(3);
+        assertThat(enrichment.progress().processed()).isEqualTo(3);
+        assertThat(enrichment.progress().written()).isEqualTo(3);
+        assertThat(results.find(new PageKey("wiki", "3"))).hasSize(1);
+    }
+
+    @Test
+    void aCancelledEnrichmentLeavesTheSyncConfirmed() {
+        SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, source.queries(), store, fetcher, FakeSource.CLOCK,
+                List.of(new EnrichmentsAfterSync(enrichments, store.repository, jobs)));
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a");
+        while (!queued.isEmpty() && jobs.list("client:a", JobType.ENRICHMENT).isEmpty()) {
+            queued.poll().run();
+        }
+        JobStatus enrichment = jobs.list("client:a", JobType.ENRICHMENT).get(0);
+
+        jobs.cancel(enrichment.id(), "client:a");
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+
+        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.CANCELLED);
+        assertThat(syncs.status(accepted.id(), "client:a").status().state()).isEqualTo(JobState.COMPLETED);
+        assertThat(store.confirmed("wiki", "DOC")).isPresent();
+        assertThat(results.find(new PageKey("wiki", "1"))).isEmpty();
+    }
+
+    @Test
+    void provisioningCountsOnlyPagesTheCallerMayReadAndLeavesWritingToTheExport() {
+        SpaceSyncJobs syncs = new SpaceSyncJobs(jobs, source.queries(), store, fetcher, FakeSource.CLOCK, List.of());
+        JobStatus job = jobs.submit(JobType.EXPORT, "wiki", "DOC", "client:a", com.aresstack.spaceharvester
+                .application.jobs.JobTask.blocking(context -> syncs.provision(context, "wiki", "DOC",
+                        header -> !header.key().pageId().equals("2"))));
+        while (!queued.isEmpty()) {
+            queued.poll().run();
+        }
+
+        assertThat(jobs.status(job.id()).progress())
+                .isEqualTo(new com.aresstack.spaceharvester.application.jobs.JobProgress(2, 2, 0, 0));
     }
 
     private JobStatus run(SyncCommitted... afterCommit) {

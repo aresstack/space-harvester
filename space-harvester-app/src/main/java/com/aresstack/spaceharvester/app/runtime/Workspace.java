@@ -262,8 +262,25 @@ public final class Workspace {
                 // Ohne Recht auf den Space (z. B. nach geänderter Konfiguration) bleibt der Auftrag unsichtbar.
             }
         }
+        // Anreicherungen plant der Kern nach Abgleich oder Export selbst ein; sie gehören trotzdem in die Liste.
+        for (JobStatus enrichment : harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT)) {
+            if (result.stream().noneMatch(known -> known.id().equals(enrichment.id()))) {
+                try {
+                    requireVisible(enrichment, AccessKind.SYNC);
+                    result.add(enrichment);
+                } catch (RuntimeException e) {
+                    // wie oben: ohne Recht auf den Space unsichtbar
+                }
+            }
+        }
         result.sort(Comparator.comparing(JobStatus::createdAt).reversed());
         return result;
+    }
+
+    /** Bricht einen eigenen Auftrag beliebiger Art ab, etwa eine Anreicherung. */
+    public JobStatus cancelJob(String jobId) {
+        job(jobId);
+        return harvester.jobs().cancel(jobId, Harvester.OWNER);
     }
 
     /**

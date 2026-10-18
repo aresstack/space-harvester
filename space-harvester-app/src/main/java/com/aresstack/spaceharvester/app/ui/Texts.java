@@ -79,6 +79,7 @@ public final class Texts {
             case HARVEST -> "Ernte";
             case SYNC -> "Abgleich";
             case EXPORT -> "Export";
+            case ENRICHMENT -> "Anreicherung";
         };
     }
 

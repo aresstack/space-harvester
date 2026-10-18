@@ -165,7 +165,7 @@ class SearchViewTest {
 
         // Leerer Cache: ein erfolgreiches, leeres Ergebnis der Relevanzsuche statt eines Fehlers oder Titeltreffern.
         await(() -> view[0].statusText().contains("semantisch"));
-        assertThat(view[0].statusText()).startsWith("0 Treffer");
+        assertThat(view[0].statusText()).startsWith("0 Treffer").doesNotContain("unvollständig");
     }
 
     @Test

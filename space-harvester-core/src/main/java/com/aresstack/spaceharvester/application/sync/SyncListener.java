@@ -14,6 +14,11 @@ public interface SyncListener {
     default void inventoried(int pages) {
     }
 
+    /** Die Inventur ist fertig, mit ihren Seiten; ruft standardmäßig {@link #inventoried(int)}. */
+    default void inventoried(Inventory inventory) {
+        inventoried(inventory.pages().size());
+    }
+
     /** Eine Seite wurde abgeglichen; {@code written}, wenn dafür etwas vorgemerkt wurde. */
     default void pageDone(PageChange change, boolean written, boolean failed) {
     }

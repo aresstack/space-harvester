@@ -97,6 +97,19 @@ public class Enrichments {
     }
 
     /**
+     * Wie {@link #refresh(PageSnapshot)}, nur für einen Prozessor; so kann ein Auftrag Prozessor für Prozessor
+     * arbeiten und zeigen, welcher gerade rechnet.
+     *
+     * @throws IllegalArgumentException für einen unbekannten Prozessor
+     */
+    public Run refresh(PageSnapshot snapshot, String processorId) {
+        if (!processors.containsKey(processorId)) {
+            throw new IllegalArgumentException("Unbekannter Prozessor: " + processorId);
+        }
+        return run(snapshot, processorId, false);
+    }
+
+    /**
      * Berechnet die Ergebnisse der genannten Prozessoren neu, auch wenn sie aktuell sind (Neuindexierung). Auf
      * ausdrücklichen Wunsch, deshalb auch Prozessoren mit {@link EnrichmentProcessor#background()} im aufrufenden
      * Thread.

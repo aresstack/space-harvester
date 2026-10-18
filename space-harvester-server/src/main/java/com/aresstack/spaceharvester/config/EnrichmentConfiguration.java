@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.ActivityProc
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
@@ -27,7 +28,8 @@ import org.springframework.context.annotation.Configuration;
  * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
  * {@code outline}, {@code entities}, {@code properties}, {@code activities} und {@code relations} und die Ablage
  * (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie
- * nachgezogen.
+ * nachgezogen,
+ * als eigener Auftrag {@code ENRICHMENT}.
  */
 @Configuration(proxyBeanMethods = false)
 class EnrichmentConfiguration {
@@ -44,7 +46,9 @@ class EnrichmentConfiguration {
     }
 
     @Bean
-    EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots) {
-        return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable());
+    EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
+                                              ObjectProvider<Jobs> jobs) {
+        // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung.
+        return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable());
     }
 }
