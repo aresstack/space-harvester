@@ -18,8 +18,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.core.env.Environment;
@@ -149,6 +149,24 @@ class SourcesApiTest {
                 "\"detail\":\"Die Quelle ist derzeit nicht erreichbar.\"");
         // Transportmeldungen (Host, Port, Pfad) bleiben intern.
         assertThat(denied.body() + offline.body()).doesNotContain("127.0.0.1", "/wiki", "Exception");
+        assertThat(output.getAll()).doesNotContain(PASSWORD, TOKEN);
+    }
+
+    @Test
+    void diagnosisReportsEachStageWithCauseAndHint(CapturedOutput output) throws Exception {
+        HttpResponse<String> reachable = get("/api/v1/sources/pat-wiki/diagnosis");
+        HttpResponse<String> denied = get("/api/v1/sources/denying-wiki/diagnosis");
+        HttpResponse<String> offline = get("/api/v1/sources/offline-wiki/diagnosis");
+
+        assertThat(reachable.statusCode()).isEqualTo(200);
+        assertThat(reachable.body()).contains("\"successful\":true", "\"stage\":\"proxy-route\"",
+                "\"stage\":\"tls\",\"status\":\"info\"", "\"stage\":\"authentication\",\"status\":\"ok\"",
+                "\"message\":\"Spaces lesbar\"").doesNotContain("Spaces sichtbar");
+        assertThat(denied.body()).contains("\"successful\":false",
+                "\"stage\":\"authentication\",\"status\":\"failed\"", "\"stage\":\"api\",\"status\":\"skipped\"");
+        assertThat(offline.body()).contains("\"stage\":\"tcp\",\"status\":\"failed\"", "\"hint\":\"");
+        assertThat(get("/api/v1/sources/nope/diagnosis").statusCode()).isEqualTo(403);
+        assertThat(reachable.body() + denied.body() + offline.body()).doesNotContain(PASSWORD, TOKEN);
         assertThat(output.getAll()).doesNotContain(PASSWORD, TOKEN);
     }
 

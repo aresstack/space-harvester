@@ -137,6 +137,8 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    - `setEnabled`: schaltet eine Quelle ab oder wieder ein (EAC `setEnabled`). Abgeschaltet behält sie Einstellungen und
      Daten, ist für Suche, Lesen, Aufträge und Export aber unbekannt, auch für einen Export aus dem schon eingelesenen
      Stand; ihre offenen Aufträge werden abgebrochen.
+   - `diagnose`: prüft den Weg zu einer Quelle in Stufen (Proxy-Route, DNS, TCP, TLS, Anmeldung, API; #189, siehe
+     DIAGNOSTICS.md), mit Ursache und Hinweis je gescheitertem Schritt.
 
    Die Einstellungen dauerhaft ablegen bleibt Sache des Programms.
 6. **Veröffentlichung vorbereiten, nicht veröffentlichen.** `maven-publish` mit POM-Metadaten (Lizenz, SCM,
