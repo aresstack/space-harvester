@@ -94,6 +94,8 @@ public final class SearchView implements View {
     private int lastLoaded;
     /** Ob ein erneutes Suchen desselben Stapels läuft; nie zwei zugleich. */
     private boolean refreshing;
+    /** Ob das Laden abgebrochen wurde; dann sucht die Ansicht nicht erneut, denn das stieße das Laden wieder an. */
+    private boolean cancelled;
     /** Zeile, ab der der angezeigte Stapel in der Liste steht; nur er wird neu geordnet. */
     private int batchStart;
     /** Anfrage und Cursor der zuletzt angezeigten Suche, für „Weitere laden“; der Cursor gilt nur für sie. */
@@ -496,6 +498,7 @@ public final class SearchView implements View {
      */
     private void track(KeywordSearch.Progress progress) {
         poll.stop();
+        cancelled = false;
         if (progress == null) {
             progressId = null;
             finished(false);
@@ -561,7 +564,7 @@ public final class SearchView implements View {
             model.reorder(start, hits(results));
             select(selected);
             show(q, results);
-            if (progressId == null) {
+            if (progressId == null && !cancelled) {
                 finished(false);
             }
         }, error -> refreshing = false);
@@ -576,10 +579,10 @@ public final class SearchView implements View {
         }
         poll.stop();
         progressId = null;
-        Background.run(() -> runtime.workspace().cancelKeywordSearch(id), cancelled -> {
-            refresh();
-            finished(true);
-        }, error -> finished(true));
+        cancelled = true;
+        // Kein erneutes Suchen danach: Es lüde die abgebrochenen Seiten wieder in den Cache.
+        Background.run(() -> runtime.workspace().cancelKeywordSearch(id), ignored -> finished(true),
+                error -> finished(true));
     }
 
     /** Beendet das Verfolgen ohne Meldung, etwa bei einer neuen Eingabe; der Core bricht das Laden ab. */
@@ -659,7 +662,9 @@ public final class SearchView implements View {
         if (state.done()) {
             progressId = null;
             poll.stop();
-            refresh();
+            if (!state.cancelled()) {
+                refresh();
+            }
             finished(state.cancelled());
             return;
         }
