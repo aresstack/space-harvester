@@ -518,8 +518,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 **Suche nach Relevanz (#89), experimentell:** die semantische Suche; die Standardsuche ist die Schlagwortsuche oben.
 `sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
 die Wörter aus `title`) liefert genau einen Stapel (kein `cursor`; `complete=false` nur, wenn ein Kandidat bei der Quelle nicht prüfbar war) aus höchstens 100 Kandidaten der
-Vektorsuche und der Titelsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet
-nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
+Vektorsuche, des Volltextindex über den Cache und der Titelsuche (global ein gemeinsames Fenster über alle Quellen,
+keine Top-K je Quelle), geordnet nach der Kosinusähnlichkeit zu den gespeicherten Embeddings; gibt es Volltexttreffer,
+per Reciprocal Rank Fusion aus Volltext- und Kosinus-Rangfolge (#181, `reranker: rrf(fulltext,…)`). Alle Filter gelten
 weiter. Kandidaten der Vektorsuche brauchen `content` für ihre Seite; `relevance` (Ähnlichkeit, Abschnitt, `freshness`)
 steht nur an Treffern mit `content`-Freigabe. Jeder Treffer wird vor der Auslieferung live bei der Quelle auf Recht und Version geprüft (ADR 0011,
 Punkt 7). Ohne eingerichteten KI-Dienst, oder wenn er die Anfrage nicht

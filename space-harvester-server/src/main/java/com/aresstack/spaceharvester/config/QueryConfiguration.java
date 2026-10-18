@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -102,16 +103,19 @@ class QueryConfiguration {
     /**
      * {@code sort=relevance} (#89, ADR 0011): nur mit Embedding-Dienst und Anreicherungen im Lucene-Cache (der zugleich
      * Ablage und Vektorsuche ist); sonst {@code semantic-search-unavailable}. Mit dem Hintergrund
-     * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach.
+     * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach. Mit dem
+     * Volltextindex über den Cache ist sie hybrid (#181, RRF aus Volltext und Kosinus).
      */
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
                                     ObjectProvider<EmbeddingProcessor> embedding, PageQueries pages,
-                                    @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals) {
+                                    @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
+                                    ObjectProvider<PageTextIndex> texts) {
         ExecutorService background = renewals.getIfAvailable();
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
                 store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique(),
-                background == null ? null : new PageRenewal(pages, background));
+                background == null ? null : new PageRenewal(pages, background), SearchReranker.NONE,
+                texts.getIfUnique());
     }
 }
