@@ -29,6 +29,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -56,6 +59,31 @@ public class SearchController {
         this.search = search;
         this.keywords = keywords;
         this.relevance = relevance;
+    }
+
+    @GetMapping("/progress/{id}")
+    @Operation(summary = "Stand des Ladens einer Schlagwortsuche",
+            description = "Zähler zu progress.id einer Antwort mit text: wie viele der besten Funde geladen sind. "
+                    + "Steigt loaded, dieselbe Suche erneut stellen; die geladenen Seiten stehen dann in hits. Nennt "
+                    + "keine Seiten. Bekannt sind die letzten " + 256 + " Suchen.")
+    @ApiResponse(responseCode = "200", description = "Der Stand")
+    @ApiResponse(responseCode = "404", description = "Unbekannt oder verdrängt (not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<ProgressResponse> progress(@PathVariable String id) {
+        return keywords.progress(id).map(ProgressResponse::of).map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/progress/{id}")
+    @Operation(summary = "Laden einer Schlagwortsuche abbrechen",
+            description = "Wartende Abrufe entfallen, ein laufender endet regulär; Geladenes bleibt im Cache.")
+    @ApiResponse(responseCode = "204", description = "Abgebrochen")
+    @ApiResponse(responseCode = "404", description = "Unbekannt oder verdrängt (not-found)",
+            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+                    schema = @Schema(implementation = ProblemDetail.class)))
+    public ResponseEntity<Void> cancel(@PathVariable String id) {
+        return keywords.cancel(id) ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
 
     @GetMapping
@@ -259,18 +287,43 @@ public class SearchController {
      * @param nextCursor für weitere Treffer mit denselben Parametern, {@code null}, wenn nichts mehr folgt
      * @param complete   nichts folgt mehr, und jede Quelle ließ sich fragen und jeder Treffer prüfen
      * @param loading    gefundene Seiten, die beim Antworten noch nicht im Cache lagen; sie kommen mit nextCursor
+     * @param found      vorläufige Treffer: Funde der Quellen mit Titel und Auszug, nach Titel und Auszug bewertet, noch
+     *                   nicht aus dem Cache; ein Fund verschwindet hier, sobald er in {@code hits} steht
+     * @param progress   Stand des Ladens der besten Funde; mit {@code GET /api/v1/search/progress/{id}} abfragen und
+     *                   neu suchen, sobald {@code loaded} steigt
      */
     public record KeywordResponse(@Schema(allowableValues = {"source", "global"}) String scope,
                                   @Schema(nullable = true) String sourceId,
                                   @Schema(allowableValues = {"cache", "source"}) String origin,
                                   List<KeywordHitResponse> hits, List<SourceStateResponse> sources,
-                                  @Schema(nullable = true) String nextCursor, boolean complete, int loading) {
+                                  @Schema(nullable = true) String nextCursor, boolean complete, int loading,
+                                  List<KeywordHitResponse> found,
+                                  @Schema(nullable = true) ProgressResponse progress) {
 
         static KeywordResponse of(boolean fromCache, KeywordSearch.Results results) {
             return new KeywordResponse(SearchResponse.scope(results.sourceId()), results.sourceId(),
                     fromCache ? "cache" : "source", results.hits().stream().map(KeywordHitResponse::of).toList(),
                     results.sources().stream().map(SourceStateResponse::of).toList(), results.nextCursor(),
-                    results.complete(), results.loading());
+                    results.complete(), results.loading(),
+                    results.found().stream().map(KeywordHitResponse::of).toList(),
+                    results.progress() == null ? null : ProgressResponse.of(results.progress()));
+        }
+    }
+
+    /**
+     * Wie weit die besten Funde einer Suche geladen sind.
+     *
+     * @param total  so viele lädt der Stapel
+     * @param loaded davon im Cache
+     * @param failed    davon nicht ladbar oder abgebrochen
+     * @param cancelled abgebrochen
+     * @param done      nichts lädt mehr: die Suche ist abgeschlossen
+     */
+    public record ProgressResponse(String id, int total, int loaded, int failed, boolean cancelled, boolean done) {
+
+        static ProgressResponse of(KeywordSearch.Progress progress) {
+            return new ProgressResponse(progress.id(), progress.total(), progress.loaded(), progress.failed(),
+                    progress.cancelled(), progress.done());
         }
     }
 
@@ -280,7 +333,8 @@ public class SearchController {
      *
      * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
      */
-    public record KeywordHitResponse(String sourceId, String pageId, String spaceKey, String title, String snippet,
+    public record KeywordHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
+                                     String title, String snippet,
                                      @Schema(nullable = true) URI url, @Schema(nullable = true) String version,
                                      @Schema(nullable = true) Instant modifiedAt,
                                      @Schema(nullable = true) String parentPageId) {

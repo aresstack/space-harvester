@@ -17,6 +17,7 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -219,7 +220,8 @@ class HarvesterSearchTest {
     }
 
     private Harvester harvester(Harvester.Builder builder) {
-        return builder
+        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt.
+        return builder.searchWait(Duration.ofSeconds(10))
                 .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", SERVER.baseUrl(),
                         SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
                 .dataDirectory(data)

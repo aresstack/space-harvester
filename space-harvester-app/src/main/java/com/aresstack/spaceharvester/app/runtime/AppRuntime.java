@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
@@ -189,6 +190,8 @@ public final class AppRuntime implements AutoCloseable {
                 .asyncTransport(settings.asyncTransport())
                 .jobLimits(settings.jobLimits())
                 .searchTimeout(storage.searchTimeout())
+                // Bis die Suchansicht vorläufige Treffer und Fortschritt zeigt, wartet sie wie bisher aufs Laden.
+                .searchWait(SearchHitPrefetch.DEFAULT_WAIT)
                 .maxTreeNodes(storage.maxTreeNodes())
                 .pdfFont(storage.pdfFont())
                 .cacheFreshness(new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()))

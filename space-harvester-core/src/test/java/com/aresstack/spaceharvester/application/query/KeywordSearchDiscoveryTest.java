@@ -169,6 +169,54 @@ class KeywordSearchDiscoveryTest {
         assertThat(ranked.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("a", "b", "c");
     }
 
+    @Test
+    void allFindsComeAtOnceWithTheirSnippetsButOnlyTheBestLoad() {
+        wiki.results("agil", "a", "b", "c", "d", "e");
+        ExcerptPriority excerpts = new ExcerptPriority((query, documents) -> new double[] {0.1, 0.2, 0.9, 0.3, 0.8},
+                "wiki"::equals);
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, excerpts, 2)
+                .search(APP, KeywordSearch.Query.of("agil"), null, 50);
+
+        // Nur die beiden besten nach Titel und Auszug laden; der Rest ist sofort vorläufig sichtbar.
+        assertThat(loads).containsExactly(List.of("c", "e"));
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("c", "e");
+        assertThat(results.found()).extracting(KeywordSearch.Hit::pageId).containsExactly("d", "b", "a");
+        assertThat(results.found()).extracting(KeywordSearch.Hit::snippet).containsExactly("Auszug d", "Auszug b",
+                "Auszug a");
+        assertThat(results.ranked()).extracting(KeywordSearch.Hit::pageId).containsExactly("c", "e", "d", "b", "a");
+    }
+
+    @Test
+    void aLoadedFindMovesForwardInsteadOfDisappearing() {
+        wiki.results("agil", "a", "b", "c");
+        KeywordSearch.Prefetch nothingYet = (caller, hits) -> new KeywordSearch.Prefetch.Fill(hits, 0, "p",
+                new KeywordSearch.Progress("p", hits.size(), 0, 0));
+        KeywordSearch search = new KeywordSearch(catalog, access, texts, nothingYet, 1, ExcerptPriority.off(), 3);
+
+        KeywordSearch.Results first = search.search(APP, KeywordSearch.Query.of("agil"), null, 50);
+        cached.add("c");
+        KeywordSearch.Results second = search.search(APP, KeywordSearch.Query.of("agil"), null, 50);
+
+        assertThat(first.ranked()).extracting(KeywordSearch.Hit::pageId).containsExactly("a", "b", "c");
+        assertThat(first.progress()).isEqualTo(new KeywordSearch.Progress("p", 3, 0, 0));
+        assertThat(second.ranked()).extracting(KeywordSearch.Hit::pageId).containsExactly("c", "a", "b");
+    }
+
+    @Test
+    void withoutSourceWideGrantFindsAreCheckedPerPage() {
+        wiki.results("agil", "a", "b");
+        AccessGuard perSpace = new AccessGuard((context, scope, kind) -> scope.pageId() != null
+                && scope.spaceKey() == null ? AccessDecision.DENY : AccessDecision.ALLOW);
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, perSpace, texts, prefetch, 1,
+                ExcerptPriority.off(), 50).search(APP, KeywordSearch.Query.of("agil"), null, 50);
+
+        // Mit Space aus den live gelesenen Kopfdaten.
+        assertThat(loads).containsExactly(List.of("a", "b"));
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::spaceKey).containsExactly("DEV", "DEV");
+    }
+
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {
         return new KeywordSearch(catalog, access, texts, prefetch, maxQueries, excerpts);
     }

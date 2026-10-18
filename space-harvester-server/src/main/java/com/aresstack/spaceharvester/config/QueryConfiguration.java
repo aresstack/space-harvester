@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -95,21 +96,25 @@ class QueryConfiguration {
      * (Standard 4, 1 bis 8) begrenzt die Anfragen je Quelle, die aus einer längeren Frage entstehen; 1 schickt den
      * Suchtext unverändert. {@code space-harvester.search.excerpt-ranking} (Standard {@code true}) lässt mit
      * {@code rerank-model} den Cross-Encoder die Funde nach Titel und Auszug bewerten, um die vielversprechendsten zuerst
-     * zu laden (nur Quellen in {@code external-processing-sources}).
+     * zu laden (nur Quellen in {@code external-processing-sources}). {@code space-harvester.search.loads} (Standard
+     * {@value KeywordSearch#DEFAULT_LOADS}, alle) begrenzt, wie viele Funde je Stapel in den Cache laden, die besten
+     * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
                                 SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
-                                @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking) {
+                                @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
+                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
         ExcerptPriority excerpts = excerptRanking && reranker.getIfUnique() instanceof ModelReranker model
                 ? model.excerptPriority() : ExcerptPriority.off();
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts);
+        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts, loads);
     }
 
     /**
      * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013): vier Abrufe zugleich, höchstens 200 wartende;
-     * ohne Cache nichts. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
+     * ohne Cache nichts. Technische Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
+     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
      * verdrängt.
      */
     @Bean(destroyMethod = "close")
@@ -121,8 +126,9 @@ class QueryConfiguration {
             return SearchHitPrefetch.disabled();
         }
         return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
+                key -> available.findHeader(key).map(PageHeader::metadata),
                 (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                SearchHitPrefetch.background(4, 200));
+                SearchHitPrefetch.background(4, 200), SearchHitPrefetch.DEFAULT_WAIT, Duration.ZERO);
     }
 
     /**
