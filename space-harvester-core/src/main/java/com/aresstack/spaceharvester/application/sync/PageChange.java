@@ -29,7 +29,8 @@ public record PageChange(String pageId, Kind kind, BaselineEntry previous, PageM
         NOT_SEEN,
         /**
          * Gelistet, aber weder in der Generation noch im Cache, und der Abgleich lädt Unbekanntes nicht (ADR 0014,
-         * Punkt 2): kein Abruf, die Generation führt die Seite als fehlend.
+         * Punkt 2): kein Inhaltsabruf, nur die Kopfdaten kommen in den Katalog; die Generation führt die Seite als
+         * fehlend.
          */
         NOT_LOADED
     }

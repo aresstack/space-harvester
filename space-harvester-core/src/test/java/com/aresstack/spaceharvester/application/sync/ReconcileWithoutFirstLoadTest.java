@@ -61,6 +61,8 @@ class ReconcileWithoutFirstLoadTest {
         assertThat(run.confirmed().complete()).isFalse();
         assertThat(run.summary().notLoaded()).isEqualTo(1);
         assertThat(repository.find(new PageKey("wiki", "2"))).isEmpty();
+        assertThat(repository.findHeader(new PageKey("wiki", "2")).orElseThrow().metadata().parentPageId())
+                .isEqualTo("1");
     }
 
     @Test
