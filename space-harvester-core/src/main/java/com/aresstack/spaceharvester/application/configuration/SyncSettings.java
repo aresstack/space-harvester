@@ -136,4 +136,12 @@ public record SyncSettings(boolean events, Duration interval, List<String> space
         return new SyncSettings(events, interval, spaces, beforeSearch, withheldRetention, catchUpOnStart, mode,
                 inventoryInterval, next, backgroundFill, backgroundParallelism);
     }
+
+    /**
+     * Ob die Hintergrundfüllung für irgendeine Quelle an ist: global an oder für mindestens eine Quelle eigens
+     * eingeschaltet. Welche Quellen sie lädt, sagt {@link #forSource(String)}.
+     */
+    public boolean backgroundFillAnywhere() {
+        return backgroundFill || sources.values().stream().anyMatch(o -> Boolean.TRUE.equals(o.backgroundFill()));
+    }
 }

@@ -493,7 +493,9 @@ ohne Cache `not-supported`). Nur von dort kommen Treffer (`origin: cache`); Erge
 zusammengeführt. Jeder Treffer verlangt `metadata` und `content`, weil Fundstelle und Auszug aus dem Inhalt stammen.
 Die Suche wartet nicht auf das Laden (Fortschreibung 18.10.): Alle Funde der Quellen kommen sofort als vorläufige
 Treffer mit Titel und Auszug der Quelle in `found`, nach Titel und Auszug bewertet, wenn ein Reranker eingerichtet ist,
-sonst in der Reihenfolge der Quelle; geladen wird in dieser Rangfolge (`space-harvester.search.loads`, Standard alle).
+sonst in der Reihenfolge der Quelle; geladen wird in dieser Rangfolge, so viele, wie
+`space-harvester.search.candidate-selection` auswählt (`adaptive`, Standard; `top-n`; `order`; ADR 0016) und
+`space-harvester.search.loads` zulässt (Standard ohne Grenze).
 Vorläufige Treffer brauchen die quellweite Freigabe für `metadata`, sonst werden sie wie bisher einzeln live geprüft;
 den Auszug zeigen sie nur mit quellweitem `content`. `progress` (`id`, `total`, `loaded`, `failed`, `cancelled`,
 `done`) zählt das Laden; `GET /api/v1/search/progress/{id}` fragt nach, `DELETE` bricht ab. Wer dieselbe Suche erneut
