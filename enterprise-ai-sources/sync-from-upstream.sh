@@ -52,6 +52,8 @@ astu_classes=(
   knowledge/KnowledgeDocument knowledge/KnowledgeMetadata knowledge/KnowledgeResource
   knowledge/KnowledgeResourceId knowledge/KnowledgeRevision knowledge/KnowledgeStructuralBlock
   knowledge/KnowledgeText knowledge/SourceAddress knowledge/UnicodeClasses
+  knowledge/SentenceSplitter knowledge/KnowledgeTokenCounter knowledge/WordAndSymbolTokenCounter
+  knowledge/KnowledgeChunkingPolicy
   security/SecretRef
   embedding/EmbeddingModelIdentity embedding/EmbeddingVector embedding/EmbeddingWorldMismatchException
   modelcatalog/ModelCategory modelcatalog/ModelClassification modelcatalog/ModelDescriptor

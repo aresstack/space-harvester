@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import java.util.concurrent.ExecutorService;
@@ -41,7 +42,7 @@ class AiConfiguration {
                     + "embedding-dimensions");
         }
         return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent(build)).embeddings(),
-                properties.embeddingChunkChars(), settings::mayProcessExternally);
+                properties.embeddingChunkChars(), KnowledgeTextSegmentation.defaults(), settings::mayProcessExternally);
     }
 
     /**

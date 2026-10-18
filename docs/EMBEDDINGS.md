@@ -43,7 +43,20 @@ Danach berechnet jeder bestätigte Abgleich die Anreicherung `embedding` für ne
 Hintergrund (ein Thread, höchstens 1000 wartende Seiten); Abgleich, Lesen und Export warten nicht darauf.
 `POST …/pages/{pageId}/enrichments` rechnet eine Seite sofort. Ergebnis je Seite:
 `{"model","dimensions","chunks":[{"charStart","charEnd","section","vector":[…]}]}` unter `enrichments` in
-`view=extended`.
+`view=extended`; `section` ist die Überschriftenkette des Abschnitts, z. B. `Handbuch > Betrieb`.
+
+Zerlegung (#181, wie `KnowledgeChunker` im Enterprise AI Client): Abschnitte der Textprojektion sind harte Grenzen.
+Innerhalb eines Abschnitts packt der Prozessor Sätze (`SentenceSplitter`) bis 350 Tokens (gezählt nach Wörtern und
+Symbolen, `KnowledgeChunkingPolicy.defaults()`); das nächste Stück beginnt mit dem letzten Satz des vorigen. Ein Satz
+über dem Budget wird an Wortgrenzen geteilt; zusätzlich hat kein Stück mehr als `embedding-chunk-chars` Zeichen.
+Eingebettet wird jedes Stück mit der Überschriftenkette seines Abschnitts davor (`Betrieb > Nachtlauf`), wenn es nicht
+selbst mit der Überschrift beginnt. `charStart`/`charEnd` bleiben Stellen in der Textprojektion, damit Treffer auf
+ihre Stelle zeigen. Seit dieser Zerlegung trägt die Prozessorversion Format `2`; ältere Vektoren zählen nicht mehr und
+werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet.
+
+Die Seiten kommen über die normale Beschaffung in den Cache: Jede gelesene Seite, auch ein vorgeladener Treffer der
+nativen Schlagwortsuche, landet im Volltextindex und bekommt ihre Embeddings im Hintergrund. Für `sort=relevance` ist
+also kein vollständiger Abgleich nötig (`HarvesterFullTextTest.aLiveHitLoadedIntoTheCacheIsFoundByTheSemanticSearchWithoutAnySync`).
 
 ## Ablage der Vektoren
 
@@ -73,23 +86,21 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Die Anfrage geht über `POST /embeddings` an den Dienst (wie die Seiten, ohne Präfixe; das Modell bestimmt der Dienst).
 - Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle (ohne `sourceId`: aller freigegebenen Quellen zusammen, eine
   Einbettung der Anfrage und eine Vektorsuche, #114) unter genau der aktuellen Prozessorversion, zu Seiten
-  (`sourceId + pageId`) zusammengefasst, und mit `title` zusätzlich die ersten Titeltreffer; abwechselnd gemischt, höchstens 100 Seiten. Alle
+  (`sourceId + pageId`) zusammengefasst, höchstens 100 Seiten. Es gibt keine Volltext- oder Titelkandidaten und keine
+  Fusion von Ergebnislisten (ADR 0013); `title` filtert nur die Kandidaten der Vektorsuche. Alle
   Filter (`spaceKey`, `title`, `parentPageId`, Zeitgrenzen …) gelten auch für Kandidaten der Vektorsuche.
 - Rechte: wie die übrige Suche `metadata` für Quelle bzw. Spaces und jeden Treffer. Ähnlichkeiten sind aus dem Inhalt
-  abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Ein
-  Titeltreffer ohne `content` bleibt sichtbar, bekommt aber keine Ähnlichkeit und steht hinter allen anderen. Der
+  abgeleitet: Ein Kandidat der Vektorsuche braucht `content` für seine Seite, sonst fällt er ohne Spur weg. Der
   Reranker sieht nur diese freigegebenen Treffer und darf sie nur umordnen.
 - Live-Prüfung je Treffer (ADR 0011, Punkt 7): Vor der Auslieferung liest die Suche die Kopfdaten jedes Treffers bei
   der Quelle und prüft an ihnen Recht (aktueller Space) und Version. Gesperrte oder verschwundene Seiten fallen weg,
   weitere Kandidaten rücken nach. Eine neuere Version wird im Hintergrund nachgeladen und neu eingebettet; der Treffer
   heißt bis dahin `stale`. Ein nicht prüfbarer Kandidat fehlt, und die Antwort trägt `complete: false`.
 - Reihenfolge: Kosinusähnlichkeit der Anfrage zum ähnlichsten Abschnitt jeder Seite (`reranker:
-  embedding-cosine@<Prozessorversion>`); Treffer ohne Ähnlichkeit folgen in ihrer Reihenfolge.
-- Hybrid (#181): Der Volltextindex über den Cache (#180, BM25 über Titel und Text) liefert weitere Kandidaten; sie
-  brauchen `content`, denn ihr Rang stammt aus dem Inhalt. Gibt es Volltexttreffer im Fenster, entsteht die Reihenfolge
-  per Reciprocal Rank Fusion (k = 60, gleiche Gewichte, wie `ReciprocalRankFusion` im Enterprise AI Client) aus der
-  Volltext- und der Kosinus-Rangfolge (`reranker: rrf(fulltext,embedding-cosine@<Prozessorversion>)`); Treffer ohne
-  beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch.
+  embedding-cosine@<Prozessorversion>`).
+- Keine hybride Suche (ADR 0013): Die Schlagwortsuche läuft ohne Haken über den Volltextindex des Caches, die
+  semantische Suche nur mit Haken über die Vektoren. Ergebnislisten werden nie zusammengeführt (keine Reciprocal Rank
+  Fusion); das ist eine gewollte Abweichung vom Enterprise AI Client.
 - Cross-Encoder (#181, wie `KipitzRerankAdapter` und `CrossEncoderRanking` im Enterprise AI Client): Mit
   `rerank-model` bewertet der Dienst über `POST <base-url>/rerank` jeden Treffer einzeln gegen den Anfragetext und
   ordnet die Treffer der Antwort danach um (`reranker: …+cross-encoder@<Modell>`). Er kommt erst nach der

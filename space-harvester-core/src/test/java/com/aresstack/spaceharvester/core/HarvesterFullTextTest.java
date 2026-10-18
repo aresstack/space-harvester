@@ -7,8 +7,12 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.IOException;
 import java.net.URI;
@@ -18,6 +22,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,6 +101,46 @@ class HarvesterFullTextTest {
             // Wer nur Kopfdaten sehen darf, findet die Seite nicht über ihren Inhalt.
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Urlaubsplanung"),
                     null, 10).hits()).isEmpty();
+        }
+    }
+
+    @Test
+    void aLiveHitLoadedIntoTheCacheIsFoundByTheSemanticSearchWithoutAnySync() throws InterruptedException {
+        EmbeddingProvider model = new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return "achsen@1";
+            }
+
+            @Override
+            public int dimensions() {
+                return 2;
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                return texts.stream().map(text -> new float[] {1, 0}).toList();
+            }
+        };
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).embeddings(model).build()) {
+            harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null, 10);
+            PageSearchQuery wiki = PageSearchQuery.of("wiki", List.of(), null, null, null, null, null, null,
+                    SearchSort.TITLE);
+
+            // Kein Abgleich: der Treffer der Quellensuche liegt im Cache und bekommt sein Embedding.
+            RelevanceSearch.RelevanceResults results = null;
+            Instant deadline = Instant.now().plusSeconds(10);
+            while ((results == null || results.hits().isEmpty()) && Instant.now().isBefore(deadline)) {
+                try {
+                    results = harvester.relevance().search(harvester.caller(), wiki, "Nachtlauf", 10);
+                } catch (RuntimeException e) {
+                    // Noch nichts im Index der Quelle.
+                }
+                Thread.sleep(50);
+            }
+            assertThat(results).isNotNull();
+            assertThat(results.hits()).extracting(hit -> hit.hit().page().pageId()).containsExactly("102");
+            assertThat(results.reranker()).startsWith("embedding-cosine@");
         }
     }
 

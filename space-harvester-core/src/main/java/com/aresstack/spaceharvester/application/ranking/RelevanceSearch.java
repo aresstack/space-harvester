@@ -23,12 +23,10 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,13 +39,16 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 
 /**
- * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche über die Quellen
+ * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche
  * ({@link com.aresstack.spaceharvester.application.query.KeywordSearch}). Diese Klasse ist die semantische Suche der
  * Checkbox „Semantische Suche (experimentell)“ und bleibt der einzige Weg dafür ({@code sort=relevance}, kein eigener
  * Endpunkt). Die Vektoren kommen aus dem externen Embedding-Dienst (ADR 0011); ohne ihn antwortet sie mit
- * {@link SemanticSearchUnavailableException}, nie still mit Titeltreffern. Die Zielarchitektur (erst Schlagwortsuche in
- * den Quellen, Treffer prüfen und ablegen, fehlende Vektoren berechnen, dann semantisch im gemeinsamen Cache) steht in
- * ADR 0011; die Mischung aus Titel- und Vektortreffern hier entfällt dann.
+ * {@link SemanticSearchUnavailableException}, nie still mit anderen Treffern.
+ *
+ * <p>Nur über den Cache und ohne Fusion (ADR 0013): Kandidaten kommen ausschließlich aus der Vektorsuche über die
+ * gespeicherten Embeddings, die Reihenfolge ist die Kosinusähnlichkeit. Es gibt keine zweite Ergebnisliste, also weder
+ * Volltext- noch Titelkandidaten und keine Rangfusion. Titelwörter der Anfrage filtern die Kandidaten und sind ohne
+ * {@code q} der Anfragetext.
  *
  * <p><b>Erweiterungspunkt Schlagwortgenerierung</b> (ADR 0011, bewusst noch nicht gebaut): Vor Schritt 1 der
  * Zielarchitektur kann ein Chat-Modell ({@code space-harvester.ai.chat-model}) aus der Frage gezielt Schlagworte für
@@ -56,28 +57,21 @@ import java.util.concurrent.Semaphore;
  * mit Freigabe für externe Verarbeitung ({@code external-processing-sources}).
  *
  * <p>Suche nach Relevanz ({@code sort=relevance}, #89, ADR 0004): ein Fenster von höchstens {@value Reranking#MAX_WINDOW}
- * freigegebenen Kandidaten aus Vektorsuche und Titelsuche, umgeordnet nach der Kosinusähnlichkeit der Anfrage zu den
- * gespeicherten Embeddings.
- *
- * <p>Hybride Suche (#181): Mit dem Volltextindex über den Cache (#180) kommen dessen Treffer (BM25 über Titel und
- * Text) als weitere Kandidaten hinzu, und die Reihenfolge entsteht per {@link ReciprocalRankFusion} aus der
- * Rangfolge des Volltexts und der nach Kosinusähnlichkeit, wie im Enterprise AI Client. Ein Volltexttreffer braucht
- * {@link AccessKind#CONTENT}, denn sein Rang stammt aus dem Inhalt. Ohne Volltexttreffer bleibt es bei der
- * Kosinus-Reihenfolge. Ein Ausfall des Volltextindex lässt die Suche nicht scheitern, sie ist dann rein semantisch.
+ * freigegebenen Kandidaten aus der Vektorsuche, geordnet nach der Kosinusähnlichkeit der Anfrage zu den gespeicherten
+ * Embeddings. Ein Reranker des Programms oder des KI-Dienstes (#181) ordnet die geprüften Treffer danach nur um.
  *
  * <p>Umfang (#114): mit {@code sourceId} eine Quelle, ohne alle Quellen, die der Aufrufer sehen darf
  * ({@link SearchScope}), mit derselben Fehlersemantik wie {@code PageSearch}. Global gibt es genau eine Einbettung der
  * Anfrage und eine Vektorsuche über alle Quellen des Umfangs zusammen (höchstens {@value #MAX_CHUNKS} Stücke, dann
- * höchstens {@value #MAX_LOOKUPS} Seiten), dazu die ersten Titeltreffer in globaler Titelreihenfolge. Das Fenster bleibt
+ * höchstens {@value #MAX_LOOKUPS} Seiten). Das Fenster bleibt
  * bei {@value Reranking#MAX_WINDOW} Kandidaten: ein begrenzter, global gerankter Block, kein vollständiges Ergebnis und
  * keine Top-K je Quelle. Kandidaten sind Seiten ({@code sourceId + pageId}); gleiche Seiten-IDs verschiedener Quellen
  * bleiben getrennt. Ähnlichkeiten stammen aus demselben Modell und sind über Quellen vergleichbar.
  *
  * <p>Rechte: wie {@code PageSearch} {@link AccessKind#METADATA} für die genannten Spaces bzw. die Quelle und für jeden
  * Treffer. Ähnlichkeiten sind aus dem Inhalt abgeleitet: Ein Kandidat aus der Vektorsuche braucht zusätzlich
- * {@link AccessKind#CONTENT} für seine Seite, sonst fällt er ohne Spur weg; ein Titeltreffer ohne {@code content}
- * bleibt, bekommt aber keine Ähnlichkeit und steht hinter allen Treffern mit Ähnlichkeit. Der Reranker sieht nur
- * diese freigegebenen Treffer und darf sie nur umordnen ({@link Reranking}).
+ * {@link AccessKind#CONTENT} für seine Seite, sonst fällt er ohne Spur weg. Der Reranker sieht nur diese freigegebenen
+ * Treffer und darf sie nur umordnen ({@link Reranking}).
  *
  * <p>Alle Filter der Anfrage gelten für jeden Kandidaten, auch aus der Vektorsuche; jeder Treffer trägt die aktuellen
  * Kopfdaten aus dem Suchindex. Ein Treffer, dessen Embedding aus einer älteren Revision stammt, heißt
@@ -156,9 +150,10 @@ public class RelevanceSearch {
     }
 
     /**
-     * Hybrid (#181): zusätzlich mit dem Volltextindex über den Cache.
+     * Mit dem Volltextindex über den Cache: Aus ihm bekommt ein Reranker den Lesetext der Treffer. Kandidaten liefert
+     * er nicht (ADR 0013).
      *
-     * @param texts Volltextindex oder {@code null}, dann nur Titel- und Vektorkandidaten
+     * @param texts Volltextindex oder {@code null}, dann sieht ein Reranker nur Titel
      */
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
@@ -216,11 +211,7 @@ public class RelevanceSearch {
         }
 
         float[] vector = queryVector(queryText);
-        List<SearchHit> semantic = semanticCandidates(caller, query, scope, state, vector);
-        List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of()
-                : lexicalCandidates(caller, query, scope, state);
-        List<SearchHit> fullText = fullTextCandidates(caller, query, scope, state, queryText);
-        List<SearchHit> window = interleave(interleave(semantic, fullText), lexical);
+        List<SearchHit> window = semanticCandidates(caller, query, scope, state, vector);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
@@ -236,18 +227,9 @@ public class RelevanceSearch {
         Reranking reranking = new Reranking(reranker);
         List<SearchHit> ordered = reranking.apply(query, window);
         String rerankerId = reranking.rerankerId();
-        Set<PageKey> inWindow = new LinkedHashSet<>();
-        window.forEach(hit -> inWindow.add(hit.page().header().key()));
-        List<SearchHit> ranked = fullText.stream().filter(hit -> inWindow.contains(hit.page().header().key()))
-                .toList();
-        if (!ranked.isEmpty()) {
-            // #181: Rangfolgen von Volltext und Kosinus per RRF, Treffer ohne Rang dahinter.
-            List<SearchHit> bySimilarity = ordered.stream().filter(scores::containsKey).toList();
-            ordered = ReciprocalRankFusion.fuse(ordered, List.of(ranked, bySimilarity));
-            rerankerId = "rrf(fulltext," + rerankerId + ")";
-        }
+        // Jeder Kandidat stammt aus den Vektoren, also aus dem Inhalt: live braucht er content.
         Set<PageKey> contentRanked = new LinkedHashSet<>();
-        ranked.forEach(hit -> contentRanked.add(hit.page().header().key()));
+        window.forEach(hit -> contentRanked.add(hit.page().header().key()));
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
         Map<SearchHit, String> partitions = new IdentityHashMap<>();
         boolean complete = true;
@@ -446,83 +428,6 @@ public class RelevanceSearch {
             }
         }
         return found;
-    }
-
-    /**
-     * Seiten des Volltextindex in BM25-Reihenfolge, gefiltert nach Anfrage und Rechten ({@code content}, denn der Rang
-     * stammt aus dem Inhalt). Ein Ausfall des Index liefert keine Kandidaten statt eines Fehlers.
-     */
-    private List<SearchHit> fullTextCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                               SearchIndexState state, String text) {
-        if (texts == null) {
-            return List.of();
-        }
-        List<PageTextIndex.Match> matches;
-        try {
-            matches = texts.search(text, scope.sourceIds(), new SearchSpaces(query.spaceKeys(), Set.of()),
-                    Reranking.MAX_WINDOW);
-        } catch (RuntimeException e) {
-            // Kein Anfragetext im Log.
-            LOG.log(System.Logger.Level.INFO, "Volltextindex für die Relevanzsuche nicht lesbar ({0})",
-                    e.getClass().getName());
-            return List.of();
-        }
-        List<SearchHit> found = new ArrayList<>();
-        for (PageTextIndex.Match match : matches) {
-            if (!scope.sourceIds().contains(match.sourceId())
-                    || query.sourceId() != null && !query.sourceId().equals(match.sourceId())
-                    || query.pageId() != null && !query.pageId().equals(match.pageId())) {
-                continue;
-            }
-            PageSearchQuery single = query.with(match.sourceId(), match.pageId(), SearchSort.PAGE_ID);
-            for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
-                if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
-                    found.add(hit);
-                }
-            }
-        }
-        return found;
-    }
-
-    /** Die ersten sichtbaren Titeltreffer in der Reihenfolge des Titels, über alle Quellen des Umfangs. */
-    private List<SearchHit> lexicalCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                              SearchIndexState state) {
-        PageSearchQuery byTitle = query.with(query.sourceId(), query.pageId(), SearchSort.TITLE);
-        List<SearchHit> visible = new ArrayList<>();
-        String after = null;
-        boolean exhausted = false;
-        while (visible.size() < Reranking.MAX_WINDOW && !exhausted) {
-            List<SearchHit> batch = index.search(byTitle, scope.sourceIds(), state.generation(), after,
-                    Reranking.MAX_WINDOW);
-            for (SearchHit hit : batch) {
-                after = hit.position();
-                if (permits(caller, hit, AccessKind.METADATA)) {
-                    visible.add(hit);
-                    if (visible.size() == Reranking.MAX_WINDOW) {
-                        break;
-                    }
-                }
-            }
-            exhausted = batch.size() < Reranking.MAX_WINDOW;
-        }
-        return visible;
-    }
-
-    /**
-     * Abwechselnd aus beiden Listen, jede Seite einmal, höchstens {@value Reranking#MAX_WINDOW}. Eine Seite ist
-     * {@code sourceId + pageId}: Gleiche Seiten-IDs verschiedener Quellen bleiben getrennte Kandidaten (#114).
-     */
-    static List<SearchHit> interleave(List<SearchHit> first, List<SearchHit> second) {
-        Map<PageKey, SearchHit> window = new LinkedHashMap<>();
-        for (int i = 0; window.size() < Reranking.MAX_WINDOW && (i < first.size() || i < second.size()); i++) {
-            if (i < first.size()) {
-                window.putIfAbsent(first.get(i).page().header().key(), first.get(i));
-            }
-            if (i < second.size() && window.size() < Reranking.MAX_WINDOW) {
-                window.putIfAbsent(second.get(i).page().header().key(), second.get(i));
-            }
-        }
-        return List.copyOf(window.values());
     }
 
     /** Ähnlichkeit des besten Stücks der Seite, nur mit {@code content}-Freigabe und Embedding des aktuellen Modells. */

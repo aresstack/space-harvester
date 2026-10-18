@@ -20,6 +20,8 @@ class EmbeddingPayloadTest {
         assertThat(payload.chunks().get(0).vector()).containsExactly(0.5f, -1.0E-5f, 1f);
         assertThat(payload.chunks().get(1).charStart()).isEqualTo(12);
         assertThat(payload.chunks().get(1).charEnd()).isEqualTo(30);
+        assertThat(payload.chunks()).extracting(EmbeddingPayload.Chunk::section)
+                .containsExactly("Betrieb \"Nacht\" ä", null);
     }
 
     @Test

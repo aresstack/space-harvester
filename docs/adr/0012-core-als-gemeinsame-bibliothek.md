@@ -89,7 +89,7 @@ In die Bibliothek gehören die allgemeingültigen Fähigkeiten, die solche Anwen
 durchsuchen, Dokumente beschaffen, Inhalte zwischenspeichern, Bilder und Anhänge verwalten, Ergebnisse exportieren.
 
 Bei der semantischen Suche gilt dieselbe Trennung: Allgemeine Embedding- und Suchinfrastruktur (Einbettung über den
-externen Dienst nach ADR 0011, Vektorablage, Zerlegung in Abschnitte, hybride Suche, Reranking, Live-Prüfung der
+externen Dienst nach ADR 0011, Vektorablage, Zerlegung in Abschnitte, Reranking, Live-Prüfung der
 Treffer) liegt in der Bibliothek. Die darüberliegende Rechercheplanung (welche Fragen, in welcher Reihenfolge,
 welche Quellen, wie Ergebnisse zusammengeführt werden) bleibt im Client.
 

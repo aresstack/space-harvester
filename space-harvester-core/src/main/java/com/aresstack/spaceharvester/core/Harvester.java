@@ -68,6 +68,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceSecrets;
@@ -196,9 +197,10 @@ public final class Harvester implements AutoCloseable {
                 AiServiceSettings ai = builder.ai;
                 embedding = builder.embeddingProvider != null
                         ? new EmbeddingProcessor(builder.embeddingProvider, builder.maxChunkChars,
-                                builder.embeddingSources)
+                                KnowledgeTextSegmentation.defaults(), builder.embeddingSources)
                         : new EmbeddingProcessor(RemoteAi.of(ai, catalog, trustBundles, builder.userAgent)
-                                .embeddings(), builder.maxChunkChars, ai::mayProcessExternally);
+                                .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.defaults(),
+                                ai::mayProcessExternally);
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {

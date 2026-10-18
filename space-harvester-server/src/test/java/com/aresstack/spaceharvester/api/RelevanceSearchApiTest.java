@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -26,8 +27,8 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.Environment;
@@ -92,7 +93,7 @@ class RelevanceSearchApiTest {
                 public List<float[]> embed(List<String> texts) {
                     return texts.stream().map(RelevanceSearchApiTest::axes).toList();
                 }
-            }, 1500);
+            }, 1500, KnowledgeTextSegmentation.defaults());
         }
     }
 

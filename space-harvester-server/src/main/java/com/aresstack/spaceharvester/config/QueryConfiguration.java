@@ -104,8 +104,8 @@ class QueryConfiguration {
      * {@code sort=relevance} (#89, ADR 0011): nur mit Embedding-Dienst und Anreicherungen im Lucene-Cache (der zugleich
      * Ablage und Vektorsuche ist); sonst {@code semantic-search-unavailable}. Mit dem Hintergrund
      * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach. Mit dem
-     * Volltextindex über den Cache ist sie hybrid (#181, RRF aus Volltext und Kosinus); mit {@code rerank-model}
-     * ordnet danach der Cross-Encoder des Dienstes um.
+     * Volltextindex über den Cache sieht ein Reranker den Lesetext; Kandidaten sind nur Vektortreffer, ohne Fusion
+     * (ADR 0013). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
      */
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,

@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -106,7 +107,7 @@ class RelevanceLiveCheckTest {
         public List<float[]> embedQueries(List<String> texts) {
             return texts.stream().map(RelevanceLiveCheckTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     @BeforeEach
     void publish() {
@@ -243,9 +244,11 @@ class RelevanceLiveCheckTest {
     void theRerankerGetsCachedTextOnlyForTheSpaceThePageIsInNow() {
         index.publish("wiki", STATE, List.of(
                 entry(page("DEV", "1", "Betrieb eins", "1"), confirmed("g1")),
+                entry(page("DEV", "2", "Betrieb zwei", "1"), confirmed("g1")),
                 entry(page("DEV", "5", "Betrieb fünf", "1"), confirmed("g1"))));
-        // 5 ist ein Titeltreffer ohne Embedding; bei der Quelle liegt sie inzwischen in SECRET, wo nur Kopfdaten
-        // freigegeben sind. Ihr Text aus dem Cache darf nicht an den Reranker gehen.
+        embed("5", "[0.95,0.05,0]");
+        // Bei der Quelle liegt 5 inzwischen in SECRET, wo nur Kopfdaten freigegeben sind. Ihr Text aus dem Cache darf
+        // nicht an den Reranker gehen.
         live.put("5", metadata("SECRET", "5", "1"));
         AccessPolicy secretWithoutContent = (context, scope, kind) -> kind == AccessKind.CONTENT
                 && "SECRET".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
@@ -306,8 +309,8 @@ class RelevanceLiveCheckTest {
                 new AccessGuard(secretWithoutContent), store, store, processor, (caller, key) -> renewed.add(key),
                 recording, texts).search(CALLER, byTitle, "Betrieb", 5);
 
-        assertThat(ids(results)).containsExactly("1", "5");
-        assertThat(documents).containsEntry("1", "Betrieb eins\nGeheimtext 1").containsEntry("5", "Betrieb fünf");
+        assertThat(ids(results)).containsExactly("1", "2");
+        assertThat(documents).containsOnlyKeys("1", "2").containsEntry("1", "Betrieb eins\nGeheimtext 1");
         assertThat(metadataCalls).contains("5");
     }
 
