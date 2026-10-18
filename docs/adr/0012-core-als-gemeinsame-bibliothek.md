@@ -123,7 +123,9 @@ Diese Festlegung ist die Empfehlung von Strang S und wartet auf Angelos Bestäti
 Angelos Festlegungen vom 18.10. (#181):
 
 1. **Suche füllt den Index, Änderungsquellen sind optional** (präzisiert 18.10., 15:33). Wie im Client wird der
-   Lucene-Index vor der Antwort durch die Suche befüllt (ADR 0013), geantwortet wird aus dem Index. Änderungsquellen
+   Lucene-Index vor der Antwort durch die Suche befüllt (ADR 0013), geantwortet wird aus dem Index. Das gilt für den
+   Betrieb mit Cache; ohne `space-harvester.cache.directory` gibt es keinen Index, die Schlagwortsuche liefert dann
+   die geprüften Treffer der Quelle (`origin=source`, PARITY.md §2). Änderungsquellen
    sind optionale Erweiterungen, keine Voraussetzung und keine Erstbefüllung: Confluence-Data-Center-Webhooks, wo
    jemand sie mit Administratorrechten einrichtet, sonst CQL „geändert seit“ (beim Start, manuell mit Zeitangabe,
    optional per Zeitplan, optional vor jeder Suche, Standard aus). Die Aktualisierung einer Seite folgt einer
