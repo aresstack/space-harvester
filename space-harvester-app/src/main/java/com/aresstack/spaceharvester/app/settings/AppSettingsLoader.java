@@ -231,6 +231,15 @@ public final class AppSettingsLoader {
                 mode = parsed;
             }
         }
+        int parallelism = integer(get(sync, "background-parallelism"), SyncSettings.DEFAULT_BACKGROUND_PARALLELISM,
+                "space-harvester." + SyncSettings.BACKGROUND_PARALLELISM, problems);
+        if (parallelism < 1 || parallelism > SyncSettings.MAX_BACKGROUND_PARALLELISM) {
+            problems.add("space-harvester." + SyncSettings.BACKGROUND_PARALLELISM + " liegt zwischen 1 und "
+                    + SyncSettings.MAX_BACKGROUND_PARALLELISM);
+            parallelism = SyncSettings.DEFAULT_BACKGROUND_PARALLELISM;
+        }
+        boolean background = flag(get(sync, "background-fill"), true, "space-harvester." + SyncSettings.BACKGROUND_FILL,
+                problems);
         return new SyncSettings(
                 flag(get(sync, "events"), false, prefix + SyncSettings.EVENTS, problems),
                 interval(optionalDuration(get(sync, "interval"), prefix + SyncSettings.INTERVAL, problems),
@@ -242,7 +251,7 @@ public final class AppSettingsLoader {
                 mode,
                 interval(optionalDuration(get(sync, "inventory-interval"), prefix + SyncSettings.INVENTORY_INTERVAL,
                         problems), prefix + SyncSettings.INVENTORY_INTERVAL, problems),
-                Map.of());
+                Map.of()).withBackground(background, parallelism);
     }
 
     /**
@@ -306,7 +315,8 @@ public final class AppSettingsLoader {
                     optionalFlag(get(rule, SourceSyncOverride.CATCH_UP_ON_START), prefix + "catch-up-on-start",
                             problems),
                     optionalFlag(get(rule, SourceSyncOverride.BEFORE_SEARCH), prefix + "before-search", problems),
-                    mode, strategy, maxAge, retention));
+                    mode, strategy, maxAge, retention,
+                    optionalFlag(get(rule, SourceSyncOverride.BACKGROUND_FILL), prefix + "background-fill", problems)));
         }
         return rules;
     }

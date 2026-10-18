@@ -434,6 +434,12 @@ final class SettingDialogs {
         java.time.Duration kept = current.withheldRetention();
         retention.setText(kept.equals(java.time.Duration.ofDays(kept.toDays())) ? String.valueOf(kept.toDays())
                 : ConfigFileEditor.duration(kept));
+        SyncSettings sync = context.settings() != null ? context.settings().sync() : SyncSettings.DEFAULT;
+        JComboBox<String> background = choice(sync.backgroundFill() ? ON : OFF, ON, OFF);
+        javax.swing.JSpinner parallel = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(
+                sync.backgroundParallelism(), 1, SyncSettings.MAX_BACKGROUND_PARALLELISM, 1));
+        background.addActionListener(e -> parallel.setEnabled(ON.equals(background.getSelectedItem())));
+        parallel.setEnabled(sync.backgroundFill());
         Rows rows = new Rows();
         rows.add(REFRESH_TITLE, refresh, "Immer Version prüfen: jede Anzeige fragt die Version bei der Quelle ab und "
                 + "lädt nur Geänderte neu. Zeitbasiert: innerhalb der Frist gilt die gespeicherte Seite ohne "
@@ -441,6 +447,12 @@ final class SettingDialogs {
         rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 30m, 6h oder 1d; höchstens 365 Tage");
         rows.add(WITHHELD_RETENTION, retention, "Tage, die eine Seite ohne Leserecht gesperrt im Bestand bleibt, "
                 + "bevor ein Abgleich sie endgültig entfernt, oder eine Dauer wie 12h; 0 sofort");
+        rows.add(BACKGROUND_TITLE, background, "Lädt Seiten des Katalogs ohne oder mit veraltetem Inhalt, solange "
+                + "nichts anderes läuft; Suche und Aufträge haben Vorrang. Je Quelle abschaltbar unter Synchronisierung");
+        rows.add(BACKGROUND_PARALLELISM_TITLE, parallel, "Seiten, die der Hintergrund höchstens gleichzeitig lädt (1 bis "
+                + SyncSettings.MAX_BACKGROUND_PARALLELISM + "); je Quelle höchstens 3");
+        Supplier<Boolean> fill = () -> ON.equals(background.getSelectedItem());
+        Supplier<Integer> parallelism = () -> (Integer) parallel.getValue();
         Supplier<AppSettings.Cache> draft = () -> {
             Object chosen = refresh.getSelectedItem();
             boolean always = ALWAYS_CHECK.equals(chosen);
@@ -470,12 +482,17 @@ final class SettingDialogs {
                     ? Files.readString(context.configFile(), StandardCharsets.UTF_8) : "";
             ConfigFileEditor.Draft written = editor.withCache(context.configFile(),
                     new ConfigFileEditor.Draft(text, null), draft.get());
+            written = editor.withBackground(context.configFile(), new ConfigFileEditor.Draft(written.text(), null),
+                    fill.get(), parallelism.get());
             editor.save(context.configFile(), written, !editor.fileHasPlaintextSecret(context.configFile()));
-        }, () -> current.equals(draft.get()), context, saved);
+        }, () -> current.equals(draft.get()) && sync.backgroundFill() == fill.get()
+                && sync.backgroundParallelism() == parallelism.get(), context, saved);
         return shell;
     }
 
     static final String SYNC_RULES_TITLE = "Synchronisierung dieser Quelle";
+    static final String BACKGROUND_TITLE = "Hintergrundbefüllung im Leerlauf";
+    static final String BACKGROUND_PARALLELISM_TITLE = "Gleichzeitig im Hintergrund";
     static final String AS_GLOBAL = "Wie global";
     static final String ON = "An";
     static final String OFF = "Aus";
@@ -520,6 +537,7 @@ final class SettingDialogs {
         JComboBox<String> catchUp = tri(current.catchUpOnStart());
         JComboBox<String> beforeSearch = tri(current.beforeSearch());
         JComboBox<String> events = tri(current.events());
+        JComboBox<String> background = tri(current.backgroundFill());
         JComboBox<String> refresh = choice(current.refreshStrategy() == null ? AS_GLOBAL
                 : strategyLabel(current.refreshStrategy()), AS_GLOBAL, ALWAYS_CHECK, TIMED_WITHOUT_CHECK,
                 TIMED_WITH_CHECK);
@@ -539,6 +557,8 @@ final class SettingDialogs {
         rows.add("Nachholen beim Start", catchUp, "Änderungen seit dem letzten Lauf beim Start der App abfragen");
         rows.add("Abgleich vor jeder Suche", beforeSearch, "Vor jeder Suche die Änderungen dieser Quelle abfragen");
         rows.add("Webhooks", events, "Nur im Server; Confluence-Administratoren richten sie dort ein");
+        rows.add(BACKGROUND_TITLE, background, "Seiten des Katalogs ohne oder mit veraltetem Inhalt laden, solange "
+                + "nichts anderes läuft; jede Aktion hat Vorrang");
         rows.add("Aktualisierung", Comic.muted("Wann prüft die App gespeicherte Seiten?"), " ");
         rows.add(REFRESH_TITLE, refresh, "Wie global: wie unter Einstellungen › Cache");
         rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 6h; leer: wie global");
@@ -559,7 +579,7 @@ final class SettingDialogs {
                     case TIMED_WITH_CHECK -> RefreshStrategy.TIME_BASED_WITH_VERSION_CHECK;
                     default -> null;
                 },
-                optional(maxAge.getText()), optional(retention.getText()));
+                optional(maxAge.getText()), optional(retention.getText()), triValue(background));
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
         body.add(wrapped("Gilt nur für diese Quelle; leere Felder und „Wie global“ nehmen die gemeinsamen Werte. Neue "
