@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -19,6 +20,7 @@ import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
@@ -89,12 +91,20 @@ class QueryConfiguration {
 
     /**
      * Die Schlagwortsuche über den Cache (ADR 0013): die Quellen finden, gefundene Seiten werden geladen, der
-     * Volltextindex sucht; ohne Cache die Treffer der Quellen selbst.
+     * Volltextindex sucht; ohne Cache die Treffer der Quellen selbst. {@code space-harvester.search.discovery.max-queries}
+     * (Standard 4, 1 bis 8) begrenzt die Anfragen je Quelle, die aus einer längeren Frage entstehen; 1 schickt den
+     * Suchtext unverändert. {@code space-harvester.search.excerpt-ranking} (Standard {@code true}) lässt mit
+     * {@code rerank-model} den Cross-Encoder die Funde nach Titel und Auszug bewerten, um die vielversprechendsten zuerst
+     * zu laden (nur Quellen in {@code external-processing-sources}).
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
-                                SearchHitPrefetch prefetch) {
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch);
+                                SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
+                                @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
+                                @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking) {
+        ExcerptPriority excerpts = excerptRanking && reranker.getIfUnique() instanceof ModelReranker model
+                ? model.excerptPriority() : ExcerptPriority.off();
+        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries, excerpts);
     }
 
     /**

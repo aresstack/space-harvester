@@ -497,6 +497,17 @@ Embeddings, keine semantische Suche. `spaceKey` (nur diese Spaces) geht als `spa
 Spaces, und gilt ebenso im Volltextindex. Im Core lädt `Harvester.builder().prefetchSearchHits(false)` nichts; dann
 findet die Suche nur, was schon im Cache liegt.
 
+Eine längere Frage (mehr als 6 Wörter) geht nicht als Satz an die Quelle: Wie im Enterprise AI Client werden daraus
+zuerst ihre stärksten wörtlichen Begriffe (Kürzel wie `HaVdB` oder `BS-PIMA` in ihrer Schreibung), dann ihre
+Schlüsselwörter einzeln und die ersten beiden zusammen, ohne Füll- und Fragewörter und ohne Dopplungen. Höchstens
+`space-harvester.search.discovery.max-queries` Anfragen (Standard `4`, 1 bis 8; `1` schickt den Suchtext unverändert)
+laufen je Quelle parallel; ihre Funde werden reihum zusammengeführt, jede Seite einmal. Ein knapper Suchausdruck geht
+unverändert hinaus. Im Cache sucht weiter der Text des Aufrufers. Mit `space-harvester.ai.rerank-model` bewertet der
+Cross-Encoder Titel und Auszug der Funde und bestimmt so, was zuerst in den Cache geladen wird
+(`space-harvester.search.excerpt-ranking`, Standard `true`); er verwirft nichts, an ihn gehen nur Texte aus Quellen in
+`external-processing-sources`, und die Rangfolge der Treffer bleibt die des Volltextindex. Scheitert er, gilt die
+Reihenfolge der Quellen. Im Core: `Harvester.builder().discoveryQueries(int)` und `excerptRanking(boolean)`.
+
 **Suche im Index (#28):** Ohne `text` sucht `GET /api/v1/search?sourceId=…`
 in den gespeicherten Kopfdaten einer Quelle. Alle Bedingungen gelten zugleich: `title` (jedes Wort muss als ganzes Wort im Titel
 vorkommen, ohne Beachtung der Groß-/Kleinschreibung; Wörter trennt jedes Zeichen, das weder Buchstabe noch Ziffer ist;

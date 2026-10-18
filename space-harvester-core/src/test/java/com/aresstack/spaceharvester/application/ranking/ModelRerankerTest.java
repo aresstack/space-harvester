@@ -4,7 +4,9 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.c
 import static com.aresstack.spaceharvester.application.query.InMemorySearchIndex.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
@@ -79,6 +81,25 @@ class ModelRerankerTest {
         assertThat(ids(new Reranking(reranker).apply(QUERY, hits))).containsExactly("1", "3", "2");
         assertThat(ids(new Reranking(reranker).apply(request(" ", hits)))).containsExactly("1", "3", "2");
         assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void theExcerptPriorityUsesTheSameServiceAndTheSameApproval() {
+        ModelReranker reranker = reranker((query, documents) -> {
+            sent.add(documents);
+            return documents.stream().mapToDouble(document -> document.contains("Nacht") ? 0.9 : 0.1).toArray();
+        });
+        List<KeywordSearch.Hit> found = List.of(found("wiki", "1", "Architektur"), found("intern", "3", "Geheim"),
+                found("wiki", "2", "Nachtbetrieb"));
+
+        ExcerptPriority.Priority priority = reranker.excerptPriority().prioritize("nachts", found);
+
+        assertThat(priority.order()).containsExactly(2, 1, 0);
+        assertThat(sent).containsExactly(List.of("Architektur", "Nachtbetrieb"));
+    }
+
+    private static KeywordSearch.Hit found(String sourceId, String pageId, String title) {
+        return new KeywordSearch.Hit(sourceId, pageId, "DEV", title, "", null, "1", null, null);
     }
 
     private static ModelReranker reranker(ModelReranker.Scorer scorer) {

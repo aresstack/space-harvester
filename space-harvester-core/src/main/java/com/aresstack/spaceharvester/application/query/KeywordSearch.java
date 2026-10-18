@@ -26,6 +26,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -46,12 +47,16 @@ import java.util.regex.Pattern;
  *   <li><b>Finden:</b> Jede Quelle des Umfangs mit eigener Suche sucht über Titel und Inhalt (Confluence: CQL
  *       {@code siteSearch} über {@code /rest/api/search}, wie die Websuche). Ihre Treffer sind nur Kandidaten: Die
  *       Suche liest ihre Kopfdaten live bei der Quelle und prüft an ihnen {@link AccessKind#METADATA} für genau diese
- *       Seite, bei delegierten Benutzern über die Quelle mit ihrer Identität. Ein Stapel nimmt reihum Kandidaten aus
- *       jeder Quelle in deren Rangfolge, bis {@code limit} erreicht ist; je Quelle reicht das Finden höchstens
- *       {@value #MAX_DEPTH} Treffer tief.</li>
+ *       Seite, bei delegierten Benutzern über die Quelle mit ihrer Identität. Eine längere Frage geht nicht als Satz
+ *       an die Quelle, sondern als einige Anfragen aus ihren Begriffen ({@link #nativeQueries}, wie im Enterprise AI
+ *       Client), alle Quellen und Anfragen zugleich; je Quelle werden ihre Funde reihum zusammengeführt, jede Seite
+ *       einmal. Ein Stapel nimmt reihum Kandidaten aus jeder Quelle in deren Rangfolge, bis {@code limit} erreicht
+ *       ist; je Quelle reicht das Finden höchstens {@value #MAX_DEPTH} Treffer tief.</li>
  *   <li><b>Laden:</b> Sichtbare Kandidaten, deren Version nicht im Cache liegt, lädt {@link Prefetch} seitenweise mit
  *       den Rechten des Aufrufers über den Beschaffungs-Use-Case; gleiche Versionen werden nicht erneut geladen. Ein
- *       vollständiger Abgleich ist nie Voraussetzung. Was beim Antworten noch lädt, zählt {@link Results#loading()}.</li>
+ *       vollständiger Abgleich ist nie Voraussetzung. Was zuerst lädt, bestimmt mit Reranker {@link ExcerptPriority}
+ *       nach Titel und Auszug; das ändert nur die Ladereihenfolge. Was beim Antworten noch lädt, zählt
+ *       {@link Results#loading()}.</li>
  *   <li><b>Suchen:</b> Der {@link PageTextIndex} (BM25 über Titel und Text) sucht im Cache, über die Seiten aller
  *       erreichbaren Quellen des Umfangs, auch solcher ohne eigene Suche (lokale Dateien, #180). Nur von hier kommen
  *       Treffer; Ergebnislisten werden nicht zusammengeführt. Jeder Treffer braucht {@link AccessKind#METADATA} und
@@ -80,6 +85,11 @@ public class KeywordSearch {
     /** Längster Suchtext. */
     public static final int MAX_TEXT_LENGTH = 200;
 
+    /** Standard für die Anfragen je Quelle aus einer Frage (wie {@code DirectAnswers.MAX_QUERIES} im EAC). */
+    public static final int DEFAULT_MAX_QUERIES = 4;
+    /** Höchstens so viele Anfragen je Quelle aus einer Frage. */
+    public static final int MAX_QUERIES = 8;
+
     /** Gleichzeitige Kopfdatenabrufe eines Stapels. */
     static final int PARALLEL_CHECKS = 6;
 
@@ -99,6 +109,8 @@ public class KeywordSearch {
     private final AccessGuard access;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
+    private final int maxQueries;
+    private final ExcerptPriority excerpts;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -110,10 +122,77 @@ public class KeywordSearch {
      *                 liegt
      */
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch) {
+        this(catalog, access, texts, prefetch, DEFAULT_MAX_QUERIES, ExcerptPriority.off());
+    }
+
+    /**
+     * @param maxQueries höchstens so viele Anfragen je Quelle für eine Frage (1 bis {@value #MAX_QUERIES}; 1: der
+     *                   Suchtext unverändert, wie vor der Fortschreibung von ADR 0013)
+     * @param excerpts   Ladereihenfolge der gefundenen Seiten nach Titel und Auszug; {@link ExcerptPriority#off()}
+     *                   lädt in der Reihenfolge der Quellen
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
         this.texts = texts;
         this.prefetch = prefetch;
+        if (maxQueries < 1 || maxQueries > MAX_QUERIES) {
+            throw new IllegalArgumentException("maxQueries muss zwischen 1 und " + MAX_QUERIES + " liegen");
+        }
+        this.maxQueries = maxQueries;
+        this.excerpts = Objects.requireNonNull(excerpts, "excerpts");
+    }
+
+    /**
+     * Die Anfragen an die Suche der Quellen. Ein knapper Suchausdruck (höchstens {@value SearchTerms#MAX_QUERY_WORDS}
+     * Wörter) geht unverändert hinaus. Aus einer längeren Frage werden wie im Enterprise AI Client zuerst ihre stärksten
+     * wörtlichen Begriffe ({@link SearchTerms#literalQuery}), dann ihre Schlüsselwörter
+     * ({@link SearchTerms#keywordQueries}, ohne Wörter einer Bitte wie „wird“), ohne Dopplungen (Groß- und
+     * Kleinschreibung zählt nicht), höchstens {@code maxQueries}.
+     */
+    List<String> nativeQueries(String text) {
+        if (maxQueries == 1 || SearchTerms.isConcise(text)) {
+            return List.of(text);
+        }
+        Map<String, String> queries = new LinkedHashMap<>();
+        List<String> derived = new ArrayList<>();
+        derived.add(SearchTerms.literalQuery(text));
+        derived.addAll(SearchTerms.keywordQueries(SearchTerms.withoutRequestWords(text), maxQueries));
+        for (String candidate : derived) {
+            String trimmed = candidate.strip();
+            if (!trimmed.isEmpty() && queries.size() < maxQueries) {
+                queries.putIfAbsent(trimmed.toLowerCase(Locale.ROOT), trimmed);
+            }
+        }
+        return queries.isEmpty() ? List.of(text) : List.copyOf(queries.values());
+    }
+
+    /**
+     * Die Funde mehrerer Anfragen einer Quelle reihum in ihrer Rangfolge, jede Seite nur beim ersten Fund. Weil jede
+     * Anfrage in jedem Stapel ab dem ersten Treffer tiefer gesucht wird, ist die Zusammenführung eines Stapels ein
+     * Anfang der des nächsten; die Positionen im Cursor bleiben gültig, solange die Quelle gleich ordnet.
+     */
+    private static List<SourceSearchMatch> merge(List<List<SourceSearchMatch>> answered) {
+        if (answered.size() == 1) {
+            return answered.getFirst();
+        }
+        List<SourceSearchMatch> merged = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (int rank = 0; ; rank++) {
+            boolean any = false;
+            for (List<SourceSearchMatch> matches : answered) {
+                if (rank < matches.size()) {
+                    any = true;
+                    if (seen.add(matches.get(rank).pageId())) {
+                        merged.add(matches.get(rank));
+                    }
+                }
+            }
+            if (!any) {
+                return merged;
+            }
+        }
     }
 
     /** Ob die Treffer aus dem Cache kommen (ADR 0013); ohne Cache kommen sie aus der Suche der Quellen. */
@@ -150,6 +229,7 @@ public class KeywordSearch {
         Set<String> searchable = new LinkedHashSet<>();
         // Was ein früherer Stapel nicht prüfen konnte, bleibt bis zum Ende offen.
         boolean complete = position == null || !position.incomplete();
+        List<LiveSearch> searches = new ArrayList<>();
         for (HarvestSource source : catalog.all()) {
             String sourceId = source.id();
             if (!scope.sourceIds().contains(sourceId)) {
@@ -179,22 +259,68 @@ public class KeywordSearch {
                 continue;
             }
             int offset = offsets == null ? 0 : offsets.get(sourceId);
-            int wanted = Math.min(offset + limit + 1, MAX_DEPTH);
-            try {
-                List<SourceSearchMatch> matches = source.searchPages(query.text(), wanted, query.spaces());
-                List<SourceSearchMatch> fresh = matches.size() <= offset ? List.of()
-                        : matches.subList(offset, Math.min(matches.size(), offset + limit));
-                pending.put(sourceId, new ArrayList<>(fresh));
-                more.put(sourceId, matches.size() > offset + fresh.size() && offset + fresh.size() < MAX_DEPTH);
-                start.put(sourceId, offset);
-                searchable.add(sourceId);
-                states.add(new SourceState(sourceId, SourceState.Status.SEARCHED, null));
-            } catch (SourceAccessException e) {
+            searches.add(new LiveSearch(source, offset, Math.min(offset + limit + 1, MAX_DEPTH), states.size()));
+            states.add(null);
+        }
+        // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen.
+        List<String> nativeQueries = nativeQueries(query.text());
+        List<List<Future<List<SourceSearchMatch>>>> calls = new ArrayList<>();
+        try (ExecutorService searching = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (LiveSearch search : searches) {
+                List<Future<List<SourceSearchMatch>>> perQuery = new ArrayList<>();
+                for (String text : nativeQueries) {
+                    perQuery.add(searching.submit(() -> search.source().searchPages(text, search.wanted(),
+                            query.spaces())));
+                }
+                calls.add(perQuery);
+            }
+        }
+        for (int s = 0; s < searches.size(); s++) {
+            LiveSearch search = searches.get(s);
+            String sourceId = search.source().id();
+            int offset = search.offset();
+            List<List<SourceSearchMatch>> answered = new ArrayList<>();
+            SourceAccessException failure = null;
+            for (Future<List<SourceSearchMatch>> call : calls.get(s)) {
+                try {
+                    answered.add(call.get());
+                } catch (ExecutionException e) {
+                    if (e.getCause() instanceof SourceAccessException sourceFailure) {
+                        failure = failure == null ? sourceFailure : failure;
+                    } else if (e.getCause() instanceof RuntimeException runtime) {
+                        throw runtime;
+                    } else {
+                        throw new IllegalStateException(e.getCause());
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    failure = failure == null ? new SourceAccessException(sourceId,
+                            SourceAccessException.Reason.UNAVAILABLE, "unterbrochen", null) : failure;
+                }
+            }
+            if (answered.isEmpty()) {
                 // Ohne Meldung: Texte des Transports können Hosts und Routen nennen.
-                LOG.log(System.Logger.Level.INFO, "Suche in Quelle {0} nicht möglich ({1})", sourceId, e.reason());
-                states.add(new SourceState(sourceId, SourceState.Status.UNAVAILABLE, e.reason().name()));
+                LOG.log(System.Logger.Level.INFO, "Suche in Quelle {0} nicht möglich ({1})", sourceId,
+                        failure.reason());
+                states.set(search.state(), new SourceState(sourceId, SourceState.Status.UNAVAILABLE,
+                        failure.reason().name()));
+                complete = false;
+                continue;
+            }
+            if (failure != null) {
+                // Ein Teil der Anfragen fehlt: gefunden ist, was die übrigen fanden, aber nicht alles.
+                LOG.log(System.Logger.Level.INFO, "Suche in Quelle {0} nur teilweise möglich ({1})", sourceId,
+                        failure.reason());
                 complete = false;
             }
+            List<SourceSearchMatch> matches = merge(answered);
+            List<SourceSearchMatch> fresh = matches.size() <= offset ? List.of()
+                    : matches.subList(offset, Math.min(matches.size(), offset + limit));
+            pending.put(sourceId, new ArrayList<>(fresh));
+            more.put(sourceId, matches.size() > offset + fresh.size() && offset + fresh.size() < MAX_DEPTH);
+            start.put(sourceId, offset);
+            searchable.add(sourceId);
+            states.set(search.state(), new SourceState(sourceId, SourceState.Status.SEARCHED, null));
         }
         Set<String> unavailable = new TreeSet<>(position == null ? Set.of() : position.unavailable());
         states.stream().filter(state -> state.status() == SourceState.Status.UNAVAILABLE)
@@ -235,7 +361,8 @@ public class KeywordSearch {
 
         // ADR 0013: Gefundenes zuerst in den Cache, dann sucht der Volltextindex über den Cache. Was ein früherer Stapel
         // noch lud, fragt dieser Stapel wieder ab, damit es nicht verloren geht.
-        List<Hit> toLoad = new ArrayList<>(found.hits());
+        // Ladereihenfolge nach Titel und Auszug (#154); nur die Reihenfolge, die Treffer ordnet der Volltextindex.
+        List<Hit> toLoad = new ArrayList<>(excerpts.prioritize(query.text(), found.hits()).apply(found.hits()));
         if (position != null) {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
@@ -502,6 +629,10 @@ public class KeywordSearch {
     /** @param pending Seiten, die beim vorigen Stapel noch luden; nur Quelle, Seite und Version */
     private record Position(Map<String, Integer> offsets, boolean incomplete, Set<String> unavailable,
                             Set<String> delivered, List<Hit> pending) {
+    }
+
+    /** @param state Platz der Quelle in den Zuständen des Stapels */
+    private record LiveSearch(HarvestSource source, int offset, int wanted, int state) {
     }
 
     /** @param known eben live geprüfter Treffer derselben Seite oder {@code null} */
