@@ -346,4 +346,15 @@ class SettingDialogsTest {
         assertThat(SettingDialogs.duration("bald")).isNull();
         assertThat(SettingDialogs.duration("-1h")).isNull();
     }
+
+    @Test
+    void theThreeRefreshStrategiesMapToCacheFreshness() {
+        java.time.Duration month = java.time.Duration.ofDays(30);
+        assertThat(SettingDialogs.refreshStrategy(com.aresstack.spaceharvester.app.settings.AppSettings.Cache.DEFAULT))
+                .isEqualTo(SettingDialogs.ALWAYS_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), false, month))).isEqualTo(SettingDialogs.TIMED_WITHOUT_CHECK);
+        assertThat(SettingDialogs.refreshStrategy(new com.aresstack.spaceharvester.app.settings.AppSettings.Cache(
+                java.time.Duration.ofHours(6), true, month))).isEqualTo(SettingDialogs.TIMED_WITH_CHECK);
+    }
 }

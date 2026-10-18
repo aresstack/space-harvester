@@ -20,7 +20,7 @@ import java.util.Locale;
 /**
  * Einstellungen und Diagnose in Reitern wie im Enterprise AI Client: „Allgemein“ (welche Datei gilt, was daran nicht
  * stimmt, wo die Daten liegen, Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
- * Quellen), „Netzwerk“ (Proxy und Serverzertifikate) und „Cache“ (Zeitfenster, Versionsprüfung, Frist für gesperrte
+ * Quellen), „Netzwerk“ (Proxy und Serverzertifikate) und „Cache“ (Aktualisierung gespeicherter Seiten, Frist für gesperrte
  * Seiten). Geheimnisse erscheinen nur als „gesetzt“ oder „fehlt“. Jede Änderung schreibt die Datei und startet die
  * Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
@@ -41,7 +41,7 @@ public final class SettingsView implements View {
     private final Facts network = new Facts();
     private final Facts cache = new Facts();
     private final ComposerButton editCache = Comic.button("Cache und Aufbewahrung …",
-            "Zeitfenster, Versionsprüfung und Frist für gesperrte Seiten einstellen");
+            "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
     private final PillTabs tabs = new PillTabs();
     private final AiSettingsPanel ai;
     private final Facts runtime = new Facts();
@@ -248,10 +248,12 @@ public final class SettingsView implements View {
         cache.reset();
         if (settings != null) {
             AppSettings.Cache c = settings.cache();
-            cache.add(SettingDialogs.CACHE_MAX_AGE, c.maxAge().isZero() ? "keins – jede Anzeige fragt bei der Quelle"
-                            : ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage")
-                    .add("Versionsprüfung", c.versionCheck() ? "ja" : "nein – nach dem Zeitfenster neu laden")
-                    .add(SettingDialogs.WITHHELD_RETENTION, Texts.count(c.withheldRetention().toDays(), "Tag",
+            cache.add(SettingDialogs.REFRESH_TITLE, SettingDialogs.refreshStrategy(c));
+            if (!c.maxAge().isZero()) {
+                cache.add(SettingDialogs.CACHE_MAX_AGE, ConfigFileEditor.duration(c.maxAge()) + " ohne Rückfrage, danach "
+                        + (c.versionCheck() ? "Version prüfen" : "neu laden"));
+            }
+            cache.add(SettingDialogs.WITHHELD_RETENTION, Texts.count(c.withheldRetention().toDays(), "Tag",
                             "Tagen"));
         }
         runtime.reset();

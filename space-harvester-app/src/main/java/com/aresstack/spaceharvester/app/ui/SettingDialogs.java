@@ -329,7 +329,23 @@ final class SettingDialogs {
     }
 
     static final String CACHE_TITLE = "Cache und Aufbewahrung";
-    static final String CACHE_MAX_AGE = "Zeitfenster";
+    static final String CACHE_MAX_AGE = "Frist";
+    static final String REFRESH_TITLE = "Aktualisierung gespeicherter Seiten";
+    static final String ALWAYS_CHECK = "Immer Version prüfen";
+    static final String TIMED_WITHOUT_CHECK = "Zeitbasiert ohne Versionsprüfung";
+    static final String TIMED_WITH_CHECK = "Zeitbasiert mit Versionsprüfung";
+    static final List<String> REFRESH_STRATEGIES = List.of(ALWAYS_CHECK, TIMED_WITHOUT_CHECK, TIMED_WITH_CHECK);
+
+    /**
+     * Die Strategie zu {@code CacheFreshness(maxAge, versionCheck)}: Frist 0 heißt immer Version prüfen (ohne Frist
+     * und ohne Versionsprüfung gibt es nicht, der Core prüft dann ebenfalls bei jeder Anzeige).
+     */
+    static String refreshStrategy(AppSettings.Cache cache) {
+        if (cache.maxAge().isZero()) {
+            return ALWAYS_CHECK;
+        }
+        return cache.versionCheck() ? TIMED_WITH_CHECK : TIMED_WITHOUT_CHECK;
+    }
     static final String WITHHELD_RETENTION = "Gesperrte Seiten entfernen nach";
     static final String TLS_TITLE = "Serverzertifikate für alle Quellen";
 
@@ -398,19 +414,32 @@ final class SettingDialogs {
         AppSettings.Cache current = context.settings() != null ? context.settings().cache() : AppSettings.Cache.DEFAULT;
         JTextField maxAge = Comic.field(8);
         maxAge.setText(ConfigFileEditor.duration(current.maxAge()));
-        JCheckBox versionCheck = checkbox("Version bei der Quelle prüfen, bevor eine Seite neu geladen wird",
-                current.versionCheck());
+        JComboBox<String> refresh = Comic.combo();
+        for (String strategy : REFRESH_STRATEGIES) {
+            refresh.addItem(strategy);
+        }
+        refresh.setSelectedItem(refreshStrategy(current));
+        if (current.maxAge().isZero()) {
+            maxAge.setText("1d");
+        }
+        Runnable toggle = () -> maxAge.setEnabled(!ALWAYS_CHECK.equals(refresh.getSelectedItem()));
+        refresh.addActionListener(e -> toggle.run());
+        toggle.run();
         JTextField retention = Comic.field(6);
         retention.setText(String.valueOf(current.withheldRetention().toDays()));
         Rows rows = new Rows();
-        rows.add(CACHE_MAX_AGE, maxAge, "So lange gilt eine abgerufene Seite ohne Rückfrage, z. B. 30m, 6h oder 1d; "
-                + "0 fragt jedes Mal bei der Quelle nach");
-        rows.add("Versionsprüfung", versionCheck, "Nach dem Zeitfenster erst die Version vergleichen; aus: die Seite "
-                + "wird gleich neu geladen");
+        rows.add(REFRESH_TITLE, refresh, "Immer Version prüfen: jede Anzeige fragt die Version bei der Quelle ab und "
+                + "lädt nur Geänderte neu. Zeitbasiert: innerhalb der Frist gilt die gespeicherte Seite ohne "
+                + "Rückfrage, danach ohne Versionsprüfung neu laden bzw. erst die Version vergleichen");
+        rows.add(CACHE_MAX_AGE, maxAge, "Frist der zeitbasierten Strategien, z. B. 30m, 6h oder 1d; höchstens 365 Tage");
         rows.add(WITHHELD_RETENTION, retention, "Tage, die eine Seite ohne Leserecht gesperrt im Bestand bleibt, "
                 + "bevor ein Abgleich sie endgültig entfernt; 0 sofort");
-        Supplier<AppSettings.Cache> draft = () -> new AppSettings.Cache(duration(maxAge.getText()),
-                versionCheck.isSelected(), days(retention.getText()));
+        Supplier<AppSettings.Cache> draft = () -> {
+            Object chosen = refresh.getSelectedItem();
+            boolean always = ALWAYS_CHECK.equals(chosen);
+            java.time.Duration age = always ? java.time.Duration.ZERO : duration(maxAge.getText());
+            return new AppSettings.Cache(age, always || TIMED_WITH_CHECK.equals(chosen), days(retention.getText()));
+        };
         JPanel body = new JPanel(new BorderLayout(0, 10));
         body.setOpaque(false);
         body.add(wrapped("Gilt für alle Quellen. Leserechte prüft der Core bei jedem Abruf, auch im Zeitfenster."),
@@ -420,8 +449,9 @@ final class SettingDialogs {
         shell.onSaveFile(() -> {
             List<String> problems = new ArrayList<>();
             java.time.Duration age = duration(maxAge.getText());
-            if (age == null || age.compareTo(java.time.Duration.ofDays(365)) > 0) {
-                problems.add("Das Zeitfenster ist eine Dauer wie 0, 30m, 6h oder 1d, höchstens 365 Tage.");
+            if (!ALWAYS_CHECK.equals(refresh.getSelectedItem()) && (age == null || age.isZero()
+                    || age.compareTo(java.time.Duration.ofDays(365)) > 0)) {
+                problems.add("Die Frist ist eine Dauer wie 30m, 6h oder 1d, mehr als 0 und höchstens 365 Tage.");
             }
             if (days(retention.getText()) == null) {
                 problems.add("Die Frist für gesperrte Seiten ist eine Zahl von Tagen ab 0.");
