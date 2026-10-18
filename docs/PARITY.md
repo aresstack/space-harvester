@@ -190,10 +190,10 @@ Allgemeine Infrastruktur gehört in den Core, Rechercheplanung bleibt im EAC (AD
 | Embeddings über OpenAI-kompatiblen Dienst, Modellkatalog | `embedding-openai/…/OpenAiCompatibleEmbeddingAdapter`, `model-kipitz/…/KipitzModelCatalogAdapter` | dieselben Klassen (Kopie) über `core/source/ai/RemoteAi` | gleich |
 | Lokale Embeddings im Prozess (ONNX) | `text-local/…/LocalEmbeddingAdapter`, `text-onnx` | entfernt (ADR 0011) | bewusst nicht; der EAC hängt seinen lokalen Adapter als eigenen `EmbeddingProvider` ein → #188 |
 | Vektorablage je Modell | `chalco/pinakes/…/FileVectorIndex` (exakt) | `LuceneEnrichmentStore` (HNSW) | gleich |
-| Zerlegung in Abschnitte mit Satzgrenzen und Token-Budget | `astu/…/knowledge/KnowledgeChunker`, `KnowledgeChunkingPolicy`, `SentenceSplitter` | `EmbeddingProcessor` (Abschnitte, Zeichen) | teilweise → #181 |
+| Zerlegung in Abschnitte mit Satzgrenzen und Token-Budget | `astu/…/knowledge/KnowledgeChunker`, `KnowledgeChunkingPolicy`, `SentenceSplitter` | `KnowledgeTextSegmentation` mit denselben Klassen (`SentenceSplitter`, `KnowledgeChunkingPolicy.defaults()`: 350 Tokens, ein Satz Überlappung) im `EmbeddingProcessor` (#252); offen: Token-Budget und Überlappung einstellbar wie `knowledge.chunk.maxTokens`, `knowledge.chunk.overlapSentences` (`AppConfigLoader`) | teilweise → #181 |
 | Semantische Passagen (Themenwechsel) | `astu/acropolis/…/passage/PassageSegmentation`, `TopicClusterer` | keine | fehlt → #181 |
-| Hybride Suche (Volltext + Vektor, Reciprocal Rank Fusion) | `rag/RetrieveKnowledgeUseCase`, `rag/ReciprocalRankFusion` | `RelevanceSearch` mit `PageTextIndex`: Volltextindex und Vektor per RRF, `k` = 60 und gleiche Gewichte wie die Voreinstellung des EAC (#247), Antwort `reranker` = `rrf(fulltext,embedding-cosine@…)`; offen: Gewichte und `k` einstellbar wie `retrieval.keywordWeight`, `retrieval.semanticWeight`, `retrieval.rankConstant` (`AppConfigLoader`) (kommt mit #181 Teil 3); gewollte Abweichung: der Core fusioniert je Seite, weil Volltextindex und Antwort Seiten kennen, für die Kosinus-Rangfolge zählt das ähnlichste Stück | teilweise → #181 |
-| Reranking über Modell (`/rerank`) | `model-kipitz/…/KipitzRerankAdapter`, `rag/CrossEncoderRanking` | `ModelReranker` über `POST /rerank` des KI-Dienstes, eingeschaltet mit `space-harvester.ai.rerank-model` (`AiServiceSettings.rerankModel`, `RemoteAi.reranker()`), sonst `CosineReranker` (#248); gewollte Abweichung: kein `topK`, der Core ordnet alle Kandidaten nur um und schneidet nichts ab | gleich (#181) |
+| Hybride Suche (Volltext + Vektor, Reciprocal Rank Fusion) | `rag/RetrieveKnowledgeUseCase`, `rag/ReciprocalRankFusion` | keine Fusion: Schlagwortsuche heute live in der Quelle, für Quellen ohne eigene Suche im Volltextindex (Suche nur über den Cache folgt nach ADR 0013), semantische Suche nur mit Haken bzw. `sort=relevance` und nur über die Vektoren (`reranker` = `embedding-cosine@…`) | gewollte Abweichung ([ADR 0013](adr/0013-suche-ueber-den-cache.md)) |
+| Reranking über Modell (`/rerank`) | `model-kipitz/…/KipitzRerankAdapter`, `rag/CrossEncoderRanking` | `ModelReranker` über `POST /rerank` des KI-Dienstes, eingeschaltet mit `space-harvester.ai.rerank-model` (`AiServiceSettings.rerankModel`, `RemoteAi.reranker()`), sonst `CosineReranker` (#248), nur in der semantischen Suche (ADR 0013); gewollte Abweichung: kein `topK`, der Core ordnet alle Kandidaten nur um und schneidet nichts ab | gleich (#181) |
 | Verwandte Abschnitte | `chalco/KnowledgeRelationsPort`, `know/IndexKnowledgeRelations` | keine | fehlt → #181 |
 | Live-Prüfung jedes Treffers, Freigabe je Quelle für externe Verarbeitung | — | ADR 0011, Punkte 4 und 7 | SH+ |
 | Suchlauf-Protokoll | `search-run-api/…/KnowledgeSearchRunPort`, `search-run-h2` | keines | fehlt → #182 |
@@ -247,7 +247,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #178 | URL- und Ressourcenauflösung vollständig | Q |
 | #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q, erledigt |
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
-| #181 | Hybride Suche: Zerlegung, RRF, Rerank-Modell, verwandte Abschnitte | Q |
+| #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013) | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
 | #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
 | #184 | `ImageDescriber` über den externen KI-Dienst | Q |
