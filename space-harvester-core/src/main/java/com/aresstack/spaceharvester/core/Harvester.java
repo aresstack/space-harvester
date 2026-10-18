@@ -46,6 +46,7 @@ import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -399,7 +400,15 @@ public final class Harvester implements AutoCloseable {
      */
     public JobStatus sync(String sourceId, String spaceKey) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
+        requireActive(sourceId);
         return syncs.start(sourceId, spaceKey, OWNER);
+    }
+
+    /** Abgeschaltete oder unbekannte Quellen nehmen an keinem Auftrag teil, auch nicht über den Cache (#188). */
+    private void requireActive(String sourceId) {
+        if (catalog.find(sourceId).isEmpty()) {
+            throw new UnknownSourceException(sourceId);
+        }
     }
 
     /**
@@ -421,6 +430,7 @@ public final class Harvester implements AutoCloseable {
      */
     public JobStatus export(String sourceId, String spaceKey, List<String> formats, boolean refresh) {
         requireExport(sourceId, spaceKey);
+        requireActive(sourceId);
         return exports.start(ExportRequest.of(sourceId, spaceKey, OWNER, formats).withRefresh(refresh)
                 .withVisible(header -> access.canRead(caller, header.key().sourceId(),
                         header.metadata().partitionKey(), header.key().pageId()))

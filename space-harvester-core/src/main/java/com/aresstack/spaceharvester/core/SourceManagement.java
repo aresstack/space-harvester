@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -73,6 +74,15 @@ public final class SourceManagement {
      */
     public List<String> validate(SourceSettingsConfig draft, boolean replacing) {
         return catalog.problems(draft, replacing);
+    }
+
+    /**
+     * Wie {@link #validate(SourceSettingsConfig, boolean)}, dazu gegen Quellen, die das Programm eingerichtet, aber
+     * nicht geöffnet hat (wartet auf ihr Geheimnis, beim Start abgelehnt): Ihre IDs und Ziele sind ebenso belegt.
+     */
+    public List<String> validate(SourceSettingsConfig draft, boolean replacing,
+                                 Collection<SourceSettingsConfig> alsoConfigured) {
+        return catalog.problems(draft, replacing, alsoConfigured);
     }
 
     /**
