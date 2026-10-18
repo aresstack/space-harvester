@@ -78,6 +78,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** So lange gilt die gemerkte Partitionsliste für den Space-Filter. */
     static final long PARTITION_CACHE_SECONDS = 60;
 
+    private static final System.Logger LOG = System.getLogger(KnowledgeSourceHarvestSource.class.getName());
+
     private final String id;
     private final String type;
     private final String title;
@@ -177,14 +179,25 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return List.copyOf(matches.values());
     }
 
-    /** Die auszuschließenden Spaces: der Ausschluss und, für eine Auswahl, alle übrigen bekannten Partitionen. */
-    private Set<String> excluded(SearchSpaces spaces) throws KnowledgeSourceException {
+    /**
+     * Die auszuschließenden Spaces: der Ausschluss und, für eine Auswahl, alle übrigen bekannten Partitionen. Lässt
+     * sich die Partitionsliste nicht lesen, entfällt nur diese Ergänzung; die Auswahl prüft dann die Nachprüfung.
+     */
+    private Set<String> excluded(SearchSpaces spaces) {
         Set<String> excluded = new TreeSet<>(spaces.excluded());
         if (!spaces.only().isEmpty()) {
-            Set<String> others = new TreeSet<>(partitionKeys());
-            others.removeAll(spaces.only());
-            if (excluded.size() + others.size() <= MAX_EXCLUDED_SPACES) {
-                excluded.addAll(others);
+            Set<String> union;
+            try {
+                union = new TreeSet<>(partitionKeys());
+            } catch (KnowledgeSourceException | RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Spaces von {0} für den Suchfilter nicht lesbar ({1})", id,
+                        e.getClass().getSimpleName());
+                return excluded;
+            }
+            union.removeAll(spaces.only());
+            union.addAll(excluded);
+            if (union.size() <= MAX_EXCLUDED_SPACES) {
+                return union;
             }
         }
         return excluded;
