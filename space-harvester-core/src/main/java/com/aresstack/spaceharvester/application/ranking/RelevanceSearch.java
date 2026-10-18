@@ -305,6 +305,9 @@ public class RelevanceSearch {
                                            RelatedSections.Query query) {
         Objects.requireNonNull(sourceId, "sourceId");
         Objects.requireNonNull(pageId, "pageId");
+        // Rechte zuerst: Wer die Quelle nicht lesen darf, erfährt nicht, ob ein Dienst eingerichtet ist.
+        SearchScope.authorize(access, catalog, caller, PageSearchQuery.of(sourceId, List.of(), null, pageId, null,
+                null, null, null, SearchSort.PAGE_ID)).requireKnown(catalog);
         if (embedding == null) {
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
