@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.sources.ChangeEvent;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -60,6 +61,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
     private final SourceQueries queries;
     private final SpaceSync sync;
     private final ChangeSync changeSync;
+    private final EventSync eventSync;
     private final SyncBaselineStore store;
     private final PlanApplier applier;
     private final List<SyncCommitted> afterCommit;
@@ -105,6 +107,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                 withheldRetention);
         this.store = store;
         this.changeSync = store == null || fetcher == null ? null : new ChangeSync(queries, store, clock);
+        this.eventSync = store == null || fetcher == null ? null : new EventSync(queries, store, clock);
         this.applier = fetcher == null ? null : new PlanApplier(fetcher);
     }
 
@@ -244,6 +247,49 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             return sync.run(sourceId, spaceKey, applier, listener(context),
                     mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : mode);
         });
+    }
+
+    /**
+     * Wendet Änderungsereignisse der Quelle an ({@link EventSync}, ADR 0014): nur Kopfdaten in den Katalog, kein
+     * Inhaltsabruf, kein Auftrag. Fragt die Seiten im Aufrufer bei der Quelle nach; geschrieben wird je Space nur, wenn
+     * dort gerade kein Abgleich läuft.
+     *
+     * @return die Ereignisse, die jetzt nicht angewendet werden konnten, weil ihr Space gerade abgeglichen wird oder ein
+     *         anderer Lauf zuerst bestätigt hat; der Aufrufer versucht sie später erneut
+     * @throws UnknownSourceException   wenn keine Quelle mit dieser ID konfiguriert ist
+     * @throws SyncUnavailableException wenn Cache oder Inhaltsabruf nicht angebunden sind
+     */
+    public List<ChangeEvent> applyEvents(String sourceId, List<ChangeEvent> events) {
+        Objects.requireNonNull(events, "events");
+        if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
+            throw new UnknownSourceException(sourceId);
+        }
+        if (!available()) {
+            throw new SyncUnavailableException("Cache-Speicher oder Inhaltsabruf sind nicht angebunden");
+        }
+        List<ChangeEvent> deferred = new ArrayList<>();
+        List<ChangeEvent> now = new ArrayList<>();
+        for (ChangeEvent event : events) {
+            // Läuft im gemeldeten Space ein Abgleich, wartet das Ereignis ohne Anfrage an die Quelle.
+            (event.spaceKey() != null && running(sourceId, event.spaceKey()) ? deferred : now).add(event);
+        }
+        for (EventSync.SpacePlan plan : eventSync.plan(sourceId, now)) {
+            SpaceSync.SyncRun run;
+            synchronized (this) {
+                if (running(sourceId, plan.spaceKey())) {
+                    deferred.addAll(plan.events());
+                    continue;
+                }
+                try {
+                    run = eventSync.commit(plan, applier);
+                } catch (SyncConflictException e) {
+                    deferred.addAll(plan.events());
+                    continue;
+                }
+            }
+            afterCommit(run, sourceId, plan.spaceKey(), null);
+        }
+        return deferred;
     }
 
     /**
@@ -523,6 +569,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
                 context.checkpoint();
             }
         };
+    }
+
+    private boolean running(String sourceId, String spaceKey) {
+        String running = activeBySpace.get(sourceId + "/" + spaceKey);
+        return running != null && !finished(running);
     }
 
     private boolean finished(String jobId) {

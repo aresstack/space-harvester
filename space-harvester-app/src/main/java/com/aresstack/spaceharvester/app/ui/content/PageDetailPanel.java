@@ -66,6 +66,7 @@ public final class PageDetailPanel extends JPanel {
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
+    private static final String REFERENCES = "Verweise";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
@@ -79,6 +80,8 @@ public final class PageDetailPanel extends JPanel {
     private final JPanel deck = new JPanel(cards);
     private final JLabel empty = Comic.muted("Wähle links im Explorer eine Seite aus, um ihren Inhalt zu lesen.");
     private final JLabel path = Comic.muted(" ");
+    private final Breadcrumbs breadcrumbs = new Breadcrumbs();
+    private final References references = new References();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -118,6 +121,7 @@ public final class PageDetailPanel extends JPanel {
     private DeliveredPage page;
     private boolean assetsLoaded;
     private boolean readingLoaded;
+    private boolean referencesLoaded;
     private final ReadingPane readingPane = new ReadingPane();
     private List<Enrichments.View> views = List.of();
     private ReaderDocument shown;
@@ -184,6 +188,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(READ, readerPanel)
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
+                .tab(REFERENCES, references)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
@@ -192,7 +197,12 @@ public final class PageDetailPanel extends JPanel {
             if (READING.equals(name)) {
                 loadReading();
             }
+            if (REFERENCES.equals(name)) {
+                loadReferences();
+            }
         });
+        breadcrumbs.onOpen(id -> load(sourceId, id, false));
+        references.onOpen(id -> load(sourceId, id, false));
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -208,7 +218,11 @@ public final class PageDetailPanel extends JPanel {
         JPanel lines = new JPanel(new BorderLayout(0, 2));
         lines.setOpaque(false);
         lines.add(title, BorderLayout.NORTH);
-        lines.add(path, BorderLayout.CENTER);
+        JPanel where = new JPanel(new BorderLayout(0, 2));
+        where.setOpaque(false);
+        where.add(breadcrumbs, BorderLayout.NORTH);
+        where.add(path, BorderLayout.CENTER);
+        lines.add(where, BorderLayout.CENTER);
         lines.add(state, BorderLayout.SOUTH);
         JPanel titleRow = new JPanel(new BorderLayout(8, 0));
         titleRow.setOpaque(false);
@@ -240,7 +254,10 @@ public final class PageDetailPanel extends JPanel {
         page = null;
         assetsLoaded = false;
         readingLoaded = false;
+        referencesLoaded = false;
         readingPane.clear(" ");
+        breadcrumbs.clear();
+        references.message(" ");
         views = List.of();
         showReader(null, false);
         acronymHint.setText(" ");
@@ -276,8 +293,11 @@ public final class PageDetailPanel extends JPanel {
         this.pageId = pageId;
         this.assetsLoaded = false;
         this.readingLoaded = false;
+        this.referencesLoaded = false;
         this.page = null;
         readingPane.clear(" ");
+        breadcrumbs.clear();
+        references.message(" ");
         int current = ++request;
         cards.show(deck, PAGE);
         showReader(null, false);
@@ -311,6 +331,10 @@ public final class PageDetailPanel extends JPanel {
             if (READING.equals(tabs.selected())) {
                 loadReading();
             }
+            if (REFERENCES.equals(tabs.selected())) {
+                loadReferences();
+            }
+            loadPosition();
         }, error -> {
             if (current != request) {
                 return;
@@ -565,6 +589,48 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /** Lädt den Pfad der angezeigten Seite; ohne Seitenbaum der Quelle bleibt er leer. */
+    private void loadPosition() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        Background.run(() -> runtime.workspace().position(source, id), position -> {
+            if (shown == page) {
+                breadcrumbs.show(position);
+            }
+        }, error -> {
+            // Quellen ohne Seitenbaum und gesperrte Vorfahren: der Pfad fehlt, die Seite bleibt lesbar.
+        });
+    }
+
+    /** Lädt die Querverweise einmal je Seite, wenn der Reiter „Verweise“ gewählt ist. */
+    private void loadReferences() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || referencesLoaded) {
+            return;
+        }
+        referencesLoaded = true;
+        references.message("Verweise werden geladen …");
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        Background.run(() -> runtime.workspace().references(source, id), found -> {
+            if (shown == page) {
+                references.show(found);
+            }
+        }, error -> {
+            if (shown != page) {
+                return;
+            }
+            referencesLoaded = false;
+            references.message("Verweise nicht geladen: " + Problems.describe(error).title());
+        });
+    }
+
     private void harvestAssets() {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
@@ -721,6 +787,18 @@ public final class PageDetailPanel extends JPanel {
         saveAsset.setEnabled(enabled);
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
+    }
+
+    Breadcrumbs breadcrumbs() {
+        return breadcrumbs;
+    }
+
+    References references() {
+        return references;
+    }
+
+    PillTabs tabs() {
+        return tabs;
     }
 
     /** Für Tests: die angezeigte Seite oder {@code null} ohne Seite und während des Ladens. */

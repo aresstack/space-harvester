@@ -77,6 +77,7 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
+import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
@@ -113,6 +114,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -185,6 +187,7 @@ public final class Harvester implements AutoCloseable {
     private final RelevanceSearch relevance;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
+    private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
     private final Exports exports;
     private final ExportConversions conversions;
@@ -370,6 +373,15 @@ public final class Harvester implements AutoCloseable {
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
+            // ADR 0014: Webhooks markieren nur den Katalog; ein- und ausgeschaltet je Quelle über sync.events.
+            boolean eventsFixed = builder.changeEvents;
+            Map<String, char[]> webhookSecrets = Map.copyOf(builder.webhookSecrets);
+            this.changeEvents = new ChangeEvents(syncs, sources, manager == null ? sourceId -> eventsFixed
+                    : sourceId -> this.settings.syncFor(sourceId).events(), sourceId -> {
+                        char[] secret = webhookSecrets.get(sourceId);
+                        return secret == null ? null : secret.clone();
+                    });
+            opened.add(changeEvents);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
@@ -748,6 +760,16 @@ public final class Harvester implements AutoCloseable {
         return syncs;
     }
 
+    /**
+     * Änderungsquelle Webhooks (ADR 0014, Standard aus): nimmt signierte Aufrufe der Quelle an und markiert nur den
+     * Katalog (veraltet bzw. nicht geladen, gelöscht oder gesperrt), ohne Inhalte zu laden. Wirkt nur, wenn für die
+     * Quelle {@code sync.events} gilt (ohne {@link Builder#configuration} {@link Builder#changeEvents}) und
+     * {@link Builder#webhookSecret} ein Geheimnis setzt.
+     */
+    public ChangeEvents changeEvents() {
+        return changeEvents;
+    }
+
     /** Exporte eines Space; fehlt er im Cache, liest der Export ihn selbst ein. */
     public Exports exports() {
         return exports;
@@ -1098,6 +1120,8 @@ public final class Harvester implements AutoCloseable {
         private Path assetDirectory;
         private long maxAssetBytes = 50L * 1024 * 1024;
         private Duration signInWait = Duration.ZERO;
+        private boolean changeEvents;
+        private final Map<String, char[]> webhookSecrets = new HashMap<>();
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
@@ -1218,6 +1242,30 @@ public final class Harvester implements AutoCloseable {
         /** Abgelegte Anhänge und Bilder; Standard {@code <dataDirectory>/assets}. */
         public Builder assetDirectory(Path assetDirectory) {
             this.assetDirectory = assetDirectory;
+            return this;
+        }
+
+        /**
+         * Änderungsquelle Webhooks für alle Quellen ein- oder ausschalten (Standard aus); mit {@link #configuration}
+         * gilt stattdessen {@code sync.events} je Quelle.
+         */
+        public Builder changeEvents(boolean changeEvents) {
+            this.changeEvents = changeEvents;
+            return this;
+        }
+
+        /**
+         * Geheimnis, mit dem die Quelle ihre Webhook-Aufrufe signiert (HMAC-SHA256, ADR 0014); ohne Geheimnis nimmt
+         * {@link Harvester#changeEvents()} für die Quelle nichts an. Der Builder kopiert es; der Core liest es nie aus
+         * der Umgebung, speichert und protokolliert es nicht.
+         */
+        public Builder webhookSecret(String sourceId, char[] secret) {
+            Objects.requireNonNull(sourceId, "sourceId");
+            if (secret == null || secret.length == 0) {
+                webhookSecrets.remove(sourceId);
+            } else {
+                webhookSecrets.put(sourceId, secret.clone());
+            }
             return this;
         }
 

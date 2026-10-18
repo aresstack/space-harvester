@@ -34,6 +34,7 @@ import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
+import com.aresstack.spaceharvester.application.sources.ChangeEvent;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -48,6 +49,7 @@ import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceSearchMatch;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceWebhooks;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -346,6 +348,20 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageMetadataBatch(batch.resources().stream()
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    /** Confluence verschickt Webhooks (ADR 0014), wo ein Administrator sie registriert hat. */
+    @Override
+    public boolean readsChangeEvents() {
+        return ConfluenceSourceAdapter.TYPE.equals(type);
+    }
+
+    @Override
+    public List<ChangeEvent> changeEvents(byte[] body, String eventKey) {
+        if (!readsChangeEvents()) {
+            return HarvestSource.super.changeEvents(body, eventKey);
+        }
+        return ConfluenceWebhooks.parse(body, eventKey);
     }
 
     @Override
