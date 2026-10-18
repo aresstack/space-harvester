@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededE
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
+import com.aresstack.spaceharvester.application.convert.SpaceNames;
 import com.aresstack.spaceharvester.application.jobs.JobCancelledException;
 import com.aresstack.spaceharvester.application.jobs.JobContext;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -603,6 +604,16 @@ public class Exports {
         @Override
         public String spaceKey() {
             return scope.spaceKey();
+        }
+
+        /** Aus der ersten Seite in Baumreihenfolge; eine Seite genügt, alle tragen denselben Space. */
+        @Override
+        public String spaceName() {
+            if (tree.roots().isEmpty()) {
+                return scope.spaceKey();
+            }
+            return cache.page(exported.get(tree.roots().get(0).pageId()).header().key())
+                    .flatMap(page -> SpaceNames.of(page.snapshot(), scope.spaceKey())).orElse(scope.spaceKey());
         }
 
         @Override

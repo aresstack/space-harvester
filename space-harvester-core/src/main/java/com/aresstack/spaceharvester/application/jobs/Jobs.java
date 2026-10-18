@@ -17,8 +17,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -109,12 +109,16 @@ public class Jobs implements AutoCloseable {
             if (closed) {
                 throw new IllegalStateException("Der Dienst wird beendet und nimmt keine Aufträge mehr an");
             }
-            if (open.size() >= capacity) {
+            // Folgeaufträge (Anreicherung, Bilder) entstehen, während ihr Auslöser noch einen Platz belegt. Sie haben
+            // daher einen eigenen Vorrat derselben Größe und zählen weder dort noch gegen die Grenze je Eigentümer
+            // mit; sonst nähme etwa maxOpenPerOwner=1 nie einen an.
+            if (open.values().stream().filter(other -> other.type.followUp() == type.followUp()).count()
+                    >= capacity) {
                 throw new JobCapacityExceededException(capacity);
             }
-            if (owner != null
-                    && open.values().stream().filter(other -> owner.equals(other.owner)).count()
-                            >= limits.maxOpenPerOwner()) {
+            if (owner != null && !type.followUp()
+                    && open.values().stream().filter(other -> !other.type.followUp() && owner.equals(other.owner))
+                            .count() >= limits.maxOpenPerOwner()) {
                 throw JobCapacityExceededException.perOwner(limits.maxOpenPerOwner());
             }
             // Vor dem Einreihen: sonst könnte ein paralleler dispatch() den Start vor der Annahme festhalten.

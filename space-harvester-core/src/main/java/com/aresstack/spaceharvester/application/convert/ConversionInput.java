@@ -12,6 +12,14 @@ public interface ConversionInput {
 
     String spaceKey();
 
+    /**
+     * Name des Space, wie die Quelle ihn nennt (bei Confluence {@code space.name} der Seiten); ohne Namen
+     * {@link #spaceKey()}. Für Überschriften und Dateinamen.
+     */
+    default String spaceName() {
+        return spaceKey();
+    }
+
     /** Baum der exportierten Seiten; nur Verweise über IDs. */
     PageTree tree();
 

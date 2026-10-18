@@ -140,6 +140,39 @@ class ExportConversionsTest {
     }
 
     @Test
+    void aTreeNamingAPageTwiceOrAMissingFileIsADamagedDataset() throws IOException {
+        FileSystemExportArtifactWriter writer = writer();
+        String exportId = exportOnce(writer);
+        Path tree = data.resolve("exports").resolve(exportId).resolve("tree.json");
+        String original = Files.readString(tree);
+        // 101 doppelt statt 200: gleiche Zahl an Knoten, aber 200 fehlt.
+        Files.writeString(tree, original.replace("\"id\":\"200\"", "\"id\":\"101\""));
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters);
+
+        assertThatThrownBy(() -> conversions.convert(exportId, "client-a", "markdown", downloads))
+                .isInstanceOf(ExportDatasetDamagedException.class);
+        Files.delete(tree);
+        assertThatThrownBy(() -> conversions.convert(exportId, "client-a", "markdown", downloads))
+                .isInstanceOf(ExportDatasetDamagedException.class);
+    }
+
+    @Test
+    void theSpaceNameComesFromThePagesAndOtherwiseIsTheKey() {
+        FileSystemExportArtifactWriter writer = writer();
+        cache.publish("confluence", "PAR", confirmed("g2"), List.of(page("confluence", "PAR", "300", null,
+                "{\"space\":{\"key\":\"PAR\",\"name\":\"Paritätsprüfung\"}}".getBytes(
+                        java.nio.charset.StandardCharsets.UTF_8))));
+        String named = new Exports(jobs, cache, writer, converters, clock).start("confluence", "PAR", "client-a",
+                List.of("json")).id();
+        String unnamed = exportOnce(writer);
+        ExportConversions conversions = new ExportConversions(jobs, writer, converters);
+
+        assertThat(writer.dataset(named).orElseThrow().spaceName()).isEqualTo("Paritätsprüfung");
+        assertThat(writer.dataset(unnamed).orElseThrow().spaceName()).isEqualTo("DEV");
+        assertThat(conversions.dataset(named, "client-a")).isPresent();
+    }
+
+    @Test
     void withoutAPublishedDatasetNothingIsConvertible() {
         FileSystemExportArtifactWriter writer = writer();
         String exportId = exportOnce(writer);
