@@ -509,6 +509,14 @@ Artefakte liegen unter `space-harvester.export.directory` (Standard `data/export
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
+**Einmal beschaffen, beliebig oft konvertieren:** Aus dem gespeicherten Datenbestand eines abgeschlossenen Exports
+(`pages.ndjson`, `raw/`, `tree.json`) entsteht jedes Format später erneut, ohne die Quelle zu lesen und ohne neuen
+Export. `GET /api/v1/exports/{exportId}/dataset` nennt Seitenzahl, Space, Vollständigkeit, Stand der Bilder und die
+Formate; `GET /api/v1/exports/{exportId}/conversions/{format}` liefert die Datei (`json`, `markdown`, `docx`, `pdf`) mit
+denselben Rechten wie der Download. In der Bibliothek: `Harvester.conversions().convert(exportId, owner, format,
+ordner)` schreibt die Datei in den Ordner des Aufrufers und überschreibt nie. Der Datenbestand selbst bleibt im
+Datenverzeichnis; jede Payload wird vor dem Konvertieren gegen ihre SHA-256 geprüft (`export-dataset-damaged`, 409).
+
 **Ausgabeformate (#30):** Standardformat ist JSON: ohne `format` erzeugt ein Export neben dem Raw-First-Artefakt
 `pages.json`. `?format=…` (wiederholbar, z. B. `format=markdown&format=pdf`) wählt die Formate selbst; sie entstehen
 am Ende des Exports als abgeleitete Dateien aus denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,

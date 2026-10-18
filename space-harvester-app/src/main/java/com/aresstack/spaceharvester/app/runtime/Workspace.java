@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
+import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
@@ -30,8 +32,8 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.core.Harvester;
-
 import java.io.InputStream;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -230,6 +232,24 @@ public final class Workspace {
     public Optional<InputStream> exportFile(String exportId, String name) {
         ownExport(exportId);
         return harvester.exports().artifactFile(exportId, Harvester.OWNER, name);
+    }
+
+    /**
+     * Datenbestand eines abgeschlossenen Exports ({@code GET /exports/{id}/dataset}); leer, solange keiner vorliegt.
+     * Nur dann bietet die Oberfläche „Exportieren als …“ an.
+     */
+    public Optional<ExportDatasetInfo> exportDataset(String exportId) {
+        ownExport(exportId);
+        return harvester.conversions().dataset(exportId, Harvester.OWNER);
+    }
+
+    /**
+     * Erzeugt aus dem Datenbestand eines Exports eine Datei im Ordner {@code directory}, ohne die Quelle erneut zu
+     * lesen ({@code GET /exports/{id}/conversions/{format}}); überschreibt nie.
+     */
+    public ExportConversions.ConvertedFile convertExport(String exportId, String format, Path directory) {
+        ownExport(exportId);
+        return harvester.conversions().convert(exportId, Harvester.OWNER, format, directory);
     }
 
     /** Export abbrechen ({@code POST /exports/{id}/cancel}). */
