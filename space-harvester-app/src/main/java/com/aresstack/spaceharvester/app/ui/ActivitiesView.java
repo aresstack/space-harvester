@@ -20,6 +20,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
 import javax.swing.JTable;
+import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -63,8 +64,8 @@ public final class ActivitiesView implements View {
     private final JComponent cardPlate;
     private final JLabel cardTitle = new JLabel();
     private final JLabel cardLine = new JLabel();
-    /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden. */
-    final JLabel cardImages = new JLabel();
+    /** „Bilder: …“ mit Hinweis, solange sie noch beschafft werden; bricht um, damit der Hinweis nie abgeschnitten wird. */
+    final JTextArea cardImages = Comic.note("");
     final JComboBox<Format> format = Comic.combo();
     final ComposerButton exportAs = Comic.primary("Exportieren", "Die Datei aus dem vorhandenen Datenbestand im "
             + "Ausgabeordner erzeugen, ohne die Quelle erneut zu lesen");
@@ -129,7 +130,6 @@ public final class ActivitiesView implements View {
         cardLine.setForeground(Comic.INK);
         output.setFont(Comic.regular(13f));
         output.setForeground(Comic.INK);
-        cardImages.setFont(Comic.regular(13f));
         JPanel cardHead = new JPanel(new BorderLayout(0, 2));
         cardHead.setOpaque(false);
         cardHead.add(cardTitle, BorderLayout.NORTH);
