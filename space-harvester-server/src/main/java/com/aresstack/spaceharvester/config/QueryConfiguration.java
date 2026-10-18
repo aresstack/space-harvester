@@ -2,19 +2,20 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
-import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.query.PageQueries;
-import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
-import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import java.time.Clock;
@@ -47,6 +48,12 @@ class QueryConfiguration {
                               ObjectProvider<EnrichmentStore> store) {
         return new ReadingViews(catalog, pages, access, new ReadingViewStore(store.getIfAvailable(
                 InMemoryEnrichmentStore::new)), Clock.systemUTC());
+    }
+
+    /** Live-Navigation (#177); der Cache nennt nur den Space von Verweiszielen. */
+    @Bean
+    PageNavigation pageNavigation(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access) {
+        return new PageNavigation(catalog, cache.getIfAvailable(), access);
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */
