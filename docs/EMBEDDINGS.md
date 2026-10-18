@@ -92,8 +92,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   beide Ränge folgen. Fällt der Volltextindex aus, ist die Suche rein semantisch.
 - Cross-Encoder (#181, wie `KipitzRerankAdapter` und `CrossEncoderRanking` im Enterprise AI Client): Mit
   `rerank-model` bewertet der Dienst über `POST <base-url>/rerank` jeden Treffer einzeln gegen den Anfragetext und
-  ordnet das Fenster danach um (`reranker: …+cross-encoder@<Modell>`). Er sieht den Titel und, nur mit
-  `content`-Freigabe, höchstens 2000 Zeichen des Lesetexts um das ähnlichste Stück, nie die Adresse. Es gehen nur
+  ordnet die Treffer der Antwort danach um (`reranker: …+cross-encoder@<Modell>`). Er kommt erst nach der
+  Live-Prüfung und sieht den Titel und, nur mit `content`-Freigabe im heute gemeldeten Space, höchstens 2000 Zeichen
+  des Lesetexts um das ähnlichste Stück, nie die Adresse. Es gehen nur
   Treffer aus Quellen in `external-processing-sources` hinaus; die übrigen behalten ihren Platz. Anders als im
   Enterprise AI Client verwirft er nichts, er ordnet nur um. Scheitert der Dienst, bleibt die Reihenfolge, und die Suche
   antwortet trotzdem. Ein eigener Reranker des Programms (`Harvester.builder().reranker(…)`) ersetzt ihn.
