@@ -34,6 +34,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceDiagnosis;
+import com.aresstack.spaceharvester.application.sync.SpaceCatalog;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.core.Harvester;
@@ -312,6 +313,15 @@ public final class Workspace {
         JobStatus status = harvester.syncs().catchUp(sourceId, spaceKey, Harvester.OWNER, null);
         activities.remember(status.id());
         return status;
+    }
+
+    /**
+     * Katalogstand eines Space im Cache, ohne Quellenzugriff ({@code GET …/spaces/{key}/catalog}): erfasst oder nicht,
+     * bekannte Seiten und Seiten mit Inhalt.
+     */
+    public SpaceCatalog catalog(String sourceId, String spaceKey) {
+        access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.METADATA);
+        return harvester.syncs().catalog(sourceId, spaceKey);
     }
 
     /** Status und Delta eines Abgleichs ({@code GET /syncs/{id}}). */
