@@ -122,7 +122,7 @@ Nicht angebunden sind:
 | Versioniert, inkrementell, Löschungen | `RefreshKnowledgeSourceUseCase`, `chalco/ResourceArchive` | `SpaceSync`, `SyncPlanner`, `RemovalCheck`, Generationen | SH+ |
 | Getrennte Löschfeststellung | `ResourceArchive#removeByUri`: an der Quelle weggefallen, ohne Unterscheidung zwischen gelöscht und nicht mehr sichtbar | `RemovalCheck.Verdict`: `DELETED` nur bei bestätigter Löschung (`HarvestSource.confirmsDeletion()`, heute lokale Dateien) wird entfernt; `INACCESSIBLE` (für das technische Konto nicht sichtbar) wird sofort gesperrt und aus den Indizes genommen, die Rohdaten nach `space-harvester.sync.withheld-retention` (Standard 30 Tage) entfernt; `SyncSummary`/REST mit `withheld` und `purged`, `removed` zählt nur bestätigte Löschungen; Benutzerrechte werden bei jeder Ausgabe unabhängig geprüft (#263, [ADR 0014](adr/0014-abgleich-berechtigung-suche-getrennt.md)) | SH+ |
 | Transparentes Nachladen | `KnowledgePrefetchService` | `PageQueries`, `PageCacheFill` (ADR 0010) | gleich |
-| Ereignisbasierte Synchronisierung | keine (Abgleich auf Knopfdruck, suchgesteuertes Vorladen) | geplant (Angelo 18.10., #181): Confluence-DC-Webhooks (Seite erstellt, geändert, verschoben, gelöscht, wiederhergestellt) übernehmen Seiten sofort mit Inhalt; CQL „geändert seit“ nur zum Nachholen (beim Start, manuell mit Zeitangabe, optional per Zeitplan, optional vor jeder Suche, Standard aus); alle anderen Seiten weiter suchgesteuert | Erweiterung, in Arbeit (Q) |
+| Ereignisbasierte Synchronisierung | keine (Abgleich auf Knopfdruck, suchgesteuertes Vorladen) | geplant (Angelo 18.10., #181): Confluence-DC-Webhooks (Seite erstellt, geändert, verschoben, gelöscht, wiederhergestellt) übernehmen Seiten sofort mit Inhalt; CQL „geändert seit“ nur zum Nachholen (beim Start, manuell mit Zeitangabe, optional per Zeitplan, optional vor jeder Suche, Standard aus); alle anderen Seiten weiter suchgesteuert; verpasste Löschungen erkennt weiter die Inventur (ADR 0014) | Erweiterung, in Arbeit (Q) |
 
 ## 6. Bilder
 
@@ -244,7 +244,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Leseansicht mit Bildern, Diagrammen, Bildergalerie | `exedra/…/reader/ReaderHtmlView`, `ImageSlideshowPanel` | `desk/…/content/ReadingPane` (Reiter „Leseansicht“): HTML aus `ReadingViews`, Bilder über `Assets.viewImage`, Mermaid über `Diagrams`, fehlende Bilder markiert, Klick öffnet Galerie mit ◀/▶ | gleich (#192) |
 | Auftragskarte mit „Exportieren als …“, Ausgabeordner | — | in Arbeit (Strang L, Runde 7) | in Arbeit |
 | Einrichtungsassistent beim ersten Start, später über die Einstellungen | `exedra/…/ui/setup/SetupWizardPanel` | wird aus dem EAC übernommen (Angelo 18.10.), Modelle wie Embeddings und Reranker global für alle Quellen | in Arbeit (L) |
-| Einstellungsmenüs (Dienst, Modelle, Sicherheit, System, Index) | `exedra/…/ui/settings/ServiceTab`, `ModelsTab`, `SecurityTab`, `SystemTab`, `IndexEditor` | werden aus dem EAC übernommen und auf die Properties abgebildet; Änderung zur Laufzeit über eine Konfigurationsverwaltung im Core (ADR 0015) | in Arbeit (L, Konfigurationsverwaltung zur Laufzeit) |
+| Einstellungsmenüs (Dienst, Modelle, Sicherheit, System, Index) | `exedra/…/ui/settings/ServiceTab`, `ModelsTab`, `SecurityTab`, `SystemTab`, `IndexEditor` | werden aus dem EAC übernommen und auf die Properties abgebildet; Änderung zur Laufzeit über eine Konfigurationsverwaltung im Core (geplant als ADR 0015) | in Arbeit (L, Konfigurationsverwaltung zur Laufzeit) |
 
 ## Lücken und Issues
 
