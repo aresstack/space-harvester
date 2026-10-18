@@ -173,49 +173,63 @@ public class PageQueries {
     }
 
     /**
-     * Eine Seite mit ihrer nativen Payload. Der Cache ist dabei transparent (ADR 0010): Liegt die Seite nicht im Cache,
-     * wird sie von der Quelle nachgeladen, sofern der Aufrufer sie lesen darf, im gemeinsamen Cache abgelegt und
-     * ausgeliefert. Die Rechte werden an den live gelesenen Kopfdaten geprüft, bevor ein Inhalt geladen wird, und bei
-     * jeder Auslieferung erneut, auch bei einem Cache-Treffer.
+     * Eine Seite mit ihrer nativen Payload. Der Cache ist dabei transparent (ADR 0010, Punkt 8): Jeder Abruf liest
+     * zuerst die Kopfdaten live bei der Quelle und prüft an ihnen in einem Schritt die Rechte des Aufrufers und die
+     * Version. Liegt dieselbe Version im Cache, kommt sie von dort; ist sie älter oder fehlt sie, wird die Seite geholt,
+     * im gemeinsamen Cache abgelegt und ausgeliefert. Das gilt für jede Anmeldeart gleich.
+     *
+     * <p>Ist die Quelle für diese Prüfung nicht erreichbar ({@code UNAVAILABLE}, {@code RATE_LIMITED}), liefert der
+     * Abruf ohne {@code refresh} den Cache-Stand, aber nur, wenn die Richtlinie dem Aufrufer die Seite an ihren
+     * gespeicherten Kopfdaten freigibt; eine delegierte Prüfung, die die Quelle braucht, schlägt dann fehl und gibt
+     * nichts heraus. Ohne angebundenen Inhaltsabruf gilt nur der Cache.
      *
      * @param caller  Aufrufer aus der geprüften Anmeldung
-     * @param refresh {@code true} verlangt eine Prüfung gegen die Quelle vor der Auslieferung; nie stattdessen der
-     *                Cache-Stand. Eine neuere Seite wird dabei ebenfalls abgelegt
+     * @param refresh {@code true} verlangt die Prüfung gegen die Quelle ohne Rückgriff auf den Cache, wenn sie nicht
+     *                antwortet
      * @throws AccessDeniedException       wenn die Quelle für keinen Space für {@code content} freigegeben ist
      * @throws UnknownSourceException      wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws RefreshUnavailableException bei {@code refresh}, solange keine Prüfung gegen die Quelle angebunden ist
-     * @throws SourceAccessException       wenn nachgeladen oder geprüft werden muss und die Quelle nicht oder nicht in
-     *                                     der Frist antwortet
+     * @throws SourceAccessException       wenn die Quelle nicht oder nicht in der Frist antwortet und kein lesbarer
+     *                                     Cache-Stand vorliegt (mit {@code refresh} immer)
      * @throws CacheMissException          wenn die Quelle die Seite nicht (mehr) kennt, sie für den Aufrufer nicht
      *                                     lesbar ist oder sie ohne angebundenen Inhaltsabruf nicht im Cache liegt
      */
     public DeliveredPage page(AccessContext caller, String sourceId, String pageId, boolean refresh) {
         access.require(caller, ResourceScope.source(sourceId), AccessKind.CONTENT);
         requireSource(sourceId);
-        if (!refresh) {
-            Optional<CachedPage> cached = cache.page(new PageKey(sourceId, pageId));
-            if (cached.isPresent()) {
-                if (!readable(caller, cached.get().header())) {
-                    throw new CacheMissException(sourceId, "Seite nicht im Cache");
-                }
-                return DeliveredPage.cached(cached.get());
+        if (!freshness.available()) {
+            if (refresh) {
+                throw new RefreshUnavailableException("Die Prüfung gegen die Quelle ist noch nicht angebunden");
             }
-            if (!freshness.available()) {
+            Optional<CachedPage> cached = cache.page(new PageKey(sourceId, pageId));
+            if (cached.isEmpty() || !readable(caller, cached.get().header())) {
                 throw new CacheMissException(sourceId, "Seite nicht im Cache");
             }
-            return fromSource(caller, sourceId, pageId, Optional.empty());
+            return DeliveredPage.cached(cached.get());
         }
-        if (!freshness.available()) {
-            throw new RefreshUnavailableException("Die Prüfung gegen die Quelle ist noch nicht angebunden");
-        }
-        // Ohne lesbaren Cache prüft refresh trotzdem live; die Antwort ist dann als live gekennzeichnet.
+        // Ohne lesbaren Cache prüft der Abruf trotzdem live; die Antwort ist dann als live gekennzeichnet.
         Optional<CachedPage> cached;
         try {
             cached = cache.page(new PageKey(sourceId, pageId));
         } catch (CacheUnavailableException e) {
             cached = Optional.empty();
         }
-        return fromSource(caller, sourceId, pageId, cached);
+        try {
+            return fromSource(caller, sourceId, pageId, cached);
+        } catch (SourceAccessException e) {
+            boolean unreachable = e.reason() == SourceAccessException.Reason.UNAVAILABLE
+                    || e.reason() == SourceAccessException.Reason.RATE_LIMITED;
+            if (refresh || !unreachable || cached.isEmpty()) {
+                throw e;
+            }
+            if (!readable(caller, cached.get().header())) {
+                throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+            }
+            // Ohne Seiten-ID: die Meldung landet auch bei Abrufen nicht lesbarer Seiten im Log.
+            LOG.log(System.Logger.Level.INFO, "Quelle {0} für die Versionsprüfung nicht erreichbar ({1}), "
+                    + "Cache-Stand ausgeliefert", sourceId, e.reason());
+            return DeliveredPage.cached(cached.get());
+        }
     }
 
     /** Prüft bzw. lädt die Seite bei der Quelle, legt einen neuen Inhalt ab und liefert ihn aus. */

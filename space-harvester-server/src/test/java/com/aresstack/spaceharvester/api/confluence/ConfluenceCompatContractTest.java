@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.api.confluence;
 
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import org.springframework.context.annotation.Primary;
 import com.aresstack.spaceharvester.EmptyConfluence;
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.confirmed;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,6 +107,13 @@ class ConfluenceCompatContractTest {
 
     @TestConfiguration
     static class Cache {
+
+        @Bean
+        @Primary
+        PageFreshness cacheOnlyFreshness(SourceQueries queries) {
+            return EmptyConfluence.cacheOnly(queries);
+        }
+
 
         @Bean
         InMemoryPageCache pageCache() {

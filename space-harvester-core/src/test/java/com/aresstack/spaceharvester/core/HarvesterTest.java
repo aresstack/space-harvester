@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -109,7 +110,8 @@ class HarvesterTest {
 
             DeliveredPage second = harvester.pages().page(harvester.caller(), "wiki", "102", false);
             assertThat(second.live()).isFalse();
-            assertThat(second.refresh()).isNull();
+            // Zweites Lesen prüft die Version live und nimmt den gleichen Stand aus dem Cache.
+            assertThat(second.refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
             assertThat(second.snapshot().payload().rawSha256()).isEqualTo(first.snapshot().payload().rawSha256());
         }
     }

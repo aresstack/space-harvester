@@ -42,8 +42,10 @@ class PageQueryWithoutCacheApiTest {
                     HttpResponse.BodyHandlers.ofString());
 
             assertThat(response.statusCode()).as(path).isEqualTo(503);
+            // Die Einzelseite braucht den Cache nicht, aber die Live-Prüfung (ADR 0010, Punkt 8): hier fehlt die Quelle.
+            String problem = path.endsWith("/pages/101") ? "source-unavailable" : "cache-unavailable";
             assertThat(new ObjectMapper().readTree(response.body()).get("type").asString())
-                    .isEqualTo("https://github.com/aresstack/space-harvester/problems/cache-unavailable");
+                    .isEqualTo("https://github.com/aresstack/space-harvester/problems/" + problem);
         }
     }
 }

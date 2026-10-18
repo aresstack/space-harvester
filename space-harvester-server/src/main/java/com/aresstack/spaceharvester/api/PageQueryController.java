@@ -170,12 +170,14 @@ public class PageQueryController {
                     + "Aktualität, #29); Metadaten werden nie in data "
                     + "geschrieben. Beide Ansichten verlangen die content-Freigabe. "
                     + "Kanonische Route ohne Space-Key: eine verschobene Seite behält ihre pageId. "
-                    + "refresh=true prüft die Seite vor der Auslieferung gegen die Quelle und liefert nie stattdessen "
-                    + "den Cache-Stand: unverändert (current) kommt der Cache-Stand, neue Kopfdaten bei gleicher "
-                    + "Revision (header-changed) mit der gespeicherten Payload, eine neue Revision (content-changed) "
-                    + "live geladen. Abweichungen vom Cache sind origin=live und Cache-Zustand stale; der Cache selbst "
-                    + "ändert sich erst mit dem nächsten Abgleich. Ohne angebundene Prüfung antwortet refresh=true "
-                    + "mit 501, bei Fehlern oder Zeitüberschreitung der Quelle mit 502/503.")
+                    + "Jeder Abruf prüft Recht und Version zuerst live gegen die Quelle (ADR 0010, Punkt 8): "
+                    + "unverändert (current) kommt der Cache-Stand, neue Kopfdaten bei gleicher Revision "
+                    + "(header-changed) mit der gespeicherten Payload, eine neue Revision oder eine fehlende Seite "
+                    + "(content-changed) wird geladen, abgelegt und ausgeliefert (origin=live). Ist die Quelle für die "
+                    + "Prüfung nicht erreichbar, kommt ohne refresh der Cache-Stand ungeprüft (ohne X-Page-Refresh), "
+                    + "sofern die Zugriffspolicy die Seite freigibt; refresh=true liefert nie ungeprüft. Ohne "
+                    + "angebundene Prüfung antwortet refresh=true mit 501, bei Fehlern oder Zeitüberschreitung der "
+                    + "Quelle mit 502/503.")
     @ApiResponse(responseCode = "200", description = "view=native: native Payload der Seite (Medientyp der Quelle); "
             + "view=extended: ExtendedPageResponse",
             content = {@Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
@@ -183,11 +185,12 @@ public class PageQueryController {
                             description = "view=extended; bei view=native die unveränderte Payload"))},
             headers = {
                     @Header(name = "ETag", description = "\"sha256:<hex>\" über die Payload-Bytes"),
-                    @Header(name = PAGE_ORIGIN, description = "cache oder live (nach refresh=true vom Cache "
-                            + "abweichend)"),
-                    @Header(name = PAGE_REFRESH, description = "Nur mit refresh=true: current, header-changed oder "
-                            + "content-changed"),
-                    @Header(name = PAGE_CHECKED_AT, description = "Nur mit refresh=true: Zeitpunkt der Prüfung"),
+                    @Header(name = PAGE_ORIGIN, description = "cache oder live (vom Cache abweichend, nach "
+                            + "der Prüfung geladen)"),
+                    @Header(name = PAGE_REFRESH, description = "Ergebnis der Live-Prüfung: current, "
+                            + "header-changed oder content-changed; fehlt, wenn ungeprüft aus dem Cache"),
+                    @Header(name = PAGE_CHECKED_AT, description = "Zeitpunkt der Live-Prüfung; fehlt, wenn ungeprüft "
+                            + "aus dem Cache"),
                     @Header(name = CACHE_GENERATION, description = "Cache-Generation des Space; fehlt, wenn die "
                             + "Seite nur live vorliegt"),
                     @Header(name = CACHE_STATE, description = "confirmed, incomplete oder stale; stale auch, wenn "

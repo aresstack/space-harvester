@@ -375,12 +375,14 @@ samt Hash-Schemas sowie `payloadRevision`, `payloadRetrievedAt`, `headerObserved
 können neuer sein als die Payload) und `enrichments` die Anreicherungen (siehe unten). Harvester-Angaben stehen nie
 in `data`. Ist die
 Payload kein JSON, antwortet `view=extended` mit `payload-not-json` (422).
-`refresh=true` prüft die Einzelseite vor der Auslieferung gegen die Quelle und liefert nie stattdessen den
-Cache-Stand: Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
+Jeder Abruf einer Einzelseite prüft zuerst live bei der Quelle Recht und Version, für jede Anmeldeart gleich
+([ADR 0010](docs/adr/0010-export-ohne-vorbereiteten-bestand.md), Punkt 8): Ist sie unverändert, kommt der Cache-Stand (`X-Page-Refresh: current`). Bei neuen Kopfdaten und gleicher
 Revision kommt die gespeicherte Payload mit den Kopfdaten der Quelle (`header-changed`), bei neuer Revision die live
 geladene Payload (`content-changed`), die dabei im Cache abgelegt wird. Konnte sie nicht abgelegt werden (ein Abgleich
 schreibt gerade), tragen Abweichungen vom Cache `X-Page-Origin: live` (bzw. `origin: live`) und den Cache-Zustand
-`stale`. Die Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
+`stale`. Ist die Quelle für die Prüfung nicht erreichbar, kommt ohne `refresh` der Cache-Stand ungeprüft (ohne
+`X-Page-Refresh`), aber nur, wenn die Zugriffspolicy die Seite freigibt; `refresh=true` liefert nie ungeprüft. Die
+Rechte gelten im Space, den die Quelle meldet. Kennt die Quelle
 die Seite nicht mehr, ist die Antwort `cache-miss` (404); antwortet sie nicht oder nicht in der Frist (30 s), kommt
 `source-unavailable` (503) bzw. `source-access-denied`/`source-invalid-response` (502). Ohne angebundenen Inhaltsabruf
 antwortet `refresh=true` mit `refresh-unavailable` (501). Seiten lassen sich auch über ihre URL abrufen
@@ -453,7 +455,8 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?t
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?sort=relevance&q=Softwarearchitektur"
 ```
 
-**Suche nach Relevanz (#89):** `sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
+**Suche nach Relevanz (#89), experimentell:** die semantische Suche; die Standardsuche ist die Schlagwortsuche oben.
+`sort=relevance` mit `q` (Frage in natürlicher Sprache, höchstens 500 Zeichen; ohne `q`
 die Wörter aus `title`) liefert genau einen Stapel (`complete=true`, kein `cursor`) aus höchstens 100 Kandidaten der
 Vektorsuche und der Titelsuche (global ein gemeinsames Fenster über alle Quellen, keine Top-K je Quelle), geordnet
 nach der Kosinusähnlichkeit zu den gespeicherten Embeddings. Alle Filter gelten
@@ -503,8 +506,9 @@ Artefakte liegen unter `space-harvester.export.directory` (Standard `data/export
 leben so lange wie ihr Auftrag (`space-harvester.jobs.retention`, Standard 7 Tage): beim Start des Dienstes und vor
 jedem neuen Export werden Artefakte ohne Auftrag und liegen gebliebene Zwischenstände abgebrochener Läufe entfernt.
 
-**Ausgabeformate (#30):** `?format=json` (wiederholbar) erzeugt am Ende des Exports zusätzlich abgeleitete Dateien aus
-denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
+**Ausgabeformate (#30):** Standardformat ist JSON: ohne `format` erzeugt ein Export neben dem Raw-First-Artefakt
+`pages.json`. `?format=…` (wiederholbar, z. B. `format=markdown&format=pdf`) wählt die Formate selbst; sie entstehen
+am Ende des Exports als abgeleitete Dateien aus denselben Seiten; `json` schreibt `pages.json`, ein JSON-Array mit einem Objekt je Seite (`header`, `depth`, `revision`,
 `rawSha256`, `content`), linear in Baumreihenfolge und ohne eingebetteten Baum; `markdown` schreibt `pages.md` aus dem
 Storage-Format, `docx` `pages.docx` und `pdf` `pages.pdf`, Bilder und Anhänge jeweils nur als Verweise
 ([Formate und Formatverluste](docs/CONVERTERS.md)). Converter lesen nur die exportierten

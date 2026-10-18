@@ -22,6 +22,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.tls.TestCertificates;
@@ -146,7 +147,8 @@ class WorkspaceTest {
                 .contains("Der Dienst läuft.");
         DeliveredPage again = workspace.page("wiki", "102", false);
         assertThat(again.live()).isFalse();
-        assertThat(again.refresh()).isNull();
+        // Erneutes Öffnen prüft die Version live und nimmt den gleichen Stand aus dem Cache (ADR 0010, Punkt 8).
+        assertThat(again.refresh()).isEqualTo(PageFreshness.Outcome.CURRENT);
     }
 
     @Test
