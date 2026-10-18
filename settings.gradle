@@ -17,6 +17,8 @@ rootProject.name = 'space-harvester'
 // Unveränderte Kopie der Confluence-Quelle aus aresstack/enterprise-ai-client, siehe enterprise-ai-sources/UPSTREAM.md.
 include 'enterprise-ai-sources'
 
+include 'enterprise-ai-keepass'
+
 // Dokumentausgabe des Enterprise AI Client (Word, PDF, Markdown) als eigene Bibliothek ohne Swing (angepasste Kopie,
 // siehe document-export/UPSTREAM.md).
 include 'document-export'

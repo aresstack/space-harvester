@@ -1,5 +1,10 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.enterpriseai.proasteion.platform.security.keepassrpc.KeePassPairingCallback;
+import com.aresstack.spaceharvester.app.credentials.AiCredentials;
+import com.aresstack.spaceharvester.app.credentials.KeePassLink;
+import com.aresstack.spaceharvester.app.credentials.ManualAiCredentials;
+import com.aresstack.spaceharvester.app.settings.AiAccess;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
@@ -89,6 +94,7 @@ public final class AppContext {
     private final String version;
     private final AppRuntime.SessionSecrets secrets = new AppRuntime.SessionSecrets();
     private char[] sessionAiKey;
+    private KeePassLink keePass;
     /** Für welchen Proxy-Benutzer das Passwort der Sitzung gilt. */
     private volatile String proxyPasswordUser;
     private final SecretVault vault;
@@ -97,6 +103,8 @@ public final class AppContext {
     private AppSettings settings;
     private AppRuntime runtime;
     private Throwable startProblem;
+    /** Ob beim letzten Laden aus dem KeePass-Eintrag ein API-Key kam. */
+    private volatile boolean keePassKeyRead;
     private Navigator navigator;
 
     public AppContext(AppSettingsLoader loader, Path configFile, String version) {
@@ -191,15 +199,11 @@ public final class AppContext {
      * Hintergrund. Der Aufrufer leert das Feld nach Gebrauch.
      */
     char[] storedAiKey() {
-        char[] aiKey = sessionAiKey();
-        try {
-            if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
-                aiKey = aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
-            }
-        } catch (IOException | RuntimeException e) {
-            LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
+        AppSettings current = settings;
+        if (current != null && current.aiAccess().fromKeePass()) {
+            return aiCredentials(current.aiAccess()).apiKey();
         }
-        return aiKey;
+        return manualAiKey();
     }
 
     /**
@@ -270,7 +274,73 @@ public final class AppContext {
 
     /** Ob ein API-Key für den KI-Dienst vorliegt: im Tresor oder für diese Sitzung. */
     public boolean aiKeyAvailable() {
+        AppSettings current = settings;
+        if (current != null && current.aiAccess().fromKeePass()) {
+            // Gekoppelt heißt nicht, dass der Eintrag (noch) einen Key liefert; maßgeblich ist das letzte Lesen.
+            return keePassKeyRead;
+        }
         return sessionAiKey != null || aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
+    }
+
+    /** Woher der API-Key kommt: KeePass-Eintrag oder Tresor bzw. Sitzung („Manuell“). */
+    AiCredentials aiCredentials(AiAccess access) {
+        if (access.fromKeePass()) {
+            return keePass().credentials(access.entry());
+        }
+        return new ManualAiCredentials(this::manualAiKey);
+    }
+
+    /** Der API-Key bei „Manuell“: aus der Sitzung, sonst aus dem Tresor, oder {@code null}. Nur im Hintergrund. */
+    char[] manualAiKey() {
+        char[] aiKey = sessionAiKey();
+        try {
+            if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
+                aiKey = aiVault().load(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
+            }
+        } catch (IOException | RuntimeException e) {
+            LOG.warn("Der API-Key des KI-Dienstes ließ sich nicht lesen: {}", e.getMessage());
+        }
+        return aiKey;
+    }
+
+    /** Die KeePass-Anbindung (KeePassRPC); fragt beim Koppeln nach dem Einmal-Passwort aus KeePass. */
+    public synchronized KeePassLink keePass() {
+        if (keePass == null) {
+            keePass = new KeePassLink(vault.scope(KeePassLink.PAIRING_VAULT), new SwingPairing());
+        }
+        return keePass;
+    }
+
+    /** Für Tests: eine andere KeePass-Anbindung. */
+    synchronized void keePass(KeePassLink link) {
+        this.keePass = link;
+    }
+
+    /** Fragt auf dem EDT nach dem Einmal-Passwort, das KeePass beim Koppeln anzeigt; Abbrechen heißt {@code null}. */
+    private static final class SwingPairing implements KeePassPairingCallback {
+        @Override
+        public char[] requestPairingPassword(String clientDisplayName) {
+            if (java.awt.GraphicsEnvironment.isHeadless()) {
+                return null;
+            }
+            java.util.concurrent.atomic.AtomicReference<char[]> typed = new java.util.concurrent.atomic.AtomicReference<>();
+            Runnable ask = () -> typed.set(Dialogs.askSecret(null, "Mit KeePass koppeln",
+                    "KeePass zeigt jetzt ein Einmal-Passwort für „" + clientDisplayName + "“. Bitte hier eintragen.",
+                    "Koppeln"));
+            if (javax.swing.SwingUtilities.isEventDispatchThread()) {
+                ask.run();
+            } else {
+                try {
+                    javax.swing.SwingUtilities.invokeAndWait(ask);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                } catch (java.lang.reflect.InvocationTargetException e) {
+                    return null;
+                }
+            }
+            return typed.get();
+        }
     }
 
     public Navigator navigator() {
@@ -415,8 +485,13 @@ public final class AppContext {
 
     /** Lädt gespeicherte Token und Passwörter aus dem Tresor in die Sitzung (im Hintergrund, vor dem Start). */
     private void unlock(AppSettings loaded) {
-        // Der Core bekommt den Key nur zur Laufzeit (ADR 0011).
-        secrets.aiKey(storedAiKey());
+        // Der Core bekommt den Key nur zur Laufzeit (ADR 0011), aus KeePass oder dem Tresor.
+        char[] aiKey = aiCredentials(loaded.aiAccess()).apiKey();
+        keePassKeyRead = loaded.aiAccess().fromKeePass() && aiKey != null && aiKey.length > 0;
+        secrets.aiKey(aiKey);
+        if (aiKey != null) {
+            java.util.Arrays.fill(aiKey, '\0');
+        }
         unlockProxy(loaded.proxy().authentication());
         for (AppSettings.SourceEntry entry : loaded.sources()) {
             if (entry.config().auth().type() == SourceSettingsConfig.AuthType.NONE || secrets.has(entry)
