@@ -52,7 +52,7 @@ import java.util.stream.Stream;
  * der Quellen, neueste zuerst, mit Zeit, Komponente, Phase, Code, HTTP-Status, Proxy-Route, TLS-Befund und Auftrag;
  * Filter nach Art, Zeitraum und Text; ein Ereignis klappt unten mit seiner Ausnahmekette auf. Alles ist maskiert
  * ({@link Redaction}). Solange keine Quelle eingerichtet ist, begrüßt stattdessen die Weltraumszene mit dem Einstieg
- * in den Quellen-Assistenten.
+ * in das Quellenformular.
  */
 public final class StatusView implements View {
 
@@ -594,9 +594,9 @@ public final class StatusView implements View {
         JLabel name = new JLabel("Space Harvester");
         name.setFont(Comic.semiBold(30f));
         name.setForeground(Comic.INK);
-        ComposerButton add = Comic.primary("Erste Wissensquelle hinzufügen …", "Führt Schritt für Schritt durch die "
-                + "Einrichtung einer Confluence- oder Dateiquelle");
-        add.addActionListener(e -> SourceWizard.open(root, context,
+        ComposerButton add = Comic.primary("Erste Wissensquelle hinzufügen …", "Confluence- oder Dateiquelle in einem "
+                + "Formular einrichten, testen und speichern");
+        add.addActionListener(e -> SourceForm.open(root, context,
                 id -> context.navigator().show(AppContext.Section.SOURCES)));
         JPanel textPanel = new JPanel(new GridBagLayout());
         textPanel.setOpaque(false);
@@ -609,8 +609,8 @@ public final class StatusView implements View {
         c.insets = new Insets(2, 0, 16, 0);
         textPanel.add(AboutDialog.heading(AboutDialog.TAGLINE), c);
         c.insets = new Insets(0, 0, 18, 0);
-        textPanel.add(Comic.note("Noch ist keine Wissensquelle eingerichtet. Der Assistent fragt Adresse, Anmeldung und "
-                + "Proxy ab, prüft die Verbindung und trägt die Quelle in die Konfigurationsdatei ein; Passwörter und "
+        textPanel.add(Comic.note("Noch ist keine Wissensquelle eingerichtet. Das Formular fragt Adresse, Anmeldung und "
+                + "Zertifikate ab, prüft die Verbindung und trägt die Quelle in die Konfigurationsdatei ein; Passwörter und "
                 + "Token legt die App verschlüsselt ab, nie in der Datei."), c);
         c.fill = GridBagConstraints.NONE;
         c.insets = new Insets(0, 0, 0, 0);

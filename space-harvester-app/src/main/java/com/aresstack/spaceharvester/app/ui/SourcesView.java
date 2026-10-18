@@ -120,7 +120,7 @@ public final class SourcesView implements View {
     /** Zeile unter der Maus für den runden Rand am Export-Knopf. */
     private int hoverRow = -1;
     private final ComposerButton add = Comic.primary("Quelle hinzufügen …",
-            "Assistent: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
+            "Formular: Art, Adresse, Anmeldung, Zertifikate, Verbindungstest; schreibt die Konfigurationsdatei");
     private final JLabel title = new JLabel(" ");
     private final JLabel address = Comic.muted(" ");
 
@@ -142,12 +142,12 @@ public final class SourcesView implements View {
         cardsScroll.setBorder(BorderFactory.createEmptyBorder());
         cardsScroll.getViewport().setBackground(Comic.SURFACE);
         left.add(cardsScroll, BorderLayout.CENTER);
-        add.addActionListener(e -> SourceWizard.open(root, context, this::select));
+        add.addActionListener(e -> SourceForm.open(root, context, this::select));
         JPanel south = new JPanel(new BorderLayout(0, 8));
         south.setOpaque(false);
         south.add(add, BorderLayout.NORTH);
         south.add(Comic.note("Quellen stehen in der Konfigurationsdatei (Einstellungen). Token und Passwörter legt "
-                + "der Assistent verschlüsselt ab."), BorderLayout.SOUTH);
+                + "die App verschlüsselt ab."), BorderLayout.SOUTH);
         left.add(south, BorderLayout.SOUTH);
 
         title.setFont(Comic.semiBold(18f));
@@ -580,7 +580,7 @@ public final class SourcesView implements View {
                         SettingDialogs.trustLabel(config.trustBundle(), context.settings()), Comic.INK,
                         "Festlegen, welchen Zertifizierungsstellen die App bei Serverzertifikaten glaubt",
                         () -> setting(entry, SettingDialogs::trust)));
-                row(EditableProperty.action("Proxy", SourceWizard.proxyLabel(context.settings().proxy().mode())
+                row(EditableProperty.action("Proxy", SettingDialogs.proxyLabel(context.settings().proxy().mode())
                                 + " · gilt für alle Quellen", Comic.INK, "Proxy ändern (gilt für alle Quellen)",
                         () -> SettingDialogs.proxy(root, context,
                                 config.baseUrl() == null ? null : config.baseUrl().toString(),
@@ -609,7 +609,7 @@ public final class SourcesView implements View {
     /**
      * Ändert ein Feld der Quelle in der Konfigurationsdatei (kommentarschonend, mit .bak) und lädt neu. Enthält der
      * Eintrag ein Geheimnis im Klartext, bleibt die Datei unverändert: Das Speichern ersetzte es durch einen
-     * Platzhalter; das übernimmt der Assistent mit Rückfrage.
+     * Platzhalter; das übernimmt das Formular „Bearbeiten …“ mit Rückfrage.
      */
     private void saveField(AppSettings.SourceEntry entry, UnaryOperator<SourceDraft> change, Runnable ok,
                            Consumer<Throwable> failed) {
@@ -622,7 +622,7 @@ public final class SourcesView implements View {
             SourceDraft.Editable editable = editor.editable(context.configFile(), entry.id());
             if (!editable.plaintextSecrets().isEmpty()) {
                 throw new IllegalStateException("Der Eintrag enthält ein Geheimnis im Klartext. Bitte über ⋯ › "
-                        + "„Assistent erneut öffnen“ an der Karte bearbeiten; der Assistent legt es sicher ab.");
+                        + "„Bearbeiten …“ an der Karte ändern; das Formular legt es sicher ab.");
             }
             boolean backup = !editor.fileHasPlaintextSecret(context.configFile());
             ConfigFileEditor.Draft draft = editor.replace(context.configFile(), change.apply(editable.draft()));
@@ -729,10 +729,6 @@ public final class SourcesView implements View {
         context.reload(() -> { });
     }
 
-    private void edit(AppSettings.SourceEntry entry) {
-        edit(entry, null);
-    }
-
     /** Ein Einstellungsdialog der Quelle, z. B. „Anmeldung“; liest den Eintrag frisch aus der Datei. */
     private void setting(AppSettings.SourceEntry entry, SettingDialog dialog) {
         SourceDraft.Editable editable;
@@ -751,7 +747,8 @@ public final class SourcesView implements View {
                                     Consumer<String> saved);
     }
 
-    private void edit(AppSettings.SourceEntry entry, SourceWizard.Step step) {
+    /** Öffnet das Formular der Quelle mit dem Eintrag frisch aus der Datei. */
+    private void edit(AppSettings.SourceEntry entry) {
         String id = entry.id();
         ConfigFileEditor editor = new ConfigFileEditor(context.loader());
         SourceDraft.Editable editable;
@@ -761,7 +758,7 @@ public final class SourcesView implements View {
             feedback.problem(e);
             return;
         }
-        SourceWizard.open(root, context, editable, step, this::select);
+        SourceForm.open(root, context, editable, this::select);
     }
 
     private boolean disabled(AppSettings.SourceEntry entry) {
@@ -829,6 +826,11 @@ public final class SourcesView implements View {
                 }
                 if (removed.settings() != null && removed.settings().syncRules().containsKey(id)) {
                     removed = editor.withSyncRule(context.configFile(), removed, id, SourceSyncOverride.NONE);
+                }
+                // Ebenso die Freigabe für den KI-Dienst.
+                if (removed.settings() != null && removed.settings().ai().externalProcessingSources().contains(id)) {
+                    removed = editor.withAi(context.configFile(), removed,
+                            SourceForm.withRelease(removed.settings(), id, false));
                 }
                 editor.save(context.configFile(), removed, !plaintext);
             } catch (IOException | RuntimeException e) {
@@ -1153,7 +1155,7 @@ public final class SourcesView implements View {
 
         private JPopupMenu menu() {
             JPopupMenu menu = new JPopupMenu();
-            JMenuItem wizard = new JMenuItem("Assistent erneut öffnen …");
+            JMenuItem wizard = new JMenuItem("Bearbeiten …");
             wizard.addActionListener(e -> SourcesView.this.edit(entry));
             menu.add(wizard);
             boolean off = disabled(entry);
