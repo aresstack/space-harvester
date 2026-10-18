@@ -23,6 +23,7 @@ import java.util.TreeSet;
  *       {@link RemovalCheck.Verdict#INACCESSIBLE} sperren ({@link StagedGeneration#withhold}), bei
  *       {@link RemovalCheck.Verdict#MOVED_OUT} nur die Kopfdaten aus der Einzelabfrage übernehmen (der Schlüssel
  *       enthält keinen Space, die Seite bleibt), sonst nichts.</li>
+ *   <li>{@link PageChange.Kind#NOT_LOADED}: nur die Kopfdaten in den Katalog, kein Inhaltsabruf.</li>
  *   <li>{@link SyncPlan#purges()}: gesperrte Seiten nach Ablauf der Frist endgültig entfernen.</li>
  * </ul>
  *
@@ -77,6 +78,11 @@ public class PlanApplier {
                     } else {
                         written = false;
                     }
+                }
+                case NOT_LOADED -> {
+                    // Metadatenkatalog ohne Inhalt (ADR 0014): Kopfdaten samt Eltern-ID, kein Abruf.
+                    target.saveHeader(header(key, change.current(), observedAt));
+                    written = false;
                 }
                 case UNCHANGED, NOT_SEEN -> written = false;
             }

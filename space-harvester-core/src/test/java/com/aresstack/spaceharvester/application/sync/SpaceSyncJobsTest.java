@@ -77,6 +77,48 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void aReconcileWithoutFirstLoadCompletesWithoutLoadingUnknownPages() {
+        JobStatus accepted = syncs.start("wiki", "DOC", "client:a", false);
+        runQueued();
+
+        SpaceSyncJobs.SyncJob done = syncs.status(accepted.id(), "client:a");
+        assertThat(done.status().state()).isEqualTo(JobState.COMPLETED);
+        assertThat(done.summary().notLoaded()).isEqualTo(3);
+        assertThat(done.summary().complete()).isFalse();
+        assertThat(store.repository.find(new PageKey("wiki", "1"))).isEmpty();
+    }
+
+    @Test
+    void aScheduledReconcileStartsSyncsAndSkipsWhileOneIsRunning() {
+        try (Reconciliation reconciliation = new Reconciliation(syncs, null, FakeSource.CLOCK)) {
+            reconciliation.schedule("wiki", "DOC", Duration.ofHours(1), true);
+            Reconciliation.Entry entry = reconciliation.entry("wiki", "DOC");
+
+            reconciliation.due(entry);
+            Reconciliation.Schedule started = reconciliation.schedules().get(0);
+            reconciliation.due(entry);
+            Reconciliation.Schedule skipped = reconciliation.schedules().get(0);
+            runQueued();
+
+            assertThat(started.lastOutcome()).isEqualTo(Reconciliation.Outcome.STARTED);
+            assertThat(skipped.lastOutcome()).isEqualTo(Reconciliation.Outcome.ALREADY_RUNNING);
+            assertThat(skipped.lastJobId()).isEqualTo(started.lastJobId());
+            assertThat(skipped.nextAt()).isEqualTo(FakeSource.CLOCK.instant().plus(Duration.ofHours(1)));
+            assertThat(store.confirmed("wiki", "DOC")).isPresent();
+            assertThat(reconciliation.cancel("wiki", "DOC")).isTrue();
+            assertThat(reconciliation.schedules()).isEmpty();
+        }
+    }
+
+    @Test
+    void aReconcileIntervalBelowOneMinuteIsRejected() {
+        try (Reconciliation reconciliation = new Reconciliation(syncs, null, FakeSource.CLOCK)) {
+            assertThatThrownBy(() -> reconciliation.schedule("wiki", "DOC",
+                    Duration.ofSeconds(30), true)).isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
     void aRepeatedRunOnlyCountsWhatChanged() {
         syncs.start("wiki", "DOC", "client:a");
         runQueued();

@@ -123,6 +123,10 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
         SortedSet<String> stale = new TreeSet<>();
         SortedSet<String> missing = new TreeSet<>();
         for (PageChange change : changes) {
+            if (change.kind() == PageChange.Kind.NOT_LOADED) {
+                missing.add(change.pageId());
+                continue;
+            }
             boolean keepPrevious;
             if (change.current() != null) {
                 keepPrevious = failed.remove(change.pageId());
@@ -136,7 +140,7 @@ public record SyncPlan(Inventory inventory, SyncBaseline baseline, List<PageChan
             if (keepPrevious && change.previous() != null) {
                 pages.put(change.pageId(), change.previous());
                 stale.add(change.pageId());
-            } else if (keepPrevious && change.current() != null) {
+            } else if (keepPrevious) {
                 missing.add(change.pageId());
             }
         }
