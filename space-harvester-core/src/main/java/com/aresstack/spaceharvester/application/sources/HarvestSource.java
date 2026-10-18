@@ -141,6 +141,21 @@ public interface HarvestSource {
     }
 
     /**
+     * Seiten, deren Titel den Text enthält, ohne Rücksicht auf Groß- und Kleinschreibung, in der Reihenfolge der
+     * Quelle und ohne Seiten zu laden; auch Seiten, die nie abgeglichen wurden. Mit den Zugangsdaten der Quelle, Rechte
+     * je Seite klärt der Aufrufer. Die Partition eines Knotens darf fehlen, wenn die Quelle sie ohne weitere Anfrage
+     * nicht kennt. Nur mit {@link SourceCapability#TITLE_SEARCH}, sonst leer.
+     *
+     * @param title  Suchtext, nicht leer
+     * @param spaces Space-Filter; die Quelle setzt ihn möglichst in die eigene Anfrage
+     * @param limit  höchstens so viele Seiten ab der ersten, mindestens 1
+     * @throws SourceAccessException wie {@link #partitions()}
+     */
+    default List<PageNode> findByTitle(String title, SearchSpaces spaces, int limit) {
+        return List.of();
+    }
+
+    /**
      * Ob die Eingabe eine Adresse dieser Quelle sein kann (Muster der Quelle, ohne Abfrage). Nur dann lohnt
      * {@link #resolveAddress}; eine passende Adresse kann trotzdem auf keine Seite zeigen, etwa eine andere Instanz.
      */

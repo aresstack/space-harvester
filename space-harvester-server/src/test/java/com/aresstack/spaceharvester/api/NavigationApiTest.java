@@ -142,6 +142,26 @@ class NavigationApiTest {
                 .isEqualTo(400);
     }
 
+    @Test
+    void pagesAreFoundByTitleOnlyWhereTheClientMaySeeThem() throws Exception {
+        CONFLUENCE.searchResults("100", "101", "200", "103");
+
+        JsonNode dev = body("/api/v1/sources/wiki/pages?title=RS", DEV_TOKEN);
+        assertThat(dev.get("pages")).extracting(node -> node.get("pageId").asString() + "@"
+                + node.get("spaceKey").asString()).containsExactly("101@DEV");
+        assertThat(dev.get("truncated").asBoolean()).isFalse();
+
+        JsonNode all = body("/api/v1/sources/wiki/pages?title=rs&limit=1", TestClient.TOKEN);
+        assertThat(all.get("pages")).extracting(node -> node.get("title").asString()).containsExactly("Erste");
+        assertThat(all.get("truncated").asBoolean()).isTrue();
+
+        JsonNode hr = body("/api/v1/sources/wiki/pages?title=rs&spaceKey=HR&spaceKey=OPS", TestClient.TOKEN);
+        assertThat(hr.get("pages")).extracting(node -> node.get("pageId").asString()).containsExactly("200");
+
+        assertThat(get("/api/v1/sources/wiki/pages?title=%20", DEV_TOKEN).statusCode()).isEqualTo(400);
+        assertThat(get("/api/v1/sources/wiki/pages?title=rs&limit=0", DEV_TOKEN).statusCode()).isEqualTo(400);
+    }
+
     private JsonNode body(String path, String token) throws Exception {
         HttpResponse<String> response = get(path, token);
         assertThat(response.statusCode()).as(response.body()).isEqualTo(200);

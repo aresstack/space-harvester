@@ -47,11 +47,13 @@ import com.aresstack.spaceharvester.application.sources.StoredPage;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -74,6 +76,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static final String SPACE_NODE = "space:";
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
+    /** So viele Treffer der Wortsuche prüft eine Titelsuche höchstens auf ihren Titel. */
+    static final int TITLE_SEARCH_DEPTH = 1000;
+    /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
+    private static final int TITLE_SCAN_BATCH = 500;
 
     private final String id;
     private final String type;
@@ -143,6 +149,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof SearchableKnowledgeSource) {
             capabilities.add(SourceCapability.LIVE_SEARCH);
         }
+        if (port instanceof SearchableKnowledgeSource || port instanceof PartitionListingSource) {
+            capabilities.add(SourceCapability.TITLE_SEARCH);
+        }
         if (port instanceof AddressableKnowledgeSource || port instanceof ResourceMetadataSource
                 || LocalFilesSourceAdapter.TYPE.equals(type)) {
             capabilities.add(SourceCapability.ADDRESSES);
@@ -180,6 +189,65 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     hit.revision().modifiedAt().orElse(null)));
         }
         return List.copyOf(matches.values());
+    }
+
+    /**
+     * Mit eigener Suche (Confluence) über die Wortsuche der Quelle, dieselbe CQL wie {@link #searchPages} mit
+     * demselben Escaping und Space-Filter ({@code siteSearch ~ "…" AND type=page}); der Enterprise AI Client kennt keine
+     * reine Titelsuche. Von bis zu {@value #TITLE_SEARCH_DEPTH} Treffern in Rangfolge der Quelle bleiben die, deren Titel
+     * den Text enthält; Confluence gewichtet Titel hoch, eine Seite, deren Titel nur ein Wortteil enthält, findet die
+     * Wortsuche aber nicht. Ohne eigene Suche (lokale Dateien) gehen die Partitionen des Filters Stapel für Stapel durch
+     * ihre Auflistung; der Titel ist dort der Dateiname. Treffer der Wortsuche kennen ihren Space nicht.
+     */
+    @Override
+    public List<PageNode> findByTitle(String title, SearchSpaces spaces, int limit) {
+        String term = title == null ? "" : title.trim();
+        if (term.isEmpty() || limit < 1) {
+            return List.of();
+        }
+        String needle = term.toLowerCase(Locale.ROOT);
+        try {
+            if (port instanceof SearchableKnowledgeSource searchable) {
+                int depth = Math.min(Math.max(limit * 4, 100), Math.max(limit, TITLE_SEARCH_DEPTH));
+                Map<String, PageNode> found = new LinkedHashMap<>();
+                for (SourceSearchHit hit : searchable.search(new SourceQuery(term, depth)
+                        .withIncludedPartitions(spaces.only()).withExcludedPartitions(spaces.excluded()))) {
+                    if (found.size() < limit && contains(hit.title(), needle)) {
+                        found.putIfAbsent(nativeId(hit.resourceId()),
+                                new PageNode(nativeId(hit.resourceId()), hit.title(), null, null));
+                    }
+                }
+                return List.copyOf(found.values());
+            }
+            if (port instanceof PartitionListingSource listing) {
+                List<PageNode> found = new ArrayList<>();
+                for (SourcePartition partition : port.partitions()) {
+                    String cursor = "";
+                    while (found.size() < limit && spaces.permits(partition.key())) {
+                        PartitionResources batch = listing.resources(partition.key(), cursor, TITLE_SCAN_BATCH);
+                        for (KnowledgeResource resource : batch.resources()) {
+                            PageMetadata metadata = pageMetadata(resource, partition.key());
+                            if (found.size() < limit && contains(metadata.title(), needle)) {
+                                found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(),
+                                        null));
+                            }
+                        }
+                        if (batch.complete()) {
+                            break;
+                        }
+                        cursor = batch.nextCursor();
+                    }
+                }
+                return List.copyOf(found);
+            }
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return List.of();
+    }
+
+    private static boolean contains(String title, String needle) {
+        return title != null && title.toLowerCase(Locale.ROOT).contains(needle);
     }
 
     @Override
