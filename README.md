@@ -58,6 +58,10 @@ Der Build hat drei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006]
   ohne Spring-Kontext: `java -jar space-harvester-app/build/libs/space-harvester-app-<version>.jar`. Start unter
   Windows, Konfiguration und Funktionsumfang: [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md).
 
+Der Core wird die gemeinsame Wissensquellen- und Dokumentverarbeitungsbibliothek, die auch der Enterprise AI Client
+verwendet ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)). Er muss dessen Fähigkeiten mindestens
+funktionsgleich bereitstellen; Stand und Lücken: [docs/PARITY.md](docs/PARITY.md).
+
 Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
 Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,
 `exports()`, `assets()`, `enrichments()`, `jobs()`); Abgleich und Export laufen als Aufträge mit Fortschritt und
