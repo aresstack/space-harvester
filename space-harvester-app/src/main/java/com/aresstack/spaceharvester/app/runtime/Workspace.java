@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchResults;
@@ -180,6 +181,15 @@ public final class Workspace {
     public List<String> sourceProblems(SourceSettingsConfig draft, boolean replacing,
                                        java.util.Collection<SourceSettingsConfig> configured) {
         return harvester.sourceManagement().validate(draft, replacing, configured);
+    }
+
+    /**
+     * Löst eine Adresse über alle Quellen auf ({@code Harvester.addresses().resolve}, #178): Seiten-URL in jeder Form
+     * der Quelle, Lesezeichen {@code space-harvester://…}, Confluence-Bookmark oder Ressourcen-ID. Nur Seiten, die der
+     * Bediener lesen darf.
+     */
+    public PageAddresses.Resolution resolveAddress(String address) {
+        return harvester.addresses().resolve(caller, address);
     }
 
     /**

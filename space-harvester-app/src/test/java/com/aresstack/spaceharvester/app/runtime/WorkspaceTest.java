@@ -245,6 +245,19 @@ class WorkspaceTest {
     }
 
     @Test
+    void aBookmarkResolvesToItsPageThroughTheCore() throws Exception {
+        Workspace workspace = start().workspace();
+
+        var resolution = workspace.resolveAddress("space-harvester://wiki/page/102");
+
+        assertThat(resolution.matches()).singleElement().satisfies(match -> {
+            assertThat(match.sourceId()).isEqualTo("wiki");
+            assertThat(match.pageId()).isEqualTo("102");
+            assertThat(match.bookmark().value()).startsWith("space-harvester://wiki/page/102");
+        });
+    }
+
+    @Test
     void theConnectionDiagnosisComesFromTheCoreStageByStage() throws Exception {
         Workspace workspace = start().workspace();
 

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.app.ui;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
@@ -124,7 +125,8 @@ public final class SearchView implements View {
         head.setOpaque(false);
         head.add(lines, BorderLayout.NORTH);
         head.add(Comic.note("Schlagwortsuche über Titel und Inhalt, direkt in den angehakten Quellen. "
-                + "Doppelklick öffnet die Seite unter Inhalte."), BorderLayout.CENTER);
+                + "Doppelklick öffnet die Seite unter Inhalte. Eine Seitenadresse oder ein Lesezeichen "
+                + "(space-harvester://…) im Suchfeld öffnet die Seite direkt."), BorderLayout.CENTER);
         head.add(feedback, BorderLayout.SOUTH);
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
@@ -218,6 +220,51 @@ public final class SearchView implements View {
         return box;
     }
 
+    /** Adressen, die das Suchfeld direkt öffnet statt zu suchen: Seiten-URL, Lesezeichen, Confluence-Bookmark. */
+    static final java.util.regex.Pattern ADDRESS = java.util.regex.Pattern.compile(
+            "(?i)(https?|space-harvester|confluence)://\\S+");
+
+    /**
+     * Öffnet eine Adresse über die Adressauflösung des Core ({@code Harvester.addresses().resolve}, #178): eine Seite
+     * direkt unter Inhalte, mehrere (dieselbe Adresse in mehreren Quellen) als Treffer zur Wahl.
+     */
+    private void open(AppRuntime runtime, String address) {
+        int id = ++request;
+        run.setEnabled(false);
+        more.setEnabled(false);
+        feedback.working("Adresse wird aufgelöst …");
+        Background.run(() -> runtime.workspace().resolveAddress(address), resolution -> {
+            if (id != request) {
+                return;
+            }
+            run.setEnabled(true);
+            states.clear();
+            List<Hit> hits = resolution.matches().stream().map(Hit::of).toList();
+            model.set(hits);
+            String unavailable = resolution.unavailableSources().isEmpty() ? ""
+                    : " Nicht erreichbar: " + String.join(", ", resolution.unavailableSources()) + ".";
+            if (hits.size() == 1) {
+                feedback.clear();
+                status.setText("Adresse aufgelöst: " + hits.get(0).title());
+                context.navigator().openPage(hits.get(0).sourceId(), hits.get(0).pageId());
+            } else if (hits.isEmpty()) {
+                status.setText(" ");
+                feedback.info("Keine Seite zu dieser Adresse", "Keine eingerichtete Quelle kennt eine Seite unter "
+                        + "dieser Adresse, die du lesen darfst." + unavailable);
+            } else {
+                status.setText(Texts.count(hits.size(), "Seite", "Seiten") + " zu dieser Adresse");
+                feedback.info("Mehrere Quellen", "Die Adresse passt in mehreren Quellen; Doppelklick öffnet die Seite."
+                        + unavailable);
+            }
+        }, error -> {
+            if (id != request) {
+                return;
+            }
+            run.setEnabled(true);
+            feedback.problem(error);
+        });
+    }
+
     private void search() {
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
@@ -231,6 +278,10 @@ public final class SearchView implements View {
         }
         if (text.isEmpty()) {
             feedback.warning("Suchtext fehlt", "Ein oder mehrere Schlagwörter eingeben.");
+            return;
+        }
+        if (ADDRESS.matcher(text).matches()) {
+            open(runtime, text);
             return;
         }
         if (semantic.isSelected()) {
@@ -460,6 +511,12 @@ public final class SearchView implements View {
 
     /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */
     record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
+
+        /** Eine aufgelöste Adresse; statt eines Auszugs die Version. */
+        static Hit of(PageAddresses.Match match) {
+            return new Hit(match.sourceId(), match.pageId(), match.title(), match.spaceKey(),
+                    match.version() == null ? "" : "Version " + match.version(), null);
+        }
 
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt());
