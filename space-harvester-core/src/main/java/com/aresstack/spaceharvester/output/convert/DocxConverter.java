@@ -24,7 +24,7 @@ import java.util.List;
 public final class DocxConverter implements ExportConverter {
 
     public static final String FORMAT = "docx";
-    public static final String VERSION = "docx/5";
+    public static final String VERSION = "docx/6";
 
     @Override
     public String format() {
@@ -55,7 +55,7 @@ public final class DocxConverter implements ExportConverter {
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
             chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
             input.forEachPage(page -> {
-                ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                 figures.notices().forEach(input::report);
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                         figures.markdown(), figures.images(), ExportChapters.depth(page));

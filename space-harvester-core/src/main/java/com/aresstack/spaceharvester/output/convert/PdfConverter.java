@@ -34,7 +34,7 @@ import java.util.Set;
 public final class PdfConverter implements ExportConverter {
 
     public static final String FORMAT = "pdf";
-    public static final String VERSION = "pdf/5";
+    public static final String VERSION = "pdf/6";
 
     /**
      * Höchste Seitenzahl einer PDF-Datei (#90): Seitenbaum, Gliederung und Verweise wachsen im Speicher, bevor
@@ -99,7 +99,7 @@ public final class PdfConverter implements ExportConverter {
                     identity.update((page.pageId() + "\t" + page.snapshot().payload().rawSha256() + "\n")
                             .getBytes(StandardCharsets.UTF_8));
                     try {
-                        ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                        ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                         figures.notices().forEach(input::report);
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
                                 figures.markdown(), figures.images(), ExportChapters.depth(page));
