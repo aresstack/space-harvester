@@ -212,8 +212,8 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | nur Option `directory` | teilweise → #187 |
 | Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort` | keine | fehlt → #187 |
 | MediaWiki, Git, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
-| Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | statische Konfiguration (`ConfiguredSourceCatalog`), Löschen von Aufträgen | teilweise → #188 |
-| Eigene Adapter, Embedding-Anbieter, Reranker, Secret-Speicher einhängen | Kompositionspunkt `app/composition` | `Harvester.builder()` mit festen `DEFAULT_ADAPTERS` | teilweise → #188 |
+| Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | `Harvester.sourceManagement()` (#227): `validate`, `test`, `add`, `change`, `remove` mit Rückzug von Cache, Anreicherungen und Assets | gleich (Vergleichstest Quellenverwaltung) außer: dasselbe Ziel unter neuer ID wird angenommen, Abschalten ohne Entfernen fehlt → #188 |
+| Eigene Adapter, Embedding-Anbieter, Reranker, Secret-Speicher einhängen | Kompositionspunkt `app/composition` | `Harvester.builder()` mit `sourceAdapter`, `secretProvider`, `embeddings`, `reranker` (#226) | gleich |
 | Werkzeuge für Agenten (`knowledge_search`, `_read`, `_tree`, `_attachments`, `_resolve_url`) | `astu/acropolis/…/mcp/*Tool` | — | EAC (Adapter); die Use-Cases dahinter liefern #177, #178, #180 |
 
 ## 13. Netzwerk und Sicherheit
@@ -226,7 +226,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Vertrauen: JVM, Windows-ROOT, Windows-CA, eigene CA-Datei | `app/net/TrustPolicy` | App `desk/settings/TrustStores`; Server und Core nur Spring-SSL-Bundles bzw. `trust-bundle` | teilweise → #189 |
 | Client-Zertifikat Windows-MY / PKCS12 | `ClientCertificates`, `app/security/ClientCertificateFactory` | `ConfiguredClientCertificates` | gleich |
 | Secrets: DPAPI, je Sitzung abgefragt | `app/security/DpapiSecretStore`, `AskedSecretProvider` | App `SecretVault`, `SessionSecrets` | gleich |
-| Secrets: KeePassRPC | `proasteion/platform/security-keepassrpc/…/KeePassRpcSecretProvider` | keine | fehlt; im Core als einhängbarer `SecretProvider` → #188 |
+| Secrets: KeePassRPC | `proasteion/platform/security-keepassrpc/…/KeePassRpcSecretProvider` | keine eigene; einhängbar über `Harvester.builder().secretProvider(SourceSecrets)` (#226) | gleich über den Port; der KeePassRPC-Adapter bleibt im EAC |
 | Secrets: Azure Key Vault | — | Server-Profil `azure-keyvault` | SH+ |
 | Verbindungsdiagnose mit Ursache (Zertifikat, Proxy, DNS) und Stufentest | `app/net/ConnectionDiagnosis`, `exedra/…/settings/ConnectionProbe` | Spaces laden als Test; Diagnose aus `JobEvent` (docs/DIAGNOSTICS.md) | teilweise → #189 |
 | Frei konfigurierbare HTTP-Kopfzeilen | `NetworkConfig` | nur `userAgent` | teilweise → #189 |
@@ -289,12 +289,15 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    `KnowledgeExportUseCase.subtree` als Word, PDF und Markdown und legt `parity.{docx,pdf,md}` samt
    `problems-<format>.txt` (Meldungen von `ExportGraphics`) unter `src/test/resources/eac/` ab, dazu je Seite den
    Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/` sowie Kinder, Breadcrumbs und Querverweise
-   (`children`, `position`, `crossReferences`) in `navigation.properties`. Die CI von Space
+   (`children`, `position`, `crossReferences`) in `navigation.properties`, außerdem die Schritte der
+   Quellenverwaltung (`KnowledgeSourceManagement` mit dem echten Confluence-Provider über dem Fake) in
+   `management.properties`. Die CI von Space
    Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
-   die Navigation (`Harvester.navigation()`) und vergleicht mit den Referenzen. Bericht:
+   die Navigation (`Harvester.navigation()`), spielt die Schritte der Quellenverwaltung mit
+   `Harvester.sourceManagement()` nach und vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -318,9 +321,11 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
+| Quellenverwaltung | Szenario (#188) | je Schritt dasselbe Ergebnis: prüfen (vollständig, ohne Basis-URL, dasselbe Ziel doppelt), Verbindung testen (erreichbar, nicht erreichbar, unvollständig), hinzufügen, ändern mit und ohne neues Ziel (Daten bleiben bzw. werden zurückgezogen), abschalten, entfernen (Daten zurückgezogen, gemessen am Cache) |
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
-Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core behält sie.
+Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core behält sie. Quellenverwaltung:
+zwei bekannte Lücken für #188 (dasselbe Ziel unter neuer ID, Abschalten ohne Entfernen).
 
 Gewollte Abweichung: Der Enterprise AI Client wiederholt jeden Seitentitel eine Ebene tiefer als Überschrift im
 Kapitelinhalt. Der Core lässt das weg; `kapitel` und `ebenen` werten die direkte Wiederholung nicht, `text` zählt

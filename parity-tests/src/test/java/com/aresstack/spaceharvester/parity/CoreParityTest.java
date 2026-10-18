@@ -7,10 +7,12 @@ import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.core.Harvester;
+import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
 import com.aresstack.spaceharvester.parity.ParityComparison.Verdict;
 import org.junit.jupiter.api.AfterAll;
@@ -23,6 +25,7 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -55,6 +58,9 @@ class CoreParityTest {
     private static final Map<String, String> CORE_READING = new LinkedHashMap<>();
     private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_NAVIGATION = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_MANAGEMENT = new LinkedHashMap<>();
+    @TempDir
+    static Path managed;
 
     @BeforeAll
     static void exportThroughTheCore() throws Exception {
@@ -95,6 +101,80 @@ class CoreParityTest {
             navigation(harvester, caller);
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
+        sourceManagement();
+    }
+
+    /**
+     * Quellenverwaltung (#188) über {@code Harvester.sourceManagement()}, Schritt für Schritt wie
+     * {@code EacParityExport.management} mit {@code KnowledgeSourceManagement}; dieselben Schlüssel wie
+     * {@code eac/management.properties}. Ob Daten zurückgezogen sind, zeigt der Cache: Nach dem Abgleich liefert
+     * die Seitenliste des Space Seiten, danach nur noch {@link CacheMissException}.
+     */
+    private static void sourceManagement() throws Exception {
+        try (Harvester harvester = Harvester.builder().dataDirectory(managed).build()) {
+            SourceManagement management = harvester.sourceManagement();
+            SourceSettingsConfig wiki = config("wiki", "Wiki", server.baseUrl());
+            SourceSettingsConfig incomplete = config("wiki", "Wiki", null);
+            put("validate.complete", management.validate(wiki, false));
+            put("validate.missing-url", management.validate(incomplete, false));
+            CORE_MANAGEMENT.put("test.reachable", outcome(management.test(wiki, false)));
+            CORE_MANAGEMENT.put("test.unreachable",
+                    outcome(management.test(config("wiki", "Wiki", URI.create("http://127.0.0.1:1/wiki")), false)));
+            CORE_MANAGEMENT.put("test.incomplete", outcome(management.test(incomplete, false)));
+
+            management.add(wiki);
+            CORE_MANAGEMENT.put("add.listed", String.valueOf(listed(management, "wiki")));
+            put("validate.same-target", management.validate(config("wiki-kopie", "Wiki (Kopie)",
+                    server.baseUrl()), false));
+
+            synced(harvester);
+            management.change(config("wiki", "Handbuch-Wiki", server.baseUrl()));
+            CORE_MANAGEMENT.put("change.same-target.withdrawn", String.valueOf(!cached(harvester)));
+            management.change(config("wiki", "Handbuch-Wiki", URI.create("http://127.0.0.1:1/wiki")));
+            CORE_MANAGEMENT.put("change.other-target.withdrawn", String.valueOf(!cached(harvester)));
+
+            // SourceManagement kennt kein Abschalten: eine Quelle ist konfiguriert oder entfernt
+            CORE_MANAGEMENT.put("disable", "fehlt");
+
+            management.change(wiki);
+            synced(harvester);
+            management.remove("wiki");
+            CORE_MANAGEMENT.put("remove.listed", String.valueOf(listed(management, "wiki")));
+            management.add(wiki);
+            CORE_MANAGEMENT.put("remove.withdrawn", String.valueOf(!cached(harvester)));
+        }
+    }
+
+    private static SourceSettingsConfig config(String id, String title, URI baseUrl) {
+        return new SourceSettingsConfig(id, "confluence", title, baseUrl, SourceSettingsConfig.Auth.anonymous(),
+                Map.of("connectTimeoutMillis", "2000"));
+    }
+
+    private static void put(String key, List<String> problems) {
+        CORE_MANAGEMENT.put(key, problems.isEmpty() ? "ok" : "problems");
+    }
+
+    private static String outcome(SourceManagement.ConnectionCheck check) {
+        return check.successful() ? "success" : "failure";
+    }
+
+    private static boolean listed(SourceManagement management, String sourceId) {
+        return management.sources().stream().anyMatch(source -> source.id().equals(sourceId));
+    }
+
+    private static void synced(Harvester harvester) throws Exception {
+        JobStatus sync = harvester.await(harvester.sync("wiki", ParitySpace.SPACE).id(), Duration.ofSeconds(60));
+        assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(cached(harvester)).as("Seiten nach dem Abgleich im Cache").isTrue();
+    }
+
+    private static boolean cached(Harvester harvester) {
+        try {
+            return !harvester.pages().pages(harvester.caller(), "wiki", ParitySpace.SPACE, null, 10).pages()
+                    .isEmpty();
+        } catch (CacheMissException e) {
+            return false;
+        }
     }
 
     @AfterAll
@@ -134,6 +214,14 @@ class CoreParityTest {
         List<Finding> navigation = ParityComparison.navigation(eacNavigation(), CORE_NAVIGATION);
         report.append('\n').append(ParityReport.section("Navigation", navigation, gaps));
         for (Finding finding : navigation) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
+        List<Finding> management = ParityComparison.sourceManagement(eacManagement(), CORE_MANAGEMENT);
+        report.append('\n').append(ParityReport.section("Quellenverwaltung", management, gaps));
+        for (Finding finding : management) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
                         + finding.core() + "; " + finding.detail() + ")");
@@ -181,6 +269,18 @@ class CoreParityTest {
 
     private static String ids(List<HarvestSource.PageNode> pages) {
         return String.join(",", pages.stream().map(HarvestSource.PageNode::pageId).toList());
+    }
+
+    /** {@code eac/management.properties} in der Reihenfolge der Datei (die Schritte bauen aufeinander auf). */
+    private static Map<String, String> eacManagement() throws IOException {
+        Map<String, String> steps = new LinkedHashMap<>();
+        for (String line : Files.readAllLines(reference("management.properties"), StandardCharsets.UTF_8)) {
+            int at = line.indexOf('=');
+            if (at > 0 && !line.startsWith("#")) {
+                steps.put(line.substring(0, at).strip(), line.substring(at + 1).strip());
+            }
+        }
+        return steps;
     }
 
     private static Map<String, String> eacNavigation() throws IOException {

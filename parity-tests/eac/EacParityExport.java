@@ -4,24 +4,41 @@ import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeExportUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.PageNavigationUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.source.KnowledgeSourceManagement;
+import com.aresstack.enterpriseai.astu.acropolis.source.SourceDataWithdrawal;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
+import com.aresstack.enterpriseai.astu.source.KnowledgeSourceType;
+import com.aresstack.enterpriseai.astu.source.SourceDefinition;
+import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceConfig;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceHttpResponse;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceHttpTransport;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceKnowledgeSource;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportFormat;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportGraphics;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
 import com.aresstack.enterpriseai.source.api.NavigationChildren;
 import com.aresstack.enterpriseai.source.api.NavigationNode;
 import com.aresstack.enterpriseai.source.api.PagePosition;
+import com.aresstack.enterpriseai.source.api.SourceDefinitionStore;
 import com.aresstack.enterpriseai.source.api.SourceLink;
+import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.spaceharvester.parity.ParitySpace;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -68,6 +85,164 @@ public final class EacParityExport {
         write(tree, ExportFormat.MARKDOWN, new File(out, "parity.md"), new File(out, "problems-md.txt"));
         readingViews(source, new File(out, "reading"));
         navigation(source, new File(out, "navigation.properties"));
+        management(confluence, none, new File(out, "management.properties"));
+    }
+
+    /** Basis-URL einer zweiten Confluence-Instanz (anderes Ziel) und einer, die nicht antwortet. */
+    private static final String OTHER = "https://confluence2.example.org/wiki";
+    private static final String UNREACHABLE = "https://unreachable.example.org/wiki";
+
+    /**
+     * Quellenverwaltung (#188) über {@code KnowledgeSourceManagement}, wie der Dialog „Wissensquellen“ sie benutzt:
+     * Einstellungen prüfen, Verbindung testen, hinzufügen, ändern, abschalten, entfernen. Jede Zeile ist ein
+     * Ergebnis ({@code ok}/{@code problems}, {@code success}/{@code failure}, {@code true}/{@code false}), das
+     * {@code CoreParityTest} mit {@code Harvester.sourceManagement()} nachstellt. Der Typ ist der echte
+     * Confluence-Provider (Felder, Prüfung, Adresse); nur sein Transport ist der Fake.
+     */
+    private static void management(final FakeConfluence confluence, final SecretProvider none, File target)
+            throws Exception {
+        final ConfluenceSourceProvider real = new ConfluenceSourceProvider(none, null, null, null,
+                new ConfluenceSourceProvider.ClientCertificateSockets() {
+                    @Override
+                    public javax.net.ssl.SSLSocketFactory socketFactory(String alias, java.nio.file.Path file,
+                                                                        SecretRef password) {
+                        return null;
+                    }
+                });
+        KnowledgeSourceProvider fake = new KnowledgeSourceProvider() {
+            @Override
+            public KnowledgeSourceType type() {
+                return real.type();
+            }
+
+            @Override
+            public List<String> validate(SourceSettings settings) {
+                return real.validate(settings);
+            }
+
+            @Override
+            public SourceScope scope(SourceSettings settings) {
+                return real.scope(settings);
+            }
+
+            @Override
+            public String locator(SourceSettings settings) {
+                return real.locator(settings);
+            }
+
+            @Override
+            public KnowledgeSourcePort open(SourceAddress sourceId, SourceSettings settings) {
+                URI base = URI.create(settings.get("baseUrl"));
+                ConfluenceHttpTransport transport = base.toString().equals(UNREACHABLE)
+                        ? new ConfluenceHttpTransport() {
+                            @Override
+                            public ConfluenceHttpResponse get(URI uri, Map<String, String> headers, int maxBytes)
+                                    throws IOException {
+                                throw new java.net.ConnectException("Connection refused");
+                            }
+                        }
+                        : confluence;
+                return new ConfluenceKnowledgeSource(sourceId, ConfluenceConfig.builder(base).build(), transport,
+                        none);
+            }
+        };
+        final List<String> withdrawn = new ArrayList<String>();
+        KnowledgeSourceManagement management = new KnowledgeSourceManagement(
+                java.util.Collections.singletonList(fake), new MemoryStore(), null)
+                .withWithdrawal(new SourceDataWithdrawal() {
+                    @Override
+                    public void withdraw(SourceAddress sourceId) {
+                        withdrawn.add(sourceId.toString());
+                    }
+                });
+        SourceDefinition draft = management.draft(ConfluenceSourceProvider.TYPE_ID, null);
+        SourceDefinition wiki = draft.withSettings(draft.settings().with("title", "Wiki")
+                .with("baseUrl", FakeConfluence.BASE.toString()));
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            out.println("validate.complete=" + problems(management.validate(wiki, null)));
+            out.println("validate.missing-url=" + problems(management.validate(draft, null)));
+            out.println("test.reachable=" + outcome(management.checkConnection(wiki).successful()));
+            out.println("test.unreachable=" + outcome(management.checkConnection(
+                    wiki.withSettings(wiki.settings().with("baseUrl", UNREACHABLE))).successful()));
+            out.println("test.incomplete=" + outcome(management.checkConnection(draft).successful()));
+
+            management.save(wiki, null);
+            String address = management.addressOf(wiki);
+            out.println("add.listed=" + (management.find(address) != null));
+            out.println("validate.same-target=" + problems(management.validate(
+                    wiki.withSettings(wiki.settings().with("title", "Wiki (Kopie)")), null)));
+
+            int before = withdrawn.size();
+            SourceDefinition renamed = wiki.withSettings(wiki.settings().with("title", "Handbuch-Wiki"));
+            management.save(renamed, address);
+            out.println("change.same-target.withdrawn=" + (withdrawn.size() > before));
+
+            before = withdrawn.size();
+            SourceDefinition moved = renamed.withSettings(renamed.settings().with("baseUrl", OTHER));
+            management.save(moved, address);
+            address = management.addressOf(moved);
+            out.println("change.other-target.withdrawn=" + (withdrawn.size() > before));
+
+            management.setEnabled(address, false);
+            out.println("disable=" + (management.find(address).enabled() ? "fehlt" : "ok"));
+
+            before = withdrawn.size();
+            management.remove(address);
+            out.println("remove.listed=" + (management.find(address) != null));
+            out.println("remove.withdrawn=" + (withdrawn.size() > before));
+        } finally {
+            out.close();
+        }
+    }
+
+    private static String problems(List<String> problems) {
+        return problems.isEmpty() ? "ok" : "problems";
+    }
+
+    private static String outcome(boolean successful) {
+        return successful ? "success" : "failure";
+    }
+
+    /** Ablage im Speicher statt Konfigurationsdatei, Reihenfolge wie gespeichert. */
+    private static final class MemoryStore implements SourceDefinitionStore {
+
+        private final List<SourceDefinition> definitions = new ArrayList<SourceDefinition>();
+
+        @Override
+        public List<SourceDefinition> definitions() {
+            return new ArrayList<SourceDefinition>(definitions);
+        }
+
+        @Override
+        public void save(SourceDefinition definition, String originalAddress) {
+            for (int i = 0; i < definitions.size(); i++) {
+                if (originalAddress != null && definitions.get(i).address().equals(originalAddress)) {
+                    definitions.set(i, definition);
+                    return;
+                }
+            }
+            definitions.add(definition);
+        }
+
+        @Override
+        public void remove(String address) {
+            for (int i = 0; i < definitions.size(); i++) {
+                if (definitions.get(i).address().equals(address)) {
+                    definitions.remove(i);
+                    return;
+                }
+            }
+        }
+
+        @Override
+        public void setEnabled(String address, boolean enabled) {
+            for (int i = 0; i < definitions.size(); i++) {
+                if (definitions.get(i).address().equals(address)) {
+                    definitions.set(i, definitions.get(i).withEnabled(enabled));
+                }
+            }
+        }
     }
 
     /**
