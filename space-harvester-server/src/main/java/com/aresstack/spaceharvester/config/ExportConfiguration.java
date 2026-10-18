@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
+import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
@@ -62,6 +63,11 @@ class ExportConfiguration {
     @Bean
     JsonPackageConverter jsonPackageConverter() {
         return new JsonPackageConverter();
+    }
+
+    @Bean
+    MarkdownPackageConverter markdownPackageConverter() {
+        return new MarkdownPackageConverter();
     }
 
     @Bean
