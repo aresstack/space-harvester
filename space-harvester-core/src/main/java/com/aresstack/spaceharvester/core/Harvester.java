@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.harvest.SpaceKeyCheck;
@@ -123,6 +124,7 @@ public final class Harvester implements AutoCloseable {
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final Exports exports;
+    private final ExportConversions conversions;
     private final Assets assets;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -210,11 +212,12 @@ public final class Harvester implements AutoCloseable {
                     renewal);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs)));
-            this.exports = new Exports(jobs, reader,
-                    new FileSystemExportArtifactWriter(builder.exportDirectory()),
-                    new ExportConverters(List.of(new JsonArrayConverter(), new MarkdownConverter(),
-                            new DocxConverter(), new PdfConverter(builder.pdfFont)), ExportConverters.DEFAULT_MAX_BYTES),
-                    syncs, clock);
+            FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
+            ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
+                    new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
+                    ExportConverters.DEFAULT_MAX_BYTES);
+            this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
+            this.conversions = new ExportConversions(jobs, exportWriter, exportConverters);
             this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
                     builder.maxAssetBytes, clock, builder.imageDescriber);
             this.caller = AccessContext.technicalClient(OWNER);
@@ -319,6 +322,14 @@ public final class Harvester implements AutoCloseable {
     /** Exporte eines Space; fehlt er im Cache, liest der Export ihn selbst ein. */
     public Exports exports() {
         return exports;
+    }
+
+    /**
+     * Einmal beschaffen, beliebig oft konvertieren: Dateien aus dem Datenbestand abgeschlossener Exporte, ohne die
+     * Quelle erneut zu lesen.
+     */
+    public ExportConversions conversions() {
+        return conversions;
     }
 
     /** Alle Aufträge dieses Harvesters. */

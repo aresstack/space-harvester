@@ -52,6 +52,17 @@ public interface ExportArtifactWriter {
      */
     Optional<InputStream> open(String exportId, String name);
 
+    /**
+     * Der gespeicherte Datenbestand eines veröffentlichten Artefakts (Seiten, Payloads, Baum) als Eingabe für
+     * Converter; liest weder Cache noch Quelle.
+     *
+     * @return leer, wenn es das Artefakt nicht gibt oder die Ablage keinen Datenbestand liefern kann
+     * @throws ExportDatasetDamagedException wenn der Datenbestand nicht zu sich selbst passt
+     */
+    default Optional<com.aresstack.spaceharvester.application.convert.ConversionInput> dataset(String exportId) {
+        return Optional.empty();
+    }
+
     /** IDs aller veröffentlichten Artefakte. */
     Set<String> published();
 
