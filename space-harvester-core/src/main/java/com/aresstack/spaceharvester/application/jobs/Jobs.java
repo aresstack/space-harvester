@@ -60,6 +60,8 @@ public class Jobs implements AutoCloseable {
     private final Deque<Job> queued = new ArrayDeque<>();
     private final Map<String, Job> open = new HashMap<>();
     private int running;
+    /** Laufende Folgeaufträge ({@link JobType#followUp()}). */
+    private int runningFollowUps;
     private boolean closed;
 
     /**
@@ -436,8 +438,14 @@ public class Jobs implements AutoCloseable {
         List<Job> toStart = new ArrayList<>();
         synchronized (lock) {
             while (running < limits.maxConcurrent() && !queued.isEmpty()) {
-                Job job = queued.removeFirst();
+                Job job = next();
+                if (job == null) {
+                    break;
+                }
                 running++;
+                if (job.type.followUp()) {
+                    runningFollowUps++;
+                }
                 job.state = JobState.RUNNING;
                 job.startedAt = clock.instant();
                 job.deadline = job.startedAt.plus(limits.maxRunTime());
@@ -455,6 +463,24 @@ public class Jobs implements AutoCloseable {
                         + "weil der Dienst beendet wird"));
             }
         }
+    }
+
+    /**
+     * Der nächste startbare Auftrag: Abgleiche und Exporte vor Folgeaufträgen, damit Anreicherung und Bilder nie einen
+     * Export aufhalten; Folgeaufträge belegen höchstens alle Plätze bis auf einen. Unter dem Sperrobjekt.
+     */
+    private Job next() {
+        for (java.util.Iterator<Job> it = queued.iterator(); it.hasNext(); ) {
+            Job job = it.next();
+            if (!job.type.followUp()) {
+                it.remove();
+                return job;
+            }
+        }
+        if (runningFollowUps >= Math.max(1, limits.maxConcurrent() - 1)) {
+            return null;
+        }
+        return queued.pollFirst();
     }
 
     private void run(Job job) {
@@ -486,6 +512,9 @@ public class Jobs implements AutoCloseable {
                 job.finish(JobState.FAILED, errorOf(cause), now);
             }
             running--;
+            if (job.type.followUp()) {
+                runningFollowUps--;
+            }
             open.remove(job.id);
             finished = job.snapshot();
             // Erst das Endereignis, dann der Endzustand: Wer den Endzustand sieht, findet auch die Diagnose.

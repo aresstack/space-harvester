@@ -142,4 +142,45 @@ public interface HarvestSource {
         throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
                 "Quelle kann Anhänge nicht herunterladen", null);
     }
+
+    /**
+     * Die Bilder der Lese-Ansicht einer Seite, so wie die Quelle sie darstellt; auch Bilder, die nicht als Anhang
+     * im Storage-Format stehen (Makros, gerenderte Diagramme). Lädt keine Bytes.
+     *
+     * @throws SourceAccessException {@code UNSUPPORTED} ohne Lese-Ansicht, sonst wie {@link #storedPage(String)}
+     */
+    default List<ViewImage> viewImages(String pageId) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle hat keine Lese-Ansicht", null);
+    }
+
+    /**
+     * Lädt ein Bild aus {@link #viewImages(String)} über die Anmeldung und den Netzweg der Quelle; nur Adressen der
+     * Quelle selbst, alles andere {@code UNSUPPORTED}. Nie gekürzt.
+     *
+     * @throws AttachmentTooLargeException über {@code maxBytes}
+     */
+    default byte[] viewImage(ViewImage image, long maxBytes) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle hat keine Lese-Ansicht", null);
+    }
+
+    /**
+     * Ein Bild der Lese-Ansicht.
+     *
+     * @param src          aufgelöste Adresse aus dem {@code <img>}
+     * @param title        Alternativtext oder Titel, leer ohne
+     * @param attachmentId ID des Anhangs, wenn das Bild einer ist, sonst {@code null}
+     * @param mediaType    Medientyp laut Quelle oder {@code null}
+     * @param version      Version laut Quelle oder {@code null}
+     */
+    record ViewImage(String src, String title, String attachmentId, String mediaType, String version) {
+
+        public ViewImage {
+            if (src == null || src.isBlank()) {
+                throw new IllegalArgumentException("src fehlt");
+            }
+            title = title == null ? "" : title;
+        }
+    }
 }

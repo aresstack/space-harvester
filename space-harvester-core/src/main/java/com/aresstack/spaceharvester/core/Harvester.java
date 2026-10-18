@@ -23,6 +23,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.export.Exports;
@@ -32,10 +33,10 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
-import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
@@ -56,10 +57,10 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
-import com.aresstack.spaceharvester.source.ai.RemoteAi;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
+import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -217,10 +218,15 @@ public final class Harvester implements AutoCloseable {
                     new MarkdownConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
-            this.conversions = new ExportConversions(jobs, exportWriter, exportConverters);
             this.assets = new Assets(catalog, new FileSystemAssetStore(builder.assetDirectory()),
                     builder.maxAssetBytes, clock, builder.imageDescriber);
+            // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
+            ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
+                    (owner, sourceId) -> OWNER.equals(owner)
+                            && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT));
+            exports.onPublished(images::start);
+            this.conversions = new ExportConversions(jobs, exportWriter, exportConverters, images);
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
             closeAll(opened, e);
@@ -519,7 +525,7 @@ public final class Harvester implements AutoCloseable {
         private ProxySettings proxy = ProxySettings.disabled();
         private TrustBundles trustBundles = TrustBundles.NONE;
         private ConfiguredSourceCatalog.AsyncTransport asyncTransport = ConfiguredSourceCatalog.AsyncTransport.WEB_CLIENT;
-        private AccessPolicy accessPolicy = (context, scope, kind) -> AccessDecision.ALLOW;
+        private AccessPolicy accessPolicy = new TrustedCaller();
         private JobLimits jobLimits = new JobLimits(2, 20, Duration.ofHours(6));
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
@@ -660,6 +666,23 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalStateException("dataDirectory fehlt");
             }
             return new Harvester(this);
+        }
+    }
+
+    /**
+     * Richtlinie ohne eigene Vorgabe: Die Bibliothek läuft im Vertrauensbereich des einbettenden Programms, der
+     * Aufrufer sieht alles, was die Zugangsdaten der Quellen sehen, auch quellenweit.
+     */
+    private static final class TrustedCaller implements AccessPolicy {
+
+        @Override
+        public AccessDecision decide(AccessContext context, ResourceScope scope, AccessKind kind) {
+            return AccessDecision.ALLOW;
+        }
+
+        @Override
+        public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+            return AccessDecision.ALLOW;
         }
     }
 }

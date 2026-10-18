@@ -1,12 +1,18 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
+import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.Exports;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
+import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -16,6 +22,7 @@ import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
+import java.util.Optional;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -79,7 +86,31 @@ class ExportConfiguration {
     }
 
     @Bean
-    ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters) {
-        return new ExportConversions(jobs, writer, converters);
+    ExportAssetCollection exportAssetCollection(Jobs jobs, ExportArtifactWriter writer, SourceQueries sources,
+                                                Assets assets, Exports exports, AccessGuard access) {
+        // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS. Bilder, die
+        // die Quelle aus anderen Seiten einbindet, nur für technische Clients mit Freigabe der ganzen Quelle.
+        ExportAssetCollection images = new ExportAssetCollection(jobs, writer, sources, assets,
+                (owner, sourceId) -> technicalClient(owner)
+                        .filter(client -> access.permitsSourceWide(client, sourceId, AccessKind.CONTENT))
+                        .isPresent());
+        exports.onPublished(images::start);
+        return images;
+    }
+
+    /** Der technische Client zu einem Auftragseigentümer ({@link AccessContext#jobOwner()}); Endnutzer: leer. */
+    static Optional<AccessContext> technicalClient(String owner) {
+        String prefix = AccessContext.PrincipalKind.TECHNICAL_CLIENT.name() + ":";
+        if (owner == null || !owner.startsWith(prefix)) {
+            return Optional.empty();
+        }
+        AccessContext client = AccessContext.technicalClient(owner.substring(prefix.length()));
+        return client.jobOwner().equals(owner) ? Optional.of(client) : Optional.empty();
+    }
+
+    @Bean
+    ExportConversions exportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters,
+                                        ExportAssetCollection images) {
+        return new ExportConversions(jobs, writer, converters, images);
     }
 }

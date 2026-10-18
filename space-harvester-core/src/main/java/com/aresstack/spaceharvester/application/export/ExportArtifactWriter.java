@@ -63,6 +63,22 @@ public interface ExportArtifactWriter {
         return Optional.empty();
     }
 
+    /**
+     * Legt das Bildmanifest ({@code assets.json}) zu einem veröffentlichten Artefakt ab oder ersetzt es; die übrigen
+     * Dateien bleiben unverändert.
+     *
+     * @throws IllegalStateException wenn es das Artefakt nicht gibt
+     */
+    default void putAssets(String exportId, com.aresstack.spaceharvester.application.convert.ExportAssetManifest
+            manifest) {
+        throw new UnsupportedOperationException("Ablage kennt keine Bildmanifeste");
+    }
+
+    /** Das Bildmanifest eines veröffentlichten Artefakts oder leer, solange keines abgelegt ist. */
+    default Optional<com.aresstack.spaceharvester.application.convert.ExportAssetManifest> assets(String exportId) {
+        return Optional.empty();
+    }
+
     /** IDs aller veröffentlichten Artefakte. */
     Set<String> published();
 

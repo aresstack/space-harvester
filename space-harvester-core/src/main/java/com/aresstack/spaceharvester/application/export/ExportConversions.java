@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.export;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConversionLimitExceededException;
+import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -43,11 +44,19 @@ public class ExportConversions {
     private final Jobs jobs;
     private final ExportArtifactWriter writer;
     private final ExportConverters converters;
+    private final ExportAssetCollection images;
 
     public ExportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters) {
+        this(jobs, writer, converters, null);
+    }
+
+    /** @param images Bilder der Datenbestände oder {@code null}, dann ohne Bilder */
+    public ExportConversions(Jobs jobs, ExportArtifactWriter writer, ExportConverters converters,
+                             ExportAssetCollection images) {
         this.jobs = Objects.requireNonNull(jobs, "jobs");
         this.writer = Objects.requireNonNull(writer, "writer");
         this.converters = Objects.requireNonNull(converters, "converters");
+        this.images = images;
     }
 
     /** Zielformate, die {@link #convert} kennt, etwa {@code json}, {@code markdown}, {@code docx}, {@code pdf}. */
@@ -72,7 +81,8 @@ public class ExportConversions {
             return Optional.empty();
         }
         return Optional.of(new ExportDatasetInfo(exportId, status.sourceId(), status.partitionKey(),
-                pageIds.get().size(), artifact.get().complete(), ExportDatasetInfo.Images.NOT_COLLECTED, formats()));
+                pageIds.get().size(), artifact.get().complete(),
+                images == null ? ExportDatasetInfo.Images.NOT_COLLECTED : images.images(exportId), formats()));
     }
 
     /**
@@ -146,8 +156,44 @@ public class ExportConversions {
         if (status.state() != JobState.COMPLETED) {
             throw new ExportNotConvertibleException(exportId, "Export ist nicht abgeschlossen");
         }
-        return writer.dataset(exportId).orElseThrow(() -> new ExportNotConvertibleException(exportId,
-                "kein Datenbestand vorhanden"));
+        ConversionInput dataset = writer.dataset(exportId).orElseThrow(() -> new ExportNotConvertibleException(
+                exportId, "kein Datenbestand vorhanden"));
+        if (images == null) {
+            return dataset;
+        }
+        ExportAssets assets = images.assets(exportId);
+        return new ConversionInput() {
+            @Override
+            public String sourceId() {
+                return dataset.sourceId();
+            }
+
+            @Override
+            public String spaceKey() {
+                return dataset.spaceKey();
+            }
+
+            @Override
+            public com.aresstack.spaceharvester.application.tree.PageTree tree() {
+                return dataset.tree();
+            }
+
+            @Override
+            public List<com.aresstack.spaceharvester.application.snapshot.PageHeader> headers() {
+                return dataset.headers();
+            }
+
+            @Override
+            public void forEachPage(java.util.function.Consumer<
+                    com.aresstack.spaceharvester.application.convert.ConvertiblePage> action) {
+                dataset.forEachPage(action);
+            }
+
+            @Override
+            public ExportAssets assets() {
+                return assets;
+            }
+        };
     }
 
     private void write(ExportConverter converter, ConversionInput input, OutputStream out) throws IOException {

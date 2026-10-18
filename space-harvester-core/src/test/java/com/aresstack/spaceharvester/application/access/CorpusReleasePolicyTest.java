@@ -38,6 +38,15 @@ class CorpusReleasePolicyTest {
     }
 
     @Test
+    void sourceWideOnlyWithAGrantForAllSpaces() {
+        assertThat(policy.decideSourceWide(EXPORTER, "wiki", AccessKind.CONTENT)).isEqualTo(AccessDecision.ALLOW);
+        assertThat(policy.decideSourceWide(EXPORTER, "other", AccessKind.CONTENT)).isEqualTo(AccessDecision.DENY);
+        assertThat(policy.decideSourceWide(READER, "wiki", AccessKind.METADATA)).isEqualTo(AccessDecision.DENY);
+        assertThat(policy.decideSourceWide(AccessContext.endUser("alice", "exporter",
+                new UserCredential("wiki", "t")), "wiki", AccessKind.CONTENT)).isEqualTo(AccessDecision.DENY);
+    }
+
+    @Test
     void kindsAreIndependent() {
         assertThat(policy.decide(READER, ResourceScope.space("wiki", "DEV"), AccessKind.CONTENT))
                 .isEqualTo(AccessDecision.DENY);
