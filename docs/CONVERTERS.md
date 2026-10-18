@@ -147,10 +147,10 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | `ac:link` auf Anhang, `ac:image` | Link auf einen Anhang: Verweis `attachment:<Datei>`. Bild: eingebettet, wenn der Datenbestand es abgelegt hat (Markdown als `data:`-URI), sonst „[Abbildung nicht verfügbar: …]“ mit Grund; ein externes Bild (`ri:url`) ohne abgelegte Kopie zusätzlich mit Link „Adresse“ |
 | Mermaid | gezeichnetes Diagramm (Word, PDF, Markdown) und in Markdown zusätzlich der Codeblock mit der Textquelle |
 | PlantUML | Codeblock mit der Textquelle des Diagramms |
-| draw.io (auch `inc-drawio`) | gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
+| draw.io (auch `inc-drawio`) | die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
 | Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
-| `include`, `excerpt-include` | Hinweis auf die eingebundene Seite |
-| `toc`, `children` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
+| `include`, `excerpt-include`, `children` | Inhalt aus der abgelegten Lese-Ansicht: das n-te Makro eines Namens ist das n-te äußerste Element mit diesem `data-macro-name`, Unsichtbares (`display:none`, Skripte) entfällt, Bilder der Ansicht über ihre Adresse. Ohne verfügbare Ansicht Hinweis auf die eingebundene Seite bzw. die berechnete Liste, gemeldet als `OMITTED_CONTENT` (Verweis: Seitentitel oder `children`; Grund `not-collected`, `foreign-content`, `no-reading-view`, `page-changed`, `source-unavailable`, `not-rendered`) |
+| `toc` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
 | andere Makros | Hinweis mit Makronamen; vorhandener Text- oder Rich-Text-Inhalt folgt |
 
 Diagramme bleiben in Suche und KI textuell; gezeichnet werden sie nur für die Ausgabe. Eine Bildbeschreibung durch ein

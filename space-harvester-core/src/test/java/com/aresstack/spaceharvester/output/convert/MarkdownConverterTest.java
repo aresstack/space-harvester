@@ -109,7 +109,7 @@ class MarkdownConverterTest {
                 storagePage("102", "101", 7, "<p>tief</p>"));
 
         // Kapitelmodell wie Word und PDF: der Space ist # , Wurzelseiten ##, tiefer als sechs Ebenen fett
-        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten des Space DEV der Quelle wiki, erzeugt mit markdown/6")
+        assertThat(markdown).startsWith("# Space DEV (wiki)\n\n*3 Seiten des Space DEV der Quelle wiki, erzeugt mit markdown/7")
                 .contains("<a id=\"page-100\"></a>\n\n## Seite 100\n\n*Seite 100 · Version 3")
                 .contains("<a id=\"page-101\"></a>\n\n### Seite 101\n")
                 .contains("#### Abschnitt\n\nText\n")

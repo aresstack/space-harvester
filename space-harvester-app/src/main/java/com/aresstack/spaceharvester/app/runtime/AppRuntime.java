@@ -6,8 +6,8 @@ import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
-import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.core.Harvester;
+import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
@@ -101,39 +101,46 @@ public final class AppRuntime implements AutoCloseable {
     }
 
     /**
-     * Prüft eine noch nicht gespeicherte Quelle: startet einen eigenen Harvester nur mit ihr in einem leeren
-     * Arbeitsordner (der Datenordner der laufenden App bleibt gesperrt und unberührt) und lädt die Spaces live.
+     * Prüft eine noch nicht gespeicherte Quelle mit „Verbindung testen“ des Core ({@code SourceManagement.test},
+     * #188): in einem eigenen Harvester ohne Quellen in einem leeren Arbeitsordner, damit auch ein noch nicht
+     * gespeicherter Proxy gilt (der Datenordner der laufenden App bleibt gesperrt und unberührt).
      *
      * @param settings       die Konfiguration mit der neuen Quelle, z. B. aus {@code ConfigFileEditor.draft}
      * @param sessionSecrets Passwort bzw. Token aus dem Assistenten; geht einer Property oder Variable vor
      * @param scratch        leerer Arbeitsordner; wird danach gelöscht
-     * @return die sichtbaren Spaces
+     * @return Ergebnis und Meldung des Core
      */
-    public static List<Partition> probe(AppSettings settings, String sourceId, SessionSecrets sessionSecrets,
-                                        String version, Path scratch) {
-        AppSettings.SourceEntry entry = settings.sources().stream().filter(s -> s.id().equals(sourceId)).findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Die Quelle " + sourceId + " ist nicht eingerichtet."));
-        SourceSettingsConfig source;
-        if (sessionSecrets.has(entry)) {
-            source = sessionSecrets.apply(entry.config());
-        } else if (!entry.secretMissing()) {
-            source = entry.config();
-        } else {
-            throw new IllegalStateException("Für den Test fehlt " + (entry.config().auth().type()
-                    == SourceSettingsConfig.AuthType.PAT ? "das Token" : "das Passwort") + " (Platzhalter "
-                    + entry.secretVariable() + "). Bitte im Schritt Anmeldung eingeben.");
-        }
+    public static SourceManagement.ConnectionCheck probe(AppSettings settings, String sourceId,
+                                                         SessionSecrets sessionSecrets, String version, Path scratch) {
+        SourceSettingsConfig source = config(settings, sourceId, sessionSecrets);
         AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
                 scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null);
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
-        try (Harvester harvester = builder(settings, storage, List.of(source), policy, version, null).build()) {
-            Workspace workspace = new Workspace(harvester, new AccessGuard(policy),
-                    new ActivityLog(scratch.resolve("activities.txt")));
-            return workspace.spaces(sourceId);
+        try (Harvester harvester = builder(settings, storage, List.of(), policy, version, null).build()) {
+            return harvester.sourceManagement().test(source, false);
         } finally {
             deleteQuietly(scratch);
         }
+    }
+
+    /**
+     * Die Einstellungen einer Quelle aus {@code settings} mit dem Passwort bzw. Token der Sitzung.
+     *
+     * @throws IllegalStateException wenn das Geheimnis fehlt
+     */
+    public static SourceSettingsConfig config(AppSettings settings, String sourceId, SessionSecrets sessionSecrets) {
+        AppSettings.SourceEntry entry = settings.sources().stream().filter(s -> s.id().equals(sourceId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Die Quelle " + sourceId + " ist nicht eingerichtet."));
+        if (sessionSecrets.has(entry)) {
+            return sessionSecrets.apply(entry.config());
+        }
+        if (!entry.secretMissing()) {
+            return entry.config();
+        }
+        throw new IllegalStateException("Für den Test fehlt " + (entry.config().auth().type()
+                == SourceSettingsConfig.AuthType.PAT ? "das Token" : "das Passwort") + " (Platzhalter "
+                + entry.secretVariable() + "). Bitte im Schritt Anmeldung eingeben.");
     }
 
     private static void deleteQuietly(Path directory) {

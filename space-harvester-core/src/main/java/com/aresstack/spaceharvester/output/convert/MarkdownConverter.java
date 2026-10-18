@@ -47,7 +47,7 @@ import java.util.regex.Pattern;
 public final class MarkdownConverter implements ExportConverter {
 
     public static final String FORMAT = "markdown";
-    public static final String VERSION = "markdown/6";
+    public static final String VERSION = "markdown/7";
 
     /** Zeichen am Zeilenanfang, die Markdown sonst als Überschrift, Liste oder Trennlinie läse. */
     private static final Pattern LINE_START = Pattern.compile("^(\\s*\\d*)([#=+-]|(?<=\\d)[.)])");
@@ -83,7 +83,7 @@ public final class MarkdownConverter implements ExportConverter {
         try {
             input.forEachPage(page -> {
                 try {
-                    ExportChapters.Figures figures = ExportChapters.figures(page, parser, input.assets());
+                    ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                     figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
                             figures.markdown(), figures.images(), ExportChapters.depth(page)));

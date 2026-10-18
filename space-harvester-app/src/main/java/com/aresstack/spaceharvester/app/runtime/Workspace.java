@@ -34,6 +34,7 @@ import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.core.Harvester;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -165,6 +166,24 @@ public final class Workspace {
         }
         return assets.stored(header.key().sourceId(), rendered.asset().attachmentId(), rendered.asset().version(),
                 rendered.asset().sha256());
+    }
+
+    /**
+     * Übernimmt geänderte Einstellungen einer Quelle in den laufenden Core ({@code SourceManagement.change}, #188).
+     * Zeigt sie danach auf ein anderes Ziel (Typ oder Adresse), entfernt der Core ihre bisherigen Daten.
+     *
+     * @return ob der Core die bisherigen Daten der Quelle entfernt hat
+     */
+    public boolean changeSource(SourceSettingsConfig config) {
+        return harvester.sourceManagement().change(config);
+    }
+
+    /**
+     * Entfernt eine Quelle aus dem laufenden Core samt Seiten-Cache, Suchindex, Anreicherungen und Bildern; offene
+     * Aufträge der Quelle bricht er ab, Exporte bleiben ({@code SourceManagement.remove}, #188).
+     */
+    public boolean removeSource(String sourceId) {
+        return harvester.sourceManagement().remove(sourceId);
     }
 
     /** Seite zu einer Quell-URL mit Seiten-ID ({@code …/pages/by-url}). */
