@@ -502,6 +502,13 @@ public final class BackgroundFill implements AutoCloseable {
             rescan = false;
         }
         List<Gap> found = new ArrayList<>();
+        int skipped;
+        synchronized (monitor) {
+            skipped = failedAt.size();
+        }
+        // Je Space so viele mehr, wie gescheiterte Seiten übersprungen werden, damit sie die Tranche nicht füllen, und
+        // eine darüber, damit „es gibt mehr“ auch bei nur einem Space auffällt.
+        int limit = (int) Math.min(Integer.MAX_VALUE, (long) timing.maxQueued() + skipped + 1);
         for (SyncBaselineStore.SpaceRef space : catalog.spaces()) {
             if (closed || !enabled) {
                 break;
@@ -510,7 +517,7 @@ public final class BackgroundFill implements AutoCloseable {
             if (!allowed(sourceId)) {
                 continue;
             }
-            for (Gap gap : catalog.gaps(sourceId, space.spaceKey(), timing.maxQueued())) {
+            for (Gap gap : catalog.gaps(sourceId, space.spaceKey(), limit)) {
                 if (gap.key().sourceId().equals(sourceId)) {
                     found.add(gap);
                 }
