@@ -74,7 +74,7 @@ Nicht angebunden sind:
 | Anmeldung none / Basic / PAT, nur mTLS | `ConfluenceAuthorization`, `ClientCertificates` | `core/source/ConfluenceSourceAdapter`, `ConfiguredClientCertificates` (+ Thumbprint und Gültigkeit) | gleich |
 | Einmalcode (2FA) und Web-Session für Downloads | `conf/OneTimeCodeForm`, `ConfluenceWebSession`, `DownloadAccess`; `know/UnlockingDocumentReader` | Kopie vorhanden, nicht angebunden | fehlt → #185 |
 | Delegierte Anmeldung (Benutzertoken je Anfrage) | keine | `DelegatedConfluenceHttp`, `DelegatedAccessPolicy` | SH+ |
-| Querverweise und ausgehende Links | `#crossReferences`, `#discoverLinks`, `#visiblePageTitles` | nur Linkumschreibung im Export (`core/output/convert/PageLinks`) | fehlt → #177 |
+| Querverweise und ausgehende Links | `#crossReferences`, `#discoverLinks`, `#visiblePageTitles` | `PageNavigation#references`: ausgehend, eingehend wenn die Quelle sie vollständig kennt; dazu Linkumschreibung im Export | gleich (Vergleichstest, ausgehend) |
 
 ## 2. Schlagwortsuche
 
@@ -93,9 +93,9 @@ Nicht angebunden sind:
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | Spaces als Wurzeln | `know/PageNavigationUseCase` | `GET /sources/{id}/spaces` live | gleich |
-| Seitenbaum ganzer Space live | live je Knoten | `core/application/query/PageQueries#tree` nur aus dem Cache; den Live-Baum baut die App selbst aus den Seitenmetadaten (`desk/ui/content/ContentView`), also außerhalb des Core | teilweise → #177 |
-| Kindseiten eines Knotens live, in Confluence-Reihenfolge, mit `hasChildren` | `ConfluenceKnowledgeSource#children`, `#treeBatch` | nur aus dem Baum, sortiert nach `pageId` | teilweise → #177 |
-| Vorfahren und Breadcrumbs mit Space-Namen | `#position`, `ConfluenceRestClient#lineage` | nur `parentPageId`; `ancestors` nur im Raw-Payload | fehlt → #177 |
+| Seitenbaum ganzer Space live | live je Knoten | `core/application/navigation/PageNavigation#children` live je Knoten (#177), REST `…/spaces/{key}/children`, `…/pages/{pageId}/children`, `/ancestors`, `/links`; daneben `PageQueries#tree` aus dem Cache | gleich (Vergleichstest) |
+| Kindseiten eines Knotens live, in Confluence-Reihenfolge, mit `hasChildren` | `ConfluenceKnowledgeSource#children`, `#treeBatch` | `PageNavigation#children`: live, Reihenfolge der Quelle, `hasChildren`, Stapel mit Cursor | gleich (Vergleichstest) |
+| Vorfahren und Breadcrumbs mit Space-Namen | `#position`, `ConfluenceRestClient#lineage` | `PageNavigation#position`: Space mit Namen, Vorfahren von oben, Rechte je Vorfahr | gleich (Vergleichstest) |
 | Hierarchie anderer Quellen (Ordner in Git) | `PageNavigationSource` in `source-git` | keine | fehlt → #187 |
 
 ## 4. Seitenabruf
@@ -285,12 +285,13 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    Enterprise AI Client am Commit aus `src/test/resources/eac/COMMIT`, exportiert den Paritäts-Space über
    `KnowledgeExportUseCase.subtree` als Word, PDF und Markdown und legt `parity.{docx,pdf,md}` samt
    `problems-<format>.txt` (Meldungen von `ExportGraphics`) unter `src/test/resources/eac/` ab, dazu je Seite den
-   Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/`. Die CI von Space
+   Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/` sowie Kinder, Breadcrumbs und Querverweise
+   (`children`, `position`, `crossReferences`) in `navigation.properties`. Die CI von Space
    Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
-   vergleicht mit den Referenzen. Bericht:
+   die Navigation (`Harvester.navigation()`) und vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -313,6 +314,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Interne Sprünge, Mermaid-Quelltext | alle | Core ≥ Maßstab |
 | Text | alle | ≥ 97 % der Wörter des Maßstabs im Core (ohne Zahlen und Exporter-Hinweise) |
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
+| Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
 Enterprise AI Client verliert die Ziele externer Links in allen Formaten, der Core behält sie.
@@ -338,7 +340,6 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 ### Noch nicht abgedeckt
 
-Suche, Navigation und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen:
-Navigation mit Breadcrumbs #177, Space-Filter der Suche in der Anfrage #179, Text aus Anhängen
-#183, Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf hier mehr): interne
-Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.
+Suche und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen: Space-Filter der Suche in der Anfrage #179, Text aus Anhängen #183,
+Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf
+hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.

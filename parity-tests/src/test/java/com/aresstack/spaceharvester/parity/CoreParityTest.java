@@ -6,7 +6,9 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
+import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Reader;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.net.URISyntaxException;
@@ -51,6 +54,7 @@ class CoreParityTest {
     private static final Map<String, Path> CORE = new LinkedHashMap<>();
     private static final Map<String, String> CORE_READING = new LinkedHashMap<>();
     private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_NAVIGATION = new LinkedHashMap<>();
 
     @BeforeAll
     static void exportThroughTheCore() throws Exception {
@@ -88,6 +92,7 @@ class CoreParityTest {
                     CORE_READING_IMAGES.put(page, view.images().size());
                 }
             }
+            navigation(harvester, caller);
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
     }
@@ -126,6 +131,14 @@ class CoreParityTest {
                         + finding.core() + "; " + finding.detail() + ")");
             }
         }
+        List<Finding> navigation = ParityComparison.navigation(eacNavigation(), CORE_NAVIGATION);
+        report.append('\n').append(ParityReport.section("Navigation", navigation, gaps));
+        for (Finding finding : navigation) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
         Path file = reportFile();
         Files.createDirectories(file.getParent());
         Files.writeString(file, report, StandardCharsets.UTF_8);
@@ -140,6 +153,46 @@ class CoreParityTest {
                 assertThat(text).as(file.getFileName().toString()).contains(sentence);
             }
         }
+    }
+
+    /** Navigation live über den Core (#177), in denselben Schlüsseln wie {@code eac/navigation.properties}. */
+    private static void navigation(Harvester harvester, AccessContext caller) {
+        PageNavigation navigation = harvester.navigation();
+        PageNavigation.Position home = navigation.position(caller, "wiki", ParitySpace.HOME);
+        CORE_NAVIGATION.put("space.name", home.spaceName() == null ? "" : home.spaceName());
+        CORE_NAVIGATION.put("space.children", children(navigation, caller, null));
+        for (String page : ParitySpace.PAGES) {
+            CORE_NAVIGATION.put(page + ".children", children(navigation, caller, page));
+            CORE_NAVIGATION.put(page + ".ancestors", ids(navigation.position(caller, "wiki", page).ancestors()));
+            CORE_NAVIGATION.put(page + ".links", ids(navigation.references(caller, "wiki", page).outgoing()));
+        }
+    }
+
+    private static String children(PageNavigation navigation, AccessContext caller, String parent) {
+        List<HarvestSource.PageNode> pages = new ArrayList<>();
+        String cursor = null;
+        do {
+            PageNavigation.Children batch = navigation.children(caller, "wiki", ParitySpace.SPACE, parent, cursor);
+            pages.addAll(batch.pages());
+            cursor = batch.nextCursor();
+        } while (cursor != null);
+        return ids(pages);
+    }
+
+    private static String ids(List<HarvestSource.PageNode> pages) {
+        return String.join(",", pages.stream().map(HarvestSource.PageNode::pageId).toList());
+    }
+
+    private static Map<String, String> eacNavigation() throws IOException {
+        Properties properties = new Properties();
+        try (Reader in = Files.newBufferedReader(reference("navigation.properties"), StandardCharsets.UTF_8)) {
+            properties.load(in);
+        }
+        Map<String, String> navigation = new LinkedHashMap<>();
+        for (String key : properties.stringPropertyNames()) {
+            navigation.put(key, properties.getProperty(key));
+        }
+        return navigation;
     }
 
     private static Map<String, String> eacReading() throws IOException {

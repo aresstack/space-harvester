@@ -44,6 +44,17 @@ class ParityComparisonTest {
                 .extracting(Finding::verdict).isEqualTo(Verdict.CORE_WENIGER);
     }
 
+    @Test
+    void childrenInAnotherOrderAreAGapButExtraLinksAreMore() {
+        List<Finding> findings = ParityComparison.navigation(
+                java.util.Map.of("space.name", "S", "1.children", "2,3", "1.links", "4"),
+                java.util.Map.of("space.name", "S", "1.children", "3,2", "1.links", "4,5"));
+        assertThat(findings).filteredOn(f -> f.check().equals("kinder")).singleElement()
+                .extracting(Finding::verdict).isEqualTo(Verdict.CORE_WENIGER);
+        assertThat(findings).filteredOn(f -> f.check().equals("querverweise")).singleElement()
+                .extracting(Finding::verdict).isEqualTo(Verdict.CORE_MEHR);
+    }
+
     private static DocumentOutline withHeadings(List<DocumentOutline.Heading> headings) {
         return new DocumentOutline("md", headings, false, false, false, 0, 0, 0, List.of(), Set.of(), 0, 0, "");
     }
