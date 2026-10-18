@@ -26,4 +26,12 @@ public interface ConversionInput {
      * Seiten werden einzeln aus dem Cache geladen und nicht im Speicher gesammelt.
      */
     void forEachPage(Consumer<ConvertiblePage> action);
+
+    /**
+     * Die beschafften Bilder des Datenbestands ({@code assets.json} und Asset-Speicher); ohne Bilder
+     * {@link ExportAssets#NONE}. Converter laden daraus, nie von der Quelle.
+     */
+    default ExportAssets assets() {
+        return ExportAssets.NONE;
+    }
 }

@@ -64,6 +64,16 @@ public final class DelegatedAccessPolicy implements AccessPolicy {
         return cached(source, credential, scope);
     }
 
+    /**
+     * Ein Endnutzer sieht bei der Quelle nur, was sein eigenes Token zeigt; was die Zugangsdaten der Quelle sehen,
+     * erhält er nie. Andere Aufrufer entscheidet die Basis.
+     */
+    @Override
+    public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+        return context.kind() == AccessContext.PrincipalKind.END_USER ? AccessDecision.DENY
+                : base.decideSourceWide(context, sourceId, kind);
+    }
+
     private AccessDecision cached(DelegatedSourceAccess source, UserCredential credential, ResourceScope scope) {
         Key key = new Key(credential.fingerprint(), scope);
         Instant now = clock.instant();

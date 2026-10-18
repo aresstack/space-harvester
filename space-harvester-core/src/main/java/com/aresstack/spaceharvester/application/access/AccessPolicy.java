@@ -12,4 +12,14 @@ package com.aresstack.spaceharvester.application.access;
 public interface AccessPolicy {
 
     AccessDecision decide(AccessContext context, ResourceScope scope, AccessKind kind);
+
+    /**
+     * Hat der Aufrufer {@code kind} für alles, was die Zugangsdaten der Quelle dort sehen? Das braucht, wer Inhalte
+     * erhält, die die Quelle beim Rendern einer Seite aus anderen Seiten oder Systemen einbindet (Makros wie
+     * {@code include} oder {@code jira}, #176), denn dabei prüft nur die Quelle mit ihren eigenen Zugangsdaten.
+     * Standard: {@link AccessDecision#UNDETERMINED}, also verweigert.
+     */
+    default AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+        return AccessDecision.UNDETERMINED;
+    }
 }

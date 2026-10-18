@@ -223,7 +223,8 @@ class ExportsApiTest {
         JsonNode dataset = body(send("GET", "/api/v1/exports/" + id + "/dataset", null));
         assertThat(dataset.path("pages").asInt()).isEqualTo(3);
         assertThat(dataset.path("spaceKey").asString()).isEqualTo("DEV");
-        assertThat(dataset.path("images").asString()).isEqualTo("NOT_COLLECTED");
+        // Die Bilder beschafft ein eigener Auftrag nach dem Export.
+        assertThat(dataset.path("images").asString()).isIn("COLLECTING", "COMPLETE", "INCOMPLETE");
         HttpResponse<byte[]> markdown = send("GET", "/api/v1/exports/" + id + "/conversions/markdown", null);
         assertThat(markdown.statusCode()).isEqualTo(200);
         assertThat(markdown.headers().firstValue("Content-Type")).hasValueSatisfying(

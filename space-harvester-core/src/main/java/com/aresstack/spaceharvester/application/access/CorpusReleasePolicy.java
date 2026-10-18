@@ -14,6 +14,7 @@ import java.util.Set;
  *   <li>Space oder Seite mit bekanntem Space: frei, wenn eine Freigabe den Space abdeckt.</li>
  *   <li>Seite ohne bekannten Space: nur frei, wenn eine Freigabe alle Spaces der Quelle abdeckt; sonst
  *       {@link AccessDecision#UNDETERMINED}.</li>
+ *   <li>Quellenweit ({@link #decideSourceWide}): nur frei, wenn eine Freigabe alle Spaces der Quelle abdeckt.</li>
  *   <li>Andere Aufrufer als technische Clients: {@link AccessDecision#DENY}.</li>
  * </ul>
  */
@@ -44,6 +45,16 @@ public final class CorpusReleasePolicy implements AccessPolicy {
         }
         return grants.stream().anyMatch(grant -> grant.covers(scope.spaceKey()))
                 ? AccessDecision.ALLOW : AccessDecision.DENY;
+    }
+
+    @Override
+    public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+        if (context.kind() != AccessContext.PrincipalKind.TECHNICAL_CLIENT) {
+            return AccessDecision.DENY;
+        }
+        return grantsByClient.getOrDefault(context.principal(), List.of()).stream()
+                .anyMatch(grant -> grant.sourceId().equals(sourceId) && grant.kinds().contains(kind)
+                        && grant.allSpaces()) ? AccessDecision.ALLOW : AccessDecision.DENY;
     }
 
     /**

@@ -725,8 +725,10 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 
 ## 15. Bilder und Anhänge ernten
 
-Die Seiten-Payload verweist auf Bilder und Diagramme nur. Die Anhänge selbst lädt der Dienst getrennt und nur auf
-Anfrage; die Übersicht ordnet sie ein (draw.io-Diagramm vor Bild) und lädt nichts:
+Die Seiten-Payload verweist auf Bilder und Diagramme nur. Nach jedem Export beschafft ein eigener Auftrag „Bilder
+beschaffen“ (`ASSETS`) die Bilder der exportierten Seiten und legt sie ab ([Auftragsdiagnose](DIAGNOSTICS.md)); einzeln
+lädt der Dienst Anhänge nur auf Anfrage. Die Übersicht ordnet sie ein (draw.io-Diagramm vor Bild), lädt nichts und
+zeigt unter `stored` den abgelegten Stand, sobald es einen gibt:
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/assets"
@@ -737,13 +739,14 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
   "pageId": "1001",
   "listComplete": true,
   "assets": [
-    { "attachmentId": "att1001", "title": "diagramm.png", "kind": "IMAGE", "version": "1", "stored": null },
-    { "attachmentId": "att1002", "title": "architektur", "kind": "DIAGRAM", "version": "1", "stored": null }
+    { "attachmentId": "att1001", "title": "diagramm.png", "kind": "IMAGE", "version": "1" },
+    { "attachmentId": "att1002", "title": "architektur", "kind": "DIAGRAM", "version": "1" }
   ]
 }
 ```
 
-Die Ernte legt jede Version einmal ab, unter ihrem SHA-256 (Freigabe `sync`):
+Die Ernte legt jede Version einmal ab, unter ihrem SHA-256 (Freigabe `sync`); was der Export schon abgelegt hat, zählt
+unter `reused`:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1001/assets/harvest"
@@ -753,12 +756,10 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/
 {
   "status": 200,
   "complete": true,
-  "stored": 2,
-  "reused": 0,
   "failed": 0,
   "assets": [
-    { "attachmentId": "att1001", "status": "STORED", "stored": { "version": "1", "size": 15, "sha256": "sha256:2068060e19a880e260bfcce7de3cee520fb61f5f24e0dc3bf81999d45d7da48c" } },
-    { "attachmentId": "att1002", "status": "STORED", "stored": { "version": "1", "size": 158, "sha256": "sha256:2ae8c89b8ab302c683f1f8c5daba2661f1eaa5df1ff43a64dc735ee76257b414" } }
+    { "attachmentId": "att1001", "stored": { "version": "1", "size": 15, "sha256": "sha256:2068060e19a880e260bfcce7de3cee520fb61f5f24e0dc3bf81999d45d7da48c" } },
+    { "attachmentId": "att1002", "stored": { "version": "1", "size": 158, "sha256": "sha256:2ae8c89b8ab302c683f1f8c5daba2661f1eaa5df1ff43a64dc735ee76257b414" } }
   ]
 }
 ```

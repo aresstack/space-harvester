@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceException;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.PageView;
 import com.aresstack.enterpriseai.source.api.PageViewSource;
 import com.aresstack.enterpriseai.source.api.PartitionListingSource;
 import com.aresstack.enterpriseai.source.api.PartitionResources;
@@ -273,6 +274,45 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     "Download gehört zu einem anderen Anhang", null);
         }
         return new AttachmentFile(described, file.content(), Instant.now());
+    }
+
+    @Override
+    public List<ViewImage> viewImages(String pageId) {
+        if (!(port instanceof PageViewSource views) || !(port instanceof ResourceMetadataSource single)) {
+            return HarvestSource.super.viewImages(pageId);
+        }
+        PageView view;
+        try {
+            view = views.pageView(single.resourceMetadata(pageId).id());
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        return view.images().stream().map(image -> {
+            KnowledgeResource resource = image.resource();
+            String version = resource == null ? null : resource.revision().version();
+            return new ViewImage(image.src(), image.title(), resource == null ? null : lastSegment(resource.id()),
+                    resource == null ? null : resource.contentType(),
+                    version == null || version.isEmpty() ? null : version);
+        }).toList();
+    }
+
+    @Override
+    public byte[] viewImage(ViewImage image, long maxBytes) {
+        if (!(port instanceof PageViewSource views)) {
+            return HarvestSource.super.viewImage(image, maxBytes);
+        }
+        byte[] bytes;
+        try {
+            bytes = views.loadViewImage(image.src());
+        } catch (ResponseTooLargeException e) {
+            throw new AttachmentTooLargeException(id, e.maxBytes());
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        if (bytes.length > maxBytes) {
+            throw new AttachmentTooLargeException(id, maxBytes);
+        }
+        return bytes;
     }
 
     private static PageAttachment attachment(KnowledgeResource resource) {

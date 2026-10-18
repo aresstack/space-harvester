@@ -76,6 +76,8 @@ public class Exports {
 
     /** Seiten je Lesestapel. */
     public static final int BATCH_SIZE = 100;
+    private volatile java.util.function.BiConsumer<String, String> published = (exportId, owner) -> {
+    };
 
     private static final System.Logger LOG = System.getLogger(Exports.class.getName());
     private static final String COMPONENT = "Exports";
@@ -448,6 +450,26 @@ public class Exports {
             boolean complete = generation.state() == CacheState.CONFIRMED && failures.isEmpty() && unrefreshed == 0;
             session.publish(tree, new ExportSummary(context.jobId(), scope, startedAt, clock.instant(),
                     entries.size(), failures, warnings, complete));
+            afterPublish(context);
+        }
+    }
+
+    /**
+     * Folgearbeit, sobald ein Datenbestand veröffentlicht ist, etwa das Beschaffen der Bilder als eigener Auftrag; der
+     * Export wartet nicht darauf, und ein Fehler darin lässt ihn nie scheitern.
+     *
+     * @param listener bekommt Export-ID und Auftraggeber
+     */
+    public void onPublished(java.util.function.BiConsumer<String, String> listener) {
+        this.published = Objects.requireNonNull(listener, "listener");
+    }
+
+    private void afterPublish(JobContext context) {
+        try {
+            published.accept(context.jobId(), context.owner());
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Folgearbeit nach Export {0} nicht eingeplant ({1})",
+                    context.jobId(), e.getClass().getSimpleName());
         }
     }
 

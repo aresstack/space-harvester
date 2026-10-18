@@ -84,6 +84,28 @@ class JobsTest {
     }
 
     @Test
+    void followUpJobsNeverTakeTheLastSlotAndWaitBehindExports() {
+        Jobs jobs = jobs(2, 10);
+        JobStatus images = jobs.submit(JobType.ASSETS, "confluence", "A", "client-a", JobTask.blocking(context -> { }));
+        JobStatus enrichment = jobs.submit(JobType.ENRICHMENT, "confluence", "A", "client-a",
+                JobTask.blocking(context -> { }));
+        JobStatus export = jobs.submit(JobType.EXPORT, "confluence", "B", "client-a", JobTask.blocking(context -> { }));
+
+        // Ein Platz für die Bilder, der letzte bleibt dem Export; die Anreicherung wartet.
+        assertThat(jobs.status(images.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(export.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.QUEUED);
+        JobStatus sync = jobs.submit(JobType.SYNC, "confluence", "C", "client-a", JobTask.blocking(context -> { }));
+
+        executor.runNext();
+        executor.runNext();
+
+        // Der später eingereihte Abgleich kommt vor der früher eingereihten Anreicherung.
+        assertThat(jobs.status(sync.id()).state()).isEqualTo(JobState.RUNNING);
+        assertThat(jobs.status(enrichment.id()).state()).isEqualTo(JobState.RUNNING);
+    }
+
+    @Test
     void asynchronousTaskHoldsItsSlotUntilItsStageCompletes() {
         Jobs jobs = jobs(1, 5);
         CompletableFuture<Void> transport = new CompletableFuture<>();

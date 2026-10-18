@@ -155,6 +155,100 @@ public class Assets {
     }
 
     /**
+     * Ein Bild der Lese-Ansicht einer Seite ({@link HarvestSource#viewImages}): aus der Ablage oder über die Anmeldung
+     * der Quelle geladen und abgelegt. Ist das Bild ein Anhang, gilt dessen ID und Version; sonst eine ID aus der
+     * Adresse und die Version der Seite, damit ein unverändertes Bild nicht erneut übertragen wird.
+     *
+     * @throws SourceAccessException  {@code UNSUPPORTED} für Adressen außerhalb der Quelle, sonst wie die Quelle
+     * @throws AssetTooLargeException wenn die Datei die Grenze überschreitet
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image) {
+        HarvestSource source = source(sourceId);
+        String attachmentId = image.attachmentId() != null ? image.attachmentId()
+                : "view-" + sha256(image.src().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                        .substring("sha256:".length(), "sha256:".length() + 32);
+        String version = image.attachmentId() != null ? image.version() : pageVersion;
+        Optional<Asset> stored = store.find(sourceId, attachmentId, version);
+        if (stored.isPresent()) {
+            return new AssetContent(stored.get(), store.read(stored.get()));
+        }
+        byte[] content;
+        try {
+            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                        "Zu viele gleichzeitige Downloads von Bildern", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE, "Download abgebrochen",
+                    e);
+        }
+        try {
+            content = source.viewImage(image, maxBytes);
+        } catch (AttachmentTooLargeException e) {
+            throw new AssetTooLargeException(sourceId, maxBytes);
+        } finally {
+            downloads.release();
+        }
+        if (content.length > maxBytes) {
+            throw new AssetTooLargeException(sourceId, maxBytes);
+        }
+        String mediaType = image.mediaType() != null && !image.mediaType().isBlank() ? image.mediaType()
+                : sniff(content);
+        Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
+                AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
+        store.put(asset, content);
+        return new AssetContent(asset, content);
+    }
+
+    /** Die Bilder der Lese-Ansicht einer Seite ({@link HarvestSource#viewImages}); lädt keine Bytes. */
+    public List<HarvestSource.ViewImage> viewImages(String sourceId, String pageId) {
+        return source(sourceId).viewImages(pageId);
+    }
+
+    /**
+     * Die abgelegten Bytes zu {@code sha256}, dagegen geprüft; liest nie von der Quelle. Der Inhalt liegt nach seinem
+     * Hash ab, daher auch ohne Version der Quelle und auch dann, wenn inzwischen eine neuere Version abgelegt ist.
+     *
+     * @return leer, wenn nichts oder etwas anderes abgelegt ist
+     */
+    public Optional<byte[]> stored(String sourceId, String attachmentId, String version, String sha256) {
+        if (sha256 == null) {
+            return Optional.empty();
+        }
+        Asset asset = store.find(sourceId, attachmentId, version).filter(found -> found.sha256().equals(sha256))
+                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
+                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        byte[] content;
+        try {
+            content = store.read(asset);
+        } catch (AssetStoreException e) {
+            return Optional.empty();
+        }
+        return sha256(content).equals(sha256) ? Optional.of(content) : Optional.empty();
+    }
+
+    /** Medientyp aus den ersten Bytes, für Bilder ohne Angabe der Quelle. */
+    static String sniff(byte[] content) {
+        if (content.length >= 8 && (content[0] & 0xFF) == 0x89 && content[1] == 'P' && content[2] == 'N'
+                && content[3] == 'G') {
+            return "image/png";
+        }
+        if (content.length >= 3 && (content[0] & 0xFF) == 0xFF && (content[1] & 0xFF) == 0xD8) {
+            return "image/jpeg";
+        }
+        if (content.length >= 4 && content[0] == 'G' && content[1] == 'I' && content[2] == 'F') {
+            return "image/gif";
+        }
+        String head = new String(content, 0, Math.min(content.length, 256), java.nio.charset.StandardCharsets.UTF_8)
+                .trim().toLowerCase(Locale.ROOT);
+        if (head.startsWith("<svg") || head.startsWith("<?xml") && head.contains("<svg")) {
+            return "image/svg+xml";
+        }
+        return "application/octet-stream";
+    }
+
+    /**
      * Die vorhandene Beschreibung des Bildes in seiner aktuellen, abgelegten Version durch das konfigurierte Modell;
      * erzeugt nichts.
      *
@@ -362,7 +456,7 @@ public class Assets {
         };
     }
 
-    static String sha256(byte[] content) {
+    public static String sha256(byte[] content) {
         try {
             return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
         } catch (NoSuchAlgorithmException e) {
