@@ -103,6 +103,8 @@ public final class AppContext {
     private AppSettings settings;
     private AppRuntime runtime;
     private Throwable startProblem;
+    /** Ob beim letzten Laden aus dem KeePass-Eintrag ein API-Key kam. */
+    private volatile boolean keePassKeyRead;
     private Navigator navigator;
 
     public AppContext(AppSettingsLoader loader, Path configFile, String version) {
@@ -274,7 +276,8 @@ public final class AppContext {
     public boolean aiKeyAvailable() {
         AppSettings current = settings;
         if (current != null && current.aiAccess().fromKeePass()) {
-            return keePass().paired();
+            // Gekoppelt heißt nicht, dass der Eintrag (noch) einen Key liefert; maßgeblich ist das letzte Lesen.
+            return keePassKeyRead;
         }
         return sessionAiKey != null || aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN);
     }
@@ -287,7 +290,8 @@ public final class AppContext {
         return new ManualAiCredentials(this::manualAiKey);
     }
 
-    private char[] manualAiKey() {
+    /** Der API-Key bei „Manuell“: aus der Sitzung, sonst aus dem Tresor, oder {@code null}. Nur im Hintergrund. */
+    char[] manualAiKey() {
         char[] aiKey = sessionAiKey();
         try {
             if (aiKey == null && aiVault().has(AiSettingsPanel.KEY_ID, AiSettingsPanel.KEY_LOGIN)) {
@@ -476,6 +480,7 @@ public final class AppContext {
     private void unlock(AppSettings loaded) {
         // Der Core bekommt den Key nur zur Laufzeit (ADR 0011), aus KeePass oder dem Tresor.
         char[] aiKey = aiCredentials(loaded.aiAccess()).apiKey();
+        keePassKeyRead = loaded.aiAccess().fromKeePass() && aiKey != null && aiKey.length > 0;
         secrets.aiKey(aiKey);
         if (aiKey != null) {
             java.util.Arrays.fill(aiKey, '\0');

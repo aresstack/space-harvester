@@ -318,7 +318,8 @@ final class AiSettingsPanel {
 
     /**
      * Der Key für eine Anfrage an den Dienst: eingetippt, sonst aus dem gewählten KeePass-Eintrag, sonst aus Tresor
-     * oder Sitzung. Im Hintergrund; der Aufrufer leert ihn.
+     * oder Sitzung. Maßgeblich ist die gewählte Bezugsart, nicht die gespeicherte: Sonst ginge nach einem Wechsel auf
+     * „Manuell“ der KeePass-Key an eine neu eingetragene Adresse. Im Hintergrund; der Aufrufer leert ihn.
      */
     char[] currentKey(char[] typed, AiAccess chosen, boolean known) {
         if (typed.length > 0) {
@@ -327,7 +328,7 @@ final class AiSettingsPanel {
         if (chosen.fromKeePass()) {
             return known ? context.keePass().credentials(chosen.entry()).apiKey() : null;
         }
-        return context.storedAiKey();
+        return context.manualAiKey();
     }
 
     AiDraft draft() {
@@ -404,7 +405,8 @@ final class AiSettingsPanel {
                 }
                 char[] resolved = currentKey(key, chosen, true);
                 try {
-                    Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved);
+                    Measured measured = measure(context, runtime, draft, resolved == null ? new char[0] : resolved,
+                            false);
                     store(context, measured.draft(), new char[0], chosen);
                     return measured;
                 } finally {
@@ -413,7 +415,7 @@ final class AiSettingsPanel {
                     }
                 }
             }
-            Measured measured = measure(context, runtime, draft, key);
+            Measured measured = measure(context, runtime, draft, key, true);
             store(context, measured.draft(), vault ? key.clone() : new char[0], chosen);
             return measured;
         }, measured -> {
@@ -489,9 +491,10 @@ final class AiSettingsPanel {
      * Dimension noch die alte ist. Läuft im Hintergrund (Tresor, Netz); scheitert die Messung, bleibt das Feld leer
      * und die semantische Suche aus.
      *
-     * @param key eingegebener API-Key oder leer für den gespeicherten; bleibt unverändert
+     * @param key    eingegebener oder aufgelöster API-Key, leer für den manuell gespeicherten; bleibt unverändert
+     * @param manual ob der Key manuell bezogen wird; nur dann fällt ein leerer Key auf Tresor oder Sitzung zurück
      */
-    static Measured measure(AppContext context, AppRuntime runtime, AiDraft draft, char[] key) {
+    static Measured measure(AppContext context, AppRuntime runtime, AiDraft draft, char[] key, boolean manual) {
         String model = blankToNull(draft.embeddingModel());
         if (model == null || blankToNull(draft.baseUrl()) == null) {
             return new Measured(draft, null);
@@ -509,7 +512,8 @@ final class AiSettingsPanel {
         if (runtime == null) {
             return new Measured(without, "Die Dimension ließ sich nicht messen, weil die App nicht gestartet ist.");
         }
-        char[] stored = key.length > 0 ? null : context.storedAiKey();
+        // Ohne eingetippten Key nur der manuell gespeicherte, und nur bei „Manuell“; aus KeePass löst der Aufrufer auf.
+        char[] stored = key.length > 0 || !manual ? null : context.manualAiKey();
         try {
             int measured = runtime.workspace().aiEmbeddingDimension(service(without, key.length > 0 ? key : stored),
                     model);

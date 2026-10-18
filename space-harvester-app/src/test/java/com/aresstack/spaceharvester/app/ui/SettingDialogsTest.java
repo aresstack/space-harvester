@@ -326,6 +326,18 @@ class SettingDialogsTest {
         await(() -> context.settings().aiAccess().entry() != null
                 && context.settings().aiAccess().entry().equals("Mein Dienst"));
         assertThat(Files.readString(config)).doesNotContain("sk-neu");
+
+        // Nach dem Wechsel auf „Manuell“ geht nie der KeePass-Key an eine neu eingetragene Adresse.
+        com.aresstack.spaceharvester.app.settings.AiAccess manual = new com.aresstack.spaceharvester.app.settings
+                .AiAccess(com.aresstack.spaceharvester.app.settings.AiAccess.Mode.MANUAL, null);
+        assertThat(panel[0].currentKey(new char[0], manual, false)).isNull();
+
+        // Gekoppelt, aber der Eintrag ist weg: kein Key, auch wenn die Kopplung steht.
+        keePass.entries.remove("Mein Dienst");
+        CountDownLatch reloaded = new CountDownLatch(1);
+        context.reload(reloaded::countDown);
+        assertThat(reloaded.await(30, TimeUnit.SECONDS)).isTrue();
+        assertThat(context.aiKeyAvailable()).isFalse();
     }
 
     @Test
