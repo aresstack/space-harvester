@@ -232,6 +232,46 @@ class KeywordSearchDiscoveryTest {
         assertThat(results.found()).extracting(KeywordSearch.Hit::snippet).containsExactly("");
     }
 
+    @Test
+    void aDelegatedUserGetsOnlyTheFinalListCheckedPageByPage() {
+        wiki.results("Hashicorp Vault", "1", "2", "3", "4", "5");
+        // Der Benutzer darf nur 2 und 4 sehen; jede Rückfrage an die Quelle wird gezählt.
+        List<String> asked = Collections.synchronizedList(new ArrayList<>());
+        AccessGuard guard = new AccessGuard(new com.aresstack.spaceharvester.application.access.AccessPolicy() {
+            @Override
+            public AccessDecision decide(AccessContext context, com.aresstack.spaceharvester.application.access
+                    .ResourceScope scope, AccessKind kind) {
+                if (scope.pageId() == null) {
+                    return AccessDecision.ALLOW;
+                }
+                asked.add(scope.pageId());
+                return Set.of("2", "4").contains(scope.pageId()) ? AccessDecision.ALLOW : AccessDecision.DENY;
+            }
+
+            @Override
+            public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+                return AccessDecision.DENY;
+            }
+        });
+        AccessContext user = AccessContext.endUser("u", "app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "t"));
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, guard, texts, prefetch,
+                KeywordSearch.DEFAULT_MAX_QUERIES, ExcerptPriority.off())
+                .search(user, KeywordSearch.Query.of("Hashicorp Vault"), null, 3);
+
+        // Die Funde der Quelle laden ungeprüft; der Benutzer sieht sie nicht als vorläufige Treffer.
+        assertThat(loads).containsExactly(List.of("1", "2", "3"));
+        assertThat(results.found()).isEmpty();
+        // Geprüft wird nur die Liste aus dem Cache, jede Seite einmal je Art.
+        assertThat(new TreeSet<>(asked)).containsExactly("1", "2", "3");
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("2");
+        // Der Cursor nennt keine ungeprüften Seiten.
+        String cursor = new String(java.util.Base64.getUrlDecoder().decode(results.nextCursor()
+                .substring(3)), java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(cursor).doesNotContain("\np\t");
+    }
+
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {
         return new KeywordSearch(catalog, access, texts, prefetch, maxQueries, excerpts);
     }

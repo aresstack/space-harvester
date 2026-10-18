@@ -518,6 +518,23 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
+     * Ein Bild der Leseansicht: die Vorschau eines draw.io-Diagramms als Grafik des Core (wie Mermaid), alle übrigen
+     * und jede Vorschau, die sich nicht zeichnen lässt, wie die Quelle sie zeigt. Außerhalb des EDT.
+     */
+    public static byte[] image(AppRuntime runtime, com.aresstack.spaceharvester.application.reading.ReadingView view,
+                        com.aresstack.spaceharvester.application.sources.HarvestSource.ViewImage image) {
+        try {
+            var drawn = runtime.workspace().viewDiagram(view, image);
+            if (drawn.isPresent()) {
+                return drawn.get().content();
+            }
+        } catch (RuntimeException e) {
+            // Quelldaten nicht abrufbar: dann bleibt das Vorschaubild der Quelle.
+        }
+        return runtime.workspace().viewImage(view, image).content();
+    }
+
+    /**
      * Lädt die Leseansicht (#192) über den Core: HTML aus dem Bestand oder live, Bilder aus dem AssetStore bzw. einmalig
      * abgelegt. Wie die Anhänge gilt das Ergebnis nur für die Seite, für die es angefordert wurde.
      */
@@ -533,7 +550,7 @@ public final class PageDetailPanel extends JPanel {
         DeliveredPage shown = page;
         Background.run(() -> {
             var view = runtime.workspace().readingView(source, id, false);
-            return ReadingPane.prepare(view, image -> runtime.workspace().viewImage(view, image).content(),
+            return ReadingPane.prepare(view, image -> image(runtime, view, image),
                     diagram -> runtime.workspace().mermaid(view, diagram).orElse(null));
         }, prepared -> {
             if (shown == page) {

@@ -252,7 +252,12 @@ class SearchViewTest {
         assertThat(table.getRowCount()).isPositive();
         assertThat(view[0].statusText()).contains("semantisch");
         assertThat(button(whole(view[0]), "Weitere laden").isVisible()).isFalse();
-        assertThat(view[0].progress.isVisible()).isFalse();
+        // Wie der globale Balken: leere Spur, mittig „Fertig“ statt „Abbrechen“.
+        assertThat(view[0].progress.isIndeterminate()).isFalse();
+        assertThat(view[0].progress.getValue()).isZero();
+        assertThat(view[0].endState.isVisible()).isTrue();
+        assertThat(view[0].endState.getText()).isEqualTo("Fertig");
+        assertThat(view[0].cancel.isVisible()).isFalse();
     }
 
     @Test

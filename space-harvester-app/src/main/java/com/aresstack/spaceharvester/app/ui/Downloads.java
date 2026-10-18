@@ -11,7 +11,8 @@ import java.util.function.Consumer;
 /**
  * Herunterladen: beschafft je Space einmal den JSON-Datenbestand als Export-Auftrag ({@code Workspace.startExport}),
  * sofort und ohne Dialog, Formatwahl oder Rückfrage. Exportiert (PDF, Word, Markdown) wird danach unter Aufträge. Ein
- * Anwendungsfall für Explorer (Kontextmenü und Download-Symbol) und Wissensquellen verwalten.
+ * Anwendungsfall für Explorer (Kontextmenü und Download-Symbol, auch an Seiten: Seite samt Unterseiten) und
+ * Wissensquellen verwalten.
  */
 public final class Downloads {
 
@@ -54,5 +55,17 @@ public final class Downloads {
             }
             return new Started(jobs, problems);
         }, done, failed);
+    }
+
+    /** Startet im Hintergrund den Download einer Seite mit allen Unterseiten (ein Auftrag). */
+    public static void startPage(AppContext context, String sourceId, String spaceKey, String pageId,
+                                 Consumer<Started> done, Consumer<Throwable> failed) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            failed.accept(new IllegalStateException("Die Laufzeit ist nicht gestartet"));
+            return;
+        }
+        Background.run(() -> new Started(List.of(runtime.workspace().startExport(sourceId, spaceKey, pageId,
+                List.of(FORMAT))), List.of()), done, failed);
     }
 }

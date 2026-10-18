@@ -148,6 +148,25 @@ class ContentViewTest {
         assertThat(onEdt(() -> view.detail().shownPage().header().key().pageId())).isEqualTo(page);
     }
 
+    @Test
+    void theListToggleShowsEveryPageOfTheSpaceAndAClickOpensOne() throws Exception {
+        String space = space("handbuch");
+        onEdt(() -> {
+            view.openSpace("handbuch", space);
+            view.showAsList();
+            return null;
+        });
+
+        await(() -> view.list().table().getRowCount() == 3);
+        assertThat(onEdt(() -> view.list().status())).isEqualTo("3 Seiten");
+        onEdt(() -> {
+            view.list().table().setRowSelectionInterval(1, 1);
+            return null;
+        });
+        await(() -> view.detail().shownPage() != null);
+        assertThat(onEdt(view::crumbs)).isEqualTo("handbuch › " + space);
+    }
+
     private String space(String sourceId) {
         return context.runtime().workspace().spaces(sourceId).get(0).key();
     }

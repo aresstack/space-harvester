@@ -82,6 +82,10 @@ public final class AppContext {
             download(sourceId, spaceKey == null ? java.util.List.of() : java.util.List.of(spaceKey));
         }
 
+        /** Startet sofort den Download einer Seite samt Unterseiten, wie {@link #download(String, java.util.List)}. */
+        default void downloadPage(String sourceId, String spaceKey, String pageId) {
+        }
+
         void search(String text);
     }
 

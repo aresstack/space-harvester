@@ -2,8 +2,12 @@ package com.aresstack.spaceharvester.app.ui;
 
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobState;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -44,6 +48,33 @@ class JobStepTest {
                 .startsWith("Bilder: werden beschafft").contains("noch ohne Bilder");
         assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.COMPLETE)).isEqualTo("Bilder: vollständig");
         assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE)).startsWith("Bilder: unvollständig");
+    }
+
+    @Test
+    void theCardCountsStoredMissingSignInAndDeliberatelySkippedMediaInPlainWords() {
+        ExportDatasetInfo.Media media = new ExportDatasetInfo.Media(7, 2, 1, 3);
+        assertThat(ActivitiesView.media(media)).isEqualTo("7 gesichert · 2 fehlen · 1 Anmeldung erforderlich · "
+                + "3 bewusst ausgelassen (Vorschau zu Diagrammquelle)");
+        assertThat(ActivitiesView.media(new ExportDatasetInfo.Media(1, 1, 0, 0))).isEqualTo("1 gesichert · 1 fehlt");
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.INCOMPLETE, media))
+                .startsWith("Bilder: unvollständig").endsWith("\nMedien: " + ActivitiesView.media(media));
+        assertThat(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED, ExportDatasetInfo.Media.NONE))
+                .isEqualTo(ActivitiesView.cardImages(ExportDatasetInfo.Images.NOT_COLLECTED));
+    }
+
+    @Test
+    void aPageDownloadNamesItsStartPageOnceTheJobHasReadIt() {
+        assertThat(ActivitiesView.where(job(null, null))).isEqualTo("wiki / OPS");
+        assertThat(ActivitiesView.startPage(job(null, null))).isEqualTo("–");
+        assertThat(ActivitiesView.where(job("42", null))).isEqualTo("wiki / OPS ab „Seite 42“");
+        assertThat(ActivitiesView.where(job("42", "Betriebshandbuch"))).isEqualTo("wiki / OPS ab „Betriebshandbuch“");
+        assertThat(Explorer.downloadable(new Explorer.PageItem("wiki", "OPS", "42", "Betriebshandbuch", true)))
+                .isTrue();
+    }
+
+    private static JobStatus job(String rootPageId, String rootTitle) {
+        return new JobStatus("j1", JobType.EXPORT, "wiki", "OPS", "local", JobState.RUNNING, new JobProgress(0, 0, 0, 0),
+                null, false, Instant.EPOCH, null, null, rootPageId, rootTitle);
     }
 
     @Test

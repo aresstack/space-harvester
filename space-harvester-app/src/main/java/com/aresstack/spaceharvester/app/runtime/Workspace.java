@@ -50,6 +50,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -167,6 +168,20 @@ public final class Workspace {
         access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
                 header.key().pageId()), AccessKind.CONTENT);
         return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
+    }
+
+    /**
+     * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
+     * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
+     */
+    public java.util.Optional<Assets.AssetContent> viewDiagram(ReadingView view, HarvestSource.ViewImage image) {
+        PageHeader header = view.header();
+        if (view.status() != ReadingView.Status.AVAILABLE || !view.images().contains(image)) {
+            throw new IllegalArgumentException("Das Bild gehört nicht zu dieser Lese-Ansicht");
+        }
+        access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
+                header.key().pageId()), AccessKind.CONTENT);
+        return harvester.assets().viewDiagram(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
     /**
@@ -305,6 +320,11 @@ public final class Workspace {
         return harvester.searchProfile().expansion() == SearchProfile.Expansion.AI;
     }
 
+    /** Seiten einer Quelle über ihren Titel, auch nie abgeglichene (Confluence per CQL); leer ohne Titelsuche. */
+    public PageNavigation.TitleMatches findByTitle(String sourceId, Set<String> spaceKeys, String title, int limit) {
+        return harvester.navigation().findByTitle(caller, sourceId, spaceKeys, title, limit);
+    }
+
     /** Offene Einmalcode-Anforderungen der Quellen (ADR 0018); Senden und Neu-Senden blockieren, nie auf dem EDT. */
     public SignInRequests signIns() {
         return harvester.signIns();
@@ -394,6 +414,17 @@ public final class Workspace {
     public JobStatus startExport(String sourceId, String spaceKey, List<String> formats) {
         requireExport(sourceId, spaceKey);
         JobStatus status = harvester.exports().start(sourceId, spaceKey, Harvester.OWNER, formats);
+        activities.remember(status.id());
+        return status;
+    }
+
+    /**
+     * Export einer Seite samt Unterseiten starten ({@code ExportRequest.withRoot}); {@code rootPageId == null} heißt
+     * ganzer Space. Eine unbekannte oder nicht lesbare Startseite lässt den Auftrag mit ROOT_NOT_FOUND scheitern.
+     */
+    public JobStatus startExport(String sourceId, String spaceKey, String rootPageId, List<String> formats) {
+        requireExport(sourceId, spaceKey);
+        JobStatus status = harvester.exports().start(sourceId, spaceKey, rootPageId, Harvester.OWNER, formats);
         activities.remember(status.id());
         return status;
     }

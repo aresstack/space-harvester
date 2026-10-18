@@ -402,7 +402,10 @@ public class KeywordSearch {
         // ohne Inhaltsabruf. Bewertet nach Titel und Auszug (#154) laden nur die besten in den Cache; der Volltextindex
         // findet sie dort, und seine Treffer ersetzen die vorläufigen. Was ein früherer Stapel noch lud, fragt dieser
         // Stapel wieder ab, damit es nicht verloren geht.
-        Checked discovered = provisional(caller, query, candidates);
+        // ADR 0014, Fortschreibung Punkt 4: Ein Endnutzer mit delegierter Anmeldung bekommt nur die endgültige Liste aus
+        // dem Cache, seitenweise mit seinem Token geprüft. Die Funde der Quelle bleiben ungeprüft und nur zum Laden.
+        boolean finalListOnly = caller != null && caller.kind() == AccessContext.PrincipalKind.END_USER;
+        Checked discovered = finalListOnly ? unchecked(candidates) : provisional(caller, query, candidates);
         complete &= discovered.complete();
         List<Hit> found = discovered.hits();
         List<Hit> ranked = excerpts.prioritize(query.text(), found).apply(found);
@@ -487,11 +490,13 @@ public class KeywordSearch {
         boolean checkedAll = complete && checked.complete();
         boolean exhausted = next.isEmpty() && !moreInCache && loading == 0;
         String nextCursor = exhausted || delivered.size() >= MAX_DEPTH ? null
-                : encode(fingerprint(query), !checkedAll, next, unavailable, delivered, stillLoading);
+                : encode(fingerprint(query), !checkedAll, next, unavailable, delivered,
+                        // Der Cursor geht an den Aufrufer: keine IDs ungeprüfter Seiten.
+                        finalListOnly ? List.of() : stillLoading);
         // Vorläufig bleibt, was der Volltextindex (noch) nicht liefert, in der Rangfolge nach Titel und Auszug.
         Set<PageKey> fromIndex = new HashSet<>();
         checked.hits().forEach(hit -> fromIndex.add(new PageKey(hit.sourceId(), hit.pageId())));
-        List<Hit> provisional = ranked.stream()
+        List<Hit> provisional = finalListOnly ? List.of() : ranked.stream()
                 .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
         return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading,
                 provisional, progress);
@@ -549,6 +554,19 @@ public class KeywordSearch {
                     match.url(), match.version(), match.modifiedAt(), null));
         }
         return new Checked(hits, complete);
+    }
+
+    /**
+     * Die Funde der Quellen ohne jede Prüfung, nur als Kandidaten zum Bewerten und Laden; sie verlassen die Suche nicht.
+     */
+    private static Checked unchecked(List<Candidate> candidates) {
+        List<Hit> hits = new ArrayList<>();
+        for (Candidate candidate : candidates) {
+            SourceSearchMatch match = candidate.match();
+            hits.add(new Hit(candidate.sourceId(), match.pageId(), null, match.title(), match.snippet(), match.url(),
+                    match.version(), match.modifiedAt(), null));
+        }
+        return new Checked(hits, true);
     }
 
     /** Kopfdaten live und Freigabe je Treffer; parallel, Reihenfolge der Kandidaten bleibt. */

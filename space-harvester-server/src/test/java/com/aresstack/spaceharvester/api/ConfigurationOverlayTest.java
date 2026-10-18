@@ -84,6 +84,22 @@ class ConfigurationOverlayTest {
     }
 
     @Test
+    void backgroundFillRoundTripsGloballyAndPerSource() {
+        HarvesterConfiguration next = ConfigurationOverlay.overlay(FULL, Map.of(
+                "sync.background-fill", false, "space-harvester.sync.background-parallelism", 3,
+                "sync.sources[wiki].background-fill", true)).orThrow();
+
+        assertThat(next.sync().backgroundFill()).isFalse();
+        assertThat(next.sync().backgroundParallelism()).isEqualTo(3);
+        assertThat(next.syncFor("wiki").backgroundFill()).isTrue();
+        assertThat(next.syncFor("docs").backgroundFill()).isFalse();
+        assertThat(HarvesterConfiguration.fromProperties(ConfigurationOverlay.toProperties(next)).orThrow()
+                .withNetwork(FULL.network())).isEqualTo(next);
+        assertThat(ConfigurationOverlay.overlay(next, Map.of("sync.background-parallelism", 0)).problems())
+                .extracting(ConfigurationProblem::key).containsExactly("sync.background-parallelism");
+    }
+
+    @Test
     void unknownKeysNetworkAndObjectsAreProblems() {
         HarvesterConfiguration.Parsed parsed = ConfigurationOverlay.overlay(FULL, Map.of("ai.model", "x",
                 "network.proxy.mode", "disabled", "search.rerank", Map.of("a", "b")));

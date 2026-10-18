@@ -136,6 +136,10 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem(SyncSettings.WITHHELD_RETENTION, "Die Frist darf nicht negativ sein"));
         }
         intervalProblem(problems, SyncSettings.INVENTORY_INTERVAL, sync.inventoryInterval());
+        if (sync.backgroundParallelism() < 1 || sync.backgroundParallelism() > SyncSettings.MAX_BACKGROUND_PARALLELISM) {
+            problems.add(new ConfigurationProblem(SyncSettings.BACKGROUND_PARALLELISM, "Die Parallelität im Hintergrund "
+                    + "muss zwischen 1 und " + SyncSettings.MAX_BACKGROUND_PARALLELISM + " liegen"));
+        }
         for (var entry : sync.sources().entrySet()) {
             String id = entry.getKey();
             SourceSyncOverride o = entry.getValue();
@@ -232,7 +236,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 read.list(SyncSettings.SPACES), read.bool(SyncSettings.BEFORE_SEARCH, false),
                 read.duration(SyncSettings.WITHHELD_RETENTION), read.bool(SyncSettings.CATCH_UP_ON_START, false),
                 read.mode(SyncSettings.MODE), read.duration(SyncSettings.INVENTORY_INTERVAL),
-                sourceOverrides(properties, problems));
+                sourceOverrides(properties, problems), read.bool(SyncSettings.BACKGROUND_FILL, true),
+                read.integer(SyncSettings.BACKGROUND_PARALLELISM, SyncSettings.DEFAULT_BACKGROUND_PARALLELISM));
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
                 storage);
@@ -304,7 +309,8 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                             : read.mode(SourceSyncOverride.key(id, SourceSyncOverride.MODE)),
                     read.strategy(SourceSyncOverride.key(id, SourceSyncOverride.REFRESH_STRATEGY)),
                     read.duration(SourceSyncOverride.key(id, SourceSyncOverride.MAX_AGE)),
-                    read.duration(SourceSyncOverride.key(id, SourceSyncOverride.WITHHELD_RETENTION)));
+                    read.duration(SourceSyncOverride.key(id, SourceSyncOverride.WITHHELD_RETENTION)),
+                    read.optionalBool(SourceSyncOverride.key(id, SourceSyncOverride.BACKGROUND_FILL)));
             if (!override.equals(SourceSyncOverride.NONE)) {
                 overrides.put(id, override);
             }
@@ -315,7 +321,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     private static final Set<String> SOURCE_FIELDS = Set.of(SourceSyncOverride.CHANGE_SEARCH_INTERVAL,
             SourceSyncOverride.INVENTORY_INTERVAL, SourceSyncOverride.EVENTS, SourceSyncOverride.CATCH_UP_ON_START,
             SourceSyncOverride.BEFORE_SEARCH, SourceSyncOverride.MODE, SourceSyncOverride.REFRESH_STRATEGY,
-            SourceSyncOverride.MAX_AGE, SourceSyncOverride.WITHHELD_RETENTION);
+            SourceSyncOverride.MAX_AGE, SourceSyncOverride.WITHHELD_RETENTION, SourceSyncOverride.BACKGROUND_FILL);
 
     private static String strip(String name) {
         return name.startsWith(PREFIX) ? name.substring(PREFIX.length()) : name;
@@ -348,6 +354,19 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 return null;
             }
             return mode;
+        }
+
+        int integer(String key, int fallback) {
+            String value = value(key);
+            if (value == null) {
+                return fallback;
+            }
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException e) {
+                problems.add(new ConfigurationProblem(key, "Erwartet eine ganze Zahl"));
+                return fallback;
+            }
         }
 
         Boolean optionalBool(String key) {
