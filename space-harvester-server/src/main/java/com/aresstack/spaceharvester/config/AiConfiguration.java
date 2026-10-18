@@ -11,7 +11,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.info.BuildProperties;
-import org.springframework.boot.ssl.SslBundles;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -33,14 +32,12 @@ class AiConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
-                                          ConfiguredSourceCatalog catalog, ObjectProvider<SslBundles> sslBundles,
+                                          ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build) {
         if (!settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
         }
-        SslBundles bundles = sslBundles.getIfAvailable();
-        TrustBundles trust = bundles == null ? TrustBundles.NONE : SourceConfiguration.trustBundles(bundles);
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
         return new EmbeddingProcessor(RemoteAi.of(settings, catalog, trust, userAgent).embeddings(),

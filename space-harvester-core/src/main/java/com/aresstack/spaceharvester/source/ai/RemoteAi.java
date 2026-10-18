@@ -59,8 +59,9 @@ public final class RemoteAi {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.routes = Objects.requireNonNull(routes, "routes");
         this.userAgent = Objects.requireNonNull(userAgent, "userAgent");
-        this.tls = settings.trustBundle() == null ? null
-                : socketFactory(trustBundles.trustManager(settings.trustBundle()));
+        X509TrustManager trust = settings.trustBundle() == null ? trustBundles.defaultTrust()
+                : trustBundles.trustManager(settings.trustBundle());
+        this.tls = trust == null ? null : socketFactory(trust);
     }
 
     /**

@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoute;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.spaceharvester.application.jobs.RequestRoute;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.ssl.ApplicationProtocolConfig;
 import io.netty.handler.ssl.ClientAuth;
@@ -19,6 +20,7 @@ import io.netty.resolver.NoopAddressResolverGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.PasswordAuthentication;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.security.NoSuchAlgorithmException;
@@ -81,6 +83,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     private final SslContext clientTls;
     private final SslContext anonymousTls;
     private final String userAgent;
+    private final ProxyCredentials proxyCredentials;
     private final Duration connectTimeout;
     private final Duration readTimeout;
     private final int maxConnections;
@@ -95,6 +98,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         this.clientTls = netty(builder.clientTls);
         this.anonymousTls = netty(builder.anonymousTls);
         this.userAgent = builder.userAgent;
+        this.proxyCredentials = builder.proxyCredentials;
         this.connectTimeout = builder.connectTimeout;
         this.readTimeout = builder.readTimeout;
         this.maxConnections = builder.maxConnections;
@@ -318,9 +322,22 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .followRedirect(false)
                 .compress(false);
         if (key.kind() == HttpRoute.Kind.PROXY) {
-            http = http.proxy(proxy -> proxy.type(ProxyProvider.Proxy.HTTP)
-                    .socketAddress(InetSocketAddress.createUnresolved(key.proxyHost(), key.proxyPort()))
-                    .connectTimeoutMillis(connectTimeout.toMillis()));
+            // Die Anmeldung wird beim Bau des Clients gelesen (je Proxy und Ziel einmal) und von Netty bei jedem
+            // Verbindungsaufbau mitgeschickt, auch im CONNECT-Tunnel; nie protokolliert.
+            PasswordAuthentication login = proxyCredentials.get().orElse(null);
+            String user = login == null ? null : login.getUserName();
+            String password = login == null ? null : new String(login.getPassword());
+            if (login != null) {
+                java.util.Arrays.fill(login.getPassword(), '\0');
+            }
+            http = http.proxy(proxy -> {
+                ProxyProvider.Builder spec = proxy.type(ProxyProvider.Proxy.HTTP)
+                        .socketAddress(InetSocketAddress.createUnresolved(key.proxyHost(), key.proxyPort()))
+                        .connectTimeoutMillis(connectTimeout.toMillis());
+                if (user != null) {
+                    spec.username(user).password(name -> password);
+                }
+            });
         } else {
             http = http.noProxy();
         }
@@ -407,6 +424,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         private SSLContext clientTls;
         private SSLContext anonymousTls;
         private String userAgent;
+        private ProxyCredentials proxyCredentials = ProxyCredentials.none();
         private Duration connectTimeout = Duration.ofSeconds(15);
         private Duration readTimeout = Duration.ofSeconds(60);
         private int maxConnections = 8;
@@ -440,6 +458,12 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
 
         public Builder userAgent(String value) {
             this.userAgent = value;
+            return this;
+        }
+
+        /** Anmeldung am Proxy (#189); {@code null} ohne. */
+        public Builder proxyCredentials(ProxyCredentials value) {
+            this.proxyCredentials = value == null ? ProxyCredentials.none() : value;
             return this;
         }
 

@@ -6,6 +6,8 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
+import com.aresstack.spaceharvester.source.network.ProxyAuthenticator;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import java.net.URI;
@@ -60,6 +62,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * gelesen ohne Sperre.
      */
     private volatile Map<String, Opened> opened;
+    private final ProxyAuthenticator authenticator;
 
     /**
      * Eine geöffnete Quelle mit ihren Einstellungen. Eine abgeschaltete ({@code enabled = false}) behält Einstellungen
@@ -80,7 +83,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     }
 
     private ConfiguredSourceCatalog(Map<String, SourceAdapter> adapters, ConfiguredSecrets secrets,
-                                    SourceAdapter.Context context, Map<String, Opened> opened) {
+                                    SourceAdapter.Context context, Map<String, Opened> opened,
+                                    ProxyAuthenticator authenticator) {
+        this.authenticator = authenticator;
         this.adapters = adapters;
         this.secrets = secrets;
         this.context = context;
@@ -158,10 +163,12 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets(secretProvider);
+        ProxyCredentials proxyCredentials = ProxyCredentials.of(proxy.authentication(), secretProvider);
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
-                ? new AsyncSnapshotTransports(secrets, routes, userAgent) : null;
+                ? new AsyncSnapshotTransports(secrets, routes, userAgent, proxyCredentials) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
-        SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, userAgent, trustBundles, async);
+        SourceAdapter.Context context = new SourceAdapter.Context(secrets, routes, userAgent, trustBundles, async,
+                proxyCredentials);
         Map<String, Opened> opened = new LinkedHashMap<>();
         Set<String> seenIds = new HashSet<>();
         for (int i = 0; i < configs.size(); i++) {
@@ -188,8 +195,10 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             }
             throw new InvalidSourceConfigurationException(problems);
         }
+        // Für HttpURLConnection (synchroner Transport, KI-Dienst) gibt es die Proxy-Anmeldung nur prozessweit.
+        ProxyAuthenticator authenticator = ProxyAuthenticator.install(proxyCredentials);
         return new ConfiguredSourceCatalog(Collections.unmodifiableMap(byType), secrets, context,
-                Collections.unmodifiableMap(opened));
+                Collections.unmodifiableMap(opened), authenticator);
     }
 
     private static Opened open(SourceSettingsConfig config, SourceAdapter adapter, SourceAdapter.Context context) {
@@ -404,7 +413,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
             throw new InvalidSourceConfigurationException(problems);
         }
         SourceAdapter.Context probing = new SourceAdapter.Context(secrets.fresh(), routes, context.userAgent(),
-                context.trustBundles(), null);
+                context.trustBundles(), null, context.proxyCredentials());
         Opened source = open(config, adapters.get(config.type()), probing);
         try {
             return use.apply(source.source());
@@ -457,6 +466,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         opened.values().forEach(Opened::close);
         if (async != null) {
             async.close();
+        }
+        if (authenticator != null) {
+            authenticator.uninstall();
         }
     }
 }

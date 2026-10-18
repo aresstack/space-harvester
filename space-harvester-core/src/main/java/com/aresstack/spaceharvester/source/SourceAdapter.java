@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.source;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
+import com.aresstack.spaceharvester.source.network.ProxyCredentials;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
 import java.util.List;
 
@@ -50,9 +51,14 @@ public interface SourceAdapter {
      * @param userAgent    User-Agent für HTTP-Aufrufe
      * @param trustBundles Vertrauensquellen für {@code trust-bundle}
      * @param async        asynchrone Transporte für Snapshots oder {@code null}
+     * @param proxyCredentials Anmeldung am Proxy für WebClient-Transporte (#189); {@code null} ohne
      */
     record Context(ConfiguredSecrets secrets, ProxyRoutes routes, String userAgent, TrustBundles trustBundles,
-                   AsyncSnapshotTransports async) {
+                   AsyncSnapshotTransports async, ProxyCredentials proxyCredentials) {
+
+        public Context {
+            proxyCredentials = proxyCredentials == null ? ProxyCredentials.none() : proxyCredentials;
+        }
     }
 
     /**
