@@ -162,8 +162,8 @@ public final class Problems {
         }
         if (e instanceof SemanticSearchUnavailableException) {
             return new Problem("Semantische Suche nicht eingerichtet",
-                    "Ohne Embedding-Modell sucht die App nur in Titeln.",
-                    "space-harvester.embedding.provider: onnx mit model-dir einrichten (docs/EMBEDDINGS.md).",
+                    "Die semantische Suche braucht einen KI-Dienst mit Embedding-Modell.",
+                    "Unter Einstellungen › KI Dienst und Embedding-Modell einrichten (docs/EMBEDDINGS.md).",
                     technical);
         }
         if (e instanceof AssetTooLargeException || e instanceof AssetStoreFullException

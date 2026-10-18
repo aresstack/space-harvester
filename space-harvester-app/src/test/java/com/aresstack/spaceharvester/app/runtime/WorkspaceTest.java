@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -118,7 +119,9 @@ class WorkspaceTest {
                 .containsExactly(new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", "102")
                         .toString());
         assertThat(workspace.semanticSearch()).isFalse();
-        assertThat(workspace.relevance(query, "wartung", 10).hits()).isNotEmpty();
+        // Ohne KI-Dienst kein Rückfall auf die Titelsuche (ADR 0011).
+        assertThatThrownBy(() -> workspace.relevance(query, "wartung", 10))
+                .isInstanceOf(SemanticSearchUnavailableException.class);
 
         JobStatus export = await(workspace, workspace.startExport("wiki", "DEV", List.of("markdown")));
         assertThat(export.state()).isEqualTo(JobState.COMPLETED);

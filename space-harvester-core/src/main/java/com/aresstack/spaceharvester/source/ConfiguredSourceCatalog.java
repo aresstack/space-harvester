@@ -219,6 +219,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         }
     }
 
+    /** Die Proxy-Route je Ziel aller Quellen, auch für den KI-Dienst ({@code source.ai}, ADR 0011). */
+    public ProxyRoutes routes() {
+        return routes;
+    }
+
     /** Gibt die Verbindungspools der delegierten und asynchronen Aufrufe frei (Spring ruft das beim Herunterfahren). */
     @Override
     public void close() {

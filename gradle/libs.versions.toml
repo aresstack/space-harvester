@@ -18,10 +18,6 @@ winTrust = "0.1.0"
 lucene = "10.5.2"
 # PDF-Ausgabe (#30)
 pdfbox = "3.0.5"
-# Lokales Embedding-Modell (#89): ONNX Runtime (1.30.0 stürzt in manchen Containern beim Start ab) und der
-# Hugging-Face-Tokenizer von DJL, beide mit nativen Bibliotheken für Linux, Windows und macOS im Jar
-onnxruntime = "1.31.0"
-djlTokenizers = "0.38.0"
 # space-harvester-core (#100): ohne die Spring-Boot-BOM, deshalb hier fest; abgestimmt auf Spring Boot 4.1.1,
 # der Server erzwingt über die BOM dieselben Versionen
 jackson = "3.1.5"
@@ -63,8 +59,6 @@ lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene"
 spring-cloud-dependencies = { module = "org.springframework.cloud:spring-cloud-dependencies", version.ref = "springCloud" }
 spring-cloud-azure-dependencies = { module = "com.azure.spring:spring-cloud-azure-dependencies", version.ref = "springCloudAzure" }
 pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
-onnxruntime = { module = "com.microsoft.onnxruntime:onnxruntime", version.ref = "onnxruntime" }
-djl-tokenizers = { module = "ai.djl.huggingface:tokenizers", version.ref = "djlTokenizers" }
 maltparser = { module = "org.maltparser:maltparser", version.ref = "maltparser" }
 reload4j = { module = "ch.qos.reload4j:reload4j", version.ref = "reload4j" }
 opennlp-tools = { module = "org.apache.opennlp:opennlp-tools", version.ref = "opennlp" }

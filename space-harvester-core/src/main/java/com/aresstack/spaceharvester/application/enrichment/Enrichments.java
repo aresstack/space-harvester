@@ -10,11 +10,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
  * Berechnet und liest die Anreicherungen einer Seite. Jeder Prozessor läuft für sich: Scheitert einer, wird nur sein
  * Ergebnis als fehlgeschlagen gespeichert; die übrigen, die Payload und jeder Abgleich oder Export laufen weiter.
+ *
+ * <p>Prozessoren, die über das Netz rechnen ({@link EnrichmentProcessor#background()}), laufen bei {@link #refresh}
+ * in einem begrenzten Hintergrund ({@link #background(int)}): höchstens eine Berechnung zugleich, eine Warteschlange
+ * fester Länge, jede Seite höchstens einmal darin. Ist sie voll, wird die Seite übersprungen und beim nächsten
+ * Abgleich oder Abruf nachgeholt, weil ihr Ergebnis dann noch fehlt oder veraltet ist.
  */
 public class Enrichments {
 
@@ -28,9 +40,22 @@ public class Enrichments {
     private final Map<String, EnrichmentProcessor> processors = new LinkedHashMap<>();
     private final EnrichmentStore store;
     private final Clock clock;
+    private final ExecutorService background;
+    private final Set<String> queued = ConcurrentHashMap.newKeySet();
 
+    /** Ohne Hintergrund: alle Prozessoren rechnen im aufrufenden Thread. */
     public Enrichments(PageTextProjector projector, List<EnrichmentProcessor> processors, EnrichmentStore store,
                        Clock clock) {
+        this(projector, processors, store, clock, null);
+    }
+
+    /**
+     * @param background Hintergrund für Prozessoren mit {@link EnrichmentProcessor#background()}, z. B.
+     *                   {@link #background(int)}, oder {@code null}, dann rechnen auch sie im aufrufenden Thread
+     */
+    public Enrichments(PageTextProjector projector, List<EnrichmentProcessor> processors, EnrichmentStore store,
+                       Clock clock, ExecutorService background) {
+        this.background = background;
         this.projector = Objects.requireNonNull(projector, "projector");
         this.store = Objects.requireNonNull(store, "store");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -44,6 +69,20 @@ public class Enrichments {
         }
     }
 
+    /**
+     * Ein begrenzter Hintergrund: ein Thread, höchstens {@code capacity} wartende Berechnungen, darüber wird verworfen.
+     * Der Aufrufer schließt ihn mit {@link ExecutorService#shutdownNow()}.
+     */
+    public static ExecutorService background(int capacity) {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 30, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(capacity), Thread.ofVirtual().name("enrichment-background-", 0).factory(),
+                (task, pool) -> {
+                    throw new RejectedExecutionException("Hintergrund der Anreicherungen voll");
+                });
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */
     public List<String> processorIds() {
         return List.copyOf(processors.keySet());
@@ -51,14 +90,16 @@ public class Enrichments {
 
     /**
      * Berechnet die Ergebnisse, die fehlen oder veraltet sind. Ein aktuelles Ergebnis, auch ein fehlgeschlagenes, wird
-     * nicht wiederholt; dafür gibt es {@link #recompute}.
+     * nicht wiederholt; dafür gibt es {@link #recompute}. Prozessoren im Hintergrund zählen nicht in {@link Run}.
      */
     public Run refresh(PageSnapshot snapshot) {
         return run(snapshot, null, false);
     }
 
     /**
-     * Berechnet die Ergebnisse der genannten Prozessoren neu, auch wenn sie aktuell sind (Neuindexierung).
+     * Berechnet die Ergebnisse der genannten Prozessoren neu, auch wenn sie aktuell sind (Neuindexierung). Auf
+     * ausdrücklichen Wunsch, deshalb auch Prozessoren mit {@link EnrichmentProcessor#background()} im aufrufenden
+     * Thread.
      *
      * @param processorId ein Prozessor oder {@code null} für alle
      * @throws IllegalArgumentException für einen unbekannten Prozessor
@@ -126,13 +167,17 @@ public class Enrichments {
         int current = 0;
         int failed = 0;
         for (EnrichmentProcessor processor : processors.values()) {
-            if (only != null && !only.equals(processor.id())) {
+            if (only != null && !only.equals(processor.id()) || !processor.appliesTo(snapshot.key())) {
                 continue;
             }
             Enrichment previous = stored.get(processor.id());
             if (!force && previous != null
                     && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
                 current++;
+                continue;
+            }
+            if (!force && background != null && processor.background()) {
+                schedule(processor, snapshot, text, input);
                 continue;
             }
             Enrichment result = compute(processor, snapshot, text, input);
@@ -143,6 +188,37 @@ public class Enrichments {
             }
         }
         return new Run(true, computed, current, failed);
+    }
+
+    private void schedule(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
+        String id = processor.id() + "\n" + snapshot.key().sourceId() + "\n" + snapshot.key().pageId();
+        if (!queued.add(id)) {
+            return;
+        }
+        try {
+            background.execute(() -> {
+                try {
+                    Enrichment previous = store.find(snapshot.key()).stream()
+                            .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
+                            .orElse(null);
+                    if (previous != null
+                            && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
+                        return;
+                    }
+                    store.save(compute(processor, snapshot, text, input));
+                    store.flush();
+                } catch (RuntimeException e) {
+                    LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
+                            processor.id(), e.getClass().getName());
+                } finally {
+                    queued.remove(id);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            queued.remove(id);
+            LOG.log(System.Logger.Level.INFO, "Hintergrund der Anreicherungen voll oder beendet; {0} wird später "
+                    + "nachgeholt", processor.id());
+        }
     }
 
     private Enrichment compute(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {

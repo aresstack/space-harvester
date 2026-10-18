@@ -3,9 +3,9 @@ package com.aresstack.spaceharvester.application.enrichment.embedding;
 import java.util.List;
 
 /**
- * Port zu einem Embedding-Modell, lokal (z. B. ONNX im Prozess) oder entfernt (HTTP über den Netzwerk-Stack mit PAC,
- * Proxy und mTLS). Umsetzungen sind deterministisch für dasselbe Modell und denselben Text, senden nur die übergebenen
- * Texte und protokollieren sie nie.
+ * Port zu einem Embedding-Modell. Die Umsetzung ist der externe KI-Dienst ({@code source.ai.RemoteAi}, ADR 0011)
+ * über den Netzwerk-Stack mit PAC und Proxy; ein Modell im Prozess gibt es nicht mehr. Umsetzungen sind
+ * deterministisch für dasselbe Modell und denselben Text, senden nur die übergebenen Texte und protokollieren sie nie.
  */
 public interface EmbeddingProvider {
 
@@ -27,8 +27,8 @@ public interface EmbeddingProvider {
     List<float[]> embed(List<String> texts);
 
     /**
-     * Bettet Suchanfragen ein, in derselben Reihenfolge. Modelle, die Anfragen anders als Dokumente behandeln (etwa E5
-     * mit den Präfixen {@code query: } und {@code passage: }), überschreiben das; sonst wie {@link #embed}.
+     * Bettet Suchanfragen ein, in derselben Reihenfolge. Dienste, die Anfragen anders als Dokumente behandeln,
+     * überschreiben das; sonst wie {@link #embed}.
      *
      * @return je Text ein Vektor mit {@link #dimensions()} endlichen Werten
      * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar oder überlastet ist

@@ -34,7 +34,7 @@ Die Paketstruktur trennt Fachlogik und Spring bereits sauber. Gezählt auf `main
 | `source`, `source.confluence`, `source.network` | 25 | nur `WebClientConfluenceTransport` | `enterprise-ai-sources`, win-proxy-java, Jackson 3, Reactor Netty, **Spring WebClient** |
 | `persistence.lucene`, `persistence.files` | 15 | keine | Lucene 10 |
 | `output.convert`, `output.export` | 13 | keine | jsoup, PDFBox, Jackson 3 |
-| `embedding.onnx` | 5 | keine | ONNX Runtime, DJL-Tokenizer |
+| `embedding.onnx` | 5 | keine | ONNX Runtime, DJL-Tokenizer (mit ADR 0011 entfernt) |
 | `api`, `api.confluence` | 19 | alle | Spring MVC, springdoc |
 | `config` | 19 | alle | Spring Boot (Konfigurationseigenschaften, Beans) |
 | `security` | 11 | fast alle | Spring Security, Servlet |
@@ -53,7 +53,7 @@ Kein Paket aus `application`, `source`, `persistence`, `output` oder `embedding`
 | `source`, `source.confluence`, `source.network` | Quellenadapter (Confluence, Dateien), Proxy/PAC, mTLS, asynchroner Transport; ohne sie kann die Bibliothek nichts ernten |
 | `persistence.lucene`, `persistence.files` | Umsetzung der Ports SnapshotRepository, PageCacheReader, PageSearchIndex, JobStore, SyncBaselineStore, EnrichmentStore, AssetStore |
 | `output.convert`, `output.export` | Konverter JSON/Markdown/DOCX/PDF und Exportdateien |
-| `embedding.onnx` | lokales Embedding-Modell hinter dem Port `EmbeddingProvider` |
+| `ai`, `source.ai` | externer KI-Dienst hinter dem Port `EmbeddingProvider` (ADR 0011; ersetzt `embedding.onnx`) |
 | `core` (`com.aresstack.spaceharvester.core.Harvester`) | kleiner öffentlicher Einstieg ohne Spring (Abschnitt 4) |
 
 ### `:space-harvester-server`
@@ -101,7 +101,7 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    (`async-transport: disabled`) kommt ganz ohne Spring aus.
 4. **Konfiguration.** Die `@ConfigurationProperties`-Klassen bleiben im Server und bilden die YAML-Schlüssel
    unverändert auf die Core-Einstellungstypen ab (`SourceSettingsConfig`, `ProxySettings`, `JobLimits`,
-   `OnnxEmbeddingSettings` usw., die schon heute frameworkneutral sind). Keine Konfigurationsschlüssel ändern sich.
+   `AiServiceSettings` usw., die schon heute frameworkneutral sind). Keine Konfigurationsschlüssel ändern sich.
 5. **Öffentlicher Einstieg.** `com.aresstack.spaceharvester.core.Harvester` (eigenes Paket, damit kein Paket auf
    zwei Module verteilt ist) baut aus Quellen-Einstellungen und einem
    Cache-Verzeichnis dieselben Objekte, die heute `config` verdrahtet, und bietet Quellen, Abgleich, Seiten, Suche und
@@ -131,7 +131,7 @@ folgende Befund bleibt als Begründung stehen. Geprüft wurde, was ein Java-8-Co
 | Lucene 10.5 | verlangt Java 21. Letzte Java-8-Version ist 8.11 mit anderer API und anderem Indexformat: der persistente Cache, ADR 0003 und die Vektoren aus ADR 0004 (`KnnFloatVectorField`) müssten neu gebaut werden |
 | Jackson 3 (`tools.jackson`) | verlangt Java 17; Rückbau auf Jackson 2 |
 | Spring WebFlux 7 | verlangt Java 17; der asynchrone Transport (ADR 0001) müsste ersetzt werden |
-| PDFBox 3, jsoup, ONNX Runtime | Java 8 möglich |
+| PDFBox 3, jsoup | Java 8 möglich |
 
 Ein Java-8-Core wäre damit ein Neubau großer Teile von Cache, Suche, Transport und Domänenmodell, mit hohem Risiko
 für die festgelegten Hashes (`page-metadata/v1`, `page-attributes/v1`), die Konverter-Versionen und das Indexformat.

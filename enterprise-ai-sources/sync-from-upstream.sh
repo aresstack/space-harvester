@@ -22,12 +22,20 @@ modules=(
   proasteion/emporion/holkas/source-confluence
   proasteion/emporion/deigma
   proasteion/emporion/holkas/source-localfiles
+  embedding-api
+  embedding-openai
 )
 
 # Einzelne Klassen aus weiteren Modulen: <Modulpfad>:<Klassenpfad unter src/main/java ohne .java>.
 # SimpleContentDetector (nur JDK) erkennt Dateitypen für source-localfiles, ohne Apache Tika mitzunehmen.
 module_classes=(
   proasteion/emporion/deigma/document-tika:com/aresstack/enterpriseai/proasteion/emporion/deigma/tika/SimpleContentDetector
+  model-api:com/aresstack/enterpriseai/model/api/ModelCatalogPort
+  model-api:com/aresstack/enterpriseai/model/api/ModelCatalogException
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelCatalogAdapter
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelCatalogConfig
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelListParser
+  model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzConnections
 )
 
 # Aus astu nur die Klassen, die die Module oben (inklusive Tests) transitiv brauchen.
@@ -36,6 +44,9 @@ astu_classes=(
   knowledge/KnowledgeResourceId knowledge/KnowledgeRevision knowledge/KnowledgeStructuralBlock
   knowledge/KnowledgeText knowledge/SourceAddress knowledge/UnicodeClasses
   security/SecretRef
+  embedding/EmbeddingModelIdentity embedding/EmbeddingVector embedding/EmbeddingWorldMismatchException
+  modelcatalog/ModelCategory modelcatalog/ModelClassification modelcatalog/ModelDescriptor
+  modelcatalog/ModelReference
   source/KnowledgeSourceType source/SourceDefinition source/SourceLocators
   source/SourceSettingField source/SourceSettings
 )
