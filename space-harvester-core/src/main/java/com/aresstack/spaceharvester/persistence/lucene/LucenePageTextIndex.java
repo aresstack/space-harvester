@@ -13,12 +13,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.StoredField;
@@ -219,7 +219,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             query.add(new BoostQuery(new TermQuery(new Term(TITLE, term)), 2f), BooleanClause.Occur.SHOULD);
         }
         query.setMinimumNumberShouldMatch(1);
-        Pattern found = finder(terms);
+        Set<String> wanted = Set.copyOf(terms);
         return read(searcher -> {
             TopDocs top = searcher.search(query.build(), limit);
             StoredFields stored = searcher.storedFields();
@@ -227,7 +227,7 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
             for (ScoreDoc hit : top.scoreDocs) {
                 Document doc = stored.document(hit.doc);
                 matches.add(new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
-                        window(doc.get(TEXT), found)));
+                        window(doc.get(TEXT), wanted)));
             }
             return matches;
         });
@@ -283,26 +283,21 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         return List.copyOf(terms);
     }
 
-    private static Pattern finder(List<String> terms) {
-        StringBuilder alternatives = new StringBuilder();
-        for (String term : terms) {
-            alternatives.append(alternatives.isEmpty() ? "" : "|").append(Pattern.quote(term));
-        }
-        return Pattern.compile(alternatives.toString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-    }
-
-    /** Ein Textfenster um die erste Fundstelle, an Wortgrenzen, Leerraum zusammengezogen (wie RawTextWindows). */
-    static String window(String text, Pattern found) {
+    /**
+     * Ein Textfenster um die erste Fundstelle, an Wortgrenzen, Leerraum zusammengezogen (wie RawTextWindows). Die
+     * Fundstelle ist das erste Wort, das der Analyzer genauso zerlegt wie ein Suchwort, nicht ein beliebiger Teiltext.
+     */
+    String window(String text, Set<String> terms) {
         if (text == null || text.isEmpty()) {
             return "";
         }
-        Matcher matcher = found.matcher(text);
-        if (!matcher.find()) {
+        int at = firstToken(text, terms);
+        if (at < 0) {
             return "";
         }
-        int start = Math.max(0, matcher.start() - WINDOW / 3);
+        int start = Math.max(0, at - WINDOW / 3);
         int end = Math.min(text.length(), start + WINDOW);
-        while (start > 0 && start > matcher.start() - WINDOW / 2 && !Character.isWhitespace(text.charAt(start - 1))) {
+        while (start > 0 && start > at - WINDOW / 2 && !Character.isWhitespace(text.charAt(start - 1))) {
             start--;
         }
         while (end < text.length() && end < start + WINDOW + WINDOW / 4 && !Character.isWhitespace(text.charAt(end))) {
@@ -310,6 +305,26 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         }
         String window = SPACES.matcher(text.substring(start, end)).replaceAll(" ").strip();
         return (start > 0 ? "… " : "") + window + (end < text.length() ? " …" : "");
+    }
+
+    /** Zeichenposition des ersten Worts im Text, das eines der Suchwörter ist, sonst -1. */
+    private int firstToken(String text, Set<String> terms) {
+        try (TokenStream tokens = analyzer.tokenStream(TEXT, text)) {
+            CharTermAttribute term = tokens.addAttribute(CharTermAttribute.class);
+            OffsetAttribute offset = tokens.addAttribute(OffsetAttribute.class);
+            tokens.reset();
+            int found = -1;
+            while (tokens.incrementToken()) {
+                if (terms.contains(term.toString())) {
+                    found = offset.startOffset();
+                    break;
+                }
+            }
+            tokens.end();
+            return found;
+        } catch (IOException e) {
+            return -1;
+        }
     }
 
     private static String id(PageKey key) {

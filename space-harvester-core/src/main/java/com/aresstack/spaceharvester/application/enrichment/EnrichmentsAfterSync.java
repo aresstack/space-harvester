@@ -177,7 +177,12 @@ public class EnrichmentsAfterSync implements SyncCommitted {
                     context.checkpoint();
                 }
                 try {
-                    snapshots.find(key).ifPresent(texts::index);
+                    // Die Payload trägt nach METADATA_CHANGED noch die alten Kopfdaten; Titel und Space aus dem Kopf.
+                    PageSnapshot snapshot = snapshots.find(key).orElse(null);
+                    if (snapshot != null) {
+                        texts.index(snapshot, snapshots.findHeader(key).map(header -> header.metadata())
+                                .orElse(snapshot.metadata()));
+                    }
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Volltext einer Seite in {0} übersprungen ({1})",
                             key.sourceId(), e.getClass().getName());

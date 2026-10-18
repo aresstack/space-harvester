@@ -4,6 +4,11 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -32,18 +37,29 @@ public final class PageTextIndexing {
 
     /** @return ob die Seite neu indiziert wurde */
     public boolean index(PageSnapshot snapshot) {
+        return index(snapshot, snapshot.metadata());
+    }
+
+    /**
+     * Wie {@link #index(PageSnapshot)}, mit den aktuellen Kopfdaten: nach einer Umbenennung oder Verschiebung ohne neue
+     * Version trägt die abgelegte Payload noch die alten, der Index soll Titel und Space der aktuellen führen.
+     *
+     * @return ob die Seite neu indiziert wurde
+     */
+    public boolean index(PageSnapshot snapshot, PageMetadata current) {
         try {
             Optional<PageText> text = projection(snapshot);
             if (text.isEmpty()) {
                 index.remove(snapshot.key());
                 return false;
             }
-            String input = text.get().inputSha256();
+            // Titel und Space gehören zum Stand des Eintrags: ändern sie sich, wird neu indiziert.
+            String input = state(text.get().inputSha256(), current);
             if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()) {
                 return false;
             }
-            index.put(new PageTextIndex.Entry(snapshot.key(), snapshot.metadata().partitionKey(),
-                    snapshot.metadata().title(), text.get().text(), input));
+            index.put(new PageTextIndex.Entry(snapshot.key(), current.partitionKey(), current.title(),
+                    text.get().text(), input));
             return true;
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten.
@@ -69,6 +85,16 @@ public final class PageTextIndexing {
             index.flush();
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "Volltextindex nicht gesichert ({0})", e.getClass().getName());
+        }
+    }
+
+    private static String state(String input, PageMetadata current) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + current.partitionKey() + "\n"
+                    + current.title()).getBytes(StandardCharsets.UTF_8));
+            return "sha256:" + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
         }
     }
 

@@ -21,7 +21,7 @@ public interface PageTextIndex {
     /** Legt den Text einer Seite ab oder ersetzt ihn. */
     void put(Entry entry);
 
-    /** Der abgelegte Eingabe-Hash der Seite, wenn sie im Index liegt. */
+    /** Der abgelegte Stand ({@link Entry#inputSha256()}) der Seite, wenn sie im Index liegt. */
     Optional<String> inputSha256(PageKey key);
 
     /** Entfernt eine Seite; unbekannte Seiten sind kein Fehler. */
@@ -45,7 +45,7 @@ public interface PageTextIndex {
      * Eine Seite im Index.
      *
      * @param spaceKey    Space bzw. Partition der Seite
-     * @param inputSha256 Eingabe-Hash der Projektion
+     * @param inputSha256 Stand des Eintrags: Eingabe-Hash der Projektion samt Titel und Space
      */
     record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256) {
 

@@ -39,6 +39,18 @@ class LucenePageTextIndexTest {
     }
 
     @Test
+    void theWindowIsAroundAWholeWordNotAPartOfOne() {
+        try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
+            index.put(entry("wiki", "1", "DEV", "A", "Die party beginnt. " + "Füllwort ".repeat(80)
+                    + "Moderne art im Foyer."));
+
+            String window = index.search("art", Set.of("wiki"), SearchSpaces.all(), 10).getFirst().snippet();
+
+            assertThat(window).contains("Moderne art im Foyer.").doesNotContain("party");
+        }
+    }
+
+    @Test
     void filtersBySourceAndSpacesAndNeedsAtLeastOneWord() {
         try (LucenePageTextIndex index = LucenePageTextIndex.open(dir)) {
             index.put(entry("wiki", "1", "DEV", "A", "Nachtlauf Prüfung"));

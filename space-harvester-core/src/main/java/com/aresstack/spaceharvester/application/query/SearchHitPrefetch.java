@@ -20,6 +20,8 @@ import java.util.function.Function;
  */
 public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoCloseable {
 
+    private static final System.Logger LOG = System.getLogger(SearchHitPrefetch.class.getName());
+
     /** Höchstens so viele Treffer je Stapel. */
     public static final int MAX_PER_BATCH = 10;
 
@@ -74,8 +76,9 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                 pool.getQueue().clear();
             }
             background.shutdown();
-            if (!background.awaitTermination(30, TimeUnit.SECONDS)) {
-                background.shutdownNow();
+            // Kein Unterbrechen: der laufende Abruf hat eigene Fristen und endet von selbst.
+            while (!background.awaitTermination(30, TimeUnit.SECONDS)) {
+                LOG.log(System.Logger.Level.INFO, "Vorladen endet noch; warte auf den laufenden Abruf");
             }
         };
     }
