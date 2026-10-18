@@ -9,7 +9,6 @@ import com.aresstack.spaceharvester.app.settings.ProxyDraft;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
-import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.InvalidNetworkConfigurationException;
 import com.aresstack.spaceharvester.source.network.ProxyRoutes;
@@ -453,11 +452,13 @@ final class SourceWizard {
         test.setEnabled(false);
         Background.run(() -> AppRuntime.probe(draft.settings(), source.id(), secrets, context.version(),
                         Files.createTempDirectory("space-harvester-probe")),
-                spaces -> {
+                check -> {
                     test.setEnabled(true);
-                    String keys = spaces.stream().map(Partition::key).limit(8).collect(Collectors.joining(", "));
-                    feedback.success("Verbunden: " + Texts.count(spaces.size(), "Space", "Spaces") + " sichtbar"
-                            + (keys.isEmpty() ? "" : " (" + keys + (spaces.size() > 8 ? ", …" : "") + ")"));
+                    if (check.successful()) {
+                        feedback.success(check.message());
+                    } else {
+                        feedback.warning("Verbindung nicht möglich", check.message());
+                    }
                     done.run();
                 },
                 error -> {
@@ -485,6 +486,7 @@ final class SourceWizard {
         feedback.working("Wird gespeichert …");
         save.setEnabled(false);
         com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
+        AppRuntime.SessionSecrets secrets = sessionSecrets(source);
         Background.run(() -> {
             if (aiDraft != null) {
                 // Ohne gemessene Dimension bleibt die semantische Suche aus; die Quelle wird trotzdem gespeichert.
@@ -493,7 +495,16 @@ final class SourceWizard {
                 // statt die Quelle doppelt anzuhängen.
                 AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
             }
-            SourceSaving.store(context, editor, editing, source, write(source), value);
+            ConfigFileEditor.Draft written = write(source);
+            SourceSaving.store(context, editor, editing, source, written, value);
+            if (editing != null && runtime != null) {
+                // Zeigt die Quelle jetzt auf ein anderes Ziel, entfernt der Core ihre bisherigen Daten (#188).
+                try {
+                    runtime.workspace().changeSource(AppRuntime.config(written.settings(), source.id(), secrets));
+                } catch (RuntimeException e) {
+                    // Ohne gültige Einstellungen bleibt es beim Neuladen; dessen Prüfung nennt das Problem.
+                }
+            }
             return source.id();
         }, savedId -> {
             if (!aiVault && aiKey.length > 0) {

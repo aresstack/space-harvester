@@ -629,12 +629,14 @@ public final class SourcesView implements View {
                         + "und eine vorhandene gelöscht; das Entfernen lässt sich nicht rückgängig machen."
                 : "Die vorige Fassung bleibt als .bak erhalten.";
         if (!Dialogs.confirm(root, "Quelle entfernen", "Die Quelle " + id + " wird aus der Konfigurationsdatei "
-                + "entfernt. " + backup + " Die Quellen starten danach neu. Der lokale Bestand im "
-                + "Datenordner bleibt liegen, ist ohne die Quelle aber nicht mehr erreichbar.", "Entfernen")
+                + "entfernt. " + backup + " Ihre offenen Aufträge werden abgebrochen, ihr lokaler Bestand (Seiten, "
+                + "Suchindex, Analysen, Bilder) wird gelöscht; fertige Exporte bleiben. Die Quellen starten danach neu.",
+                "Entfernen")
                 || !Dialogs.restartAllowed(root, context)) {
             return;
         }
         feedback.working("Quelle wird entfernt …");
+        AppRuntime runtime = context.runtime();
         Background.execute(() -> {
             // Gehört zur Entfernung: Ein späterer Eintrag mit derselben ID erbt sonst das gespeicherte Geheimnis.
             // Erst der Tresor (verschlüsselt gemerkt), dann die Datei; scheitert die Datei, kommt er zurück.
@@ -652,6 +654,10 @@ public final class SourcesView implements View {
                     }
                 }
                 throw e;
+            }
+            // Erst nach der Datei: Der Core bricht die Aufträge ab und löscht den Bestand der Quelle (#188).
+            if (runtime != null) {
+                runtime.workspace().removeSource(id);
             }
         }, () -> {
             context.secrets().remove(id);

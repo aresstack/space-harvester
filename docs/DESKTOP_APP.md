@@ -95,9 +95,10 @@ helles Schiff mit blauen Triebwerken erkennbar sein, die Ecken bleiben durchsich
    unter Windows; der Export läuft erst beim ersten TLS-Handshake) oder ein vorhandenes `spring.ssl.bundle`. **Proxy auflösen** zeigt
    mit den gewählten Einstellungen jeden Schritt der Auflösung zur Adresse aus Schritt 1, ohne etwas zu speichern.
 4. **Prüfen und speichern:** Vorschau des Eintrags (und des Proxys, wenn er sich ändert; die Prüfseite sagt dann,
-   dass das alle Quellen betrifft). **Verbindung testen** startet einen eigenen Harvester nur mit der neuen Quelle in
-   einem leeren Arbeitsordner und genau den gewählten Einstellungen (Quelle, Anmeldung, Proxy) und lädt die Spaces
-   live; der Bestand der laufenden App bleibt unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources`
+   dass das alle Quellen betrifft). **Verbindung testen** ist „Verbindung testen“ des Core (`SourceManagement.test`,
+   #188): in einem eigenen Harvester in einem leeren Arbeitsordner mit genau den gewählten Einstellungen (Quelle,
+   Anmeldung, Proxy); die Meldung kommt vom Core („Verbunden, 3 Spaces sichtbar“ oder die Art des Fehlers, nie Werte
+   der Einstellungen); der Bestand der laufenden App bleibt unberührt. **Speichern** hängt den Eintrag an `space-harvester.sources`
    an, ersetzt bei Bedarf nur den Block `proxy:`, lässt Kommentare und den Rest der Datei unverändert, legt die vorige
    Fassung als `<datei>.bak` ab und lädt neu.
 
@@ -106,11 +107,13 @@ behält seine Größe, und Tippen im Feld nimmt den Hinweis wieder weg. Ergebnis
 **Speichern** erscheinen auf der Prüfseite.
 
 **Bearbeiten …** öffnet denselben Assistenten mit den Angaben der gewählten Quelle (Kennung und Art bleiben fest) und
-ersetzt den Eintrag an seiner Stelle. Optionen, die der Assistent nicht abfragt (z. B. `connectTimeoutMillis`),
+ersetzt den Eintrag an seiner Stelle; zeigt die Quelle danach auf ein anderes Ziel (Art oder Adresse), entfernt der
+Core ihre bisherigen Daten (`SourceManagement.change`). Optionen, die der Assistent nicht abfragt (z. B. `connectTimeoutMillis`),
 bleiben erhalten; enthält der Eintrag andere unbekannte Schlüssel, verweist die App auf die Datei. Steht im
 bearbeiteten Eintrag ein Passwort, Token oder Zertifikatspasswort im Klartext, ersetzt der Assistent es durch den
-Platzhalter. **Entfernen …** nimmt den Eintrag nach Rückfrage aus der Datei; der lokale Bestand im Datenordner bleibt
-liegen. Steht irgendwo in der Datei ein Geheimnis im Klartext (jede Quelle, Vertrauensspeicher, auch nicht ausgewertete
+Platzhalter. **Entfernen …** nimmt den Eintrag nach Rückfrage aus der Datei; danach bricht der Core die offenen Aufträge der
+Quelle ab und löscht ihren Bestand (Seiten, Suchindex, Analysen, Bilder; `SourceManagement.remove`), fertige Exporte
+bleiben. Steht irgendwo in der Datei ein Geheimnis im Klartext (jede Quelle, Vertrauensspeicher, auch nicht ausgewertete
 Felder oder `${NAME:wert}`), legen Bearbeiten und Entfernen keine `.bak` an und löschen eine vorhandene; Prüfseite und
 Rückfrage sagen das vorher ausdrücklich.
 
@@ -284,7 +287,7 @@ Synchronisierung ist keine Voraussetzung; fehlende Daten holt der Core selbst.
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
-| – | `Harvester.builder` mit nur der neuen Quelle, `SourceQueries.partitions` | Wissensquellen › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
+| – | `SourceManagement.test`, `.change`, `.remove` (#188) | Wissensquellen › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceWizardTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |
 | – | – | Konfiguration, Platzhalter, fehlende Zugangsdaten | `AppSettingsLoaderTest`, `PlaceholdersTest`, `WorkspaceTest.aSourceWithoutToken…` |
 | – | Auftragsliste der App | Aufträge nach Neustart | `WorkspaceTest.theActivityListSurvivesARestart` |
 
