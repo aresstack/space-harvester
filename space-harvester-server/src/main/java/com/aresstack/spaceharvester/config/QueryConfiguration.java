@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -21,6 +22,7 @@ import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -118,19 +120,30 @@ class QueryConfiguration {
      * Ablage und Vektorsuche ist); sonst {@code semantic-search-unavailable}. Mit dem Hintergrund
      * {@code relevanceRenewals} prüft die Suche jeden Treffer live und lädt neuere Versionen nach. Mit dem
      * Volltextindex über den Cache sieht ein Reranker den Lesetext; Kandidaten sind nur Vektortreffer, ohne Fusion
-     * (ADR 0013). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
+     * (ADR 0013). Vorher finden die Quellen, die gefundenen Seiten werden geladen und ihre fehlenden Embeddings
+     * berechnet (ADR 0013, Punkt 3). Mit {@code rerank-model} ordnet danach der Cross-Encoder des Dienstes um.
      */
     @Bean
     RelevanceSearch relevanceSearch(SourceCatalog catalog, ObjectProvider<PageSearchIndex> index, AccessGuard access,
                                     ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingIndex> vectors,
                                     ObjectProvider<EmbeddingProcessor> embedding, PageQueries pages,
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
-                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker) {
+                                    ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
+                                    KeywordSearch keywords, ObjectProvider<PageCacheReader> cache,
+                                    ObjectProvider<Enrichments> enrichments) {
         ExecutorService background = renewals.getIfAvailable();
+        EmbeddingProcessor processor = embedding.getIfUnique();
+        PageCacheReader reader = cache.getIfAvailable();
+        Enrichments available = enrichments.getIfAvailable();
+        // ADR 0013, Punkt 3: erst finden, laden und fehlende Embeddings berechnen, dann semantisch suchen.
+        SemanticPreparation preparation = processor == null || reader == null || available == null
+                || !keywords.searchesTheCache() ? null
+                : new SemanticPreparation(keywords, key -> reader.page(key).map(CachedPage::snapshot), available,
+                processor.id(), SemanticPreparation.DEFAULT_WAIT);
         return new RelevanceSearch(catalog, index.getIfAvailable(PageSearchIndex::unavailable), access,
-                store.getIfUnique(), vectors.getIfUnique(), embedding.getIfUnique(),
+                store.getIfUnique(), vectors.getIfUnique(), processor,
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique());
+                texts.getIfUnique(), preparation);
     }
 }

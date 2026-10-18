@@ -86,6 +86,12 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   "http://localhost:8080/api/v1/search?sourceId=confluence&sort=relevance&q=Wie+l%C3%A4uft+der+n%C3%A4chtliche+Betrieb%3F"
 ```
 
+- Erst in den Cache (ADR 0013, Punkt 3): Vor der Vektorsuche findet dieselbe Schlagwortsuche wie ohne Haken bis zu
+  50 Seiten (die Anfrage, auf 200 Zeichen gekürzt, geht an die Suche der Quellen) und lädt sie mit den Rechten des
+  Aufrufers in den Cache. Für diese Treffer berechnet die Suche fehlende oder veraltete Embeddings im Aufruf, vier
+  zugleich, höchstens 10 s für Laden und Embeddings zusammen; was dann nicht fertig ist, macht die Antwort
+  unvollständig (`complete: false`) und zählt beim nächsten Mal. Ohne Haken wird nie etwas eingebettet. Auch Seiten
+  lokaler Dateien bekommen Embeddings.
 - Die Anfrage geht über `POST /embeddings` an den Dienst (wie die Seiten, ohne Präfixe; das Modell bestimmt der Dienst).
 - Kandidaten: bis zu 1000 ähnlichste Stücke der Quelle (ohne `sourceId`: aller freigegebenen Quellen zusammen, eine
   Einbettung der Anfrage und eine Vektorsuche, #114) unter genau der aktuellen Prozessorversion, zu Seiten

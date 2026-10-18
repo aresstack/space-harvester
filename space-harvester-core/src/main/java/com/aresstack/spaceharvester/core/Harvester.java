@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
@@ -36,6 +37,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
+import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageCacheFill;
@@ -47,6 +49,7 @@ import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
+import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
@@ -217,8 +220,10 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
-            this.enrichments = new Enrichments(new ConfluenceStorageTextProjector(), processors, enrichmentStore,
-                    clock, background);
+            // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+            PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
+                    new LocalFilesTextProjector()));
+            this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
@@ -264,8 +269,12 @@ public final class Harvester implements AutoCloseable {
                 reranker = new ModelReranker(builder.ai.rerankModel(), RemoteAi.of(builder.ai, catalog, trustBundles,
                         builder.userAgent).reranker(), builder.ai::mayProcessExternally);
             }
+            // ADR 0013, Punkt 3: mit Haken erst finden, laden und fehlende Embeddings berechnen.
+            SemanticPreparation preparation = embedding == null || prefetch == null ? null
+                    : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
+                    enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex);
+                    renewal, reranker, textIndex, preparation);
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)));
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());

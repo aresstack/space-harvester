@@ -50,6 +50,24 @@ class HarvesterFullTextTest {
         }
     }
 
+    /** Jeder Text zeigt in dieselbe Richtung; es zählt nur, ob ein Vektor da ist. */
+    private static final EmbeddingProvider MODEL = new EmbeddingProvider() {
+        @Override
+        public String modelId() {
+            return "achsen@1";
+        }
+
+        @Override
+        public int dimensions() {
+            return 2;
+        }
+
+        @Override
+        public List<float[]> embed(List<String> texts) {
+            return texts.stream().map(text -> new float[] {1, 0}).toList();
+        }
+    };
+
     @TempDir
     Path data;
     @TempDir
@@ -105,42 +123,30 @@ class HarvesterFullTextTest {
     }
 
     @Test
-    void aLiveHitLoadedIntoTheCacheIsFoundByTheSemanticSearchWithoutAnySync() throws InterruptedException {
-        EmbeddingProvider model = new EmbeddingProvider() {
-            @Override
-            public String modelId() {
-                return "achsen@1";
-            }
-
-            @Override
-            public int dimensions() {
-                return 2;
-            }
-
-            @Override
-            public List<float[]> embed(List<String> texts) {
-                return texts.stream().map(text -> new float[] {1, 0}).toList();
-            }
-        };
-        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).embeddings(model).build()) {
-            harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null, 10);
+    void theSemanticSearchFindsLoadsAndEmbedsBeforeItSearchesWithoutAnySync() {
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).embeddings(MODEL).build()) {
             PageSearchQuery wiki = PageSearchQuery.of("wiki", List.of(), null, null, null, null, null, null,
                     SearchSort.TITLE);
 
-            // Kein Abgleich: der Treffer der Quellensuche liegt im Cache und bekommt sein Embedding.
-            RelevanceSearch.RelevanceResults results = null;
-            Instant deadline = Instant.now().plusSeconds(10);
-            while ((results == null || results.hits().isEmpty()) && Instant.now().isBefore(deadline)) {
-                try {
-                    results = harvester.relevance().search(harvester.caller(), wiki, "Nachtlauf", 10);
-                } catch (RuntimeException e) {
-                    // Noch nichts im Index der Quelle.
-                }
-                Thread.sleep(50);
-            }
-            assertThat(results).isNotNull();
+            // ADR 0013, Punkt 3: ein Aufruf, ohne vorherige Schlagwortsuche und ohne Abgleich.
+            RelevanceSearch.RelevanceResults results = harvester.relevance().search(harvester.caller(), wiki,
+                    "Nachtlauf", 10);
+
             assertThat(results.hits()).extracting(hit -> hit.hit().page().pageId()).containsExactly("102");
             assertThat(results.reranker()).startsWith("embedding-cosine@");
+            assertThat(results.complete()).isTrue();
+        }
+    }
+
+    @Test
+    void localFilesGetEmbeddingsWhenOpenedToo() {
+        try (Harvester harvester = files(Harvester.builder().embeddings(MODEL))) {
+            harvester.pages().page(harvester.caller(), "docs", id("betrieb.md"), false);
+            PageSearchQuery docs = PageSearchQuery.of("docs", List.of(), null, null, null, null, null, null,
+                    SearchSort.TITLE);
+
+            assertThat(harvester.relevance().search(harvester.caller(), docs, "Nachtlauf", 10).hits())
+                    .extracting(hit -> hit.hit().page().pageId()).containsExactly(id("betrieb.md"));
         }
     }
 

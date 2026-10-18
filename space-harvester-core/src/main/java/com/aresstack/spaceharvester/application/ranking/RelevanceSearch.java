@@ -45,6 +45,11 @@ import java.util.concurrent.Semaphore;
  * Endpunkt). Die Vektoren kommen aus dem externen Embedding-Dienst (ADR 0011); ohne ihn antwortet sie mit
  * {@link SemanticSearchUnavailableException}, nie still mit anderen Treffern.
  *
+ * <p>Erst in den Cache (ADR 0013, Punkt 3, mit {@link Preparation}): Die Quellen finden wie in der Schlagwortsuche,
+ * die gefundenen Seiten werden mit den Rechten des Aufrufers geladen und ihre fehlenden oder veralteten Embeddings
+ * berechnet; erst dann sucht die Suche einmal semantisch. Was dabei nicht fertig wird, macht das Ergebnis
+ * unvollständig.
+ *
  * <p>Nur über den Cache und ohne Fusion (ADR 0013): Kandidaten kommen ausschließlich aus der Vektorsuche über die
  * gespeicherten Embeddings, die Reihenfolge ist die Kosinusähnlichkeit. Es gibt keine zweite Ergebnisliste, also weder
  * Volltext- noch Titelkandidaten und keine Rangfusion. Titelwörter der Anfrage filtern die Kandidaten und sind ohne
@@ -112,6 +117,7 @@ public class RelevanceSearch {
     private final Renewal renewal;
     private final SearchReranker reranker;
     private final PageTextIndex texts;
+    private final Preparation preparation;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -158,6 +164,19 @@ public class RelevanceSearch {
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts, null);
+    }
+
+    /**
+     * Mit Vorbereitung (ADR 0013, Punkt 3): Vor der Vektorsuche finden die Quellen, die gefundenen Seiten werden in den
+     * Cache geladen und fehlende oder veraltete Embeddings berechnet.
+     *
+     * @param preparation die Vorbereitung oder {@code null}, dann sucht die Suche nur über schon gespeicherte Vektoren
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts, Preparation preparation) {
+        this.preparation = preparation;
         this.texts = texts;
         this.renewal = renewal;
         this.reranker = Objects.requireNonNull(reranker, "reranker");
@@ -204,10 +223,21 @@ public class RelevanceSearch {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+        int preparing = 0;
+        if (preparation != null) {
+            try {
+                preparing = preparation.prepare(caller, query, queryText);
+            } catch (RuntimeException e) {
+                // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
+                LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",
+                        e.getClass().getName());
+                preparing = 1;
+            }
+        }
         SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
-            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), true);
+            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0);
         }
 
         float[] vector = queryVector(queryText);
@@ -258,7 +288,7 @@ public class RelevanceSearch {
             hits = reranked.stream().map(byHit::get).toList();
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
-        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete);
+        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0);
     }
 
     /**
@@ -381,6 +411,21 @@ public class RelevanceSearch {
      * Holt eine Seite, deren Quelle eine neuere Version meldet, nach und legt sie im gemeinsamen Cache ab; damit wird
      * auch ihr Vektor neu berechnet (ADR 0011, Punkt 7). Darf nicht blockieren.
      */
+    /**
+     * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): finden, laden, fehlende Embeddings berechnen, begrenzt
+     * im Aufruf.
+     */
+    @FunctionalInterface
+    public interface Preparation {
+
+        /**
+         * @param query Umfang und Filter der Suche
+         * @param text  Anfragetext
+         * @return wie viele gefundene Seiten noch ohne aktuelles Embedding sind; dann ist das Ergebnis unvollständig
+         */
+        int prepare(AccessContext caller, PageSearchQuery query, String text);
+    }
+
     @FunctionalInterface
     public interface Renewal {
 
