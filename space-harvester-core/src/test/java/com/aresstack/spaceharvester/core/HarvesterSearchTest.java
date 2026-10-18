@@ -1,26 +1,28 @@
 package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
-import com.aresstack.spaceharvester.application.query.PageSearchQuery;
-import com.aresstack.spaceharvester.application.query.SearchHit;
-import com.aresstack.spaceharvester.application.query.SearchResults;
-import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Suche als Beschaffung (ADR 0010) gegen eine Fake-Confluence über echtes HTTP: Treffer aus der Suche der Quelle
- * (Titel und Inhalt), ohne vorherigen Abgleich, nachgeladen und danach im Index.
+ * Schlagwortsuche (ADR 0010) gegen eine Fake-Confluence über echtes HTTP: Treffer aus der Suche der Quelle (Titel und
+ * Inhalt), ohne vorherigen Abgleich und ohne Nachladen.
  */
 class HarvesterSearchTest {
 
@@ -55,70 +57,95 @@ class HarvesterSearchTest {
     }
 
     @Test
-    void findsContentInANeverSyncedSourceAndKeepsTheHitsInTheIndex() {
+    void findsContentInANeverSyncedSourceWithoutLoadingOrStoringPages() {
         try (Harvester harvester = harvester(Harvester.builder())) {
             assertThat(harvester.sources().sources().getFirst().capabilities()).contains(SourceCapability.LIVE_SEARCH);
 
-            SearchResults results = harvester.search().search(harvester.caller(), query("wiki", List.of(),
-                    "Nachtlauf"), null, 50);
+            KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
-            assertThat(results.live()).isTrue();
+            // In der Rangfolge der Quelle, mit Space aus den live gelesenen Kopfdaten.
+            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId, KeywordSearch.Hit::spaceKey,
+                    KeywordSearch.Hit::title).containsExactly(tuple("102", "DEV", "Prüfung"),
+                    tuple("200", "OPS", "Bereitschaft"));
+            assertThat(results.hits().getFirst().parentPageId()).isEqualTo("100");
+            assertThat(results.sources()).containsExactly(new KeywordSearch.SourceState("wiki",
+                    KeywordSearch.SourceState.Status.SEARCHED, null));
             assertThat(results.nextCursor()).isNull();
-            // sort=title: „Bereitschaft“ vor „Prüfung“, nicht in der Rangfolge der Quelle.
-            assertThat(results.hits()).extracting(SearchHit::page).extracting(page -> page.header().key().pageId())
-                    .containsExactly("200", "102");
-            assertThat(harvester.pages().page(harvester.caller(), "wiki", "102", false).live()).isFalse();
+            assertThat(results.complete()).isTrue();
+            // Nichts im Bestand: die Suche lädt und speichert keine Seiten.
+            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
+                    .isInstanceOf(CacheMissException.class);
         }
     }
 
     @Test
-    void theRequestedSortAppliesToTheHitsOfTheSource() {
+    void moreHitsComeWithTheCursor() {
         try (Harvester harvester = harvester(Harvester.builder())) {
-            SearchResults results = harvester.search().search(harvester.caller(), PageSearchQuery.of("wiki",
-                    List.of(), List.of(), "Nachtlauf", null, null, null, null, null, SearchSort.PAGE_ID), null, 1);
+            KeywordSearch.Results first = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 1);
+            KeywordSearch.Results second = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), first.nextCursor(), 1);
 
-            assertThat(results.hits()).extracting(hit -> hit.page().header().key().pageId()).containsExactly("102");
-            assertThat(results.complete()).isFalse();
+            assertThat(first.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102");
+            assertThat(first.complete()).isFalse();
+            assertThat(second.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+            assertThat(second.nextCursor()).isNull();
+            assertThat(second.complete()).isTrue();
+            assertThatThrownBy(() -> harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), "k1.kaputt!", 1)).isInstanceOf(InvalidQueryException.class);
+            // Ein Cursor gilt nur für die Anfrage, aus der er stammt.
+            assertThatThrownBy(() -> harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Bereitschaft"), first.nextCursor(), 1))
+                    .isInstanceOf(InvalidQueryException.class);
         }
     }
 
     @Test
     void spaceFiltersApplyToTheHitsOfTheSource() {
         try (Harvester harvester = harvester(Harvester.builder())) {
-            SearchResults results = harvester.search().search(harvester.caller(), query("wiki", List.of("OPS"),
-                    "Nachtlauf"), null, 50);
+            KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                    new KeywordSearch.Query("Nachtlauf", "wiki", Set.of(), Set.of("OPS")), null, 50);
 
-            assertThat(results.hits()).extracting(hit -> hit.page().header().key().pageId()).containsExactly("200");
+            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
         }
     }
 
     @Test
-    void hitsTheCallerMayNotReadNeverAppear() {
+    void hitsTheCallerMayNotSeeNeverAppear() {
         try (Harvester harvester = harvester(Harvester.builder().accessPolicy((context, scope, kind) ->
                 "102".equals(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW))) {
-            SearchResults results = harvester.search().search(harvester.caller(), query(null, List.of(),
-                    "Nachtlauf"), null, 50);
+            KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
-            assertThat(results.hits()).extracting(hit -> hit.page().header().key().pageId()).containsExactly("200");
+            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
         }
     }
 
     @Test
-    void withoutTextTheSearchStaysInTheIndex() {
-        try (Harvester harvester = harvester(Harvester.builder())) {
-            harvester.search().search(harvester.caller(), query("wiki", List.of(), "Nachtlauf"), null, 50);
+    void anUnreachableSourceDoesNotDiscardTheOthers() {
+        try (Harvester harvester = harvester(Harvester.builder().source(new SourceSettingsConfig("down",
+                "confluence", "Weg", java.net.URI.create("http://127.0.0.1:1"), SourceSettingsConfig.Auth.anonymous(),
+                Map.of("connectTimeoutMillis", "500"))))) {
+            KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
-            SearchResults results = harvester.search().search(harvester.caller(), query("wiki", List.of(), null),
-                    null, 50);
+            assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102", "200");
+            assertThat(results.sources()).extracting(KeywordSearch.SourceState::sourceId,
+                    KeywordSearch.SourceState::status).containsExactlyInAnyOrder(
+                    tuple("wiki", KeywordSearch.SourceState.Status.SEARCHED),
+                    tuple("down", KeywordSearch.SourceState.Status.UNAVAILABLE));
+            assertThat(results.complete()).isFalse();
 
-            assertThat(results.live()).isFalse();
-            assertThat(results.hits()).extracting(hit -> hit.page().header().key().pageId())
-                    .containsExactlyInAnyOrder("102", "200");
+            // Auch über „Weitere laden“ bleibt die ausgefallene Quelle als Lücke sichtbar.
+            KeywordSearch.Results first = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), null, 1);
+            KeywordSearch.Results last = harvester.keywordSearch().search(harvester.caller(),
+                    KeywordSearch.Query.of("Nachtlauf"), first.nextCursor(), 1);
+            assertThat(last.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+            assertThat(last.nextCursor()).isNull();
+            assertThat(last.complete()).isFalse();
         }
-    }
-
-    private static PageSearchQuery query(String sourceId, List<String> spaces, String text) {
-        return PageSearchQuery.of(sourceId, List.of(), spaces, text, null, null, null, null, null, SearchSort.TITLE);
     }
 
     private Harvester harvester(Harvester.Builder builder) {

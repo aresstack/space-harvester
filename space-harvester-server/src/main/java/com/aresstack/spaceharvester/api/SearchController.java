@@ -3,9 +3,9 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.api.PageQueryController.CacheResponse;
 import com.aresstack.spaceharvester.api.PageQueryController.PageEntry;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
-import com.aresstack.spaceharvester.application.query.ProvisioningSearch;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchResults;
@@ -22,9 +22,12 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.net.URI;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,34 +36,39 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Suche des Harvesters (#28, ADR 0010): mit Suchtext über Titel und Inhalt live in den Quellen, deren Treffer
- * nachgeladen und indexiert werden ({@link ProvisioningSearch}), sonst Titel- und Metadatensuche über den Index.
+ * Suche des Harvesters (#28, ADR 0010): mit {@code text} die Schlagwortsuche über Titel und Inhalt in der Suche jeder
+ * Quelle ({@link KeywordSearch}, ohne Nachladen und ohne Bestand), sonst Titel- und Metadatensuche über den Index.
  * Liefert nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
  * gespeicherten Embeddings (#89). Ohne {@code sourceId} sucht sie global über alle freigegebenen, indexierten Quellen
  * (#114, ADR 0009); Rechte, Sortierung und Cursor kommen aus demselben Core-Anwendungsfall wie in der Desktop-App.
  */
 @RestController
 @RequestMapping(path = ApiPaths.V1 + "/search", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Suche", description = "Suche über Titel und Inhalt, live in den Quellen mit Nachladen, sonst im Index")
+@Tag(name = "Suche", description = "Schlagwortsuche über die Suche der Quellen, Titel- und Metadatensuche im Index")
 public class SearchController {
 
-    private final ProvisioningSearch search;
+    private final PageSearch search;
+    private final KeywordSearch keywords;
     private final RelevanceSearch relevance;
 
-    public SearchController(ProvisioningSearch search, RelevanceSearch relevance) {
+    public SearchController(PageSearch search, KeywordSearch keywords, RelevanceSearch relevance) {
         this.search = search;
+        this.keywords = keywords;
         this.relevance = relevance;
     }
 
     @GetMapping
     @Operation(summary = "Seiten einer oder aller Quellen nach Titel und Metadaten suchen, stapelweise",
-            description = "Mit title und ohne cursor/pageId sucht der Harvester in jeder Quelle des Umfangs, die selbst "
-                    + "suchen kann, über Titel und Inhalt (Confluence: CQL siteSearch, höchstens "
-                    + ProvisioningSearch.LIVE_LIMIT + " Treffer je Quelle), lädt fehlende Treffer über den "
-                    + "Seitenabruf nach (Rechte je Seite wie beim Lesen, bei delegierten Benutzern über die Quelle), "
-                    + "indexiert sie und liefert sie aus dem Index (origin=source, ein Stapel ohne cursor). Antwortet "
-                    + "die Quelle nicht oder fehlt content, gilt die Titelsuche im Index (origin=cache); liegt dann "
-                    + "für die einzige Quelle nichts im Index, ist es 503 (source-unavailable). Sonst aus dem Index "
+            description = "Mit text: Schlagwortsuche über Titel und Inhalt in der Suche jeder Quelle des Umfangs "
+                    + "(Confluence: CQL siteSearch über /rest/api/search, wie die Websuche), ohne vorherigen Abgleich "
+                    + "und ohne Nachladen von Seiten (origin=source, Antwort KeywordResponse). Jeder Treffer trägt "
+                    + "Titel, Textauszug (snippet), url, Version, Quelle und Space; seine Kopfdaten liest der "
+                    + "Harvester live und prüft an ihnen metadata für genau diese Seite, bei delegierten Benutzern "
+                    + "über die Quelle. Die Quellen liefern reihum; nextCursor lädt weitere (höchstens "
+                    + KeywordSearch.MAX_DEPTH + " je Quelle). sources nennt je Quelle searched, not-supported (kann "
+                    + "nicht selbst suchen) oder unavailable (mit reason); eine nicht erreichbare Quelle verwirft "
+                    + "die anderen nicht, complete ist dann false. sourceId, sourceIds und spaceKey gelten wie unten; "
+                    + "andere Filter und sort gibt es mit text nicht. Ohne text: Titel- und Metadatensuche im Index "
                     + "(origin=cache). Mit sourceId nur diese Quelle (scope=source), ohne "
                     + "alle Quellen, für die der Aufrufer metadata hat und die im Index liegen (scope=global): eine "
                     + "Abfrage, global sortiert und paginiert, kein Zusammenfügen je Quelle. Global gelten Filter in "
@@ -102,8 +110,12 @@ public class SearchController {
             + "sort=relevance ohne title, aber ohne verfügbares Embedding-Modell (semantic-search-unavailable)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    public SearchResponse search(
+    public Object search(
             @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Schlagworte für die Suche der Quellen über Titel und Inhalt, höchstens "
+                    + KeywordSearch.MAX_TEXT_LENGTH + " Zeichen; nicht mit title, pageId, parentPageId, version, "
+                    + "modifiedFrom, modifiedBefore, sort oder q", example = "Nachtlauf")
+            @RequestParam(required = false) String text,
             @Parameter(description = "Quellen-ID aus der Konfiguration; ohne Angabe alle freigegebenen, indexierten "
                     + "Quellen", example = "confluence")
             @RequestParam(required = false) String sourceId,
@@ -130,7 +142,7 @@ public class SearchController {
                     + "Kleinschreibung), -modifiedAt (neueste zuerst, ohne Änderungszeit zuletzt), pageId; relevance "
                     + "(ähnlichste zuerst, braucht q oder title, ohne cursor)",
                     schema = @Schema(allowableValues = {"title", "-modifiedAt", "pageId", "relevance"}))
-            @RequestParam(defaultValue = "title") String sort,
+            @RequestParam(required = false) String sort,
             @Parameter(description = "Nur mit sort=relevance: Frage oder Stichwörter in natürlicher Sprache, höchstens "
                     + RelevanceSearch.MAX_TEXT_LENGTH + " Zeichen; ohne Angabe die Wörter aus title",
                     example = "Wie läuft der nächtliche Betrieb?")
@@ -139,6 +151,19 @@ public class SearchController {
             @RequestParam(required = false) String cursor,
             @Parameter(description = "Größe des Stapels, 1 bis " + PageSearch.MAX_LIMIT)
             @RequestParam(defaultValue = "50") int limit) {
+        if (text != null) {
+            if (title != null || pageId != null || parentPageId != null || version != null || modifiedFrom != null
+                    || modifiedBefore != null || sort != null || q != null) {
+                throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, cursor und "
+                        + "limit");
+            }
+            return KeywordResponse.of(keywords.search(caller, new KeywordSearch.Query(text, sourceId,
+                    Set.copyOf(sourceIds == null ? List.of() : sourceIds),
+                    Set.copyOf(spaceKey == null ? List.of() : spaceKey)), cursor, limit));
+        }
+        if (sort == null) {
+            sort = "title";
+        }
         boolean byRelevance = RELEVANCE.equals(sort);
         PageSearchQuery query = PageSearchQuery.of(sourceId, sourceIds, spaceKey, title, pageId, parentPageId, version,
                 instant("modifiedFrom", modifiedFrom), instant("modifiedBefore", modifiedBefore),
@@ -182,8 +207,7 @@ public class SearchController {
      *
      * @param scope    {@code source} mit {@code sourceId}, {@code global} ohne (#114)
      * @param sourceId die angefragte Quelle; global {@code null}, denn die Treffer stammen aus mehreren Quellen
-     * @param origin   {@code source}: Treffer aus der Suche der Quellen, nachgeladen und aus dem Index geliefert;
-     *                 {@code cache}: Titel- und Metadatensuche im Index
+     * @param origin   immer {@code cache}: Titel- und Metadatensuche im Index
      * @param index    gelesener Indexstand; global {@code null}, wenn keine lesbare Quelle im Index liegt
      * @param reranker nur bei {@code sort=relevance}: Kennung des Rerankers, {@code none} ohne Modell
      */
@@ -196,7 +220,7 @@ public class SearchController {
 
         static SearchResponse of(SearchResults results) {
             return new SearchResponse(scope(results.sourceId()), results.sourceId(),
-                    results.live() ? "source" : "cache", IndexResponse.of(results.index()), MetadataHash.SCHEMA,
+                    "cache", IndexResponse.of(results.index()), MetadataHash.SCHEMA,
                     AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
                     results.nextCursor(), results.complete(), null);
         }
@@ -207,8 +231,63 @@ public class SearchController {
                     results.hits().stream().map(HitResponse::of).toList(), null, true, results.reranker());
         }
 
-        private static String scope(String sourceId) {
+        static String scope(String sourceId) {
             return sourceId == null ? "global" : "source";
+        }
+    }
+
+    /**
+     * Ein Stapel der Schlagwortsuche ({@code text}).
+     *
+     * @param scope      {@code source} mit {@code sourceId}, {@code global} ohne
+     * @param origin     immer {@code source}: Treffer aus der Suche der Quellen, nicht aus dem Bestand
+     * @param sources    je Quelle, ob sie gesucht hat
+     * @param nextCursor für weitere Treffer mit denselben Parametern, {@code null}, wenn keine Quelle mehr hat
+     * @param complete   keine Quelle hat mehr Treffer, und jede ließ sich fragen und jeder Treffer prüfen
+     */
+    public record KeywordResponse(@Schema(allowableValues = {"source", "global"}) String scope,
+                                  @Schema(nullable = true) String sourceId, String origin, List<KeywordHitResponse> hits,
+                                  List<SourceStateResponse> sources, @Schema(nullable = true) String nextCursor,
+                                  boolean complete) {
+
+        static KeywordResponse of(KeywordSearch.Results results) {
+            return new KeywordResponse(SearchResponse.scope(results.sourceId()), results.sourceId(), "source",
+                    results.hits().stream().map(KeywordHitResponse::of).toList(),
+                    results.sources().stream().map(SourceStateResponse::of).toList(), results.nextCursor(),
+                    results.complete());
+        }
+    }
+
+    /**
+     * Ein Treffer der Schlagwortsuche; Kopfdaten live von der Quelle, Auszug aus ihrer Suche. Den Inhalt liefert
+     * {@code GET /api/v1/sources/{sourceId}/pages/{pageId}}.
+     *
+     * @param snippet Textauszug der Quelle als Klartext, leer, wenn sie keinen liefert
+     */
+    public record KeywordHitResponse(String sourceId, String pageId, String spaceKey, String title, String snippet,
+                                     @Schema(nullable = true) URI url, @Schema(nullable = true) String version,
+                                     @Schema(nullable = true) Instant modifiedAt,
+                                     @Schema(nullable = true) String parentPageId) {
+
+        static KeywordHitResponse of(KeywordSearch.Hit hit) {
+            return new KeywordHitResponse(hit.sourceId(), hit.pageId(), hit.spaceKey(), hit.title(), hit.snippet(),
+                    hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId());
+        }
+    }
+
+    /**
+     * Ob eine Quelle gesucht hat.
+     *
+     * @param status {@code searched}, {@code not-supported} (kann nicht selbst suchen) oder {@code unavailable}
+     * @param reason bei {@code unavailable} der Grund, z. B. {@code UNAVAILABLE} oder {@code ACCESS_DENIED}
+     */
+    public record SourceStateResponse(String sourceId,
+                                      @Schema(allowableValues = {"searched", "not-supported", "unavailable"})
+                                      String status, @Schema(nullable = true) String reason) {
+
+        static SourceStateResponse of(KeywordSearch.SourceState state) {
+            return new SourceStateResponse(state.sourceId(),
+                    state.status().name().toLowerCase(Locale.ROOT).replace('_', '-'), state.reason());
         }
     }
 

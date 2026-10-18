@@ -108,6 +108,7 @@ class DocumentedExamplesTest {
                 "/api/v1/exports/$FORMAT_EXPORT_ID/artifact/manifest.json",
                 "/api/v1/sources/demo/pages/1001/attachments",
                 "/api/v1/sources/demo/pages/1002?view=extended",
+                "/api/v1/search?sourceId=demo&text=architektur",
                 "/api/v1/search?sourceId=demo&title=architektur",
                 "/api/compat/confluence/demo/rest/api/content/1001?expand=body.storage,version");
     }

@@ -31,11 +31,13 @@ import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
+import com.aresstack.spaceharvester.application.sources.SourceSearchMatch;
 import com.aresstack.spaceharvester.application.sources.StoredPage;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -112,7 +114,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     @Override
-    public List<String> searchPages(String text, int limit) {
+    public List<SourceSearchMatch> searchPages(String text, int limit) {
         if (!(port instanceof SearchableKnowledgeSource searchable)) {
             return HarvestSource.super.searchPages(text, limit);
         }
@@ -122,7 +124,14 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         } catch (KnowledgeSourceException e) {
             throw accessFailure(e);
         }
-        return hits.stream().map(hit -> nativeId(hit.resourceId())).distinct().toList();
+        Map<String, SourceSearchMatch> matches = new LinkedHashMap<>();
+        for (SourceSearchHit hit : hits) {
+            String version = hit.revision().version();
+            matches.putIfAbsent(nativeId(hit.resourceId()), new SourceSearchMatch(nativeId(hit.resourceId()),
+                    hit.title(), hit.snippet(), hit.url(), version == null || version.isEmpty() ? null : version,
+                    hit.revision().modifiedAt().orElse(null)));
+        }
+        return List.copyOf(matches.values());
     }
 
     @Override
