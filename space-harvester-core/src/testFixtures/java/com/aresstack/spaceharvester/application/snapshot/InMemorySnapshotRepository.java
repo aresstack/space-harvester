@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.snapshot;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,6 +30,13 @@ public final class InMemorySnapshotRepository implements SnapshotRepository {
     @Override
     public Optional<PageHeader> findHeader(PageKey key) {
         return Optional.ofNullable(headers.get(key));
+    }
+
+    /** Alle gespeicherten Snapshots mit ihren aktuellen Kopfdaten, als Kopie. */
+    public synchronized Map<PageSnapshot, PageHeader> snapshotsWithHeaders() {
+        Map<PageSnapshot, PageHeader> all = new LinkedHashMap<>();
+        snapshots.forEach((key, snapshot) -> all.put(snapshot, headers.get(key)));
+        return all;
     }
 
     @Override

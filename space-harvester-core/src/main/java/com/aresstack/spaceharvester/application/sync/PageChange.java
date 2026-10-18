@@ -26,7 +26,13 @@ public record PageChange(String pageId, Kind kind, BaselineEntry previous, PageM
         /** Fehlt in einer bestätigten Inventur: Kandidat zum Entfernen, erst nach {@link RemovalCheck}. */
         MISSING,
         /** Fehlt in einer abgebrochenen oder widersprüchlichen Inventur: unbekannt, bleibt unverändert. */
-        NOT_SEEN
+        NOT_SEEN,
+        /**
+         * Gelistet, aber weder in der Generation noch im Cache, und der Abgleich lädt Unbekanntes nicht (ADR 0014,
+         * Punkt 2): kein Inhaltsabruf, nur die Kopfdaten kommen in den Katalog; die Generation führt die Seite als
+         * fehlend.
+         */
+        NOT_LOADED
     }
 
     public PageChange {

@@ -83,11 +83,15 @@ public class SyncController {
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
-            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey) {
+            @Parameter(description = "Space-Key", example = "DEV") @PathVariable String spaceKey,
+            @Parameter(description = "Unbekannte Seiten laden (Standard). false: Abgleich ohne Erstbefüllung (ADR "
+                    + "0014), prüft und aktualisiert nur, was Cache und Generation kennen; unbekannte Seiten zählen "
+                    + "als notLoaded und missing")
+            @RequestParam(defaultValue = "true") boolean loadUnknown) {
         access.require(caller, ResourceScope.space(sourceId, spaceKey), AccessKind.SYNC);
         // Erst nach der Freigabe: sonst verriete die Antwort Unberechtigten, welche Spaces es gibt.
         spaces.requireExisting(sourceId, spaceKey);
-        JobStatus status = syncs.start(sourceId, spaceKey, owner(caller));
+        JobStatus status = syncs.start(sourceId, spaceKey, owner(caller), loadUnknown);
         return ResponseEntity.accepted()
                 .location(URI.create(ApiPaths.V1 + "/syncs/" + status.id()))
                 .body(SyncResponse.of(new SpaceSyncJobs.SyncJob(status, null), false));
@@ -267,6 +271,8 @@ public class SyncController {
      * @param listed            gelesene Seiten
      * @param added             neu erkannte Seiten
      * @param contentChanged    Seiten mit neuer Revision
+     * @param notLoaded         gelistete, aber unbekannte Seiten, die ein Abgleich mit {@code loadUnknown=false} nicht
+     *                          lädt (Teil von {@code missing})
      * @param metadataChanged   neue Metadaten bei gleicher Revision (umbenannt, verschoben)
      * @param attributesChanged nur neue Attribute (Labels)
      * @param unchanged         unveränderte Seiten
@@ -278,7 +284,8 @@ public class SyncController {
      * @param unverified        fehlende Seiten, deren Fehlen nicht bestätigt werden konnte; bleiben als veraltet
      * @param failed            Anzahl der Seiten, deren Abgleich fehlgeschlagen ist; bleiben als veraltet
      * @param failedPageIds     ihre IDs, nur mit {@code metadata}-Freigabe für den Space, sonst {@code null}
-     * @param missing           neue Seiten ohne Stand im Cache (Teil von {@code failed})
+     * @param missing           gelistete Seiten ohne Stand im Cache: neue, deren Abruf fehlschlug (Teil von
+     *                          {@code failed}), und nicht geladene ({@code notLoaded})
      * @param generation        neu bestätigte Generation oder {@code null}
      * @param complete          ob die neue Generation jede gelistete Seite führt
      * @param spaceFingerprint  Fingerabdruck der neuen Generation ({@code space-inventory/v1}) oder {@code null}
@@ -287,7 +294,8 @@ public class SyncController {
      */
     public record SummaryResponse(
             @Schema(allowableValues = {"complete", "incomplete", "inconsistent"}) String inventory, int listed,
-            int added, int contentChanged, int metadataChanged, int attributesChanged, int unchanged, int removed,
+            int added, int notLoaded, int contentChanged, int metadataChanged, int attributesChanged, int unchanged,
+            int removed,
             int withheld, int purged, int movedOut, int unverified, int failed,
             @Schema(nullable = true) List<String> failedPageIds,
             int missing, @Schema(nullable = true) Long generation, boolean complete,
@@ -297,7 +305,7 @@ public class SyncController {
 
         static SummaryResponse of(SyncSummary summary, boolean pageIds) {
             return new SummaryResponse(summary.inventory().name().toLowerCase(Locale.ROOT), summary.listed(),
-                    summary.added(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(),
+                    summary.added(), summary.notLoaded(), summary.contentChanged(), summary.metadataChanged(), summary.attributesChanged(),
                     summary.unchanged(), summary.removed(), summary.withheld(), summary.purged(), summary.movedOut(),
                     summary.unverified(), summary.failedPageIds().size(), pageIds ? summary.failedPageIds() : null,
                     summary.missingPageIds().size(), summary.generation(), summary.complete(),

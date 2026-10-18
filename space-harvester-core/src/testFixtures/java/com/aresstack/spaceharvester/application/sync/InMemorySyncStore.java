@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
@@ -34,6 +35,26 @@ public final class InMemorySyncStore implements SyncBaselineStore {
     @Override
     public synchronized Optional<SyncBaseline> confirmed(String sourceId, String spaceKey) {
         return Optional.ofNullable(baselines.get(sourceId + "/" + spaceKey));
+    }
+
+    /**
+     * Nur mit {@link InMemorySnapshotRepository}: Seiten mit Snapshot, deren aktuelle Kopfdaten im Space liegen; wie im
+     * Lucene-Cache mit aktuellen Kopfdaten und der Version des Snapshots.
+     */
+    @Override
+    public Map<String, BaselineEntry> knownPages(String sourceId, String spaceKey) {
+        Map<String, BaselineEntry> known = new TreeMap<>();
+        if (repository instanceof InMemorySnapshotRepository memory) {
+            memory.snapshotsWithHeaders().forEach((snapshot, header) -> {
+                if (snapshot.key().sourceId().equals(sourceId) && header != null
+                        && header.metadata().partitionKey().equals(spaceKey)) {
+                    known.put(snapshot.key().pageId(), new BaselineEntry(snapshot.key().pageId(), spaceKey,
+                            header.metadata().parentPageId(), snapshot.revision(), header.metadataHash(),
+                            header.attributesHash()));
+                }
+            });
+        }
+        return known;
     }
 
     @Override

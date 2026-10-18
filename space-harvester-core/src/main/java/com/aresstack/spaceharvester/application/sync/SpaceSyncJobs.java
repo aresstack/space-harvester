@@ -148,6 +148,16 @@ public class SpaceSyncJobs implements SpaceProvisioning {
      *                                      angenommen werden
      */
     public synchronized JobStatus start(String sourceId, String spaceKey, String owner) {
+        return start(sourceId, spaceKey, owner, true);
+    }
+
+    /**
+     * Wie {@link #start(String, String, String)}; ohne {@code loadUnknown} ein Abgleich ohne Erstbefüllung (ADR 0014):
+     * Er prüft, aktualisiert und bereinigt nur, was Generation und Cache kennen, und lädt keine unbekannten Seiten. Der
+     * Auftrag ist ein gewöhnlicher {@link JobType#SYNC}; nicht geladene Seiten machen ihn nicht {@code SYNC_PARTIAL},
+     * die Generation führt sie aber als fehlend.
+     */
+    public synchronized JobStatus start(String sourceId, String spaceKey, String owner, boolean loadUnknown) {
         if (queries.sources().stream().noneMatch(source -> source.id().equals(sourceId))) {
             throw new UnknownSourceException(sourceId);
         }
@@ -160,7 +170,7 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             throw new SyncAlreadyRunningException(running);
         }
         JobStatus status = jobs.submit(JobType.SYNC, sourceId, spaceKey, owner,
-                JobTask.blocking(context -> run(context, sourceId, spaceKey)));
+                JobTask.blocking(context -> run(context, sourceId, spaceKey, loadUnknown)));
         activeBySpace.put(space, status.id());
         return status;
     }
@@ -256,11 +266,11 @@ public class SpaceSyncJobs implements SpaceProvisioning {
         return new SyncJob(status, summaries.get(status.id()));
     }
 
-    private void run(JobContext context, String sourceId, String spaceKey) {
+    private void run(JobContext context, String sourceId, String spaceKey, boolean loadUnknown) {
         SpaceSync.SyncRun run;
         try {
             context.phase(COMPONENT, "Inventur");
-            run = sync.run(sourceId, spaceKey, applier, listener(context));
+            run = sync.run(sourceId, spaceKey, applier, listener(context), loadUnknown);
         } catch (SyncConflictException e) {
             throw new JobFailedException(CONFLICT, "Ein anderer Abgleich hat inzwischen eine Generation bestätigt");
         }
@@ -274,7 +284,8 @@ public class SpaceSyncJobs implements SpaceProvisioning {
             throw new JobFailedException(INCOMPLETE, "Keine Generation bestätigt; der Cache bleibt unverändert");
         }
         afterCommit(run, sourceId, spaceKey, context.owner());
-        if (!run.confirmed().complete() || !run.failedPageIds().isEmpty()) {
+        // Fehlende Seiten ohne Fehlschlag sind nur die bewusst nicht geladenen; jede andere fehlende ist fehlgeschlagen.
+        if (!run.failedPageIds().isEmpty()) {
             throw new JobFailedException(PARTIAL, "Generation " + run.confirmed().generation()
                     + " bestätigt, aber " + run.failedPageIds().size() + " Seiten konnten nicht abgeglichen werden "
                     + "(davon " + run.confirmed().missingPageIds().size() + " ohne Stand im Cache); der nächste "
