@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
@@ -124,6 +125,22 @@ public final class RemoteAi {
                 throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, e.getMessage());
             }
         };
+    }
+
+    /**
+     * Das Chat-Modell als Formulierer von Suchvarianten ({@code POST /chat/completions}, ADR 0017). An den Dienst geht
+     * nur die Frage des Nutzers, nie Inhalt einer Quelle; scheitert ein Aufruf, meldet das Modell
+     * {@link AiServiceException} ohne Frage, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public QueryVariantModel queryVariants() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        String key = settings.apiKey();
+        return new ChatCompletions(settings.baseUrl(), settings.chatModel(), () -> key, routes, tls, userAgent,
+                timeoutMillis());
     }
 
     /**

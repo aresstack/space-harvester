@@ -78,8 +78,32 @@ Laufende Suchanfragen werden nicht unterbrochen, nur nicht mehr abgewartet, denn
 Lucene-Index schlösse dessen Dateikanäle. Ohne Reranker gibt es keine Bewertung. Dann erreicht der Modus `QUALITY`
 sein Ziel nie und endet mit `ALL_VARIANTS_DONE` oder `BUDGET_EXHAUSTED`.
 
+## Umsetzung (zweiter Schritt: Varianten vom Modell)
+
+`AiQueryExpansion` lässt das Chat-Modell des KI-Dienstes (`ai.chat-model`, `POST /chat/completions`) Varianten
+derselben Frage formulieren. Die Reihenfolge geht nach abnehmender Genauigkeit: zuerst möglichst viele Begriffe des
+Nutzers, dann schrittweise weniger. Das Modell liefert nur Suchbegriffe, keine CQL und keine Operatoren, als JSON
+`{"queries":[{"text":…,"priority":1},…]}`.
+
+- **Strenge Prüfung.** Die Antwort muss gültiges JSON sein; erlaubt ist das erste Objekt, auch hinter Text oder in
+  einem Codeblock. Höchstens `maxVariants` Varianten mit je 200 Zeichen werden übernommen. Doppelte Varianten fallen
+  weg, ohne Rücksicht auf Groß- und Kleinschreibung oder Leerraum, ebenso die ursprüngliche Anfrage selbst. Varianten
+  mit Abfragesyntax werden verworfen und nicht repariert: Anführungszeichen, Klammern, `= ~ : * |`,
+  `AND`/`OR`/`NOT` und CQL-Felder. Die ursprüngliche Anfrage bleibt Priorität 0 und sucht sofort, das Modell läuft
+  parallel dazu.
+- **Rückfall auf `RuleBasedExpansion`.** Er greift, wenn kein Chat-Modell konfiguriert ist, bei einem Fehler, bei
+  einer unbrauchbaren Antwort und nach 6 s. Die 6 s liegen unter der Frist von 10 s, die der Orchestrator auf
+  Varianten wartet.
+- **Einstellung `SearchProfile.expansion`.** `AI` ist der Standard, `RULES` nutzt nur die Regeln. Ohne Chat-Modell
+  wirkt `AI` wie `RULES`; `Harvester.searchProfile()` meldet in dem Fall gleich `RULES`. Der Harvester folgt der
+  wirksamen Konfiguration und baut die Verbindung je Einstellungsstand einmal.
+- **Datenschutz.** An den Dienst geht nur der Suchtext des Nutzers, nie Inhalt einer Quelle. Deshalb gilt dafür
+  `external-processing` nicht, denn diese Einstellung regelt Quelleninhalte. Frage, Antwort und Key erscheinen in
+  keinem Log und keiner Meldung. Der Aufruf nutzt dieselbe Proxy-Route (fail-closed), dasselbe Vertrauen und
+  denselben Bearer-Token wie die übrigen Aufrufe. Die Antwort ist auf 256 KiB begrenzt.
+
 ## Folgen
 
 - Desktop-App und Agenten nutzen denselben Dienst; die App braucht keine eigene Suchlogik.
-- Nächste Schritte sind die Modellstrategie über den KI-Dienst, REST (ein Agent wartet auf das Ergebnis, die App
+- Nächste Schritte sind REST (ein Agent wartet auf das Ergebnis, die App
   bekommt Ereignisse) und die Anbindung an die semantische Suche.

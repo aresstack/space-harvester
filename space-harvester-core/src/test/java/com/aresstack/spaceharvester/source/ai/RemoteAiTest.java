@@ -24,7 +24,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-/** {@code /models} und {@code /embeddings} gegen einen lokalen OpenAI-kompatiblen Dienst. */
+/** {@code /models}, {@code /embeddings}, {@code /rerank} und {@code /chat/completions} gegen einen lokalen OpenAI-kompatiblen Dienst. */
 class RemoteAiTest {
 
     private static final String KEY = "sk-test-geheim-0815";
@@ -57,6 +57,13 @@ class RemoteAiTest {
             bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             respond(exchange, """
                     {"results":[{"index":1,"relevance_score":0.9},{"index":0,"relevance_score":0.2}]}""");
+        });
+        server.createContext("/v1/chat/completions", exchange -> {
+            authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, """
+                    {"choices":[{"index":0,"message":{"role":"assistant",
+                      "content":"{\\"queries\\":[{\\"text\\":\\"Nachtlauf Abbruch\\",\\"priority\\":1}]}"}}]}""");
         });
         server.start();
     }
@@ -138,6 +145,38 @@ class RemoteAiTest {
     }
 
     @Test
+    void asksTheChatModelWithOnlyTheQuestionAndReadsTheAnswer() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        String answer = remote(settings).queryVariants().complete("Nur Suchbegriffe.", "Warum bricht der Nachtlauf ab?");
+
+        assertThat(answer).contains("Nachtlauf Abbruch");
+        assertThat(authorizations).containsOnly("Bearer " + KEY);
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"gpt-x\"")
+                .contains("Warum bricht der Nachtlauf ab?").contains("\"role\":\"system\"");
+    }
+
+    @Test
+    void aFailingChatModelNamesTheStatusButNeverTheKeyOrTheQuestion() {
+        status = 401;
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        assertThatThrownBy(() -> remote(settings).queryVariants().complete("Anweisung", "Nachtlauf geheim"))
+                .isInstanceOfSatisfying(AiServiceException.class, e -> {
+                    assertThat(e.reason()).isEqualTo(AiServiceException.Reason.UNAUTHORIZED);
+                    assertThat(e.getMessage()).doesNotContain(KEY).doesNotContain("Nachtlauf");
+                });
+    }
+
+    @Test
+    void withoutChatModelThereAreNoVariantsFromTheService() {
+        assertThatThrownBy(() -> remote(settings(null, null)).queryVariants()).isInstanceOfSatisfying(
+                AiServiceException.class,
+                e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.NOT_CONFIGURED));
+        assertThat(authorizations).isEmpty();
+    }
+
+    @Test
     void withoutServiceOrModelNothingIsSent() {
         assertThatThrownBy(() -> remote(AiServiceSettings.NONE).models()).isInstanceOfSatisfying(
                 AiServiceException.class,
@@ -151,8 +190,11 @@ class RemoteAiTest {
     }
 
     private AiServiceSettings settings(String model, Integer dimensions) {
-        return new AiServiceSettings(URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1"), KEY,
-                null, model, dimensions, null, null, Set.of("wiki"));
+        return new AiServiceSettings(base(), KEY, null, model, dimensions, null, null, Set.of("wiki"));
+    }
+
+    private URI base() {
+        return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
     }
 
     private void respond(com.sun.net.httpserver.HttpExchange exchange, String body) throws IOException {
