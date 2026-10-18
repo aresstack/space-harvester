@@ -85,9 +85,9 @@ Nicht angebunden sind:
 | Paginierung | `limit`, Vorladen über `KnowledgePrefetchService` | Cursor je Quelle, „Weitere laden“ | gleich |
 | Metadaten und Auszüge je Treffer | `SourceSearchHit`, `ConfluenceRestClient#excerpt` | `KeywordSearch.Hit` (Version, Änderung, URL, Space, Elternseite, Auszug) | gleich |
 | Rechte je Treffer | eigene Anmeldung | `AccessGuard` je Treffer, gesperrte fallen ohne Spur weg | SH+ |
-| Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | keiner | fehlt → #180 |
-| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | nur Titel und Metadaten (`core/persistence/lucene/LucenePageSearchIndex`) | fehlt → #180 |
-| Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | keine (Zielablauf ADR 0011, Schritt 2) | fehlt → #180 |
+| Rückfall auf lokalen Index für Quellen ohne eigene Suche | `SearchKnowledgeSourcesUseCase` (Index-Fallback) | `KeywordSearch` sucht Quellen ohne eigene Suche im Volltextindex des Caches (`PageTextIndex`, Status `INDEXED`, REST `indexed`); Index-Treffer verlangen zusätzlich das Inhaltsrecht | gleich (Vergleichstest Suche, #180) |
+| Lokale Volltextsuche über zwischengespeicherte Inhalte mit Textfenstern | `chalco/anagraphai/…/LuceneRawKnowledgeIndex`, `RawTextWindows`, `chalco/pinakes/…/LuceneTextIndex` | `LucenePageTextIndex` über den Text der Seiten im Cache (`PageTextIndexing` mit Projektoren für Confluence und lokale Dateien), Auszug um den Suchbegriff | gleich (Vergleichstest Suche: dieselben Dateien, Auszug mit Suchbegriff, ohne Rücksicht auf Groß-/Kleinschreibung) |
+| Treffer der Live-Suche transparent in den Cache laden | `know/KnowledgePrefetchService`, `SearchDrivenIndexingUseCase` | `SearchHitPrefetch` lädt je Stapel höchstens 10 sichtbare Live-Treffer über `PageRenewal` in den Cache, nicht für delegierte Benutzer; `Harvester.builder().prefetchSearchHits(boolean)`, Standard an | gleich (Vergleichstest Suche) |
 
 ## 3. Navigation
 
@@ -246,7 +246,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | #177 | Live-Navigation: Kindseiten, Breadcrumbs, Querverweise | Q |
 | #178 | URL- und Ressourcenauflösung vollständig | Q |
 | #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage (offen: Auswahl ab 200 Spaces) | Q |
-| #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q |
+| #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
 | #181 | Hybride Suche: Zerlegung, RRF, Rerank-Modell, verwandte Abschnitte | Q |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
 | #183 | Textextraktion, Typerkennung am Inhalt, Vorschauen von Anhängen | Q |
@@ -291,13 +291,15 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
    Lesetext aus `load` und die Bildzahl aus `pageView` unter `reading/` sowie Kinder, Breadcrumbs und Querverweise
    (`children`, `position`, `crossReferences`) in `navigation.properties`, außerdem die Schritte der
    Quellenverwaltung (`KnowledgeSourceManagement` mit dem echten Confluence-Provider über dem Fake) in
-   `management.properties` sowie die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties`.
+   `management.properties`, die Seite je Adressform (`resolveAddress`, Bookmarks) in `addresses.properties` sowie die
+   Suche (`SearchKnowledgeSourcesUseCase` über eine indexierte Dateiquelle, Vorladen der Confluence-Treffer mit
+   `KnowledgePrefetchService`) in `search.properties`.
    Die CI von Space Harvester baut den Enterprise AI Client nicht; die Referenzen sind eingecheckt und werden bei einem neuen
    Commit des Enterprise AI Client neu erzeugt.
 2. **Core:** `CoreParityTest` startet den Fake als HTTP-Server, lädt denselben Space herunter, konvertiert ihn
    aus dem Datenbestand als Word, PDF und Markdown, holt je Seite die Leseansicht (`Harvester.readingViews()`) und
    die Navigation (`Harvester.navigation()`), spielt die Schritte der Quellenverwaltung mit
-   `Harvester.sourceManagement()` nach und vergleicht mit den Referenzen. Bericht:
+   `Harvester.sourceManagement()` nach, sucht mit `Harvester.keywordSearch()` und vergleicht mit den Referenzen. Bericht:
    `parity-tests/build/reports/parity/parity-report.md` (in der CI in der Job-Zusammenfassung und im Artefakt),
    Core-Exporte daneben unter `core/`.
 3. **Sperrklinke:** Jede Prüfung, bei der der Core weniger kann, steht in
@@ -323,6 +325,7 @@ handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text
 | Leseansicht | je Seite (#176) | jede Seite mit Ansicht im Core, Lesetext wie bei Text, Bilder Core ≥ Maßstab |
 | Navigation | Space und je Seite (#177) | Space-Name gleich; Kindseiten und Breadcrumbs gleich mit Reihenfolge; ausgehende Seitenverweise des Maßstabs im Core |
 | Adressen | je Form (#178) | dieselbe Seite wie beim Maßstab für Seiten-ID, `/spaces/…/pages/…`, `display/KEY/Titel`, `viewpage.action?spaceKey&title`, Space-Startseite, `confluence://`-Bookmark und Ressourcen-ID; keine Seite für unbekannten Titel und fremden Host |
+| Suche | je Suchbegriff und Live-Treffer (#180) | Quelle ohne eigene Suche: dieselben Dateien wie beim Maßstab (eine, zwei, Großschreibung, keine), jeder Auszug zeigt den Suchbegriff; jeder Treffer der Live-Suche in Confluence danach vorgeladen |
 | Quellenverwaltung | Szenario (#188) | je Schritt dasselbe Ergebnis: prüfen (vollständig, ohne Basis-URL, dasselbe Ziel doppelt), Verbindung testen (erreichbar, nicht erreichbar, unvollständig), hinzufügen, ändern mit und ohne neues Ziel (Daten bleiben bzw. werden zurückgezogen), abschalten, entfernen (Daten zurückgezogen, gemessen am Cache) |
 
 Stand nach #213: Word, PDF und Markdown haben keine bekannten Lücken mehr (`known-gaps.properties` ist leer). Der
@@ -350,6 +353,7 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 
 ### Noch nicht abgedeckt
 
-Suche und Anhänge vergleicht `:parity-tests` noch nicht. Dafür fehlen Core-Schnittstellen: Volltextindex, Index-Rückfall und Vorladen #180, Text aus Anhängen #183,
+Die Trefferauswahl der Live-Suche vergleicht `:parity-tests` nicht, weil der Fake feste Treffer liefert und beide Seiten
+dieselbe CQL bauen. Anhänge fehlen noch, dafür fehlen Core-Schnittstellen: Text aus Anhängen #183,
 Export einer Seite oder eines Teilbaums wie im Enterprise AI Client #186. Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.

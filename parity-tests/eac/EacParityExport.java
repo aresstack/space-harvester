@@ -1,12 +1,26 @@
 import com.aresstack.enterpriseai.adyton.SecretMaterial;
 import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
+import com.aresstack.enterpriseai.astu.acropolis.chalcotheca.anagraphai.LuceneRawKnowledgeIndex;
+import com.aresstack.enterpriseai.astu.acropolis.chalcotheca.pinakes.LuceneKnowledgeIndex;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.ExportDocumentNode;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.FoundResource;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexKnowledgeUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingListener;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingReport;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeDocumentReader;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgePrefetchService;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.SearchKnowledgeSourcesUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.SourceSearchOutcome;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeBookmarkIds;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeExportUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.PageNavigationUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.source.KnowledgeSourceManagement;
 import com.aresstack.enterpriseai.astu.acropolis.source.SourceDataWithdrawal;
+import com.aresstack.enterpriseai.astu.embedding.EmbeddingModelIdentity;
+import com.aresstack.enterpriseai.astu.embedding.EmbeddingVector;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunker;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunkingPolicy;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
@@ -19,6 +33,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceKnowledgeSource;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
+import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
+import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
+import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesKnowledgeSource;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportFormat;
 import com.aresstack.enterpriseai.proasteion.exedra.document.ExportGraphics;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
@@ -37,6 +55,14 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.Locale;
+import java.util.TreeSet;
+import java.util.concurrent.Executor;
+import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,8 +74,8 @@ import java.util.function.BooleanSupplier;
  *
  * <p>Nur für {@code generate.sh}; Java 8, übersetzt gegen den Klassenpfad des Enterprise AI Client. Schreibt
  * {@code parity.docx}, {@code parity.pdf}, {@code parity.md}, je Format die Liste der nicht eingebetteten Bilder
- * ({@code problems-<format>.txt}), die Leseansicht je Seite ({@code reading/}) und die Navigation
- * ({@code navigation.properties}).</p>
+ * ({@code problems-<format>.txt}), die Leseansicht je Seite ({@code reading/}), die Navigation
+ * ({@code navigation.properties}), Quellenverwaltung, Adressformen und Suche ({@code search.properties}).</p>
  */
 public final class EacParityExport {
 
@@ -88,6 +114,130 @@ public final class EacParityExport {
         navigation(source, new File(out, "navigation.properties"));
         management(confluence, none, new File(out, "management.properties"));
         addresses(source, new File(out, "addresses.properties"));
+        search(source, new File(out, "search.properties"));
+    }
+
+    /**
+     * Suche (#180) wie die Suchleiste des Enterprise AI Client: {@link SearchKnowledgeSourcesUseCase} mit
+     * {@code withIndexedHits}. Eine Dateiquelle ohne eigene Suche wird erst indexiert und dann im Wissensindex gesucht
+     * (Index-Rückfall); je Suche aus {@link ParitySpace#SEARCHES} die gefundenen Dateien und ob jeder Auszug den
+     * Suchbegriff zeigt. Danach die Live-Suche in Confluence und das Vorladen ihrer Treffer über den
+     * {@link KnowledgePrefetchService} in den Rohindex, wie nach jeder Suche in der Suchleiste.
+     */
+    private static void search(ConfluenceKnowledgeSource confluence, File target) throws Exception {
+        Path work = Files.createTempDirectory("parity-search");
+        Path files = Files.createDirectories(work.resolve("files"));
+        for (String[] file : ParitySpace.FILES) {
+            Files.write(files.resolve(file[0]), file[1].getBytes(StandardCharsets.UTF_8));
+        }
+        final EmbeddingModelIdentity space = EmbeddingModelIdentity.of("parity-fixed", 4);
+        EmbeddingPort embeddings = new EmbeddingPort() {
+            @Override
+            public EmbeddingModelIdentity modelIdentity() {
+                return space;
+            }
+
+            @Override
+            public EmbeddingBatch embed(List<String> texts) {
+                List<EmbeddingVector> vectors = new ArrayList<EmbeddingVector>();
+                for (int i = 0; i < texts.size(); i++) {
+                    vectors.add(EmbeddingVector.of(space, new float[]{1f, 0f, 0f, 0f}));
+                }
+                return EmbeddingBatch.of(space, texts.size(), vectors);
+            }
+        };
+        LuceneKnowledgeIndex index = new LuceneKnowledgeIndex(work.resolve("knowledge"));
+        LuceneRawKnowledgeIndex raw = new LuceneRawKnowledgeIndex(work.resolve("raw"));
+        KnowledgePrefetchService prefetch = null;
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            IndexKnowledgeUseCase indexing = new IndexKnowledgeUseCase(index, embeddings, space,
+                    new KnowledgeChunker(KnowledgeChunkingPolicy.defaults()));
+            LocalFilesKnowledgeSource local = new LocalFilesKnowledgeSource(SourceAddress.of("docs"), files,
+                    DocumentExtraction.detector(), DocumentExtraction.registry(), 20L * 1024 * 1024);
+            IndexingReport report = indexing.indexSource(local,
+                    SourceScope.builder().startPoints(".").maxDepth(20).maxResources(5000).build(),
+                    IndexingListener.none());
+            if (!report.isComplete() || report.discoveryFailed()) {
+                throw new IllegalStateException("Dateiquelle nicht indexiert: " + report);
+            }
+            Executor direct = new Executor() {
+                @Override
+                public void execute(Runnable command) {
+                    command.run();
+                }
+            };
+            SearchKnowledgeSourcesUseCase search = new SearchKnowledgeSourcesUseCase(index,
+                    new Supplier<EmbeddingModelIdentity>() {
+                        @Override
+                        public EmbeddingModelIdentity get() {
+                            return space;
+                        }
+                    }, direct).withIndexedHits();
+            for (String[] query : ParitySpace.SEARCHES) {
+                SourceSearchOutcome outcome = searchOne(search, local, query[1]);
+                TreeSet<String> found = new TreeSet<String>();
+                boolean snippets = true;
+                for (FoundResource hit : outcome.hits()) {
+                    String id = hit.resourceId().value();
+                    found.add(id.substring(id.lastIndexOf('/') + 1));
+                    snippets &= hit.snippet() != null
+                            && hit.snippet().toLowerCase(Locale.ROOT).contains(query[1].toLowerCase(Locale.ROOT));
+                }
+                out.println("search." + query[0] + "=" + (found.isEmpty() ? "-" : join(new ArrayList<String>(found))));
+                out.println("search." + query[0] + ".snippet=" + (found.isEmpty() ? "-" : snippets ? "ja" : "nein"));
+            }
+
+            prefetch = new KnowledgePrefetchService(indexing, raw, KnowledgeDocumentReader.direct(),
+                    new Supplier<KnowledgePrefetchService.Settings>() {
+                        @Override
+                        public KnowledgePrefetchService.Settings get() {
+                            return KnowledgePrefetchService.Settings.defaults();
+                        }
+                    });
+            SourceSearchOutcome live = searchOne(search, confluence, ParitySpace.LIVE_SEARCH);
+            List<KnowledgePrefetchService.Candidate> candidates = new ArrayList<KnowledgePrefetchService.Candidate>();
+            for (FoundResource hit : live.hits()) {
+                candidates.add(new KnowledgePrefetchService.Candidate(confluence, hit.resourceId(), hit.revision()));
+            }
+            prefetch.prefetch("search", candidates, 0).awaitAvailable(candidates.size(), 30_000L,
+                    new java.util.function.IntConsumer() {
+                        @Override
+                        public void accept(int value) {
+                        }
+                    });
+            for (String page : ParitySpace.LIVE_HITS) {
+                KnowledgeResourceId id = KnowledgeResourceId.of("confluence",
+                        FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
+                out.println("prefetch." + page + "=" + (raw.get(id).isPresent() ? "ja" : "nein"));
+            }
+        } finally {
+            out.close();
+            if (prefetch != null) {
+                prefetch.shutdown();
+            }
+            raw.close();
+            index.close();
+        }
+    }
+
+    private static String join(List<String> values) {
+        StringBuilder text = new StringBuilder();
+        for (String value : values) {
+            text.append(text.length() == 0 ? "" : ",").append(value);
+        }
+        return text.toString();
+    }
+
+    /** Eine Suche in einer Quelle; scheitert sie, bricht die Erzeugung ab, statt „keine Treffer“ zu melden. */
+    private static SourceSearchOutcome searchOne(SearchKnowledgeSourcesUseCase search, KnowledgeSourcePort source,
+                                                 String text) {
+        SourceSearchOutcome outcome = search.search(Collections.singletonList(source), text, 10).join().get(0);
+        if (outcome.failed()) {
+            throw new IllegalStateException("Suche nach " + text + " in " + source.sourceId() + ": "
+                    + outcome.problem());
+        }
+        return outcome;
     }
 
     /**
