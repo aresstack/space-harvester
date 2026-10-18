@@ -57,6 +57,8 @@ public final class SettingsView implements View {
     final ComposerButton resetOutput = Comic.button("Zurück auf Downloads", "Wieder den Ordner Downloads verwenden");
     private final Facts output = new Facts();
     private final ComposerButton about = Comic.button("Über Space Harvester", "Version und Herkunft");
+    final ComposerButton setup = Comic.button(SetupWizard.TITLE + " …",
+            "Netzwerk, KI-Dienst, Modelle und erste Wissensquelle Schritt für Schritt einrichten");
     private final ComposerButton proxy = Comic.button("Proxy ändern …", "Proxy für alle Quellen einstellen und auflösen");
     private final ComposerButton tls = Comic.button("Serverzertifikate …",
             "Festlegen, welchen Zertifizierungsstellen die App bei allen Quellen glaubt");
@@ -83,6 +85,11 @@ public final class SettingsView implements View {
         });
         resetOutput.addActionListener(e -> saveOutput(null));
         about.addActionListener(e -> AboutDialog.open(root, context));
+        setup.addActionListener(e -> {
+            SetupWizard.open(root, context);
+            render();
+            ai.render();
+        });
         proxy.addActionListener(e -> SettingDialogs.proxy(root, context, null,
                 () -> feedback.success("Proxy übernommen")).open());
         tls.addActionListener(e -> SettingDialogs.tls(root, context,
@@ -95,7 +102,7 @@ public final class SettingsView implements View {
         config.add(problems, BorderLayout.CENTER);
         JPanel south = new JPanel(new BorderLayout(0, 6));
         south.setOpaque(false);
-        south.add(Comic.row(reload, create, openFile, openFolder), BorderLayout.NORTH);
+        south.add(Comic.row(reload, create, openFile, openFolder, setup), BorderLayout.NORTH);
         south.add(feedback, BorderLayout.SOUTH);
         config.add(south, BorderLayout.SOUTH);
         JPanel data = new JPanel(new BorderLayout(0, 8));

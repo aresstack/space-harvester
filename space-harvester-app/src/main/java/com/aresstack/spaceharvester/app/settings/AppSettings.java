@@ -30,12 +30,14 @@ import java.util.Set;
  *                    Windows-Speicher wie im Enterprise AI Client, sonst nur der JVM-Truststore
  * @param disabledSources abgeschaltete Quellen ({@code space-harvester-app.disabled-sources}): bleiben eingerichtet
  *                        samt Bestand, der Core kennt sie aber nicht ({@code SourceManagement.setEnabled})
+ * @param setupCompleted  der Einrichtungsassistent lief schon ({@code space-harvester-app.setup-completed}); sonst
+ *                        öffnet er sich beim Start
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
                           AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
-                          TrustSettings tls, Cache cache) {
+                          TrustSettings tls, Cache cache, boolean setupCompleted) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -55,7 +57,13 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources, tls, cache);
+                problems, disabledSources, tls, cache, setupCompleted);
+    }
+
+    /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
+    public AppSettings withSetupCompleted() {
+        return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
+                outputDirectory, problems, disabledSources, tls, cache, true);
     }
 
     /** Ob die Quelle eingerichtet, aber abgeschaltet ist. */

@@ -197,7 +197,8 @@ public final class AppSettingsLoader {
         return new AppSettings(file, sources, proxy, async, trustStores(map(get(document, "spring")), problems),
                 storage, jobLimits(map(get(root, "jobs")), problems), ai(map(get(root, "ai")), problems),
                 path(get(app, "output-directory"), problems), problems, ids(get(app, "disabled-sources"), problems),
-                tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems));
+                tls(get(network, "tls"), problems), cache(map(get(root, "cache")), map(get(root, "sync")), problems),
+                flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems));
     }
 
     /** Cache-Frische und Sperrfrist wie im Server; ungültige Werte melden und die Vorgabe nehmen. */

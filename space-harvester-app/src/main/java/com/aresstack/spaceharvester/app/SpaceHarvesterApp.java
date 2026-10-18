@@ -59,8 +59,8 @@ public final class SpaceHarvesterApp {
             return;
         }
         SwingUtilities.invokeLater(() -> {
-            new MainWindow(context).open();
-            context.reload(() -> { });
+            javax.swing.JFrame frame = new MainWindow(context).open();
+            context.reload(() -> MainWindow.offerSetup(frame, context));
         });
     }
 

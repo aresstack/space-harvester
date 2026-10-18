@@ -454,6 +454,22 @@ public final class ConfigFileEditor {
         return new Draft(text, settings);
     }
 
+    /**
+     * Setzt {@code space-harvester-app.setup-completed: true}: Der Einrichtungsassistent öffnet sich beim Start nicht
+     * mehr, bleibt aber unter Einstellungen erreichbar.
+     *
+     * @throws IllegalArgumentException wenn die Datei danach etwas anderes liest
+     */
+    public Draft withSetupCompleted(Path file, Draft base) {
+        String text = appValue(base.text(), "setupcompleted", "setup-completed: true");
+        AppSettings settings = loader.read(file, text);
+        if (!settings.setupCompleted()) {
+            throw new IllegalArgumentException("Der Abschluss der Einrichtung ließ sich nicht sicher in die "
+                    + "Konfigurationsdatei schreiben; bitte space-harvester-app.setup-completed von Hand setzen.");
+        }
+        return new Draft(text, settings);
+    }
+
     /** Ersetzt, ergänzt oder entfernt {@code space-harvester-app.output-directory}. */
     static String outputDirectory(String text, String directory) {
         return appValue(text, "outputdirectory", directory == null ? null
