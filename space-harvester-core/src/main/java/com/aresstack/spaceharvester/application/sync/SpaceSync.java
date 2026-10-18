@@ -81,7 +81,7 @@ public class SpaceSync {
     /** Wie {@link #run(String, String, PlanApplier)}, mit Rückmeldungen und Abbruchstellen für einen Auftrag. */
     public SyncRun run(String sourceId, String spaceKey, PlanApplier applier, SyncListener listener) {
         SyncPlan plan = plan(sourceId, spaceKey);
-        listener.inventoried(plan.inventory().pages().size());
+        listener.inventoried(plan.inventory());
         Optional<String> unconfirmable = plan.unconfirmable();
         if (unconfirmable.isPresent()) {
             return new SyncRun(plan, Set.of(), null, unconfirmable.get());

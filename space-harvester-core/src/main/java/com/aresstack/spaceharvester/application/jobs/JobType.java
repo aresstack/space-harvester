@@ -7,5 +7,10 @@ public enum JobType {
     /** Abgleich des Cache mit der Quelle (#16). */
     SYNC,
     /** Exportartefakt aus dem Cache (#11). */
-    EXPORT
+    EXPORT,
+    /**
+     * Anreicherungen eines Space nach einem bestätigten Abgleich oder Einlesen, als eigener Auftrag mit eigenem
+     * Fortschritt und Abbruch; Abgleich und Export warten nicht darauf.
+     */
+    ENRICHMENT
 }
