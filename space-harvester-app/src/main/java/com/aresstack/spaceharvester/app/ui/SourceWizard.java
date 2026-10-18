@@ -87,7 +87,7 @@ final class SourceWizard {
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
     private final JLabel heading = new JLabel(" ");
-    private final Feedback feedback = new Feedback();
+    final Feedback feedback = new Feedback();
 
     final JComboBox<String> kind = Comic.combo();
     final JTextField id = Comic.field(24);
@@ -488,6 +488,22 @@ final class SourceWizard {
         com.aresstack.spaceharvester.app.runtime.AppRuntime runtime = context.runtime();
         AppRuntime.SessionSecrets secrets = sessionSecrets(source);
         Background.run(() -> {
+            if (runtime != null) {
+                // Prüfung des Core (#188), u. a. dasselbe Ziel unter neuer ID; vor jedem Schreiben (auch des
+                // KI-Dienstes), damit bei einem Problem nichts landet. Ohne Geheimnis der Sitzung prüft erst der
+                // Neustart (dann fragt die App es ab).
+                SourceSettingsConfig config = null;
+                try {
+                    config = AppRuntime.config(write(source).settings(), source.id(), secrets);
+                } catch (IllegalStateException missingSecret) {
+                    // siehe oben
+                }
+                List<String> problems = config == null ? List.of()
+                        : runtime.workspace().sourceProblems(config, editing != null);
+                if (!problems.isEmpty()) {
+                    throw new IllegalArgumentException(String.join("\n", problems));
+                }
+            }
             if (aiDraft != null) {
                 // Ohne gemessene Dimension bleibt die semantische Suche aus; die Quelle wird trotzdem gespeichert.
                 AiDraft measured = AiSettingsPanel.measure(context, runtime, aiDraft, aiKey).draft();
@@ -495,6 +511,7 @@ final class SourceWizard {
                 // statt die Quelle doppelt anzuhängen.
                 AiSettingsPanel.store(context, measured, aiVault ? aiKey.clone() : new char[0]);
             }
+            // Nach dem KI-Block neu lesen, damit er im Eintrag der Quelle erhalten bleibt.
             ConfigFileEditor.Draft written = write(source);
             SourceSaving.store(context, editor, editing, source, written, value);
             if (editing != null && runtime != null) {

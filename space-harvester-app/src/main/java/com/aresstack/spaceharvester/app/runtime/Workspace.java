@@ -169,6 +169,16 @@ public final class Workspace {
     }
 
     /**
+     * Probleme der Einstellungen einer Quelle aus Sicht des laufenden Core ({@code SourceManagement.validate}, #188),
+     * etwa dasselbe Ziel wie eine vorhandene Quelle unter neuer ID; leer, wenn sie sich übernehmen lassen.
+     *
+     * @param replacing {@code true} beim Bearbeiten der Quelle mit derselben ID
+     */
+    public List<String> sourceProblems(SourceSettingsConfig draft, boolean replacing) {
+        return harvester.sourceManagement().validate(draft, replacing);
+    }
+
+    /**
      * Übernimmt geänderte Einstellungen einer Quelle in den laufenden Core ({@code SourceManagement.change}, #188).
      * Zeigt sie danach auf ein anderes Ziel (Typ oder Adresse), entfernt der Core ihre bisherigen Daten.
      *
