@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Kopiert die Confluence-Quelle, die Dateiquelle und ihre Basismodule unverändert aus aresstack/enterprise-ai-client
-# in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
+# Kopiert die Confluence-Quelle, die Dateiquelle, den Chat-Adapter (ADR 0017) und ihre Basismodule unverändert aus
+# aresstack/enterprise-ai-client in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
 #
 #   sync-from-upstream.sh sync <commit|tag|branch>   neu kopieren und UPSTREAM.sha256 schreiben
 #   sync-from-upstream.sh verify                     Kopie gegen den Upstream-Commit aus UPSTREAM.sha256 prüfen
@@ -24,6 +24,8 @@ modules=(
   proasteion/emporion/holkas/source-localfiles
   embedding-api
   embedding-openai
+  chat-api
+  chat-openai
 )
 
 # Einzelne Klassen aus weiteren Modulen: <Modulpfad>:<Klassenpfad unter src/main/java ohne .java>.
@@ -60,6 +62,9 @@ astu_classes=(
   modelcatalog/ModelReference
   source/KnowledgeSourceType source/SourceDefinition source/SourceLocators
   source/SourceSettingField source/SourceSettings
+  chat/ChatConversation chat/ChatConversationId chat/ChatFinishReason chat/ChatImage chat/ChatMessage
+  chat/ChatOptions chat/ChatRequest chat/ChatResponse chat/ChatRole chat/ChatToolCall chat/ChatToolDefinition
+  chat/ChatUsage
 )
 
 usage() {
