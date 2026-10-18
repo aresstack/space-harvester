@@ -46,6 +46,7 @@ import java.util.stream.Stream;
 public final class AppRuntime implements AutoCloseable {
 
     private volatile AppSettings settings;
+    private volatile List<String> lastRejection = List.of();
     private final Harvester harvester;
     /** Laufzeitkonfiguration des Harvesters (ADR 0015); eine aktivierte Version wirkt ohne Neustart. */
     private final ConfigurationManager configuration;
@@ -252,22 +253,41 @@ public final class AppRuntime implements AutoCloseable {
         return next.equals(current.withLive(next));
     }
 
+    /** Ausgang von {@link #reconfigure}. */
+    public enum Reconfiguration {
+        /** Der Core hat die neue Version aktiviert, oder es war nichts zu ändern. */
+        APPLIED,
+        /** Mehr als Laufzeitwerte geändert; nur ein Neustart übernimmt sie. */
+        RESTART,
+        /** Der Core hat die neue Version abgelehnt; die bisherige gilt unverändert weiter. */
+        REJECTED
+    }
+
     /**
      * Übernimmt eine geänderte Datei ohne Neustart, wenn sich nur Laufzeitwerte geändert haben ({@link #liveChange}).
-     *
-     * @return {@code true}, wenn der Core die neue Version aktiviert hat oder nichts zu ändern war
+     * Lehnt der Core ab, bleibt die bisherige Konfiguration aktiv (ADR 0015); ein Neustart mit derselben Datei
+     * scheiterte genauso und beendete dabei laufende Aufträge.
      */
-    public boolean reconfigure(AppSettings next, SessionSecrets secrets, String version) {
+    public Reconfiguration reconfigure(AppSettings next, SessionSecrets secrets, String version) {
         if (!liveChange(settings, next) || secrets.sourceFingerprint() != startedSecrets) {
-            return false;
+            return Reconfiguration.RESTART;
         }
         ConfigurationManager.Activation activation = configuration.apply(configuration(next, secrets, version));
         if (activation.outcome() == ConfigurationManager.Outcome.REJECTED) {
             LOG.log(System.Logger.Level.WARNING, "Neue Konfiguration abgelehnt: {0}", activation.problems());
-            return false;
+            lastRejection = activation.problems().stream()
+                    .map(problem -> "Nicht übernommen, die bisherige Einstellung gilt weiter: " + problem.key() + ": "
+                            + problem.message()).toList();
+            return Reconfiguration.REJECTED;
         }
         settings = next;
-        return true;
+        lastRejection = List.of();
+        return Reconfiguration.APPLIED;
+    }
+
+    /** Was der Core bei der letzten abgelehnten Änderung bemängelt hat; leer, wenn die letzte übernommen wurde. */
+    public List<String> lastRejection() {
+        return lastRejection;
     }
 
     /** Die wirksame Version der Laufzeitkonfiguration. */

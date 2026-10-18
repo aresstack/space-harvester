@@ -1,0 +1,89 @@
+// Unveränderte Kopie der KeePassRPC-Anbindung (proasteion/platform/security-keepassrpc) aus
+// aresstack/enterprise-ai-client: Kopplung (SRP-Pairing), Einträge lesen und anlegen. Nur die Desktop-App nutzt sie;
+// der Core kennt KeePass nicht. Herkunft und Abgleich: UPSTREAM.md.
+plugins {
+    id 'java-library'
+    id 'java-test-fixtures'
+}
+
+description = 'KeePassRPC-Anbindung aus enterprise-ai-client (Kopie), nur für die Desktop-App.'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+dependencies {
+    // adyton (SecretProvider, SecretVault) und astu SecretRef liegen bereits in der Kopie enterprise-ai-sources
+    api project(':enterprise-ai-sources')
+    implementation libs.java.websocket
+    implementation libs.gson
+    testFixturesImplementation libs.java.websocket
+    testFixturesImplementation libs.gson
+
+    testImplementation libs.junit4
+    testImplementation libs.gson
+    testImplementation libs.java.websocket
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    useJUnit()
+    systemProperty 'java.awt.headless', 'true'
+}
+
+// Lokale Änderungen an der Kopie erkennen: Jede Datei unter src/ und LICENSE muss exakt der Prüfsumme
+// aus UPSTREAM.sha256 entsprechen (geschrieben von sync-from-upstream.sh); fehlende oder zusätzliche
+// Dateien zählen ebenfalls als Abweichung. Läuft offline als Teil von check/build.
+def verifyUpstreamCopy = tasks.register('verifyUpstreamCopy') {
+    group = 'verification'
+    description = 'Prüft, dass enterprise-ai-keepass unverändert dem Upstream-Stand aus UPSTREAM.sha256 entspricht.'
+    def manifestFile = layout.projectDirectory.file('UPSTREAM.sha256')
+    def copied = layout.projectDirectory.dir('src')
+    def license = layout.projectDirectory.file('LICENSE')
+    inputs.file(manifestFile)
+    inputs.dir(copied)
+    inputs.file(license)
+    def marker = layout.buildDirectory.file('verifyUpstreamCopy/ok')
+    outputs.file(marker)
+    doLast {
+        def root = layout.projectDirectory.asFile.toPath()
+        def expected = [:] as TreeMap
+        manifestFile.asFile.eachLine { line ->
+            if (!line.startsWith('#') && !line.isBlank()) {
+                def parts = line.split('  ', 2)
+                expected[parts[1]] = parts[0]
+            }
+        }
+        def actual = [:] as TreeMap
+        def files = [license.asFile] + project.fileTree(copied).files
+        files.each { file ->
+            def path = root.relativize(file.toPath()).toString().replace(File.separatorChar, '/' as char)
+            actual[path] = java.security.MessageDigest.getInstance('SHA-256').digest(file.bytes).encodeHex().toString()
+        }
+        def problems = []
+        (expected.keySet() - actual.keySet()).each { problems << "fehlt: $it" }
+        (actual.keySet() - expected.keySet()).each { problems << "zusätzlich: $it" }
+        expected.each { path, hash -> if (actual.containsKey(path) && actual[path] != hash) problems << "geändert: $path" }
+        if (problems) {
+            throw new GradleException("enterprise-ai-keepass weicht vom Upstream-Stand ab. Änderungen gehören in " +
+                    "aresstack/enterprise-ai-client und kommen per sync-from-upstream.sh zurück:\n  " + problems.join('\n  '))
+        }
+        def out = marker.get().asFile
+        out.parentFile.mkdirs()
+        out.text = "${actual.size()} Dateien geprüft\n"
+    }
+}
+
+tasks.named('check') {
+    dependsOn verifyUpstreamCopy
+}

@@ -7,7 +7,6 @@ import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentSto
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
-import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
@@ -32,7 +31,6 @@ import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -51,17 +49,16 @@ class QueryConfiguration {
     /**
      * Seitenabruf mit Cache (ADR 0010). {@code space-harvester.cache.max-age} (Standard {@code 0s}) ist das Zeitfenster,
      * in dem eine Seite ohne Rückfrage bei der Quelle gilt; {@code space-harvester.cache.version-check} (Standard
-     * {@code true}) prüft danach die Version, {@code false} ruft die Seite neu ab (ADR 0013).
+     * {@code true}) prüft danach die Version, {@code false} ruft die Seite neu ab (ADR 0013). Beides gilt je Quelle
+     * ({@code sync.sources.<Quelle>.*}) und folgt der Konfiguration zur Laufzeit beim nächsten Abruf.
      */
     @Bean
     PageQueries pageQueries(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
                             PageFreshness freshness, ObjectProvider<PageCacheFill> fill,
                             @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes,
-                            @Value("${space-harvester.cache.max-age:0s}") Duration maxAge,
-                            @Value("${space-harvester.cache.version-check:true}") boolean versionCheck) {
+                            LiveConfiguration live) {
         return new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable), access, freshness,
-                fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes, new CacheFreshness(maxAge, versionCheck),
-                Clock.systemUTC());
+                fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes, live::freshnessFor, Clock.systemUTC());
     }
 
     /** Adressauflösung über alle Quellen (#178). */

@@ -21,6 +21,10 @@ space-harvester-core   ─X─► space-harvester-server, Spring Boot, Servlet, 
 Weitere unabhängige Subprojekte (`:nlp-parser` aus #98, `:nlp-model-training` aus #99) stehen gleichrangig daneben
 und hängen von keinem der beiden Module ab.
 
+`:enterprise-ai-keepass` ist die unveränderte Kopie der KeePassRPC-Anbindung des Enterprise AI Client
+(`proasteion/platform/security-keepassrpc`, [UPSTREAM.md](../enterprise-ai-keepass/UPSTREAM.md)). Nur
+`:space-harvester-app` hängt davon ab; Core und Server kennen KeePass nicht und erhalten nur den aufgelösten Key.
+
 `:document-export` ist die Word-Ausgabe des Enterprise AI Client (Apache POI, flexmark) als eigene Bibliothek ohne Swing,
 eine angepasste Kopie (siehe `document-export/UPSTREAM.md` und [CONVERTERS.md › Word](CONVERTERS.md#word)). Nur der Core
 hängt von ihr ab; sie hat eine eigene Publikation (`com.aresstack:space-harvester-document-export`), damit die Core-POM

@@ -50,6 +50,24 @@ class SwappableEmbeddingProcessorTest {
     }
 
     @Test
+    void aSearchKeepsItsModelWhenTheConfigurationSwapsIt() {
+        AtomicReference<EmbeddingProvider> current = new AtomicReference<>(model("a", 3));
+        EmbeddingProcessor processor = new EmbeddingProcessor(current::get, 1500,
+                KnowledgeTextSegmentation.of(350, 1), sourceId -> true);
+        EmbeddingProcessor.Generation search = processor.current().orElseThrow();
+        String version = search.version();
+
+        current.set(model("b", 4));
+
+        // Anfragevektor und gesuchte Version bleiben beim Modell vom Beginn der Suche.
+        assertThat(search.version()).isEqualTo(version).contains("+a+3+");
+        assertThat(search.embedQuery("frage")).hasSize(3);
+        assertThat(processor.current().orElseThrow().version()).contains("+b+4+");
+        current.set(null);
+        assertThat(processor.current()).isEmpty();
+    }
+
+    @Test
     void anUnusableModelIsRefusedBeforeItIsUsed() {
         assertThatThrownBy(() -> EmbeddingProcessor.check(model("a b", 3)))
                 .isInstanceOf(IllegalArgumentException.class);

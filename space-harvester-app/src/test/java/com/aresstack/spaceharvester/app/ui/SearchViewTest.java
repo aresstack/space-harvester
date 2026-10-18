@@ -100,6 +100,26 @@ class SearchViewTest {
                 + (2 * PAGES_PER_SOURCE) + " Treffer");
     }
 
+    @Test
+    void waitingForPagesNeverFetchesTheNextBatchOnItsOwn() throws Exception {
+        start(false);
+
+        SearchView[] view = new SearchView[1];
+        SwingUtilities.invokeAndWait(() -> {
+            view[0] = new SearchView(context);
+            view[0].search("betrieb");
+        });
+        JTable table = find(view[0].component(), JTable.class).get(0);
+        AbstractButton more = button(view[0].component(), "Weitere laden");
+        await(() -> table.getRowCount() > 0 && more.isEnabled());
+        // Das Nachfragen wiederholt nur den angezeigten Stapel; weitere Treffer holt erst „Weitere laden“.
+        Thread.sleep(3 * 1000);
+        int[] rows = new int[1];
+        SwingUtilities.invokeAndWait(() -> rows[0] = table.getRowCount());
+        assertThat(rows[0]).isLessThanOrEqualTo(2 * SearchView.LIMIT);
+        assertThat(more.isEnabled()).isTrue();
+    }
+
     /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
     private static void loadAll(JTable table, AbstractButton more, int expected) throws Exception {
         for (int i = 0; i < 1200; i++) {

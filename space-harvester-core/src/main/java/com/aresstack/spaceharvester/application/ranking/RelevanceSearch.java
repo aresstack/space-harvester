@@ -243,17 +243,20 @@ public class RelevanceSearch {
             return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0);
         }
 
-        float[] vector = queryVector(queryText);
-        List<SearchHit> window = semanticCandidates(caller, query, scope, state, vector);
+        // Ein Modell für den ganzen Vorgang (ADR 0015): Anfragevektor und gesuchte Vektoren passen zusammen.
+        EmbeddingProcessor.Generation model = embedding.current().orElseThrow(
+                () -> new SemanticSearchUnavailableException("Kein Embedding-Modell eingestellt"));
+        float[] vector = queryVector(model, queryText);
+        List<SearchHit> window = semanticCandidates(caller, query, scope, state, model, vector);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
-            Score score = score(caller, hit, vector);
+            Score score = score(caller, hit, model, vector);
             if (score != null) {
                 scores.put(hit, score);
             }
         }
-        SearchReranker reranker = new CosineReranker("embedding-cosine@" + embedding.version(), hit -> {
+        SearchReranker reranker = new CosineReranker("embedding-cosine@" + model.version(), hit -> {
                     Score score = scores.get(hit);
                     return score == null ? null : score.similarity();
                 });
@@ -478,9 +481,9 @@ public class RelevanceSearch {
         void renew(AccessContext caller, PageKey key);
     }
 
-    private float[] queryVector(String text) {
+    private float[] queryVector(EmbeddingProcessor.Generation model, String text) {
         try {
-            return EmbeddingIndex.normalized(embedding.embedQuery(text));
+            return EmbeddingIndex.normalized(model.embedQuery(text));
         } catch (EmbeddingUnavailableException e) {
             // Kein Anfragetext im Log.
             LOG.log(System.Logger.Level.WARNING, "Anfrage nicht eingebettet ({0})", e.getClass().getName());
@@ -490,9 +493,10 @@ public class RelevanceSearch {
 
     /** Seiten der ähnlichsten Stücke, nach bester Ähnlichkeit, gefiltert nach Anfrage und Rechten. */
     private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                               SearchIndexState state, float[] vector) {
+                                               SearchIndexState state, EmbeddingProcessor.Generation model,
+                                               float[] vector) {
         Set<PageKey> pages = new LinkedHashSet<>();
-        for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), embedding.version(), vector,
+        for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), model.version(), vector,
                 MAX_CHUNKS)) {
             pages.add(chunk.page());
         }
@@ -519,7 +523,7 @@ public class RelevanceSearch {
     }
 
     /** Ähnlichkeit des besten Stücks der Seite, nur mit {@code content}-Freigabe und Embedding des aktuellen Modells. */
-    private Score score(AccessContext caller, SearchHit hit, float[] vector) {
+    private Score score(AccessContext caller, SearchHit hit, EmbeddingProcessor.Generation model, float[] vector) {
         if (!permits(caller, hit, AccessKind.CONTENT)) {
             return null;
         }
@@ -531,7 +535,7 @@ public class RelevanceSearch {
             }
         }
         if (result == null || result.status() != Enrichment.Status.OK
-                || !result.processorVersion().equals(embedding.version())) {
+                || !result.processorVersion().equals(model.version())) {
             return null;
         }
         EmbeddingPayload payload;

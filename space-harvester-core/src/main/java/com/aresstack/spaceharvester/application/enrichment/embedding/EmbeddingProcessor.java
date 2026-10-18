@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -177,17 +178,60 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             vector(json, vectors.get(i), provider.dimensions());
             json.append('}');
         }
-        return new EnrichmentOutput(json.append("]}").toString(), warnings);
+        // Mit der Version dieses Modells, nicht der bei Abschluss eingestellten.
+        return new EnrichmentOutput(json.append("]}").toString(), warnings, version(provider));
     }
 
     /**
-     * Bettet eine Suchanfrage mit demselben Modell ein wie die Seiten dieser {@link #version()}.
+     * Das jetzt eingestellte Modell mit seiner Version, fest für einen ganzen Suchvorgang: Wechselt die Konfiguration
+     * währenddessen das Modell (ADR 0015), passen Anfragevektor und gesuchte Vektoren trotzdem zusammen.
+     *
+     * @return leer, solange kein Modell eingestellt ist
+     */
+    public Optional<Generation> current() {
+        EmbeddingProvider current = provider.get();
+        return current == null ? Optional.empty() : Optional.of(new Generation(current, version(current)));
+    }
+
+    /** Ein Modell und die Version seiner Embeddings. */
+    public final class Generation {
+
+        private final EmbeddingProvider provider;
+        private final String version;
+
+        private Generation(EmbeddingProvider provider, String version) {
+            this.provider = provider;
+            this.version = version;
+        }
+
+        /** Version der Embeddings dieses Modells, wie {@link EmbeddingProcessor#version()}. */
+        public String version() {
+            return version;
+        }
+
+        /**
+         * Bettet eine Suchanfrage mit diesem Modell ein.
+         *
+         * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar ist oder einen unbrauchbaren Vektor
+         *                                       liefert
+         */
+        public float[] embedQuery(String text) {
+            return EmbeddingProcessor.embedQuery(provider, text);
+        }
+    }
+
+    /**
+     * Bettet eine Suchanfrage mit dem jetzt eingestellten Modell ein; für einen Vorgang, der auch Vektoren sucht,
+     * {@link #current()} nehmen.
      *
      * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar ist oder einen unbrauchbaren Vektor liefert
      */
     public float[] embedQuery(String text) {
+        return embedQuery(provider(), text);
+    }
+
+    private static float[] embedQuery(EmbeddingProvider provider, String text) {
         Objects.requireNonNull(text, "text");
-        EmbeddingProvider provider = provider();
         List<float[]> vectors = provider.embedQueries(List.of(text));
         float[] vector = vectors == null || vectors.size() != 1 ? null : vectors.get(0);
         if (vector == null || vector.length != provider.dimensions()) {

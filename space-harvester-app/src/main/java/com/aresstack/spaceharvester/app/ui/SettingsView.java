@@ -234,6 +234,7 @@ public final class SettingsView implements View {
         }
         if (context.runtime() != null) {
             context.runtime().rejectedSources().forEach(problem -> text.append("• ").append(problem).append('\n'));
+            context.runtime().lastRejection().forEach(problem -> text.append("• ").append(problem).append('\n'));
         }
         problems.setText(text.toString().strip());
         problems.setVisible(!text.isEmpty());
@@ -349,6 +350,9 @@ public final class SettingsView implements View {
             reload.setEnabled(true);
             if (context.runtime() == null) {
                 feedback.problem(context.startProblem());
+            } else if (!context.runtime().lastRejection().isEmpty()) {
+                feedback.warning("Nicht übernommen", "Der Core hat die Änderung abgelehnt; die bisherige Einstellung "
+                        + "gilt weiter. Details unter Konfiguration.");
             } else if (!context.settings().problems().isEmpty()) {
                 feedback.warning("Neu geladen, mit Hinweisen", "Quellen mit Fehlern fehlen, bis die Datei stimmt.");
             } else {
