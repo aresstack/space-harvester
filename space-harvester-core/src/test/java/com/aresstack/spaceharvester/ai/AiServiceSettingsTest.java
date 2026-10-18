@@ -21,6 +21,7 @@ class AiServiceSettingsTest {
         properties.setProperty("embedding-dimensions", "1536");
         properties.setProperty("space-harvester.ai.timeout", "PT45S");
         properties.setProperty("space-harvester.ai.external-processing-sources", " wiki , ,docs ");
+        properties.setProperty("rerank-model", " bge-reranker ");
 
         AiServiceSettings settings = AiServiceSettings.fromProperties(properties);
 
@@ -31,6 +32,8 @@ class AiServiceSettingsTest {
         assertThat(settings.embeddings()).isTrue();
         assertThat(settings.mayProcessExternally("wiki")).isTrue();
         assertThat(settings.mayProcessExternally("intern")).isFalse();
+        assertThat(settings.rerankModel()).isEqualTo("bge-reranker");
+        assertThat(settings.reranking()).isTrue();
         assertThat(settings.toString()).doesNotContain("sk-geheim-4711").contains("apiKey=***");
     }
 
@@ -41,6 +44,7 @@ class AiServiceSettingsTest {
         assertThat(settings).isEqualTo(AiServiceSettings.NONE);
         assertThat(settings.configured()).isFalse();
         assertThat(settings.embeddings()).isFalse();
+        assertThat(settings.reranking()).isFalse();
         assertThat(settings.timeout()).isEqualTo(AiServiceSettings.DEFAULT_TIMEOUT);
         assertThat(settings.mayProcessExternally("wiki")).isFalse();
     }

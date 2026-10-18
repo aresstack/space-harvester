@@ -31,9 +31,10 @@ public record EmbeddingPayload(String model, int dimensions, List<Chunk> chunks)
      *
      * @param charStart erstes Zeichen in der Textprojektion
      * @param charEnd   Ende (exklusiv)
+     * @param section   Überschriftenkette des Abschnitts ({@code Handbuch > Betrieb}) oder {@code null}
      * @param vector    Vektor des Modells
      */
-    public record Chunk(int charStart, int charEnd, float[] vector) {
+    public record Chunk(int charStart, int charEnd, String section, float[] vector) {
     }
 
     /**
@@ -57,8 +58,9 @@ public record EmbeddingPayload(String model, int dimensions, List<Chunk> chunks)
                     throw new IllegalArgumentException("vector enthält keinen endlichen Wert");
                 }
             }
+            Object section = chunk.get("section");
             chunks.add(new Chunk(integer(chunk.get("charStart"), "charStart"), integer(chunk.get("charEnd"),
-                    "charEnd"), vector));
+                    "charEnd"), section == null ? null : as(section, String.class, "section"), vector));
         }
         return new EmbeddingPayload(model, dimensions, chunks);
     }

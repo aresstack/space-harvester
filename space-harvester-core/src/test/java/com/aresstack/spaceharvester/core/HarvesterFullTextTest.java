@@ -7,8 +7,12 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.IOException;
 import java.net.URI;
@@ -18,6 +22,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +30,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Volltextindex über den Cache (#180): Quellen ohne eigene Suche (lokale Dateien) sucht der Index, sobald ihre Seiten
- * im Cache liegen; Treffer der Live-Suche lädt ein begrenzter Hintergrund in den Cache.
+ * Volltextindex über den Cache (#180, ADR 0013): Quellen ohne eigene Suche (lokale Dateien) sucht der Index, sobald
+ * ihre Seiten im Cache liegen; was die Quellensuche findet, wird vor der Suche im Cache geladen.
  */
 class HarvesterFullTextTest {
 
@@ -44,6 +49,24 @@ class HarvesterFullTextTest {
             throw new ExceptionInInitializerError(e);
         }
     }
+
+    /** Jeder Text zeigt in dieselbe Richtung; es zählt nur, ob ein Vektor da ist. */
+    private static final EmbeddingProvider MODEL = new EmbeddingProvider() {
+        @Override
+        public String modelId() {
+            return "achsen@1";
+        }
+
+        @Override
+        public int dimensions() {
+            return 2;
+        }
+
+        @Override
+        public List<float[]> embed(List<String> texts) {
+            return texts.stream().map(text -> new float[] {1, 0}).toList();
+        }
+    };
 
     @TempDir
     Path data;
@@ -100,25 +123,49 @@ class HarvesterFullTextTest {
     }
 
     @Test
-    void visibleLiveHitsAreLoadedIntoTheCacheInTheBackground() throws InterruptedException {
+    void theSemanticSearchFindsLoadsAndEmbedsBeforeItSearchesWithoutAnySync() {
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).embeddings(MODEL).build()) {
+            PageSearchQuery wiki = PageSearchQuery.of("wiki", List.of(), null, null, null, null, null, null,
+                    SearchSort.TITLE);
+
+            // ADR 0013, Punkt 3: ein Aufruf, ohne vorherige Schlagwortsuche und ohne Abgleich.
+            RelevanceSearch.RelevanceResults results = harvester.relevance().search(harvester.caller(), wiki,
+                    "Nachtlauf", 10);
+
+            assertThat(results.hits()).extracting(hit -> hit.hit().page().pageId()).containsExactly("102");
+            assertThat(results.reranker()).startsWith("embedding-cosine@");
+            assertThat(results.complete()).isTrue();
+        }
+    }
+
+    @Test
+    void localFilesGetEmbeddingsWhenOpenedToo() {
+        try (Harvester harvester = files(Harvester.builder().embeddings(MODEL))) {
+            harvester.pages().page(harvester.caller(), "docs", id("betrieb.md"), false);
+            PageSearchQuery docs = PageSearchQuery.of("docs", List.of(), null, null, null, null, null, null,
+                    SearchSort.TITLE);
+
+            assertThat(harvester.relevance().search(harvester.caller(), docs, "Nachtlauf", 10).hits())
+                    .extracting(hit -> hit.hit().page().pageId()).containsExactly(id("betrieb.md"));
+        }
+    }
+
+    @Test
+    void foundPagesAreInTheCacheWhenTheSearchAnswers() {
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
                     null, 10).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("102");
 
-            Instant deadline = Instant.now().plusSeconds(10);
-            while (!cached(harvester) && Instant.now().isBefore(deadline)) {
-                Thread.sleep(50);
-            }
             assertThat(cached(harvester)).isTrue();
         }
     }
 
     @Test
-    void withoutPrefetchTheSearchLoadsNothing() throws InterruptedException {
+    void withoutPrefetchTheSearchLoadsNothingAndFindsNothingNew() {
         try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).prefetchSearchHits(false)
                 .build()) {
-            harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null, 10);
-            Thread.sleep(300);
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
+                    null, 10).hits()).isEmpty();
 
             assertThat(cached(harvester)).isFalse();
         }

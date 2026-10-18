@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -72,7 +73,7 @@ class GlobalRelevanceSearchTest {
             embeddedQueries.addAll(texts);
             return texts.stream().map(GlobalRelevanceSearchTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     private final SourceCatalog catalog = new SourceCatalog() {
         @Override
@@ -120,15 +121,13 @@ class GlobalRelevanceSearchTest {
     }
 
     @Test
-    void lexicalAndSemanticCandidatesAreDeduplicatedByPageKeyNotPageId() {
+    void titleWordsFilterTheVectorCandidatesAndPagesStaySeparateBySource() {
         twoSources();
-        // Titel „übersicht“: Seite 10 in beiden Quellen, jede kommt aus Titel- und Vektorsuche.
+        // Titel „übersicht“: Seite 10 in beiden Quellen, zwei Kandidaten aus der Vektorsuche.
         RelevanceSearch.RelevanceResults results = search(ALLOW_ALL).search(CALLER, global("übersicht"), "Betrieb",
                 10);
 
         assertThat(keys(results)).containsExactly("wiki-b/10", "wiki-a/10");
-        assertThat(RelevanceSearch.interleave(results.hits().stream().map(RelevanceSearch.RankedHit::hit).toList(),
-                results.hits().stream().map(RelevanceSearch.RankedHit::hit).toList())).hasSize(2);
     }
 
     @Test
@@ -139,11 +138,10 @@ class GlobalRelevanceSearchTest {
 
         assertThat(keys(search(noContentInB).search(CALLER, global(null), "Betrieb", 10)))
                 .containsExactly("wiki-a/20", "wiki-a/11", "wiki-a/10");
+        // Auch über den Titel kommt keine Seite aus wiki-b herein (ADR 0013: Titelwörter filtern nur).
         RelevanceSearch.RelevanceResults byTitle = search(noContentInB).search(CALLER, global("betrieb"), "Betrieb",
                 10);
-        assertThat(byTitle.hits()).filteredOn(hit -> hit.hit().page().header().key().sourceId().equals("wiki-b"))
-                .singleElement().satisfies(hit -> assertThat(hit.relevance()).isNull());
-        assertThat(keys(byTitle).get(keys(byTitle).size() - 1)).isEqualTo("wiki-b/10");
+        assertThat(keys(byTitle)).noneMatch(key -> key.startsWith("wiki-b/"));
     }
 
     @Test

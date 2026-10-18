@@ -19,9 +19,11 @@ import java.util.TreeSet;
  *       zur Inventur passt (siehe unten).</li>
  *   <li>{@link PageChange.Kind#METADATA_CHANGED}, {@link PageChange.Kind#ATTRIBUTES_CHANGED}: nur die aktuellen
  *       Kopfdaten ersetzen, kein Inhaltsabruf.</li>
- *   <li>{@link PageChange.Kind#MISSING}: bei {@link RemovalCheck.Verdict#GONE} entfernen, bei
+ *   <li>{@link PageChange.Kind#MISSING}: bei {@link RemovalCheck.Verdict#DELETED} entfernen, bei
+ *       {@link RemovalCheck.Verdict#INACCESSIBLE} sperren ({@link StagedGeneration#withhold}), bei
  *       {@link RemovalCheck.Verdict#MOVED_OUT} nur die Kopfdaten aus der Einzelabfrage übernehmen (der Schlüssel
  *       enthält keinen Space, die Seite bleibt), sonst nichts.</li>
+ *   <li>{@link SyncPlan#purges()}: gesperrte Seiten nach Ablauf der Frist endgültig entfernen.</li>
  * </ul>
  *
  * <p>Ein geladener Snapshot muss Seite, Space und (wenn die Inventur sie kennt) Revision der Inventur tragen. Weicht
@@ -66,8 +68,10 @@ public class PlanApplier {
                         target.saveHeader(header(key, change.current(), observedAt));
                 case MISSING -> {
                     RemovalCheck.Result removal = plan.removals().get(change.pageId());
-                    if (removal != null && removal.verdict() == RemovalCheck.Verdict.GONE) {
+                    if (removal != null && removal.verdict() == RemovalCheck.Verdict.DELETED) {
                         target.remove(key);
+                    } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.INACCESSIBLE) {
+                        target.withhold(key);
                     } else if (removal != null && removal.verdict() == RemovalCheck.Verdict.MOVED_OUT) {
                         target.saveHeader(header(key, removal.current(), observedAt));
                     } else {
@@ -77,6 +81,9 @@ public class PlanApplier {
                 case UNCHANGED, NOT_SEEN -> written = false;
             }
             listener.pageDone(change, written, failed.contains(change.pageId()));
+        }
+        for (String pageId : plan.purges()) {
+            target.remove(new PageKey(sourceId, pageId));
         }
         return failed;
     }

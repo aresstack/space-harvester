@@ -36,8 +36,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Suche des Harvesters (#28, ADR 0010): mit {@code text} die Schlagwortsuche über Titel und Inhalt in der Suche jeder
- * Quelle ({@link KeywordSearch}, ohne Nachladen und ohne Bestand), sonst Titel- und Metadatensuche über den Index.
+ * Suche des Harvesters (#28, ADR 0010, ADR 0013): mit {@code text} die Schlagwortsuche über den Cache
+ * ({@link KeywordSearch}: die Quellen finden, gefundene Seiten werden geladen, der Volltextindex sucht), sonst Titel-
+ * und Metadatensuche über den Index.
  * Liefert nie Seiteninhalte. {@code sort=relevance} ordnet zusätzlich nach der Ähnlichkeit zu den
  * gespeicherten Embeddings (#89). Ohne {@code sourceId} sucht sie global über alle freigegebenen, indexierten Quellen
  * (#114, ADR 0009); Rechte, Sortierung und Cursor kommen aus demselben Core-Anwendungsfall wie in der Desktop-App.
@@ -59,16 +60,16 @@ public class SearchController {
 
     @GetMapping
     @Operation(summary = "Seiten einer oder aller Quellen nach Titel und Metadaten suchen, stapelweise",
-            description = "Mit text: Schlagwortsuche über Titel und Inhalt in der Suche jeder Quelle des Umfangs "
-                    + "(Confluence: CQL siteSearch über /rest/api/search, wie die Websuche), ohne vorherigen Abgleich "
-                    + "und ohne Warten auf Seiteninhalte (origin=source, Antwort KeywordResponse). Jeder Treffer trägt "
-                    + "Titel, Textauszug (snippet), url, Version, Quelle und Space; seine Kopfdaten liest der "
-                    + "Harvester live und prüft an ihnen metadata für genau diese Seite, bei delegierten Benutzern "
-                    + "über die Quelle. Die Quellen liefern reihum; nextCursor lädt weitere (höchstens "
-                    + KeywordSearch.MAX_DEPTH + " je Quelle). Quellen ohne eigene Suche sucht mit Cache der "
-                    + "Volltextindex (sources: indexed, Treffer verlangen zusätzlich content); sichtbare Live-Treffer "
-                    + "lädt danach ein begrenzter Hintergrund in den Cache. sources nennt je Quelle searched, indexed, "
-                    + "not-supported (kann nicht selbst suchen, kein Index) oder unavailable (mit reason); eine nicht "
+            description = "Mit text: Schlagwortsuche über den Cache (ADR 0013, origin=cache, Antwort KeywordResponse). "
+                    + "Die Suche jeder Quelle des Umfangs (Confluence: CQL siteSearch über /rest/api/search) findet "
+                    + "Kandidaten; deren Kopfdaten liest der Harvester live und prüft an ihnen metadata für genau "
+                    + "diese Seite, bei delegierten Benutzern über die Quelle. Sichtbare Kandidaten lädt er mit den "
+                    + "Rechten des Aufrufers in den Cache, ohne vorherigen Abgleich; gleiche Versionen nicht erneut. "
+                    + "Dann sucht der Volltextindex (BM25) über den Cache, auch für Quellen ohne eigene Suche "
+                    + "(sources: indexed); nur von dort kommen Treffer, jeder verlangt metadata und content. Was beim "
+                    + "Antworten noch lädt, zählt loading und erscheint über nextCursor (höchstens "
+                    + KeywordSearch.MAX_DEPTH + " je Quelle). sources nennt je Quelle searched, indexed, "
+                    + "not-supported (kann nicht selbst suchen, kein Cache) oder unavailable (mit reason); eine nicht "
                     + "erreichbare Quelle verwirft "
                     + "die anderen nicht, complete ist dann false. sourceId, sourceIds und spaceKey gelten wie unten; "
                     + "andere Filter und sort gibt es mit text nicht. Ohne text: Titel- und Metadatensuche im Index "
@@ -163,10 +164,11 @@ public class SearchController {
                 throw new InvalidQueryException("text gibt es nur mit sourceId, sourceIds, spaceKey, excludeSpaceKey, "
                         + "cursor und limit");
             }
-            return KeywordResponse.of(keywords.search(caller, new KeywordSearch.Query(text, sourceId,
+            KeywordSearch.Query query = new KeywordSearch.Query(text, sourceId,
                     Set.copyOf(sourceIds == null ? List.of() : sourceIds),
                     Set.copyOf(spaceKey == null ? List.of() : spaceKey),
-                    Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey)), cursor, limit));
+                    Set.copyOf(excludeSpaceKey == null ? List.of() : excludeSpaceKey));
+            return KeywordResponse.of(keywords.searchesTheCache(), keywords.search(caller, query, cursor, limit));
         }
         if (excludeSpaceKey != null && !excludeSpaceKey.isEmpty()) {
             throw new InvalidQueryException("excludeSpaceKey gibt es nur mit text");
@@ -251,29 +253,32 @@ public class SearchController {
      * Ein Stapel der Schlagwortsuche ({@code text}).
      *
      * @param scope      {@code source} mit {@code sourceId}, {@code global} ohne
-     * @param origin     immer {@code source}: Treffer aus der Suche der Quellen, nicht aus dem Bestand
+     * @param origin     {@code cache}: die Quellen finden, gefundene Seiten werden in den Cache geladen und dort gesucht
+     *                   (ADR 0013); {@code source} nur ohne Cache, dann Treffer aus der Suche der Quellen
      * @param sources    je Quelle, ob sie gesucht hat
-     * @param nextCursor für weitere Treffer mit denselben Parametern, {@code null}, wenn keine Quelle mehr hat
-     * @param complete   keine Quelle hat mehr Treffer, und jede ließ sich fragen und jeder Treffer prüfen
+     * @param nextCursor für weitere Treffer mit denselben Parametern, {@code null}, wenn nichts mehr folgt
+     * @param complete   nichts folgt mehr, und jede Quelle ließ sich fragen und jeder Treffer prüfen
+     * @param loading    gefundene Seiten, die beim Antworten noch nicht im Cache lagen; sie kommen mit nextCursor
      */
     public record KeywordResponse(@Schema(allowableValues = {"source", "global"}) String scope,
-                                  @Schema(nullable = true) String sourceId, String origin, List<KeywordHitResponse> hits,
-                                  List<SourceStateResponse> sources, @Schema(nullable = true) String nextCursor,
-                                  boolean complete) {
+                                  @Schema(nullable = true) String sourceId,
+                                  @Schema(allowableValues = {"cache", "source"}) String origin,
+                                  List<KeywordHitResponse> hits, List<SourceStateResponse> sources,
+                                  @Schema(nullable = true) String nextCursor, boolean complete, int loading) {
 
-        static KeywordResponse of(KeywordSearch.Results results) {
-            return new KeywordResponse(SearchResponse.scope(results.sourceId()), results.sourceId(), "source",
-                    results.hits().stream().map(KeywordHitResponse::of).toList(),
+        static KeywordResponse of(boolean fromCache, KeywordSearch.Results results) {
+            return new KeywordResponse(SearchResponse.scope(results.sourceId()), results.sourceId(),
+                    fromCache ? "cache" : "source", results.hits().stream().map(KeywordHitResponse::of).toList(),
                     results.sources().stream().map(SourceStateResponse::of).toList(), results.nextCursor(),
-                    results.complete());
+                    results.complete(), results.loading());
         }
     }
 
     /**
-     * Ein Treffer der Schlagwortsuche; Kopfdaten live von der Quelle, Auszug aus ihrer Suche. Den Inhalt liefert
+     * Ein Treffer der Schlagwortsuche; Kopfdaten live von der Quelle, Auszug aus dem Cache. Den Inhalt liefert
      * {@code GET /api/v1/sources/{sourceId}/pages/{pageId}}.
      *
-     * @param snippet Textauszug der Quelle als Klartext, leer, wenn sie keinen liefert
+     * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
      */
     public record KeywordHitResponse(String sourceId, String pageId, String spaceKey, String title, String snippet,
                                      @Schema(nullable = true) URI url, @Schema(nullable = true) String version,

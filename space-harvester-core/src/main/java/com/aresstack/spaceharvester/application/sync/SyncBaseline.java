@@ -25,15 +25,25 @@ import java.util.TreeSet;
  * @param missingPageIds Seiten, die die Inventur gelistet hat, für die der Cache aber keinen Stand führt, weil ihr
  *                       erster Abruf fehlschlug; nicht in {@code pages}. Der nächste Lauf sieht sie wieder als neu.
  *                       Eine Generation mit solchen Seiten ist bestätigt, aber nicht vollständig ({@link #complete()})
+ * @param withheldPageIds gesperrte Seiten ({@link RemovalCheck.Verdict#INACCESSIBLE}, ADR 0014) mit dem Beginn der
+ *                        Sperre; nicht in {@code pages}. Nach Ablauf der Frist entfernt ein Lauf ihre Rohdaten, taucht
+ *                        eine wieder in der Inventur auf, ist sie neu
  */
 public record SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
                            SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
-                           SortedSet<String> missingPageIds) {
+                           SortedSet<String> missingPageIds, SortedMap<String, Instant> withheldPageIds) {
 
-    /** Eine Generation ohne fehlende Seiten. */
+    /** Eine Generation ohne fehlende und gesperrte Seiten. */
     public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
                         SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds) {
         this(sourceId, spaceKey, generation, confirmedAt, pages, stalePageIds, new TreeSet<>());
+    }
+
+    /** Eine Generation ohne gesperrte Seiten. */
+    public SyncBaseline(String sourceId, String spaceKey, long generation, Instant confirmedAt,
+                        SortedMap<String, BaselineEntry> pages, SortedSet<String> stalePageIds,
+                        SortedSet<String> missingPageIds) {
+        this(sourceId, spaceKey, generation, confirmedAt, pages, stalePageIds, missingPageIds, new TreeMap<>());
     }
 
     public SyncBaseline {
@@ -59,6 +69,19 @@ public record SyncBaseline(String sourceId, String spaceKey, long generation, In
                 throw new IllegalArgumentException("Fehlende Seite " + missing + " darf keinen Stand haben");
             }
         }
+        withheldPageIds = new TreeMap<>(withheldPageIds == null ? Map.of() : withheldPageIds);
+        for (Map.Entry<String, Instant> withheld : withheldPageIds.entrySet()) {
+            Objects.requireNonNull(withheld.getValue(), "Beginn der Sperre");
+            if (pages.containsKey(withheld.getKey()) || missingPageIds.contains(withheld.getKey())) {
+                throw new IllegalArgumentException("Gesperrte Seite " + withheld.getKey()
+                        + " darf weder Stand haben noch fehlen");
+            }
+        }
+    }
+
+    @Override
+    public SortedMap<String, Instant> withheldPageIds() {
+        return new TreeMap<>(withheldPageIds);
     }
 
     @Override

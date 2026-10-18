@@ -117,12 +117,16 @@ public final class PageCacheSchema {
     static final String CONFIRMED_AT = "confirmedAt";
     static final String STALE_PAGE_ID = "stalePageId";
     static final String MISSING_PAGE_ID = "missingPageId";
+    /** Gesperrte Seite (ADR 0014) als {@code <Beginn der Sperre> <pageId>}; ein Instant enthält kein Leerzeichen. */
+    static final String WITHHELD_PAGE = "withheldPage";
 
     static final String PAGE = "page";
     static final String REVISION = "revision";
     static final String SPACE = "space";
     static final String BASELINE = "baseline";
     static final String SOURCE = "source";
+    /** Zurückgehaltener Stand einer gesperrten Seite (ADR 0014): nur gespeicherte Felder, kein Lesepfad. */
+    static final String WITHHELD = "withheld";
 
     /** Gespeicherte Felder der aktuellen Kopfdaten und des Payload-Hashs, damit Listen die Bytes nicht laden. */
     static final Set<String> HEADER_FIELDS = Set.of(SOURCE_ID, PAGE_ID, SPACE_KEY, PARENT_ID, RESOURCE_ID, TITLE,
@@ -143,6 +147,33 @@ public final class PageCacheSchema {
         return new Term(ID, id(REVISION, key.sourceId(), key.pageId(), revision));
     }
 
+    static Term withheldTerm(PageKey key) {
+        return new Term(ID, id(WITHHELD, key.sourceId(), key.pageId()));
+    }
+
+    /**
+     * Der zurückgehaltene Stand einer gesperrten Seite: alle gespeicherten Felder ihres Seitendokuments unter eigenem
+     * Präfix (Lucene verlangt je Feldname gleiche Indexoptionen), darunter die Rohdaten, aber kein durchsuchbares Feld
+     * außer Typ und ID. Keine Abfrage für Seiten, Titel oder Auflistungen findet ihn; er wartet nur auf das endgültige
+     * Entfernen nach Ablauf der Frist.
+     */
+    static Document withheld(PageKey key, Document page) {
+        Document doc = new Document();
+        doc.add(new StringField(TYPE, WITHHELD, Field.Store.NO));
+        doc.add(new StringField(ID, withheldTerm(key).text(), Field.Store.NO));
+        for (IndexableField field : page.getFields()) {
+            String name = WITHHELD + "." + field.name();
+            if (field.binaryValue() != null) {
+                doc.add(new StoredField(name, field.binaryValue()));
+            } else if (field.stringValue() != null) {
+                doc.add(new StoredField(name, field.stringValue()));
+            } else if (field.numericValue() != null) {
+                doc.add(new StoredField(name, field.numericValue().longValue()));
+            }
+        }
+        return doc;
+    }
+
     /** Alle Verlaufseinträge einer Seite. */
     static Term revisionsOfPage(PageKey key) {
         return new Term(PAGE_OF_REVISION, id(PAGE, key.sourceId(), key.pageId()));
@@ -158,12 +189,13 @@ public final class PageCacheSchema {
 
     /**
      * Alle Dokumente einer Quelle außer ihrer Suchgeneration (#188): Seiten, Verlauf, bestätigte Generationen und ihre
-     * Seiteneinträge.
+     * Seiteneinträge, zurückgehaltene Stände gesperrter Seiten.
      */
     static Query[] ofSource(String sourceId) {
         String prefix = SEPARATOR + sourceId + SEPARATOR;
         return new Query[]{new PrefixQuery(new Term(ID, PAGE + prefix)), new PrefixQuery(new Term(ID, REVISION + prefix)),
-                new PrefixQuery(new Term(ID, SPACE + prefix)), new PrefixQuery(new Term(BASELINE_OF, SPACE + prefix))};
+                new PrefixQuery(new Term(ID, SPACE + prefix)), new PrefixQuery(new Term(BASELINE_OF, SPACE + prefix)),
+                new PrefixQuery(new Term(ID, WITHHELD + prefix))};
     }
 
     /** Alle Seiteneinträge der bestätigten Generation eines Space. */
@@ -277,6 +309,8 @@ public final class PageCacheSchema {
         for (String pageId : baseline.missingPageIds()) {
             doc.add(new StoredField(MISSING_PAGE_ID, pageId));
         }
+        baseline.withheldPageIds().forEach((pageId, since) ->
+                doc.add(new StoredField(WITHHELD_PAGE, since + " " + pageId)));
         return doc;
     }
 
@@ -417,7 +451,16 @@ public final class PageCacheSchema {
         }
         return new SyncBaseline(space.get(SPACE_DOC + SOURCE_ID), space.get(SPACE_DOC + SPACE_KEY), generation(space),
                 instant(space.get(CONFIRMED_AT)), pages, new TreeSet<>(List.of(space.getValues(STALE_PAGE_ID))),
-                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))));
+                new TreeSet<>(List.of(space.getValues(MISSING_PAGE_ID))), withheld(space));
+    }
+
+    private static SortedMap<String, Instant> withheld(Document space) {
+        SortedMap<String, Instant> withheld = new TreeMap<>();
+        for (String value : space.getValues(WITHHELD_PAGE)) {
+            int separator = value.indexOf(' ');
+            withheld.put(value.substring(separator + 1), instant(value.substring(0, separator)));
+        }
+        return withheld;
     }
 
     private static long number(Document doc, String field) {

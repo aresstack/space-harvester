@@ -30,10 +30,12 @@ import java.util.Set;
  *                                  Benutzers genügt dafür nicht: ohne Eintrag verlässt kein Inhalt dieser Quelle das
  *                                  Haus, und ihre Seiten bekommen keine Embeddings. Suchanfragen selbst gehen immer an
  *                                  den Dienst, wenn die semantische Suche benutzt wird.
+ * @param rerankModel               Rerank-Modell ({@code POST /rerank}, #181) oder {@code null}; mit ihm ordnet ein
+ *                                  Cross-Encoder die Treffer der semantischen Suche um, aus freigegebenen Quellen
  */
 public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
                                 Integer embeddingDimensions, Duration timeout, String trustBundle,
-                                Set<String> externalProcessingSources) {
+                                Set<String> externalProcessingSources, String rerankModel) {
 
     /** Präfix der Properties im Server und in der Konfigurationsdatei der App. */
     public static final String PREFIX = "space-harvester.ai.";
@@ -46,13 +48,14 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     public static final String TIMEOUT = "timeout";
     public static final String TRUST_BUNDLE = "trust-bundle";
     public static final String EXTERNAL_PROCESSING_SOURCES = "external-processing-sources";
+    public static final String RERANK_MODEL = "rerank-model";
 
     /** Standard der Lesefrist. */
     public static final Duration DEFAULT_TIMEOUT = Duration.ofSeconds(30);
 
     /** Kein Dienst eingerichtet. */
     public static final AiServiceSettings NONE = new AiServiceSettings(null, null, null, null, null, null, null,
-            Set.of());
+            Set.of(), null);
 
     public AiServiceSettings {
         if (baseUrl != null && !("https".equalsIgnoreCase(baseUrl.getScheme())
@@ -75,6 +78,15 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         }
         externalProcessingSources = externalProcessingSources == null ? Set.of()
                 : Set.copyOf(externalProcessingSources);
+        rerankModel = blankToNull(rerankModel);
+    }
+
+    /** Ohne Rerank-Modell, wie vor #181. */
+    public AiServiceSettings(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
+                             Integer embeddingDimensions, Duration timeout, String trustBundle,
+                             Set<String> externalProcessingSources) {
+        this(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, null);
     }
 
     /**
@@ -113,7 +125,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         }
         return new AiServiceSettings(baseUrl, value(properties, API_KEY), value(properties, CHAT_MODEL),
                 value(properties, EMBEDDING_MODEL), parsedDimensions, parsedTimeout, value(properties, TRUST_BUNDLE),
-                allowed);
+                allowed, value(properties, RERANK_MODEL));
     }
 
     /** Ob ein Dienst eingerichtet ist ({@link #baseUrl}). */
@@ -126,6 +138,11 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         return baseUrl != null && embeddingModel != null && embeddingDimensions != null;
     }
 
+    /** Ob Treffer über ein Rerank-Modell umgeordnet werden können: Dienst und Modell (#181). */
+    public boolean reranking() {
+        return baseUrl != null && rerankModel != null;
+    }
+
     /** Ob Inhalte dieser Quelle an den Dienst gehen dürfen. */
     public boolean mayProcessExternally(String sourceId) {
         return externalProcessingSources.contains(sourceId);
@@ -134,13 +151,19 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
     /** Dieselben Einstellungen mit dem API-Key aus einem Tresor oder Secret-Speicher. */
     public AiServiceSettings withApiKey(String key) {
         return new AiServiceSettings(baseUrl, key, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
-                externalProcessingSources);
+                externalProcessingSources, rerankModel);
     }
 
     /** Dieselben Einstellungen mit anderem Embedding-Modell und anderer Dimension. */
     public AiServiceSettings withEmbedding(String model, Integer dimensions) {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, model, dimensions, timeout, trustBundle,
-                externalProcessingSources);
+                externalProcessingSources, rerankModel);
+    }
+
+    /** Dieselben Einstellungen mit anderem Rerank-Modell (#181). */
+    public AiServiceSettings withRerankModel(String model) {
+        return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout, trustBundle,
+                externalProcessingSources, model);
     }
 
     /** Ohne API-Key, damit nichts davon in Logs oder Fehlermeldungen gelangt. */
@@ -156,6 +179,7 @@ public record AiServiceSettings(URI baseUrl, String apiKey, String chatModel, St
         parts.add("timeout=" + timeout);
         parts.add("trustBundle=" + trustBundle);
         parts.add("externalProcessingSources=" + externalProcessingSources);
+        parts.add("rerankModel=" + rerankModel);
         return "AiServiceSettings[" + String.join(", ", parts) + "]";
     }
 

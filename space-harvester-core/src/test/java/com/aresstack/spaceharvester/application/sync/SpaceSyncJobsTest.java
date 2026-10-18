@@ -88,7 +88,7 @@ class SpaceSyncJobsTest {
         SpaceSyncJobs.SyncJob done = syncs.status(second.id(), "client:a");
         assertThat(done.status().state()).isEqualTo(JobState.COMPLETED);
         assertThat(done.summary()).extracting(SyncSummary::contentChanged, SyncSummary::attributesChanged,
-                SyncSummary::removed, SyncSummary::unchanged).containsExactly(1, 1, 1, 0);
+                SyncSummary::removed, SyncSummary::withheld, SyncSummary::unchanged).containsExactly(1, 1, 0, 1, 0);
         assertThat(done.summary().generation()).isEqualTo(2);
         assertThat(done.status().progress().written()).isEqualTo(3);
         assertThat(store.repository.find(new PageKey("wiki", "2"))).isEmpty();

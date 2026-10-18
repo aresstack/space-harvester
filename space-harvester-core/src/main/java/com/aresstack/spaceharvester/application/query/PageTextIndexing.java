@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -12,6 +13,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Hält den {@link PageTextIndex} beim Ablegen von Seiten nach (#180): Lesetext aus dem ersten Projektor, der das Format
@@ -67,6 +69,37 @@ public final class PageTextIndexing {
                     snapshot.key().sourceId(), e.getClass().getName());
             return false;
         }
+    }
+
+    /**
+     * Version einer Seite im Cache für das Laden der Suchtreffer (ADR 0013): gleiche Version heißt nur dann „nichts zu
+     * laden“, wenn auch der Volltextindex die Seite führt. Fehlt sie dort, etwa nach einem abgebrochenen Indizieren
+     * oder einem neu aufgebauten Index, wird sie aus dem Cache nachindiziert.
+     *
+     * @return die Version im Cache, leer, wenn die Seite dort fehlt
+     */
+    public Optional<String> cachedVersion(PageKey key, Function<PageKey, Optional<PageHeader>> headers,
+                                          Function<PageKey, Optional<PageSnapshot>> snapshots) {
+        Optional<PageHeader> header = headers.apply(key);
+        if (header.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            if (index.inputSha256(key).isEmpty()) {
+                Optional<PageSnapshot> snapshot = snapshots.apply(key);
+                if (snapshot.isEmpty()) {
+                    return Optional.empty();
+                }
+                if (index(snapshot.get(), header.get().metadata())) {
+                    flush();
+                }
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex einer Seite in {0} nicht prüfbar ({1})",
+                    key.sourceId(), e.getClass().getName());
+            return Optional.empty();
+        }
+        return Optional.of(header.get().metadata().version());
     }
 
     /** Entfernt eine Seite, die es im Cache nicht mehr gibt. */

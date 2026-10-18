@@ -129,7 +129,8 @@ class LocalFilesSourceApiTest {
         // Dateien haben keine eigene Suche (#180): gesucht hat der Volltextindex des Caches.
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("\"status\":\"indexed\"",
-                "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"").doesNotContain(DIR.toString());
+                "\"origin\":\"cache\"", "\"pageId\":\"" + pageId("handbuch/betrieb.txt") + "\"")
+                .doesNotContain(DIR.toString());
     }
 
     private HttpResponse<String> get(String path) throws Exception {

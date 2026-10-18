@@ -38,7 +38,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
- * Die Suche der App ist die Schlagwortsuche des Core über die Quellen selbst: Treffer zeigen Titel, Quelle, Space
+ * Die Suche der App ist die Schlagwortsuche des Core über den Cache (ADR 0013): Treffer zeigen Titel, Quelle, Space
  * und Auszug, „Weitere laden“ folgt dem Cursor, und eine Quelle ohne eigene Suche oder ohne Verbindung steht unter
  * der Liste, statt still zu fehlen. Ein Bestand ist nicht nötig.
  */
@@ -71,14 +71,11 @@ class SearchViewTest {
         });
         JTable table = find(view[0].component(), JTable.class).get(0);
         AbstractButton more = button(view[0].component(), "Weitere laden");
-        await(() -> table.getRowCount() == 100);
-        await(more::isEnabled);
-        assertThat(view[0].statusText()).contains("100 Treffer", "weitere vorhanden", "Dateien: Volltext im Cache")
-                .doesNotContain("unvollständig", "Bestand");
-
-        SwingUtilities.invokeAndWait(more::doClick);
-        await(() -> table.getRowCount() == 2 * PAGES_PER_SOURCE);
-        await(() -> !more.isEnabled());
+        // ADR 0013: Die Quellen finden, die Seiten werden in den Cache geladen, Treffer kommen aus dem Cache. Was beim
+        // Antworten noch lädt, kommt über „Weitere laden“.
+        await(() -> table.getRowCount() > 0);
+        assertThat(view[0].statusText()).contains("Dateien: Volltext im Cache").doesNotContain("Bestand");
+        loadAll(table, more, 2 * PAGES_PER_SOURCE);
 
         Set<String> keys = new HashSet<>();
         Set<String> sourcesSeen = new HashSet<>();
@@ -93,9 +90,31 @@ class SearchViewTest {
                 keys.add(sourceId + "/" + table.getModel().getValueAt(row, 0));
             }
         });
-        assertThat(first).containsExactly("Betrieb 000", "alpha", "DEV", "Auszug zu Betrieb 000");
+        assertThat(first[0]).startsWith("Betrieb ");
+        assertThat(first[2]).isEqualTo("DEV");
         assertThat(keys).hasSize(2 * PAGES_PER_SOURCE);
         assertThat(sourcesSeen).containsExactlyInAnyOrder("alpha", "beta");
+        assertThat(view[0].statusText()).doesNotContain("unvollständig");
+    }
+
+    /** Klickt „Weitere laden“, bis alle erwarteten Treffer da sind und nichts mehr folgt. */
+    private static void loadAll(JTable table, AbstractButton more, int expected) throws Exception {
+        for (int i = 0; i < 1200; i++) {
+            boolean[] state = new boolean[2];
+            SwingUtilities.invokeAndWait(() -> {
+                state[0] = table.getRowCount() == expected && !more.isEnabled();
+                state[1] = more.isEnabled();
+                if (state[1]) {
+                    more.doClick();
+                }
+            });
+            if (state[0]) {
+                return;
+            }
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Nach „Weitere laden“ nicht alle Treffer da: " + table.getRowCount() + " Zeilen, "
+                + (more.isEnabled() ? "weitere" : "keine weiteren"));
     }
 
     @Test
@@ -107,7 +126,7 @@ class SearchViewTest {
             view[0].search("betrieb");
         });
         JTable table = find(view[0].component(), JTable.class).get(0);
-        await(() -> table.getRowCount() == 100);
+        loadAll(table, button(view[0].component(), "Weitere laden"), 2 * PAGES_PER_SOURCE);
         assertThat(view[0].statusText()).contains("Offline: nicht erreichbar", "unvollständig");
     }
 
@@ -191,8 +210,7 @@ class SearchViewTest {
         assertThat(view[0].chosenSources()).containsExactly("beta");
         JTable table = find(view[0].component(), JTable.class).get(0);
         AbstractButton more = button(view[0].component(), "Weitere laden");
-        await(() -> table.getRowCount() == PAGES_PER_SOURCE);
-        await(() -> !more.isEnabled());
+        loadAll(table, more, PAGES_PER_SOURCE);
         Set<String> sourcesSeen = new HashSet<>();
         SwingUtilities.invokeAndWait(() -> {
             for (int row = 0; row < table.getRowCount(); row++) {
@@ -209,7 +227,7 @@ class SearchViewTest {
         });
         assertThat(view[0].chosenSources()).isEmpty();
         assertThat(boxes.get().get(2).isSelected()).isFalse();
-        await(() -> table.getRowCount() == 100 && more.isEnabled());
+        loadAll(table, more, 2 * PAGES_PER_SOURCE);
     }
 
     private void start(boolean withOffline) throws Exception {
@@ -224,7 +242,7 @@ class SearchViewTest {
             confluence.space("DEV", "Entwicklung");
             for (int i = 0; i < PAGES_PER_SOURCE; i++) {
                 String pageId = String.valueOf(1000 + i);
-                confluence.page(pageId, "Betrieb %03d".formatted(i), "DEV", "<p>Text</p>");
+                confluence.page(pageId, "Betrieb %03d".formatted(i), "DEV", "<p>Text</p>").storage("<p>Text</p>");
                 confluence.wrappedSearchResult(pageId, "Auszug zu Betrieb %03d".formatted(i));
             }
             sources.append(confluence(id, Character.toUpperCase(id.charAt(0)) + id.substring(1), serve(confluence)));

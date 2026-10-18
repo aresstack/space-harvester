@@ -19,12 +19,15 @@ import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
 import java.net.URI;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Anwendungsfälle der cachegestützten Query-API (#27): flache Seitenliste, ID-Baum und native Einzelseite.
@@ -37,7 +40,9 @@ import java.util.Optional;
  *
  * <p>Die Einzelseite ist transparent gecacht (ADR 0010): ein Treffer kommt aus dem Cache, eine fehlende Seite wird
  * über {@link PageFreshness} nachgeladen und über {@link PageCacheFill} abgelegt. {@code refresh=true} prüft gegen die
- * Quelle und liefert nie stattdessen den Cache-Stand; ein neuerer Inhalt wird dabei ebenfalls abgelegt.
+ * Quelle und liefert nie stattdessen den Cache-Stand; ein neuerer Inhalt wird dabei ebenfalls abgelegt. Ohne
+ * {@code refresh} gilt eine Seite im Zeitfenster von {@link CacheFreshness} ohne Rückfrage (ADR 0013); danach prüft der
+ * Abruf die Version oder, ohne Versionsprüfung, ruft die Seite neu ab.
  */
 public class PageQueries {
 
@@ -61,6 +66,13 @@ public class PageQueries {
     private final PageFreshness freshness;
     private final PageCacheFill fill;
     private final int maxTreeNodes;
+    private final CacheFreshness cacheFreshness;
+    private final Clock clock;
+    /** Letzte Versionsprüfung ohne neuen Inhalt; die gespeicherten Kopfdaten tragen nur ihren eigenen Stand. */
+    /** So viele letzte Prüfungen merkt sich der Use-Case höchstens. */
+    static final int MAX_CHECKED = 10_000;
+
+    private final Map<PageKey, Instant> checked = new ConcurrentHashMap<>();
 
     /**
      * @param freshness    Prüfung gegen die Quelle für {@code refresh=true}
@@ -74,6 +86,14 @@ public class PageQueries {
     /** @param fill legt nachgeladene Seiten im gemeinsamen Cache ab (ADR 0010) */
     public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
                        PageCacheFill fill, int maxTreeNodes) {
+        this(catalog, cache, access, freshness, fill, maxTreeNodes, CacheFreshness.DEFAULT, Clock.systemUTC());
+    }
+
+    /** @param cacheFreshness wann eine Seite aus dem Cache ohne Rückfrage bei der Quelle gilt (ADR 0013) */
+    public PageQueries(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, PageFreshness freshness,
+                       PageCacheFill fill, int maxTreeNodes, CacheFreshness cacheFreshness, Clock clock) {
+        this.cacheFreshness = Objects.requireNonNull(cacheFreshness, "cacheFreshness");
+        this.clock = Objects.requireNonNull(clock, "clock");
         this.fill = Objects.requireNonNull(fill, "fill");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = Objects.requireNonNull(cache, "cache");
@@ -216,6 +236,13 @@ public class PageQueries {
         } catch (CacheUnavailableException e) {
             cached = Optional.empty();
         }
+        if (!refresh && cached.isPresent() && fresh(cached.get())) {
+            // ADR 0013: im Zeitfenster ohne Rückfrage bei der Quelle; Rechte gelten trotzdem.
+            if (!readable(caller, cached.get().header())) {
+                throw new CacheMissException(sourceId, "Seite nicht vorhanden");
+            }
+            return DeliveredPage.cached(cached.get());
+        }
         try {
             return fromSource(caller, sourceId, pageId, cached);
         } catch (SourceAccessException e) {
@@ -240,15 +267,23 @@ public class PageQueries {
         // Vor dem Abruf, damit eine inzwischen abgelegte neuere Fassung nicht überschrieben wird.
         String seen = stateQuietly(new PageKey(sourceId, pageId));
         PageFreshness.Refreshed checked;
+        // Ohne Versionsprüfung wird eine Seite nach Ablauf neu abgerufen, als läge sie nicht im Cache.
+        Optional<PageSnapshot> compareWith = cacheFreshness.versionCheck() ? cached.map(CachedPage::snapshot)
+                : Optional.empty();
         try {
-            checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header),
-                    cached.map(CachedPage::snapshot), header -> readable(caller, header));
+            checked = freshness.check(sourceId, pageId, cached.map(CachedPage::header), compareWith,
+                    header -> readable(caller, header));
         } catch (SourceAccessException e) {
             if (e.reason() == SourceAccessException.Reason.NOT_FOUND) {
                 // Etwa beim Inhaltsabruf: wie GONE, damit der Fehlertyp nichts über die Seite verrät.
                 throw new CacheMissException(sourceId, "Seite nicht vorhanden");
             }
             throw e;
+        }
+        if (checked.outcome() != PageFreshness.Outcome.CURRENT) {
+            // Nur eine unveränderte Seite öffnet ein neues Zeitfenster: geänderte Kopfdaten (etwa ein anderer Space)
+            // liegen nicht im Cache, die Rechteprüfung im Zeitfenster sähe sonst die alten.
+            this.checked.remove(new PageKey(sourceId, pageId));
         }
         // Rechte am Ergebnis der Quelle: eine verschobene Seite zählt in ihrem neuen Space. Nicht mehr vorhanden und
         // nicht freigegeben sehen gleich aus.
@@ -266,8 +301,30 @@ public class PageQueries {
                 live = false;
             }
         }
+        if (checked.outcome() == PageFreshness.Outcome.CURRENT && !cacheFreshness.maxAge().isZero()) {
+            if (this.checked.size() >= MAX_CHECKED) {
+                // Begrenzt: ohne Eintrag zählt das Zeitfenster ab Inhaltsabruf bzw. den Kopfdaten im Cache.
+                this.checked.clear();
+            }
+            this.checked.put(checked.header().key(), checked.checkedAt());
+        }
         return new DeliveredPage(checked.header(), checked.snapshot(), generation, live, checked.outcome(),
                 checked.checkedAt());
+    }
+
+    /** Ob die Seite im Zeitfenster liegt: ab Inhaltsabruf, mit Versionsprüfung ab der letzten Prüfung. */
+    private boolean fresh(CachedPage page) {
+        Instant lastChecked = checked.get(page.header().key());
+        // Kopfdaten derselben Version, etwa aus einem Abgleich, zählen als Prüfung; eine neuere Version nie als frisch.
+        String version = page.header().metadata().version();
+        if (version == null || !version.equals(page.snapshot().revision())) {
+            return false;
+        }
+        Instant observed = page.header().observedAt();
+        if (lastChecked == null || observed.isAfter(lastChecked)) {
+            lastChecked = observed;
+        }
+        return cacheFreshness.fresh(page.snapshot().retrievedAt(), lastChecked, clock.instant());
     }
 
     /**

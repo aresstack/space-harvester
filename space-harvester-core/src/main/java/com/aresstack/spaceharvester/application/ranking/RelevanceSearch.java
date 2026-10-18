@@ -23,12 +23,10 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -41,13 +39,21 @@ import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 
 /**
- * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche über die Quellen
+ * <b>Experimentell</b> (Angelo, 18.10.): Die Suche ist die Schlagwortsuche
  * ({@link com.aresstack.spaceharvester.application.query.KeywordSearch}). Diese Klasse ist die semantische Suche der
  * Checkbox „Semantische Suche (experimentell)“ und bleibt der einzige Weg dafür ({@code sort=relevance}, kein eigener
  * Endpunkt). Die Vektoren kommen aus dem externen Embedding-Dienst (ADR 0011); ohne ihn antwortet sie mit
- * {@link SemanticSearchUnavailableException}, nie still mit Titeltreffern. Die Zielarchitektur (erst Schlagwortsuche in
- * den Quellen, Treffer prüfen und ablegen, fehlende Vektoren berechnen, dann semantisch im gemeinsamen Cache) steht in
- * ADR 0011; die Mischung aus Titel- und Vektortreffern hier entfällt dann.
+ * {@link SemanticSearchUnavailableException}, nie still mit anderen Treffern.
+ *
+ * <p>Erst in den Cache (ADR 0013, Punkt 3, mit {@link Preparation}): Die Quellen finden wie in der Schlagwortsuche,
+ * die gefundenen Seiten werden mit den Rechten des Aufrufers geladen und ihre fehlenden oder veralteten Embeddings
+ * berechnet; erst dann sucht die Suche einmal semantisch. Was dabei nicht fertig wird, macht das Ergebnis
+ * unvollständig.
+ *
+ * <p>Nur über den Cache und ohne Fusion (ADR 0013): Kandidaten kommen ausschließlich aus der Vektorsuche über die
+ * gespeicherten Embeddings, die Reihenfolge ist die Kosinusähnlichkeit. Es gibt keine zweite Ergebnisliste, also weder
+ * Volltext- noch Titelkandidaten und keine Rangfusion. Titelwörter der Anfrage filtern die Kandidaten und sind ohne
+ * {@code q} der Anfragetext.
  *
  * <p><b>Erweiterungspunkt Schlagwortgenerierung</b> (ADR 0011, bewusst noch nicht gebaut): Vor Schritt 1 der
  * Zielarchitektur kann ein Chat-Modell ({@code space-harvester.ai.chat-model}) aus der Frage gezielt Schlagworte für
@@ -56,28 +62,21 @@ import java.util.concurrent.Semaphore;
  * mit Freigabe für externe Verarbeitung ({@code external-processing-sources}).
  *
  * <p>Suche nach Relevanz ({@code sort=relevance}, #89, ADR 0004): ein Fenster von höchstens {@value Reranking#MAX_WINDOW}
- * freigegebenen Kandidaten aus Vektorsuche und Titelsuche, umgeordnet nach der Kosinusähnlichkeit der Anfrage zu den
- * gespeicherten Embeddings.
- *
- * <p>Hybride Suche (#181): Mit dem Volltextindex über den Cache (#180) kommen dessen Treffer (BM25 über Titel und
- * Text) als weitere Kandidaten hinzu, und die Reihenfolge entsteht per {@link ReciprocalRankFusion} aus der
- * Rangfolge des Volltexts und der nach Kosinusähnlichkeit, wie im Enterprise AI Client. Ein Volltexttreffer braucht
- * {@link AccessKind#CONTENT}, denn sein Rang stammt aus dem Inhalt. Ohne Volltexttreffer bleibt es bei der
- * Kosinus-Reihenfolge. Ein Ausfall des Volltextindex lässt die Suche nicht scheitern, sie ist dann rein semantisch.
+ * freigegebenen Kandidaten aus der Vektorsuche, geordnet nach der Kosinusähnlichkeit der Anfrage zu den gespeicherten
+ * Embeddings. Ein Reranker des Programms oder des KI-Dienstes (#181) ordnet die geprüften Treffer danach nur um.
  *
  * <p>Umfang (#114): mit {@code sourceId} eine Quelle, ohne alle Quellen, die der Aufrufer sehen darf
  * ({@link SearchScope}), mit derselben Fehlersemantik wie {@code PageSearch}. Global gibt es genau eine Einbettung der
  * Anfrage und eine Vektorsuche über alle Quellen des Umfangs zusammen (höchstens {@value #MAX_CHUNKS} Stücke, dann
- * höchstens {@value #MAX_LOOKUPS} Seiten), dazu die ersten Titeltreffer in globaler Titelreihenfolge. Das Fenster bleibt
+ * höchstens {@value #MAX_LOOKUPS} Seiten). Das Fenster bleibt
  * bei {@value Reranking#MAX_WINDOW} Kandidaten: ein begrenzter, global gerankter Block, kein vollständiges Ergebnis und
  * keine Top-K je Quelle. Kandidaten sind Seiten ({@code sourceId + pageId}); gleiche Seiten-IDs verschiedener Quellen
  * bleiben getrennt. Ähnlichkeiten stammen aus demselben Modell und sind über Quellen vergleichbar.
  *
  * <p>Rechte: wie {@code PageSearch} {@link AccessKind#METADATA} für die genannten Spaces bzw. die Quelle und für jeden
  * Treffer. Ähnlichkeiten sind aus dem Inhalt abgeleitet: Ein Kandidat aus der Vektorsuche braucht zusätzlich
- * {@link AccessKind#CONTENT} für seine Seite, sonst fällt er ohne Spur weg; ein Titeltreffer ohne {@code content}
- * bleibt, bekommt aber keine Ähnlichkeit und steht hinter allen Treffern mit Ähnlichkeit. Der Reranker sieht nur
- * diese freigegebenen Treffer und darf sie nur umordnen ({@link Reranking}).
+ * {@link AccessKind#CONTENT} für seine Seite, sonst fällt er ohne Spur weg. Der Reranker sieht nur diese freigegebenen
+ * Treffer und darf sie nur umordnen ({@link Reranking}).
  *
  * <p>Alle Filter der Anfrage gelten für jeden Kandidaten, auch aus der Vektorsuche; jeder Treffer trägt die aktuellen
  * Kopfdaten aus dem Suchindex. Ein Treffer, dessen Embedding aus einer älteren Revision stammt, heißt
@@ -101,6 +100,9 @@ public class RelevanceSearch {
     /** Gleichzeitige Metadatenabrufe der Live-Prüfung je Suche. */
     static final int PARALLEL_CHECKS = 6;
 
+    /** Längster Auszug des Lesetexts, den ein Reranker je Treffer als Dokument bekommt (#181). */
+    static final int MAX_DOCUMENT_CHARS = 2000;
+
     /** Längster Anfragetext. */
     public static final int MAX_TEXT_LENGTH = 500;
 
@@ -115,6 +117,7 @@ public class RelevanceSearch {
     private final Renewal renewal;
     private final SearchReranker reranker;
     private final PageTextIndex texts;
+    private final Preparation preparation;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -153,13 +156,27 @@ public class RelevanceSearch {
     }
 
     /**
-     * Hybrid (#181): zusätzlich mit dem Volltextindex über den Cache.
+     * Mit dem Volltextindex über den Cache: Aus ihm bekommt ein Reranker den Lesetext der Treffer. Kandidaten liefert
+     * er nicht (ADR 0013).
      *
-     * @param texts Volltextindex oder {@code null}, dann nur Titel- und Vektorkandidaten
+     * @param texts Volltextindex oder {@code null}, dann sieht ein Reranker nur Titel
      */
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts, null);
+    }
+
+    /**
+     * Mit Vorbereitung (ADR 0013, Punkt 3): Vor der Vektorsuche finden die Quellen, die gefundenen Seiten werden in den
+     * Cache geladen und fehlende oder veraltete Embeddings berechnet.
+     *
+     * @param preparation die Vorbereitung oder {@code null}, dann sucht die Suche nur über schon gespeicherte Vektoren
+     */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts, Preparation preparation) {
+        this.preparation = preparation;
         this.texts = texts;
         this.renewal = renewal;
         this.reranker = Objects.requireNonNull(reranker, "reranker");
@@ -206,18 +223,25 @@ public class RelevanceSearch {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+        int preparing = 0;
+        if (preparation != null) {
+            try {
+                preparing = preparation.prepare(caller, query, queryText);
+            } catch (RuntimeException e) {
+                // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
+                LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",
+                        e.getClass().getName());
+                preparing = 1;
+            }
+        }
         SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
-            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), true);
+            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0);
         }
 
         float[] vector = queryVector(queryText);
-        List<SearchHit> semantic = semanticCandidates(caller, query, scope, state, vector);
-        List<SearchHit> lexical = query.titleTerms().isEmpty() ? List.of()
-                : lexicalCandidates(caller, query, scope, state);
-        List<SearchHit> fullText = fullTextCandidates(caller, query, scope, state, queryText);
-        List<SearchHit> window = interleave(interleave(semantic, fullText), lexical);
+        List<SearchHit> window = semanticCandidates(caller, query, scope, state, vector);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
@@ -233,24 +257,11 @@ public class RelevanceSearch {
         Reranking reranking = new Reranking(reranker);
         List<SearchHit> ordered = reranking.apply(query, window);
         String rerankerId = reranking.rerankerId();
-        Set<PageKey> inWindow = new LinkedHashSet<>();
-        window.forEach(hit -> inWindow.add(hit.page().header().key()));
-        List<SearchHit> ranked = fullText.stream().filter(hit -> inWindow.contains(hit.page().header().key()))
-                .toList();
-        if (!ranked.isEmpty()) {
-            // #181: Rangfolgen von Volltext und Kosinus per RRF, Treffer ohne Rang dahinter.
-            List<SearchHit> bySimilarity = ordered.stream().filter(scores::containsKey).toList();
-            ordered = ReciprocalRankFusion.fuse(ordered, List.of(ranked, bySimilarity));
-            rerankerId = "rrf(fulltext," + rerankerId + ")";
-        }
-        if (this.reranker != SearchReranker.NONE) {
-            Reranking custom = new Reranking(this.reranker);
-            ordered = custom.apply(query, ordered);
-            rerankerId = rerankerId + "+" + custom.rerankerId();
-        }
+        // Jeder Kandidat stammt aus den Vektoren, also aus dem Inhalt: live braucht er content.
         Set<PageKey> contentRanked = new LinkedHashSet<>();
-        ranked.forEach(hit -> contentRanked.add(hit.page().header().key()));
+        window.forEach(hit -> contentRanked.add(hit.page().header().key()));
         List<RankedHit> hits = new ArrayList<>(Math.min(limit, ordered.size()));
+        Map<SearchHit, String> partitions = new IdentityHashMap<>();
         boolean complete = true;
         int next = 0;
         // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
@@ -260,11 +271,60 @@ public class RelevanceSearch {
                 complete &= !verified.failed();
                 if (verified.hit() != null && hits.size() < limit) {
                     hits.add(verified.hit());
+                    partitions.put(verified.hit().hit(), verified.partition());
                 }
             }
             next = end;
         }
-        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete);
+        if (this.reranker != SearchReranker.NONE) {
+            // Erst nach der Live-Prüfung: An den Reranker gehen nur Texte von Seiten, die der Aufrufer jetzt lesen
+            // darf, geprüft gegen ihren heutigen Space.
+            Map<SearchHit, RankedHit> byHit = new IdentityHashMap<>();
+            hits.forEach(hit -> byHit.put(hit.hit(), hit));
+            Reranking custom = new Reranking(this.reranker);
+            List<SearchHit> reranked = custom.apply(new SearchReranker.Request(query, queryText,
+                    hits.stream().map(RankedHit::hit).toList(),
+                    hit -> document(caller, hit, scores.get(hit), partitions.get(hit))));
+            hits = reranked.stream().map(byHit::get).toList();
+            rerankerId = rerankerId + "+" + custom.rerankerId();
+        }
+        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0);
+    }
+
+    /**
+     * Verwandte Abschnitte eines eingebetteten Stücks (#181, {@link RelatedSections}): ähnliche Stücke, Elternseite,
+     * Nachbarstücke und Stücke desselben Abschnitts. Nichts geht an den KI-Dienst; die Vektoren liegen schon in der
+     * Ablage.
+     *
+     * @param chunk Nummer des Stücks in der Seite, ab 0
+     * @throws SemanticSearchUnavailableException wenn kein Embedding-Dienst eingerichtet ist
+     * @throws com.aresstack.spaceharvester.application.query.CacheMissException wenn die Seite nicht im Cache liegt
+     *                                            oder nicht sichtbar ist
+     */
+    public RelatedSections.Results related(AccessContext caller, String sourceId, String pageId, int chunk,
+                                           RelatedSections.Query query) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(pageId, "pageId");
+        // Rechte zuerst: Wer die Quelle nicht lesen darf, erfährt nicht, ob ein Dienst eingerichtet ist.
+        SearchScope.authorize(access, catalog, caller, PageSearchQuery.of(sourceId, List.of(), null, pageId, null,
+                null, null, null, SearchSort.PAGE_ID)).requireKnown(catalog);
+        if (embedding == null) {
+            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
+        }
+        return new RelatedSections(catalog, index, access, store, vectors, embedding, this::checkLive)
+                .related(caller, sourceId, pageId, chunk, query);
+    }
+
+    /** Live-Prüfung wie für Treffer mit Ähnlichkeit: {@code metadata} und {@code content} im heutigen Space. */
+    private List<RelatedSections.Checked> checkLive(AccessContext caller, List<SearchHit> hits) {
+        PageSearchQuery any = PageSearchQuery.of(null, List.of(), null, null, null, null, null, null,
+                SearchSort.TITLE);
+        Set<PageKey> fromContent = new LinkedHashSet<>();
+        hits.forEach(hit -> fromContent.add(hit.page().header().key()));
+        return verify(caller, any, hits, Map.of(), fromContent).stream()
+                .map(verified -> new RelatedSections.Checked(verified.hit() == null ? null : verified.hit().hit(),
+                        verified.failed()))
+                .toList();
     }
 
     /**
@@ -276,7 +336,7 @@ public class RelevanceSearch {
     private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
                                   Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
         if (renewal == null) {
-            return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false)).toList();
+            return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false, indexed(hit))).toList();
         }
         Semaphore slots = new Semaphore(PARALLEL_CHECKS);
         List<Future<Verified>> futures = new ArrayList<>(batch.size());
@@ -328,7 +388,7 @@ public class RelevanceSearch {
             }
             if (e.reason() == SourceAccessException.Reason.UNSUPPORTED) {
                 // Die Quelle kann keine Einzelseite prüfen (wie beim Lesen ohne Inhaltsabruf): Policy und Index.
-                return new Verified(ranked(hit, score), false);
+                return new Verified(ranked(hit, score), false, indexed(hit));
             }
             // Ohne Seiten-ID im Log.
             LOG.log(System.Logger.Level.INFO, "Kopfdaten eines Relevanztreffers in {0} nicht lesbar ({1})",
@@ -351,7 +411,7 @@ public class RelevanceSearch {
                 checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE);
             }
         }
-        return new Verified(ranked(hit, checked), false);
+        return new Verified(ranked(hit, checked), false, live.partitionKey());
     }
 
     private void renew(AccessContext caller, PageKey key) {
@@ -369,17 +429,39 @@ public class RelevanceSearch {
                         score.freshness()));
     }
 
-    /** Ergebnis der Live-Prüfung: Treffer, weggefallen ({@code hit == null}) oder nicht prüfbar ({@code failed}). */
-    private record Verified(RankedHit hit, boolean failed) {
+    private static String indexed(SearchHit hit) {
+        return hit.page().header().metadata().partitionKey();
+    }
 
-        static final Verified DROPPED = new Verified(null, false);
-        static final Verified FAILED = new Verified(null, true);
+    /**
+     * Ergebnis der Live-Prüfung: Treffer, weggefallen ({@code hit == null}) oder nicht prüfbar ({@code failed}), mit
+     * dem geprüften Space.
+     */
+    private record Verified(RankedHit hit, boolean failed, String partition) {
+
+        static final Verified DROPPED = new Verified(null, false, null);
+        static final Verified FAILED = new Verified(null, true, null);
     }
 
     /**
      * Holt eine Seite, deren Quelle eine neuere Version meldet, nach und legt sie im gemeinsamen Cache ab; damit wird
      * auch ihr Vektor neu berechnet (ADR 0011, Punkt 7). Darf nicht blockieren.
      */
+    /**
+     * Vorbereitung der semantischen Suche (ADR 0013, Punkt 3): finden, laden, fehlende Embeddings berechnen, begrenzt
+     * im Aufruf.
+     */
+    @FunctionalInterface
+    public interface Preparation {
+
+        /**
+         * @param query Umfang und Filter der Suche
+         * @param text  Anfragetext
+         * @return wie viele gefundene Seiten noch ohne aktuelles Embedding sind; dann ist das Ergebnis unvollständig
+         */
+        int prepare(AccessContext caller, PageSearchQuery query, String text);
+    }
+
     @FunctionalInterface
     public interface Renewal {
 
@@ -427,83 +509,6 @@ public class RelevanceSearch {
             }
         }
         return found;
-    }
-
-    /**
-     * Seiten des Volltextindex in BM25-Reihenfolge, gefiltert nach Anfrage und Rechten ({@code content}, denn der Rang
-     * stammt aus dem Inhalt). Ein Ausfall des Index liefert keine Kandidaten statt eines Fehlers.
-     */
-    private List<SearchHit> fullTextCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                               SearchIndexState state, String text) {
-        if (texts == null) {
-            return List.of();
-        }
-        List<PageTextIndex.Match> matches;
-        try {
-            matches = texts.search(text, scope.sourceIds(), new SearchSpaces(query.spaceKeys(), Set.of()),
-                    Reranking.MAX_WINDOW);
-        } catch (RuntimeException e) {
-            // Kein Anfragetext im Log.
-            LOG.log(System.Logger.Level.INFO, "Volltextindex für die Relevanzsuche nicht lesbar ({0})",
-                    e.getClass().getName());
-            return List.of();
-        }
-        List<SearchHit> found = new ArrayList<>();
-        for (PageTextIndex.Match match : matches) {
-            if (!scope.sourceIds().contains(match.sourceId())
-                    || query.sourceId() != null && !query.sourceId().equals(match.sourceId())
-                    || query.pageId() != null && !query.pageId().equals(match.pageId())) {
-                continue;
-            }
-            PageSearchQuery single = query.with(match.sourceId(), match.pageId(), SearchSort.PAGE_ID);
-            for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
-                if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
-                    found.add(hit);
-                }
-            }
-        }
-        return found;
-    }
-
-    /** Die ersten sichtbaren Titeltreffer in der Reihenfolge des Titels, über alle Quellen des Umfangs. */
-    private List<SearchHit> lexicalCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                              SearchIndexState state) {
-        PageSearchQuery byTitle = query.with(query.sourceId(), query.pageId(), SearchSort.TITLE);
-        List<SearchHit> visible = new ArrayList<>();
-        String after = null;
-        boolean exhausted = false;
-        while (visible.size() < Reranking.MAX_WINDOW && !exhausted) {
-            List<SearchHit> batch = index.search(byTitle, scope.sourceIds(), state.generation(), after,
-                    Reranking.MAX_WINDOW);
-            for (SearchHit hit : batch) {
-                after = hit.position();
-                if (permits(caller, hit, AccessKind.METADATA)) {
-                    visible.add(hit);
-                    if (visible.size() == Reranking.MAX_WINDOW) {
-                        break;
-                    }
-                }
-            }
-            exhausted = batch.size() < Reranking.MAX_WINDOW;
-        }
-        return visible;
-    }
-
-    /**
-     * Abwechselnd aus beiden Listen, jede Seite einmal, höchstens {@value Reranking#MAX_WINDOW}. Eine Seite ist
-     * {@code sourceId + pageId}: Gleiche Seiten-IDs verschiedener Quellen bleiben getrennte Kandidaten (#114).
-     */
-    static List<SearchHit> interleave(List<SearchHit> first, List<SearchHit> second) {
-        Map<PageKey, SearchHit> window = new LinkedHashMap<>();
-        for (int i = 0; window.size() < Reranking.MAX_WINDOW && (i < first.size() || i < second.size()); i++) {
-            if (i < first.size()) {
-                window.putIfAbsent(first.get(i).page().header().key(), first.get(i));
-            }
-            if (i < second.size() && window.size() < Reranking.MAX_WINDOW) {
-                window.putIfAbsent(second.get(i).page().header().key(), second.get(i));
-            }
-        }
-        return List.copyOf(window.values());
     }
 
     /** Ähnlichkeit des besten Stücks der Seite, nur mit {@code content}-Freigabe und Embedding des aktuellen Modells. */
@@ -554,6 +559,36 @@ public class RelevanceSearch {
         Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
                 : Freshness.STALE;
         return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness);
+    }
+
+    /**
+     * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, ein Auszug des
+     * Lesetexts aus dem Volltextindex, um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
+     */
+    private String document(AccessContext caller, SearchHit hit, Score score, String partition) {
+        String title = hit.page().header().metadata().title();
+        title = title == null ? "" : title.strip();
+        PageKey key = hit.page().header().key();
+        if (texts == null || !access.permits(caller, ResourceScope.page(key.sourceId(), partition, key.pageId()),
+                AccessKind.CONTENT)) {
+            return title;
+        }
+        String text;
+        try {
+            text = texts.text(hit.page().header().key()).orElse("");
+        } catch (RuntimeException e) {
+            return title;
+        }
+        int start = score == null ? 0 : Math.clamp(score.charStart(), 0, text.length());
+        int end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
+            // Das Stück mittig, soweit der Text reicht.
+            int spare = MAX_DOCUMENT_CHARS - (Math.min(score.charEnd(), text.length()) - start);
+            start = Math.max(0, start - spare / 2);
+            end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
+        }
+        String excerpt = text.substring(start, end).strip();
+        return title.isEmpty() ? excerpt : excerpt.isEmpty() ? title : title + "\n" + excerpt;
     }
 
     private boolean permits(AccessContext caller, SearchHit hit, AccessKind kind) {

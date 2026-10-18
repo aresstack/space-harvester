@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
@@ -26,6 +27,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -58,6 +60,9 @@ class RelevanceLiveCheckTest {
 
     private final HarvestSource source = (HarvestSource) Proxy.newProxyInstance(
             HarvestSource.class.getClassLoader(), new Class<?>[] {HarvestSource.class}, (proxy, method, args) -> {
+                if (method.getName().equals("id")) {
+                    return "wiki";
+                }
                 if (!method.getName().equals("pageMetadata")) {
                     return null;
                 }
@@ -105,7 +110,7 @@ class RelevanceLiveCheckTest {
         public List<float[]> embedQueries(List<String> texts) {
             return texts.stream().map(RelevanceLiveCheckTest::axes).toList();
         }
-    }, 1500);
+    }, 1500, KnowledgeTextSegmentation.defaults());
 
     @BeforeEach
     void publish() {
@@ -236,6 +241,101 @@ class RelevanceLiveCheckTest {
 
         assertThat(ids(results)).containsExactly("1");
         assertThat(results.complete()).isTrue();
+    }
+
+    @Test
+    void theRerankerGetsCachedTextOnlyForTheSpaceThePageIsInNow() {
+        index.publish("wiki", STATE, List.of(
+                entry(page("DEV", "1", "Betrieb eins", "1"), confirmed("g1")),
+                entry(page("DEV", "2", "Betrieb zwei", "1"), confirmed("g1")),
+                entry(page("DEV", "5", "Betrieb fünf", "1"), confirmed("g1"))));
+        embed("5", "[0.95,0.05,0]");
+        // Bei der Quelle liegt 5 inzwischen in SECRET, wo nur Kopfdaten freigegeben sind. Ihr Text aus dem Cache darf
+        // nicht an den Reranker gehen.
+        live.put("5", metadata("SECRET", "5", "1"));
+        AccessPolicy secretWithoutContent = (context, scope, kind) -> kind == AccessKind.CONTENT
+                && "SECRET".equals(scope.spaceKey()) ? AccessDecision.DENY : AccessDecision.ALLOW;
+        PageTextIndex texts = new PageTextIndex() {
+            @Override
+            public void put(Entry entry) {
+            }
+
+            @Override
+            public Optional<String> inputSha256(PageKey key) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<String> text(PageKey key) {
+                return Optional.of("Geheimtext " + key.pageId());
+            }
+
+            @Override
+            public void remove(PageKey key) {
+            }
+
+            @Override
+            public void removeSource(String sourceId) {
+            }
+
+            @Override
+            public List<Match> search(String text, Set<String> sourceIds, SearchSpaces spaces, int limit) {
+                return List.of();
+            }
+
+            @Override
+            public void flush() {
+            }
+        };
+        Map<String, String> documents = new ConcurrentHashMap<>();
+        SearchReranker recording = new SearchReranker() {
+            @Override
+            public String id() {
+                return "aufzeichnung@1";
+            }
+
+            @Override
+            public List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates) {
+                return candidates;
+            }
+
+            @Override
+            public List<SearchHit> rerank(Request request) {
+                request.candidates().forEach(hit -> documents.put(hit.page().pageId(), request.documents().apply(hit)));
+                return request.candidates();
+            }
+        };
+        PageSearchQuery byTitle = PageSearchQuery.of("wiki", List.of(), "betrieb", null, null, null, null, null,
+                SearchSort.TITLE);
+
+        RelevanceSearch.RelevanceResults results = new RelevanceSearch(catalog, index,
+                new AccessGuard(secretWithoutContent), store, store, processor, (caller, key) -> renewed.add(key),
+                recording, texts).search(CALLER, byTitle, "Betrieb", 5);
+
+        assertThat(ids(results)).containsExactly("1", "2");
+        assertThat(documents).containsOnlyKeys("1", "2").containsEntry("1", "Betrieb eins\nGeheimtext 1");
+        assertThat(metadataCalls).contains("5");
+    }
+
+    @Test
+    void relatedSectionsAreCheckedLiveToo() {
+        // 2 wäre der ähnlichste Nachbar, liegt bei der Quelle aber inzwischen im gesperrten Space; 4 ist unter 0,80.
+        live.put("2", metadata("SECRET", "2", "1"));
+        AccessPolicy noSecret = (context, scope, kind) -> "SECRET".equals(scope.spaceKey())
+                ? AccessDecision.DENY : AccessDecision.ALLOW;
+
+        RelatedSections.Results results = search(noSecret).related(CALLER, "wiki", "1", 0,
+                RelatedSections.Query.all());
+
+        assertThat(results.relations()).extracting(relation -> relation.page().page().header().key().pageId())
+                .containsExactly("3");
+        assertThat(results.complete()).isTrue();
+
+        live.put("3", new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null));
+        RelatedSections.Results unchecked = search(noSecret).related(CALLER, "wiki", "1", 0,
+                RelatedSections.Query.all());
+        assertThat(unchecked.relations()).isEmpty();
+        assertThat(unchecked.complete()).isFalse();
     }
 
     private RelevanceSearch search(AccessPolicy policy) {
