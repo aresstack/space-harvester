@@ -40,12 +40,13 @@ import org.slf4j.LoggerFactory;
 public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
     /**
-     * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien, die Kopien aus dem Enterprise AI Client
-     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint) und MediaWiki (#187).
+     * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und die Kopien aus dem Enterprise AI Client
+     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook) und MediaWiki (#187).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
             new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
-            EacSourceAdapters.sharePoint(), MediaWikiSources.adapter());
+            EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
+            EacSourceAdapters.outlook(), MediaWikiSources.adapter());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
     public static final Set<String> TYPES = DEFAULT_ADAPTERS.stream().map(SourceAdapter::type)

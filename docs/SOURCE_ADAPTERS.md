@@ -12,12 +12,12 @@ Confluence-Client gibt es nicht.
 (`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider`, `files` über
 `LocalFilesSourceProvider` und `mediawiki` über `MediaWikiSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
 `<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis, sowie
-`ftp`, `jes`, `ndv` und `sharepoint` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
+`ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
-`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“) und
+`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
 `needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
 über `SourceAdapter.displayName()` an.
 
@@ -243,12 +243,16 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
-   über die Proxy-Route je Ziel; ohne `credentialRef`, `auth` und eigene Zertifikate bis #188, also nur öffentliche und
-   lokale Repositorys). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
+   über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
+   aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
+   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
    Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
    `startPoints`, anonym ohne `credentialRef`) und `jes` (Spool, `credentialRef` Pflicht), `source-ndv` als `ndv`
    (`host`, `startPoints`, `credentialRef` Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
-   Proxy-Route je Ziel, ohne `credentialRef` mit der Windows-Anmeldung des JDK). `credentialRef` löst der
+   Proxy-Route je Ziel, ohne `credentialRef` mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
+   (Listen und Reports eines Favoriten: `baseUrl`, `credentialRef`, `favoriteId` Pflicht, über die Proxy-Route je
+   Ziel) und `source-outlook` als `outlook` (lokale Postfachdateien .pst/.ost: `mailbox` Pflicht, `startPoints`,
+   `maxDepth`, `maxResources`; ohne Zugangsdaten). `credentialRef` löst der
    `SecretProvider` des Katalogs auf, also der Anbieter des einbettenden Programms (#188); `auth`, `base-url` und eigene
    Zertifikate gibt es auf diesem Weg nicht.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
@@ -272,7 +276,7 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `trust-bundle` auch durch den Proxy-Tunnel, unbrauchbare Zertifikate verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
-- `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv` und `sharepoint` öffnen je eine Partition ohne Verbindung; die
+- `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
 - `PageMetadataApiTest`, `SinglePageMetadataApiTest`, `NativeSnapshotSourceTest`: alle Wege über echtes HTTP gegen
