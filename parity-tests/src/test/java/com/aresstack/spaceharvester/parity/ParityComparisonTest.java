@@ -145,6 +145,23 @@ class ParityComparisonTest {
     }
 
     @Test
+    void aGitSourceLacksWhatTheCoreDoesNotListOrLoad() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("git.main.documents", "README.md,docs/bilder/logo.png");
+        eac.put("git.main.title.README.md", "README.md");
+        eac.put("git.main.sentences.README.md", "0");
+        eac.put("git.tag.sentences.docs/a.md", "old");
+        Map<String, String> core = new LinkedHashMap<>();
+        core.put("git.main.documents", "README.md");
+        core.put("git.main.title.README.md", "README.md");
+        core.put("git.main.sentences.README.md", "0,1");
+
+        assertThat(ParityComparison.git(eac, core)).extracting(Finding::verdict).containsExactly(
+                Verdict.CORE_WENIGER, Verdict.GLEICH, Verdict.CORE_MEHR, Verdict.CORE_WENIGER);
+        assertThat(ParityComparison.git(eac, core)).extracting(Finding::key).startsWith("git.main.documents");
+    }
+
+    @Test
     void aSearchRunDiffersOnlyWhereTheCoreLoggedSomethingElse() {
         Map<String, String> eac = new LinkedHashMap<>();
         eac.put("run.live.query", "Architektur");
