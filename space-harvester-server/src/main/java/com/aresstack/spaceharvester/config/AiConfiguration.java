@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -10,7 +11,9 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
 import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
-import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
@@ -20,6 +23,7 @@ import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
+import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import java.util.Optional;
@@ -59,7 +63,8 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          ObjectProvider<SentenceSegmenter> sentences) {
         if (!settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
@@ -84,10 +89,14 @@ class AiConfiguration {
         });
         // Freigabe aus denselben Einstellungen wie das Modell: Eine geänderte Freigabe baut ohnehin eine neue
         // Generation, und neu freigegebene Inhalte gehen nie an den Endpunkt einer früheren.
+        // #181: je semantischem Absatz ein Embedding, wie im Client mit withPassages (ADR 0020).
+        TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         return new EmbeddingProcessor(() -> model.get().provider().orElse(null), properties.embeddingChunkChars(),
                 KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
                         properties.embeddingChunkOverlapSentences()),
-                sourceId -> model.get().ai().mayProcessExternally(sourceId));
+                sourceId -> model.get().ai().mayProcessExternally(sourceId))
+                .withPassages(new PassageChunks(new PassageSegmentation(sentences.getIfAvailable(
+                        () -> EnrichmentConfiguration.sentences(rules)), rules)));
     }
 
     /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
@@ -174,6 +183,17 @@ class AiConfiguration {
         return new VisionImageDescriber(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
+    /**
+     * Benennung der Themenabschnitte der Dokumentnavigation über das Chat-Modell (#181, ADR 0020): folgt
+     * {@code ai.chat-model} und {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell gelten die
+     * Bezeichnungen der Analyse.
+     */
+    @Bean
+    NavigationLabelModel navigationLabels(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatNavigationLabeler(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
     @Bean(destroyMethod = "shutdownNow")
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
@@ -193,6 +213,7 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
     StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          SentenceSegmenter sentences,
                                           @Value("${space-harvester.enrichment.statements.verify:"
                                                   + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
                                           @Value("${space-harvester.enrichment.statements.max-paragraphs:"
@@ -203,9 +224,7 @@ class AiConfiguration {
         StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
         StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
                 userAgent(build));
-        return new StatementProcessor(OpenNlpSentenceSegmenter.german(
-                SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults())), () -> settings, chats,
-                chats.mayProcessExternally());
+        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally());
     }
 
     /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */

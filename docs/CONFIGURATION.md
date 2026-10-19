@@ -138,7 +138,8 @@ veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder A
   folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
 
 - `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
-  wie das Lesen der Seite und `freshness` je Fakt.
+  wie das Lesen der Seite und `freshness` je Fakt. Je Prozessor und Seite gibt es höchstens 2000 Fakten;
+  `truncated` nennt die Prozessoren, deren Fakten an dieser Grenze enden (sonst leer).
 - `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&cursor&limit]`: Fakten über alle
   Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
   es gibt keine Gesamtzahl.
@@ -289,6 +290,18 @@ Warteschlangen von Suche und Hintergrund, geladene und gescheiterte Seiten seit 
 Ein Wechsel des Embedding-Modells oder seiner Dimension versioniert den Vektorindex: Vorhandene Vektoren gelten als
 veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte werden dafür nicht erneut von der
 Quelle geladen.
+
+**Embedding je Absatz (#181, PR #388):** Mit Embedding-Modell bettet der Prozessor `embedding` je semantischem Absatz
+ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Ein Absatz über
+`ai.embedding-chunk-chars` Zeichen wird wie bisher geteilt; Budget und Überlappung der Zerlegung
+(`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
+Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
+Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
+diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embedding-model` und der Freigabe
+`ai.external-processing-sources`. Die Themenabschnitte benennt mit `ai.chat-model` die Kopie `ChatSectionLabeler`
+(PR #401, ADR 0020), nur in der Anreicherung und nur für freigegebene Quellen, mit fester Frist von 60 s und
+höchstens zwei Benennungen zugleich (nicht einstellbar); ohne Chat-Modell bleibt der erste Satz, bei Ausfall des
+Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht gespeicherte Navigationen alt.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
 mit dem abgelehnten Wert.

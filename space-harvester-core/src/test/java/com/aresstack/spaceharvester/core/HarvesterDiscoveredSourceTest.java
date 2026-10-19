@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.Partition;
@@ -31,6 +32,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -74,7 +76,9 @@ class HarvesterDiscoveredSourceTest {
             assertThat(new String(harvester.pages().page(harvester.caller(), "notizen", id("betrieb"), false)
                     .snapshot().payload().bytes(), StandardCharsets.UTF_8)).contains("Der Nachtlauf startet");
 
-            // Suche über den Volltextindex des Cache (#180); die Quelle sucht nicht selbst.
+            // Suche über den Volltextindex des Cache (#180); die Quelle sucht nicht selbst. Den Index füllt nach dem
+            // Abgleich ein eigener Anreicherungsauftrag.
+            awaitEnrichments(harvester);
             KeywordSearch.Results found = harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), null, 10);
             assertThat(found.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly(id("betrieb"));
@@ -105,12 +109,29 @@ class HarvesterDiscoveredSourceTest {
         try (Harvester harvester = harvester(Harvester.builder().accessPolicy((context, scope, kind) ->
                 hidden.equals(scope.pageId()) ? AccessDecision.DENY : AccessDecision.ALLOW))) {
             harvester.await(harvester.sync("notizen", "notizen").id(), Duration.ofSeconds(30));
+            awaitEnrichments(harvester);
 
             assertThat(harvester.pages().pages(harvester.caller(), "notizen", "notizen", null, 100).pages())
                     .extracting(page -> page.header().key().pageId()).doesNotContain(hidden).hasSize(2);
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Urlaubsplanung"),
                     null, 10).hits()).isEmpty();
+            // Der Index ist gefüllt: lesbare Seiten werden gefunden.
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"),
+                    null, 10).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly(id("betrieb"));
         }
+    }
+
+    /** Wartet auf den Anreicherungsauftrag nach dem Abgleich, der den Volltextindex füllt. */
+    private static void awaitEnrichments(Harvester harvester) throws Exception {
+        Instant deadline = Instant.now().plusSeconds(30);
+        while (Instant.now().isBefore(deadline)) {
+            var enrichments = harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT);
+            if (!enrichments.isEmpty() && enrichments.stream().allMatch(job -> job.finishedAt() != null)) {
+                return;
+            }
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Anreicherung läuft nach 30 s noch");
     }
 
     @Test

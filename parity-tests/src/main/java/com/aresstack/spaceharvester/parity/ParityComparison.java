@@ -309,6 +309,83 @@ public final class ParityComparison {
     }
 
     /**
+     * Git-Quelle (#187): je Stand ({@code main}, {@code tag}) die gelisteten Pfade (Core ⊇ EAC), der Titel je Pfad
+     * (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC). Ein fehlender Pfad oder Satz ist eine Lücke.
+     */
+    public static List<Finding> git(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("git", eac, core);
+    }
+
+    /**
+     * Dateiquelle (#193) wie {@link #git}: je Umfang ({@code all} mit Ausschluss, {@code start} ab Startpunkt) die
+     * gelisteten Pfade (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> files(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("files", eac, core);
+    }
+
+    /**
+     * FTP-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade (Core ⊇ EAC),
+     * der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> ftp(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("ftp", eac, core);
+    }
+
+    /**
+     * SharePoint-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade
+     * (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC); Leerzeichen im Pfad
+     * stehen im Schlüssel als {@code _}.
+     */
+    public static List<Finding> sharePoint(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("sharepoint", eac, core);
+    }
+
+    /**
+     * BetaView-Quelle (#193) wie {@link #git}: die Dokumente der Ergebnisliste (Core ⊇ EAC), der Titel je Dokument
+     * (gleich) und die Sätze im Inhalt je Dokument (Core ⊇ EAC).
+     */
+    public static List<Finding> betaView(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("betaview", eac, core);
+    }
+
+    /**
+     * JES-Quelle (#193) wie {@link #git}: je Filter ({@code all}, {@code zauf}) die Jobs (Core ⊇ EAC), der Titel je Job
+     * (gleich) und die Sätze in der Ausgabe je Job (Core ⊇ EAC).
+     */
+    public static List<Finding> jes(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("jes", eac, core);
+    }
+
+    private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String key = entry.getKey();
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(key, "fehlt");
+            String check = key.substring(format.length() + 1);
+            String state = check.substring(0, check.indexOf('.'));
+            String rest = check.substring(state.length() + 1);
+            Verdict verdict;
+            String title;
+            if (rest.startsWith("title.")) {
+                verdict = expected.equals(actual) ? Verdict.GLEICH : Verdict.CORE_WENIGER;
+                title = "Titel von " + rest.substring("title.".length()) + " (" + state + ")";
+            } else {
+                Set<String> wanted = expected.equals("-") ? Set.of() : items(expected);
+                Set<String> got = actual.equals("-") || actual.equals("fehlt") ? Set.of() : items(actual);
+                verdict = !core.containsKey(key) || !got.containsAll(wanted) ? Verdict.CORE_WENIGER
+                        : got.size() > wanted.size() ? Verdict.CORE_MEHR : Verdict.GLEICH;
+                title = rest.equals("documents") ? "Dokumente (" + state + ")"
+                        : "Sätze in " + rest.substring("sentences.".length()) + " (" + state + ")";
+            }
+            findings.add(new Finding(format, check, title, expected, actual, verdict,
+                    verdict == Verdict.CORE_WENIGER ? "im Core weniger oder anders" : ""));
+        }
+        return findings;
+    }
+
+    /**
      * Suchlauf-Protokoll (#182) der Live-Suche: Suchtext, Zahl der gefragten und der ausgefallenen Quellen und der
      * erhaltenen Kandidaten. Jede Abweichung ist eine Lücke, denn ein Protokoll soll zeigen, was die Suche bekam.
      */

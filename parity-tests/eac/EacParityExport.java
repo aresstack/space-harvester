@@ -29,6 +29,7 @@ import com.aresstack.enterpriseai.astu.embedding.EmbeddingModelIdentity;
 import com.aresstack.enterpriseai.astu.embedding.EmbeddingVector;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunker;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunkingPolicy;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
@@ -43,6 +44,19 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCredentials;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.ParityBetaView;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.JesSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
+import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -127,6 +141,12 @@ public final class EacParityExport {
         addresses(source, new File(out, "addresses.properties"));
         search(source, new File(out, "search.properties"), new File(out, "search-runs.properties"));
         facts(new File(out, "facts.properties"));
+        git(new File(out, "git.properties"));
+        files(new File(out, "files.properties"));
+        ftp(new File(out, "ftp.properties"));
+        jes(new File(out, "jes.properties"));
+        sharePoint(new File(out, "sharepoint.properties"));
+        betaView(new File(out, "betaview.properties"));
     }
 
     /**
@@ -176,6 +196,328 @@ public final class EacParityExport {
         } finally {
             out.close();
         }
+    }
+
+    /**
+     * Git-Quelle (#187, #193) über {@link ParityGit}: je Stand ({@code main} = {@link ParityGit#BRANCH}, {@code tag} =
+     * {@link ParityGit#TAG}) die gelisteten Pfade, je Pfad Titel und welche Sätze aus {@link ParityGit#SENTENCES}
+     * (Index ab 0) oder {@link ParityGit#OLD_SENTENCE} ({@code old}) der geladene Text enthält, {@code -} ohne.
+     */
+    private static void git(File target) throws Exception {
+        Path work = Files.createTempDirectory("parity-git");
+        Path repository = work.resolve("parity.git");
+        ParityGit.create(repository);
+        GitSourceProvider provider = new GitSourceProvider(work.resolve("cache"), DocumentExtraction.detector(),
+                DocumentExtraction.registry());
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            gitRef(provider, repository, null, "main", out);
+            gitRef(provider, repository, ParityGit.TAG, "tag", out);
+        } finally {
+            out.close();
+        }
+    }
+
+    private static void gitRef(GitSourceProvider provider, Path repository, String ref, String prefix,
+                               PrintWriter out) throws Exception {
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("url", repository.toAbsolutePath().toString());
+        values.put("refreshMinutes", "0");
+        if (ref != null) {
+            values.put("ref", ref);
+        }
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("git", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(gitPath(resource.id()), resource);
+        }
+        out.println("git." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityGit.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityGit.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            if (text != null && text.contains(ParityGit.OLD_SENTENCE)) {
+                found.add("old");
+            }
+            out.println("git." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
+            out.println("git." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /**
+     * Dateiquelle (#193) über {@link ParityFiles}: der ganze Ordner mit {@code exclude} = {@link ParityFiles#EXCLUDE}
+     * ({@code all}); je Pfad Titel und welche Sätze aus {@link ParityFiles#SENTENCES} (Index ab 0) oder
+     * {@link ParityFiles#EXCLUDED_SENTENCE} ({@code excluded}) der geladene Text enthält, {@code -} ohne.
+     */
+    private static void files(File target) throws Exception {
+        Path directory = Files.createTempDirectory("parity-files").resolve("pfiles");
+        ParityFiles.create(directory);
+        LocalFilesSourceProvider provider = new LocalFilesSourceProvider(DocumentExtraction.detector(),
+                DocumentExtraction.registry());
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("directory", directory.toAbsolutePath().toString());
+        values.put("exclude", ParityFiles.EXCLUDE);
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("files", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            String value = resource.id().value();
+            byPath.put(value.substring(value.lastIndexOf("/pfiles/") + "/pfiles/".length()), resource);
+        }
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            out.println("files.all.documents=" + join(new ArrayList<String>(byPath.keySet())));
+            for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+                String text = source.load(entry.getValue().id()).text();
+                List<String> found = new ArrayList<String>();
+                for (int i = 0; i < ParityFiles.SENTENCES.length; i++) {
+                    if (text != null && text.contains(ParityFiles.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                if (text != null && text.contains(ParityFiles.EXCLUDED_SENTENCE)) {
+                    found.add("excluded");
+                }
+                out.println("files.all.title." + entry.getKey() + "=" + entry.getValue().title());
+                out.println("files.all.sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+            }
+        } finally {
+            out.close();
+        }
+    }
+
+    /**
+     * FTP-Quelle (#193) über {@link ParityFtp}: anonym ab {@link ParityFtp#START_POINT}, einmal mit
+     * {@link ParityFtp#DEPTH} ({@code deep}) und einmal eine Ebene flacher ({@code shallow}); je Pfad Titel und welche
+     * Sätze aus {@link ParityFtp#SENTENCES} (Index ab 0) der geladene Text enthält.
+     */
+    private static void ftp(File target) throws Exception {
+        ParityFtp server = ParityFtp.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            ftpDepth(server, ParityFtp.DEPTH, "deep", out);
+            ftpDepth(server, ParityFtp.DEPTH - 1, "shallow", out);
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    private static void ftpDepth(ParityFtp server, int depth, String prefix, PrintWriter out) throws Exception {
+        FtpSourceProvider provider = new FtpSourceProvider(ref -> {
+            throw new IllegalStateException("anonym");
+        });
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("host", server.host());
+        values.put("port", String.valueOf(server.port()));
+        values.put("startPoints", ParityFtp.START_POINT);
+        values.put("maxDepth", String.valueOf(depth));
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("ftp", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(ftpPath(resource.id().value()), resource);
+        }
+        out.println("ftp." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityFtp.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityFtp.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            out.println("ftp." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
+            out.println("ftp." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /**
+     * SharePoint-Quelle (#193) über {@link ParitySharePoint}: ohne Anmeldung, alle Bibliotheken, einmal mit
+     * {@link ParitySharePoint#DEPTH} ({@code deep}) und eine Ebene flacher ({@code shallow}); je Pfad Titel und welche
+     * Sätze aus {@link ParitySharePoint#SENTENCES} (Index ab 0) oder {@link ParitySharePoint#HIDDEN_SENTENCE}
+     * ({@code hidden}) der geladene Text enthält.
+     */
+    private static void sharePoint(File target) throws Exception {
+        ParitySharePoint site = ParitySharePoint.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            sharePointDepth(site, ParitySharePoint.DEPTH, "deep", out);
+            sharePointDepth(site, ParitySharePoint.DEPTH - 1, "shallow", out);
+        } finally {
+            out.close();
+            site.close();
+        }
+    }
+
+    private static void sharePointDepth(ParitySharePoint site, int depth, String prefix, PrintWriter out)
+            throws Exception {
+        SharePointSourceProvider provider = new SharePointSourceProvider(ref -> {
+            throw new IllegalStateException("ohne Anmeldung");
+        }, HttpRoutePort.direct(), null, null, DocumentExtraction.detector(), DocumentExtraction.registry());
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("siteUrl", site.siteUrl());
+        values.put("maxDepth", String.valueOf(depth));
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("sharepoint", provider.locator(settings)),
+                settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(sharePointPath(resource.id().value()), resource);
+        }
+        out.println("sharepoint." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParitySharePoint.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParitySharePoint.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            if (text != null && text.contains(ParitySharePoint.HIDDEN_SENTENCE)) {
+                found.add("hidden");
+            }
+            String key = "sharepoint." + prefix + "." + "%s." + entry.getKey().replace(' ', '_');
+            out.println(String.format(key, "title") + "=" + entry.getValue().title());
+            out.println(String.format(key, "sentences") + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /**
+     * BetaView-Quelle (#193) über {@link ParityBetaView}: Ergebnisliste des Favoriten {@link ParityBetaView#FAVORITE_ID},
+     * angemeldet mit Testdaten (die Oberfläche nimmt jedes nicht leere Passwort); je Dokument-ID der Titel des geladenen
+     * Dokuments und welche
+     * Sätze aus {@link ParityBetaView#SENTENCES} (Index ab 0) der geladene Text enthält.
+     */
+    private static void betaView(File target) throws Exception {
+        ParityBetaView server = ParityBetaView.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            BetaViewSourceProvider provider = new BetaViewSourceProvider(
+                    ref -> () -> new BetaViewCredentials("paritaet", "nur-fuer-den-test".toCharArray()),
+                    HttpRoutePort.direct(), null, null, DocumentExtraction.detector(), DocumentExtraction.registry());
+            Map<String, String> values = new java.util.HashMap<String, String>();
+            values.put("baseUrl", server.baseUrl());
+            values.put("credentialRef", "keepass:paritaet");
+            values.put("favoriteId", ParityBetaView.FAVORITE_ID);
+            SourceSettings settings = SourceSettings.of(values);
+            KnowledgeSourcePort source = provider.open(SourceAddress.of("betaview", provider.locator(settings)),
+                    settings);
+            java.util.TreeMap<String, KnowledgeResource> byId = new java.util.TreeMap<String, KnowledgeResource>();
+            for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+                byId.put(betaViewDocument(resource.title()), resource);
+            }
+            out.println("betaview.all.documents=" + join(new ArrayList<String>(byId.keySet())));
+            for (Map.Entry<String, KnowledgeResource> entry : byId.entrySet()) {
+                KnowledgeDocument document = source.load(entry.getValue().id());
+                String text = document.text();
+                List<String> found = new ArrayList<String>();
+                for (int i = 0; i < ParityBetaView.SENTENCES.length; i++) {
+                    if (text != null && text.contains(ParityBetaView.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                // Titel des geladenen Dokuments wie im Index des EAC; die Liste zeigt davor das Datum aus der Ergebniszeile
+                out.println("betaview.all.title." + entry.getKey() + "=" + document.resource().title());
+                out.println("betaview.all.sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+            }
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    /** Dokument-ID zum Titel; auf der Paritäts-Oberfläche enthält jeder Titel genau einen aus {@code TITLES}. */
+    static String betaViewDocument(String title) {
+        for (int i = 0; i < ParityBetaView.TITLES.length; i++) {
+            if (title != null && title.contains(ParityBetaView.TITLES[i])) {
+                return ParityBetaView.DOCUMENT_IDS[i];
+            }
+        }
+        return String.valueOf(title);
+    }
+
+    /** Serverrelativer Pfad ab {@link ParitySharePoint#SITE_PATH}; der Port wechselt je Lauf. */
+    static String sharePointPath(String id) {
+        int start = id.indexOf(ParitySharePoint.SITE_PATH + "/");
+        return start < 0 ? id : id.substring(start);
+    }
+
+    /**
+     * JES-Quelle (#193) über {@link ParityFtp} im JES-Modus, angemeldet mit Testdaten: alle Jobs ({@code all}) und nur
+     * {@code ZAUF*} ({@code zauf}); je Job-ID der Titel des geladenen Jobs und welche Sätze aus
+     * {@link ParityFtp#JOB_SENTENCES} (Index ab 0) die Ausgabe enthält.
+     */
+    private static void jes(File target) throws Exception {
+        ParityFtp server = ParityFtp.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            jesFilter(server, null, "all", out);
+            jesFilter(server, "ZAUF*", "zauf", out);
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    private static void jesFilter(ParityFtp server, String jobNames, String prefix, PrintWriter out) throws Exception {
+        JesSourceProvider provider = new JesSourceProvider(
+                ref -> new SecretMaterial(ref, "paritaet", "nur-fuer-den-test".toCharArray()));
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("host", server.host());
+        values.put("port", String.valueOf(server.port()));
+        values.put("credentialRef", "keepass:paritaet");
+        if (jobNames != null) {
+            values.put("startPoints", jobNames);
+        }
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("jes", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byJob = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byJob.put(jobId(resource.title() + " " + resource.id().value()), resource);
+        }
+        out.println("jes." + prefix + ".documents=" + join(new ArrayList<String>(byJob.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byJob.entrySet()) {
+            KnowledgeDocument document = source.load(entry.getValue().id());
+            String text = document.text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityFtp.JOB_SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityFtp.JOB_SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            out.println("jes." + prefix + ".title." + entry.getKey() + "=" + document.resource().title());
+            out.println("jes." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /** Job-ID aus Titel oder Ressourcen-ID; auf dem Paritäts-Server sind sie eindeutig. */
+    static String jobId(String value) {
+        for (String jobId : ParityFtp.JOB_IDS) {
+            if (value.contains(jobId)) {
+                return jobId;
+            }
+        }
+        return value;
+    }
+
+    /** Pfad ab {@link ParityFtp#START_POINT}; Host und Port wechseln je Lauf. */
+    static String ftpPath(String id) {
+        int start = id.indexOf(ParityFtp.START_POINT + "/");
+        return start < 0 ? id : id.substring(start);
+    }
+
+    /** Pfad im Repository aus {@code git:<…>/parity[@<ref>]/<pfad>} (der Locator lässt {@code .git} weg). */
+    private static String gitPath(KnowledgeResourceId id) {
+        String value = id.value();
+        int repository = value.lastIndexOf("/parity/") >= 0 ? value.lastIndexOf("/parity/")
+                : value.lastIndexOf("/parity@");
+        return value.substring(value.indexOf('/', repository + 1) + 1);
     }
 
     /**

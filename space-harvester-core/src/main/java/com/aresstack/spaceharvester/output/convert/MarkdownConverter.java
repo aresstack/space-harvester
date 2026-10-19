@@ -209,7 +209,8 @@ public final class MarkdownConverter implements ExportConverter {
                         .map(item -> "• " + cell(item)).toList());
                 case Panel panel -> escape(panel.label()) + ": " + cell(panel.content());
                 case Note note -> "*[Export: " + escape(note.text()) + "]*";
-                case Table nested -> "*[Export: verschachtelte Tabelle nicht übernommen]*";
+                // Wie der Enterprise AI Client (cell.text()): der Inhalt bleibt als flacher Text erhalten.
+                case Table nested -> escape(StorageDocument.text(List.of(nested)));
                 case Rule rule -> "";
             };
             if (!part.isBlank()) {

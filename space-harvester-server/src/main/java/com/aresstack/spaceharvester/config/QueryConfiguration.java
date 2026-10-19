@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
+import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
@@ -158,8 +159,13 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:}") String loadsValue,
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
-                                SearchRunLog runs, FindingCatalog findings) {
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
+                                SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store) {
+        // Auszüge aus semantischen Absätzen, wo welche zum abgelegten Text gespeichert sind (#181, ADR 0020).
+        PageTextIndex index = texts.getIfAvailable();
+        EnrichmentStore enrichments = store.getIfAvailable();
+        PageTextIndex snippets = index == null || enrichments == null ? index
+                : new PassageSnippets(index, enrichments::find);
+        return new KeywordSearch(catalog, access, snippets, prefetch, maxQueries,
                 excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
                 findings);
     }

@@ -1,7 +1,11 @@
 package com.aresstack.spaceharvester.application.passages;
 
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -11,9 +15,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Ergebnisformat des Prozessors {@value PassageProcessor#ID}:
- * {@code {"mode","reason","model","segmentation","sentences","passages":[{"start","end","firstSentence","sentences",
- * "section","kind","boundary","similarity"}]}}. Gespeichert werden nur Stellen, nie Text: Den Wortlaut liefert die
- * Textprojektion mit demselben {@code inputSha256}.
+ * {@code {"mode","reason","model","segmentation","sentences","textSha256","passages":[{"start","end","firstSentence",
+ * "sentences","section","kind","boundary","similarity"}]}}. Gespeichert werden nur Stellen, nie Text: Den Wortlaut
+ * liefert die Textprojektion mit demselben {@code inputSha256}. {@code textSha256} ({@link #textSha256}) ist der Hash
+ * nur des Textes, damit auch der Volltextindex, der den Text ohne Gliederung ablegt, die Stellen prüfen kann.
  */
 public final class PassagePayload {
 
@@ -45,10 +50,11 @@ public final class PassagePayload {
      * @param model        bei {@link Mode#SEMANTIC} das Embedding-Modell, sonst {@code null}
      * @param segmentation {@link PassageSegmentation#fingerprint()}
      * @param sentences    Zahl aller Sätze
+     * @param textSha256   {@link #textSha256} des Textes, zu dem die Stellen gehören; {@code null} bei Format 1
      * @param passages     in Lesereihenfolge
      */
     public record Parsed(Mode mode, String reason, String model, String segmentation, int sentences,
-                         List<PassageSegmentation.Passage> passages) {
+                         String textSha256, List<PassageSegmentation.Passage> passages) {
 
         public Parsed {
             Objects.requireNonNull(mode, "mode");
@@ -57,12 +63,13 @@ public final class PassagePayload {
     }
 
     static String write(Mode mode, String reason, String model, String segmentation, int sentences,
-                        List<PassageSegmentation.Passage> passages) {
+                        String textSha256, List<PassageSegmentation.Passage> passages) {
         StringBuilder json = new StringBuilder("{\"mode\":").append(JsonText.quote(name(mode)))
                 .append(",\"reason\":").append(reason == null ? "null" : JsonText.quote(reason))
                 .append(",\"model\":").append(model == null ? "null" : JsonText.quote(model))
                 .append(",\"segmentation\":").append(JsonText.quote(segmentation))
                 .append(",\"sentences\":").append(sentences)
+                .append(",\"textSha256\":").append(JsonText.quote(textSha256))
                 .append(",\"passages\":[");
         for (int i = 0; i < passages.size(); i++) {
             PassageSegmentation.Passage passage = passages.get(i);
@@ -108,7 +115,18 @@ public final class PassagePayload {
                     similarity.isNumber() ? similarity.asDouble() : null));
         }
         return new Parsed(of(Mode.class, text(root, "mode")), textOrNull(root.path("reason")),
-                textOrNull(root.path("model")), text(root, "segmentation"), number(root, "sentences"), passages);
+                textOrNull(root.path("model")), text(root, "segmentation"), number(root, "sentences"),
+                textOrNull(root.path("textSha256")), passages);
+    }
+
+    /** {@code sha256:<hex>} über den Text allein (UTF-8), ohne Schema und Gliederung. */
+    public static String textSha256(String text) {
+        try {
+            return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** Kleinschreibung mit Bindestrich, wie in der REST-Antwort. */

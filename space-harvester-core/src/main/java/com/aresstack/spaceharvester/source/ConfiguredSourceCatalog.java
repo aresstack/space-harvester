@@ -41,12 +41,12 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     /**
      * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und die Kopien aus dem Enterprise AI Client
-     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook).
+     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook) und MediaWiki (#187).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
             new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
             EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
-            EacSourceAdapters.outlook());
+            EacSourceAdapters.outlook(), MediaWikiSources.adapter());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
     public static final Set<String> TYPES = DEFAULT_ADAPTERS.stream().map(SourceAdapter::type)
@@ -270,7 +270,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     @Override
     public List<SourceType> types() {
         return adapters.values().stream()
-                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials()))
+                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials(),
+                        adapter.addressOption(), adapter.fields(), adapter.authModes()))
                 .toList();
     }
 

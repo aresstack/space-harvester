@@ -53,9 +53,15 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.NavigationQueries;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
@@ -139,6 +145,7 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
+import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
@@ -232,6 +239,7 @@ public final class Harvester implements AutoCloseable {
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final PassageQueries passages;
+    private final NavigationQueries documentNavigation;
     private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
@@ -334,6 +342,13 @@ public final class Harvester implements AutoCloseable {
                                 .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
             }
+            // #181: Satzgrenzen für Absätze; mit Modell je semantischem Absatz ein Embedding (withPassages, ADR 0020).
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
+            if (embedding != null) {
+                embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
+                        sentenceRules)));
+            }
             this.embeddingModel = model;
             if (embedding != null || builder.statements.enabled()) {
                 // Auch die Satzanalyse (#108) rechnet über das Netz: nie im Abgleich selbst.
@@ -350,13 +365,17 @@ public final class Harvester implements AutoCloseable {
                 processors.add(embedding);
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
-            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
-            processors.add(new PassageProcessor(
-                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
-                    embedding));
+            processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
+            // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften (ADR 0020).
+            // Themenabschnitte benennt das Chat-Modell der wirksamen Konfiguration (ChatSectionLabeler), nur für
+            // freigegebene Quellen und nur in der Anreicherung.
+            AiServiceSettings startAi = builder.ai;
+            DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
+            processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
+                    new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                            builder.userAgent)));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
-            AiServiceSettings startAi = builder.ai;
             ImageDescriber describer = builder.imageDescriber != null ? builder.imageDescriber
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);
@@ -367,9 +386,8 @@ public final class Harvester implements AutoCloseable {
                 StatementSettings statementSettings = builder.statements;
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
-                processors.add(new StatementProcessor(
-                        OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)),
-                        () -> statementSettings, chats, chats.mayProcessExternally()));
+                processors.add(new StatementProcessor(sentences, () -> statementSettings, chats,
+                        chats.mayProcessExternally()));
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
@@ -394,6 +412,7 @@ public final class Harvester implements AutoCloseable {
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.passages = new PassageQueries(pages, enrichments, projector);
+            this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
             // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
@@ -468,7 +487,8 @@ public final class Harvester implements AutoCloseable {
             } else {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
-            this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
+            this.keywordSearch = new KeywordSearch(catalog, access,
+                    new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
@@ -507,7 +527,9 @@ public final class Harvester implements AutoCloseable {
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
+                            // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
+                            List.of(acronymRelationRule::refresh))), retentionRule(builder));
             // ADR 0014: Webhooks markieren nur den Katalog; ein- und ausgeschaltet je Quelle über sync.events.
             boolean eventsFixed = builder.changeEvents;
             Map<String, char[]> webhookSecrets = Map.copyOf(builder.webhookSecrets);
@@ -524,9 +546,10 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
-            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
+            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
+            // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared());
+                    TikaDocumentText.shared(), textIndex);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
@@ -855,6 +878,15 @@ public final class Harvester implements AutoCloseable {
      */
     public PassageQueries passages() {
         return passages;
+    }
+
+    /**
+     * Dokumentnavigation einer Seite: Überschriften und erkannte Themenabschnitte (#181, ADR 0020); in der Leseansicht
+     * ohne Aufrufer {@link com.aresstack.spaceharvester.application.passages.DocumentNavigationView#read} mit
+     * {@link #enrichments()}.
+     */
+    public NavigationQueries documentNavigation() {
+        return documentNavigation;
     }
 
     /**

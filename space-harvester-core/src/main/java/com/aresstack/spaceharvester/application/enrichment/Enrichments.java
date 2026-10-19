@@ -278,7 +278,7 @@ public class Enrichments {
                 current++;
                 continue;
             }
-            if (!force && background != null && processor.background()) {
+            if (!force && background != null && processor.background(snapshot.key())) {
                 schedule(processor, snapshot, text, input);
                 continue;
             }
@@ -325,7 +325,7 @@ public class Enrichments {
 
     private Enrichment compute(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
         try {
-            EnrichmentOutput output = processor.process(snapshot.key(), text);
+            EnrichmentOutput output = processor.process(snapshot, text);
             String version = output.version() != null ? output.version() : processor.version();
             return new Enrichment(snapshot.key(), processor.id(), version, input, snapshot.revision(),
                     Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, clock.instant());

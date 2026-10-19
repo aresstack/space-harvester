@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -45,6 +46,16 @@ public final class ContextualSourceAdapter implements SourceAdapter {
     @Override
     public boolean needsCredentials() {
         return needsCredentials;
+    }
+
+    @Override
+    public String addressOption() {
+        return new KnowledgeSourceProviderAdapter(provider.apply(null)).addressOption();
+    }
+
+    @Override
+    public List<SourceField> fields() {
+        return new KnowledgeSourceProviderAdapter(provider.apply(null)).fields();
     }
 
     @Override

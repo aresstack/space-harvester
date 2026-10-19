@@ -101,4 +101,39 @@ class HarvesterGitSourceTest {
         // Beim Öffnen wird nichts aufgelöst; erst ein Abruf fragt den Anbieter.
         assertThat(asked).isEmpty();
     }
+
+    @Test
+    void aTrustBundleIsAcceptedAtStartAndUsedWhenFetching() throws Exception {
+        Files.writeString(repository.resolve("README.md"), "# Betrieb\n\nDer Nachtlauf startet um zwei Uhr.\n");
+        try (Git git = Git.init().setDirectory(repository.toFile()).setInitialBranch("main").call()) {
+            StoredConfig config = git.getRepository().getConfig();
+            config.setString("gpg", null, "format", "openpgp");
+            config.setBoolean("commit", null, "gpgsign", false);
+            config.save();
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("Start").setAuthor("Test", "test@example.org")
+                    .setCommitter("Test", "test@example.org").setSign(false).call();
+        }
+        javax.net.ssl.TrustManagerFactory factory = javax.net.ssl.TrustManagerFactory.getInstance(
+                javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+        factory.init((java.security.KeyStore) null);
+        javax.net.ssl.X509TrustManager firma = (javax.net.ssl.X509TrustManager) factory.getTrustManagers()[0];
+        List<String> asked = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("repo", "git", "Repo", null, null,
+                        Map.of("url", repository.toString()), null, "firma-ca"))
+                .trustBundles(name -> {
+                    asked.add(name);
+                    if (!name.equals("firma-ca")) {
+                        throw new IllegalArgumentException("SSL-Bundle '" + name + "' ist nicht konfiguriert");
+                    }
+                    return firma;
+                })
+                .dataDirectory(data).build()) {
+            JobStatus sync = harvester.await(harvester.sync("repo", "repo").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+        }
+        assertThat(asked).contains("firma-ca");
+    }
 }

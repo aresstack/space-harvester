@@ -110,18 +110,20 @@ class SourcesApiTest {
     }
 
     @Test
-    void listsTheKnownSourceTypesWithDisplayNames() throws Exception {
+    void listsTheKnownSourceTypesWithDisplayNamesAndAddressOptions() throws Exception {
         HttpResponse<String> response = get("/api/v1/sources/types");
 
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body())
-                .contains("{\"id\":\"confluence\",\"displayName\":\"Confluence\",\"needsCredentials\":false}")
-                .contains("{\"id\":\"files\",\"displayName\":\"Ordner\",\"needsCredentials\":false}")
-                .contains("{\"id\":\"ftp\",\"displayName\":\"FTP\",\"needsCredentials\":false}")
-                .contains("{\"id\":\"jes\",\"displayName\":\"JES\",\"needsCredentials\":true}")
-                .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false}")
-                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true}")
-                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false}");
+                .contains("{\"id\":\"confluence\",\"displayName\":\"Confluence\",\"needsCredentials\":false,\"addressOption\":null,")
+                .contains("{\"id\":\"files\",\"displayName\":\"Ordner\",\"needsCredentials\":false,\"addressOption\":\"directory\",")
+                .contains("{\"id\":\"ftp\",\"displayName\":\"FTP\",\"needsCredentials\":false,\"addressOption\":\"host\",")
+                .contains("{\"id\":\"jes\",\"displayName\":\"JES\",\"needsCredentials\":true,\"addressOption\":\"host\",")
+                .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false,\"addressOption\":\"siteUrl\",")
+                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true,\"addressOption\":\"baseUrl\",")
+                .contains("\"authModes\":[\"none\",\"basic\",\"pat\"]", "\"kind\":\"SECRET_REF\"")
+                .doesNotContain("vaultValue")
+                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false,\"addressOption\":\"mailbox\",");
     }
 
     @Test

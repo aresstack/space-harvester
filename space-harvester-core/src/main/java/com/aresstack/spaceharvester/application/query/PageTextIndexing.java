@@ -56,7 +56,7 @@ public final class PageTextIndexing {
                 return false;
             }
             // Titel und Space gehören zum Stand des Eintrags: ändern sie sich, wird neu indiziert.
-            String input = state(text.get().inputSha256(), current);
+            String input = entryState(text.get().inputSha256(), current);
             if (index.inputSha256(snapshot.key()).filter(input::equals).isPresent()) {
                 return false;
             }
@@ -121,7 +121,11 @@ public final class PageTextIndexing {
         }
     }
 
-    private static String state(String input, PageMetadata current) {
+    /**
+     * Der Stand eines Eintrags ({@link PageTextIndex.Entry#inputSha256()}) zu einer Textprojektion: ihr Eingabe-Hash
+     * samt Space und Titel. Damit prüft etwa die Relevanzsuche, ob Stellen eines Embeddings zum abgelegten Text gehören.
+     */
+    public static String entryState(String input, PageMetadata current) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest((input + "\n" + current.partitionKey() + "\n"
                     + current.title()).getBytes(StandardCharsets.UTF_8));
