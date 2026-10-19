@@ -324,6 +324,39 @@ public final class ParityComparison {
         return sourceFiles("files", eac, core);
     }
 
+    /**
+     * FTP-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade (Core ⊇ EAC),
+     * der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> ftp(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("ftp", eac, core);
+    }
+
+    /**
+     * SharePoint-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade
+     * (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC); Leerzeichen im Pfad
+     * stehen im Schlüssel als {@code _}.
+     */
+    public static List<Finding> sharePoint(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("sharepoint", eac, core);
+    }
+
+    /**
+     * BetaView-Quelle (#193) wie {@link #git}: die Dokumente der Ergebnisliste (Core ⊇ EAC), der Titel je Dokument
+     * (gleich) und die Sätze im Inhalt je Dokument (Core ⊇ EAC).
+     */
+    public static List<Finding> betaView(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("betaview", eac, core);
+    }
+
+    /**
+     * JES-Quelle (#193) wie {@link #git}: je Filter ({@code all}, {@code zauf}) die Jobs (Core ⊇ EAC), der Titel je Job
+     * (gleich) und die Sätze in der Ausgabe je Job (Core ⊇ EAC).
+     */
+    public static List<Finding> jes(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("jes", eac, core);
+    }
+
     private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
         List<Finding> findings = new ArrayList<>();
         for (Map.Entry<String, String> entry : eac.entrySet()) {
