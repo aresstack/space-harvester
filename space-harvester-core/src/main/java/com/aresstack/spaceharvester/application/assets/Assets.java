@@ -286,6 +286,29 @@ public class Assets {
         return image.title() == null ? "" : image.title();
     }
 
+    /** Die Anhänge einer Seite, live von der Quelle; lädt keine Bytes. */
+    public List<PageAttachment> pageAttachments(String sourceId, String pageId) {
+        return source(sourceId).attachments(pageId).attachments();
+    }
+
+    /**
+     * Ob ein Bild der Lese-Ansicht die Vorschau eines draw.io-Diagramms dieser Anhänge ist, wie bei
+     * {@link #viewDiagram}: dann gilt die textuelle Quelle des Diagramms, nicht das Bild (Angelo, 16.10.).
+     */
+    public static boolean diagramPreview(List<PageAttachment> attachments, HarvestSource.ViewImage image) {
+        String filename = viewFileName(image);
+        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png")) {
+            return false;
+        }
+        for (PageAttachment attachment : attachments) {
+            if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
+                    && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Die Lese-Ansicht einer Seite mit Lesetext und Bildern ({@link HarvestSource#readingPage}); lädt keine Bytes. */
     public HarvestSource.ReadingPage readingPage(String sourceId, String pageId) {
         return source(sourceId).readingPage(pageId);
@@ -571,10 +594,51 @@ public class Assets {
      *                                   {@code FAILED}
      */
     public DescribedImage describe(PageAttachmentList list, String attachmentId) {
-        ImageDescriber model = describer();
+        ImageDescriber model = describer(list.sourceId());
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        AssetContent content = content(list, attachmentId);
+        return describe(model, content(list, attachmentId));
+    }
+
+    /**
+     * Beschreibt ein Bild der Lese-Ansicht einer Seite (ADR 0021) wie {@link #describe(PageAttachmentList, String)}:
+     * lädt es bei Bedarf wie {@link #viewImage}, fragt das Modell je Bildbytes und Modell nur einmal. Nur Rasterbilder;
+     * SVG und andere Arten melden {@code NOT_AN_IMAGE}.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_RELEASED}, {@code NOT_AN_IMAGE},
+     *                                   {@code BUSY} oder {@code FAILED}
+     * @throws SourceAccessException     wie {@link #viewImage}
+     * @throws AssetTooLargeException    wie {@link #viewImage}
+     */
+    public DescribedImage describeViewImage(String sourceId, String pageId, String pageVersion,
+                                            HarvestSource.ViewImage image) {
+        ImageDescriber model = describer(sourceId);
+        AssetContent content = viewImage(sourceId, pageId, pageVersion, image);
+        // Nur Rasterbilder: SVG ist Text und geht als Quelle in die Analyse, nicht als Bild an das Modell.
+        if (content.asset().kind() != AssetKind.IMAGE) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_AN_IMAGE, "Kein Rasterbild",
+                    null);
+        }
+        return describe(model, content);
+    }
+
+    /**
+     * Die vorhandene Beschreibung genau dieser Bildbytes durch das eingestellte Modell; erzeugt nichts und fragt die
+     * Quelle nicht.
+     */
+    public Optional<ImageDescription> storedDescription(String imageSha256) {
+        if (describer == null || !describer.available() || imageSha256 == null) {
+            return Optional.empty();
+        }
+        return store.description(imageSha256, describer.id(), describer.modelVersion());
+    }
+
+    /** Der eingestellte Beschreiber, leer ohne Beschreiber oder ohne Modell (ADR 0021). */
+    public Optional<ImageDescriber> describerInUse() {
+        return describer == null || !describer.available() ? Optional.empty() : Optional.of(describer);
+    }
+
+    private DescribedImage describe(ImageDescriber model, AssetContent content) {
         Asset asset = content.asset();
         Optional<ImageDescription> existing = store.description(asset.sha256(), model.id(), model.modelVersion());
         if (existing.isPresent()) {
@@ -649,11 +713,21 @@ public class Assets {
     }
 
     private ImageDescriber describer() {
-        if (describer == null) {
+        if (describer == null || !describer.available()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_CONFIGURED,
                     "Kein Bildbeschreiber konfiguriert", null);
         }
         return describer;
+    }
+
+    /** Der Beschreiber für Bilder dieser Quelle; nicht freigegebene Bilder gehen nie an das Modell. */
+    private ImageDescriber describer(String sourceId) {
+        ImageDescriber model = describer();
+        if (!model.mayDescribe(sourceId)) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Quelle nicht für den KI-Dienst freigegeben", null);
+        }
+        return model;
     }
 
     private static void requireImage(String mediaType, String title) {

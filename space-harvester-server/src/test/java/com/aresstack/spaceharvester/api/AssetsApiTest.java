@@ -22,6 +22,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -42,6 +43,7 @@ class AssetsApiTest {
     static class Describer {
 
         @Bean
+        @Primary
         ImageDescriber imageDescriber() {
             return new ImageDescriber() {
                 @Override

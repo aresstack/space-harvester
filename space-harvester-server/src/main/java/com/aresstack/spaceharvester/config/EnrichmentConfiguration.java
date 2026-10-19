@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.images.ImageProcessor;
+import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
@@ -42,18 +46,27 @@ class EnrichmentConfiguration {
 
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
-                            @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background) {
+                            @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
+                            ObjectProvider<ImageDescriber> describer) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
         // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
+        // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
+        processors.add(new ImageProcessor(describer::getIfAvailable));
         // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
         // Volltextindex.
         PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                 new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
         return new Enrichments(projector, processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+    }
+
+    /** Bildanalyse auf Abruf (ADR 0021, #362). */
+    @Bean
+    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments) {
+        return new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
     }
 
     @Bean

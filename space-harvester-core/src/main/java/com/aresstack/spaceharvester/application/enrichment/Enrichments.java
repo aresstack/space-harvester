@@ -177,6 +177,21 @@ public class Enrichments {
         return views;
     }
 
+    /**
+     * Die Textprojektion der Payload, gegen die die Ergebnisse gelten ({@link PageText#inputSha256()}); leer, wenn die
+     * Payload nicht projizierbar ist. Für Ergebnisse, die nicht ein Prozessor dieser Klasse schreibt (Bildanalyse,
+     * ADR 0021).
+     */
+    public Optional<PageText> text(PageSnapshot snapshot) {
+        return projection(snapshot);
+    }
+
+    /** Die Version, mit der ein Prozessor gerade rechnet, oder leer für einen unbekannten. */
+    public Optional<String> processorVersion(String processorId) {
+        EnrichmentProcessor processor = processors.get(processorId);
+        return processor == null ? Optional.empty() : Optional.of(processor.version());
+    }
+
     /** Macht die Ergebnisse dauerhaft, etwa am Ende eines Abgleichs. */
     public void flush() {
         store.flush();
