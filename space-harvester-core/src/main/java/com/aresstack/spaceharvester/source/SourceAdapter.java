@@ -34,6 +34,14 @@ public interface SourceAdapter {
     }
 
     /**
+     * Schlüssel unter {@code options}, unter dem der Typ seine Adresse liest, z. B. {@code host}; {@code null}, wenn
+     * die Adresse nicht unter {@code options} steht.
+     */
+    default String addressOption() {
+        return null;
+    }
+
+    /**
      * Typeigene Probleme der Einstellungen, ohne etwas zu öffnen; ID und Typ prüft der Katalog.
      *
      * @return leer, wenn die Einstellungen passen; sonst je Problem ein Satz mit dem Feldnamen
