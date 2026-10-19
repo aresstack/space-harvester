@@ -176,7 +176,9 @@ class EnrichmentApiTest {
         assertThat(moved.get("passages").size()).isEqualTo(passages.size());
 
         assertProblem(get("/api/v1/passages?id=wiki%3A510"), 400, "invalid-request");
-        assertProblem(get("/api/v1/passages?id=" + java.net.URLEncoder.encode(id.replace("wiki:510@", "wiki:unbekannt@"),
+        assertProblem(get("/api/v1/passages?id=" + java.net.URLEncoder.encode(
+                id.replace("wiki:510@", "wiki:unbekannt@"), java.nio.charset.StandardCharsets.UTF_8)), 404, "cache-miss");
+        assertProblem(get("/api/v1/passages?id=" + java.net.URLEncoder.encode(id.replace("wiki:510@", "nope:510@"),
                 java.nio.charset.StandardCharsets.UTF_8)), 404, "cache-miss");
         // Ohne content-Freigabe wie eine unbekannte Seite: keine 403, die das Bestehen verriete.
         HttpResponse<String> hidden = http.send(HttpRequest.newBuilder(uri("/api/v1/passages?id="

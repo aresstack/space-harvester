@@ -3,6 +3,12 @@ package com.aresstack.spaceharvester.application.passages;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Stabile Passage-IDs wie {@code KnowledgePassageId} im Enterprise AI Client (EAC-Lücke 5). */
@@ -57,5 +63,30 @@ class PassageIdTest {
         assertThatThrownBy(() -> PassageId.captureOf(null)).isInstanceOf(IllegalArgumentException.class);
         assertThat(PassageId.versionTag("chunker;x")).matches("[0-9a-f]{8}")
                 .isEqualTo(PassageId.versionTag("chunker;x")).isNotEqualTo(PassageId.versionTag("chunker;y"));
+    }
+
+    /** Fester Text und festes Ergebnis, ID Zeichen für Zeichen: Hash, Fingerabdrücke und Form ändern sich nie still. */
+    @Test
+    void aStoredResultAlwaysGivesTheSameLiteralIds() {
+        PageText text = new PageText("confluence-storage-text/v1", "Erster Absatz.\nZweiter Absatz.", List.of());
+        String payload = "{\"mode\":\"semantic\",\"reason\":null,\"model\":\"topics@1\","
+                + "\"segmentation\":\"passages;eac;3;0.35;2;8;350\",\"sentences\":2,\"textSha256\":null,"
+                + "\"passages\":[{\"start\":0,\"end\":14,\"firstSentence\":0,\"sentences\":1,\"section\":null,"
+                + "\"kind\":\"paragraph\",\"boundary\":\"structure\",\"similarity\":null},{\"start\":15,"
+                + "\"end\":30,\"firstSentence\":1,\"sentences\":1,\"section\":null,\"kind\":\"paragraph\","
+                + "\"boundary\":\"structure\",\"similarity\":null}]}";
+        PageKey key = new PageKey("confluence", "47110815");
+        Enrichment stored = new Enrichment(key, PassageProcessor.ID, "v", text.inputSha256(), "1",
+                Enrichment.Status.OK, payload, List.of(), null, Instant.EPOCH);
+
+        List<String> ids = PagePassages.read(key, List.of(new Enrichments.View(stored, Enrichment.Freshness.CURRENT)),
+                text).passages().stream().map(PagePassages.Passage::id).toList();
+
+        // Mit sha256sum nachgerechnet: Text, "passages;eac;3;0.35;2;8;350" → 1a796cb0, "topics@1" → 2c747974.
+        assertThat(ids).containsExactly(
+                "confluence:47110815@" + "39950a2cbe067ddcd8d115bbef58cf0de3a515be3fd06a45324ebe0e96997c30"
+                        + "#p0@1a796cb0-2c747974",
+                "confluence:47110815@" + "39950a2cbe067ddcd8d115bbef58cf0de3a515be3fd06a45324ebe0e96997c30"
+                        + "#p1@1a796cb0-2c747974");
     }
 }
