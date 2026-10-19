@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.terms.AcronymResolutionUnavailableException;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.UnknownRelationException;
 import java.net.URI;
@@ -8,7 +9,10 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-/** Fehler der Begriffsbeziehungen (#120) als Problem Details: unbekannt oder verborgen 404, veraltete Revision 409. */
+/**
+ * Fehler der Begriffsbeziehungen (#120) als Problem Details: unbekannt oder verborgen 404, veraltete Revision 409; die
+ * KI-Akronymauflösung (#122) ohne Modell 503, ohne Freigabe der Quelle 409.
+ */
 @RestControllerAdvice
 class TermRelationErrorHandler {
 
@@ -28,6 +32,19 @@ class TermRelationErrorHandler {
                 "Die Beziehung hat inzwischen eine andere Revision; bitte neu laden.");
         problem.setProperty("relationId", e.relationId());
         problem.setProperty("revision", e.revision());
+        return problem;
+    }
+
+    @ExceptionHandler(AcronymResolutionUnavailableException.class)
+    ProblemDetail unavailable(AcronymResolutionUnavailableException e) {
+        if (e.reason() == AcronymResolutionUnavailableException.Reason.NO_MODEL) {
+            return problem(HttpStatus.SERVICE_UNAVAILABLE, "ai-unavailable", "Kein KI-Modell",
+                    "Für die KI-Akronymauflösung ist kein Chat-Modell eingestellt.");
+        }
+        ProblemDetail problem = problem(HttpStatus.CONFLICT, "external-processing-not-allowed",
+                "Quelle nicht freigegeben", "Text dieser Quelle geht nicht an den KI-Dienst "
+                        + "(external-processing-sources).");
+        problem.setProperty("sourceId", e.sourceId());
         return problem;
     }
 

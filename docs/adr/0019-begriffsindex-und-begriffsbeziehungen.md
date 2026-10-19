@@ -10,6 +10,7 @@
   `<dataDirectory>/term-relations` (Server: `space-harvester.term-relations.directory`), REST
   `/api/v1/term-relations` (Punkt 5 und 7); Regelvorschläge aus Ausschreibungen `AcronymRelationRule`
   (`harvester.acronymRelationRule()`, `POST /api/v1/term-relations/rules/acronyms?sourceId=`).
+- Umgesetzt (#122, Stufe 1): KI-Akronymauflösung `AcronymResolution` (Punkt 8).
 - Bezüge: #119, #120, #122, #336, #339 (Oberfläche, Strang L); `AcronymProcessor`, `EntityProcessor`, `PageAcronyms`.
 
 ## Kontext
@@ -89,6 +90,23 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      Geltungsbereich, global auf jede Quelle. Verborgenes gilt als unbekannt (404).
    - Suche darf über bestätigte Beziehungen außer `related` ausweiten (`expansions`), nie transitiv; ob die Suche das
      nutzt, entscheidet ADR 0013/0017.
+8. **KI-Akronymauflösung (#122, Stufe 1).** `AcronymResolution` (`harvester.acronymResolution()`,
+   `POST /api/v1/term-relations/refresh?sourceId=` → 202, Stand unter `…/refresh-jobs/{jobId}`) ist ein Vorschlagslauf
+   je Quelle als Auftrag `ENRICHMENT` ohne Space (Phase „KI-Akronymauflösung“), kein eigener Auftragstyp.
+   - Je Akronym höchstens 6 Fundstellen (2 je Seite) mit 160 Zeichen Kontext, nur aktuelle Seiten und nur aus dem Text
+     mit passendem `inputSha256`; höchstens 200 Akronyme je Lauf (die mit den meisten Seiten), 20 je Anfrage. Akronyme
+     über dem Budget behalten ihre Vorschläge.
+   - Modell über den Port `AcronymExpansionModel`, umgesetzt mit `ChatAcronymExpansionModel` über
+     `RemoteAi.acronymExpansions()` (Chat-Modell der wirksamen Konfiguration, eigene Frist 90 s). Version =
+     Verfahren, Modell und Fingerabdruck der `base-url`, nie die Adresse. Ohne Modell `ai-unavailable` (503), ohne
+     Freigabe der Quelle in `external-processing-sources` `external-processing-not-allowed` (409); die Freigabe wird
+     vor jeder Anfrage erneut geprüft.
+   - Die Antwort ist nicht vertrauenswürdig: Eine Ausschreibung zählt nur, wenn sie wörtlich in einer der genannten
+     Fundstellen dieses Akronyms steht; Länge, Zeichen und Anzahl je Akronym sind begrenzt. Verschiedene Bedeutungen
+     sind getrennte Vorschläge. Ergebnis nur `ai`/`proposed` über `propose`; Regel-, manuelle und bestätigte
+     Beziehungen desselben Schlüssels haben Vorrang, Abgelehnte kommen nie wieder.
+   - Scheitert eine Anfrage oder bricht der Auftrag ab, wird nichts abgeglichen. Ins Log kommen nur Quelle, Anzahlen
+     und Ausnahmeklassen.
 
 ## Grenzen
 

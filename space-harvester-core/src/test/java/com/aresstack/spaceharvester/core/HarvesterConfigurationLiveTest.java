@@ -10,7 +10,9 @@ import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
@@ -21,6 +23,9 @@ import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.network.ProxySettings;
+import com.aresstack.spaceharvester.source.network.TestProxy;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -223,6 +228,41 @@ class HarvesterConfigurationLiveTest {
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withAi(ai("modell-a", null))).activated())
                     .isTrue();
             assertThat(harvester.relevance().semantic()).isFalse();
+        }
+    }
+
+    @Test
+    void theProxyFollowsTheConfigurationAndInvalidNetworkSettingsAreRejected() throws Exception {
+        // Ein Name statt 127.0.0.1: Loopback-Ziele gehen immer direkt (test-hosts zeigt ihn auf Loopback).
+        SourceSettingsConfig named = new SourceSettingsConfig("wiki", "confluence", "Wiki",
+                URI.create(SERVER.baseUrl().toString().replace("127.0.0.1", "wiki.proxied.test")),
+                new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.PAT, null, null, "token"),
+                Map.of("connectTimeoutMillis", "2000", "allowInsecureHttp", "true"));
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        try (TestProxy proxy = new TestProxy();
+             Harvester harvester = Harvester.builder().source(named).dataDirectory(data).configuration(manager)
+                     .build()) {
+            harvester.pages().page(harvester.caller(), "wiki", "100", false);
+            assertThat(proxy.requestLines()).isEmpty();
+
+            ProxySettings manual = new ProxySettings(ProxySettings.Mode.MANUAL_PROXY, null, "127.0.0.1", proxy.port(),
+                    null, null, null, null);
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withNetwork(new NetworkSettings(manual,
+                    TrustSettings.jvm()))).activated()).isTrue();
+            harvester.pages().page(harvester.caller(), "wiki", "100", false);
+            assertThat(proxy.requestLines()).isNotEmpty()
+                    .allSatisfy(line -> assertThat(line).contains("wiki.proxied.test"));
+
+            ConfigurationManager.Activation rejected = manager.apply(HarvesterConfiguration.DEFAULT.withNetwork(
+                    new NetworkSettings(new ProxySettings(ProxySettings.Mode.MANUAL_PROXY, null, null, null, null,
+                            null, null, null), TrustSettings.jvm())));
+            assertThat(rejected.activated()).isFalse();
+            assertThat(rejected.problems()).extracting(ConfigurationProblem::key).containsOnly(NetworkSettings.PROXY);
+
+            proxy.requestLines().clear();
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
+            harvester.pages().page(harvester.caller(), "wiki", "100", false);
+            assertThat(proxy.requestLines()).isEmpty();
         }
     }
 }

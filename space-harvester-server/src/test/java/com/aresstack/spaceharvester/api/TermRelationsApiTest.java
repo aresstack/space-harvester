@@ -112,11 +112,27 @@ class TermRelationsApiTest {
     }
 
     @Test
+    void aiRefreshWithoutModelIsUnavailableAndChecksRightsAndKind() throws Exception {
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=wiki", "{\"kind\":\"acronym\"}",
+                null), 503, "ai-unavailable");
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=wiki", null, null), 503,
+                "ai-unavailable");
+        assertThat(send("POST", "/api/v1/term-relations/refresh?sourceId=wiki", null, READER_TOKEN).statusCode())
+                .isEqualTo(403);
+        assertProblem(send("POST", "/api/v1/term-relations/refresh?sourceId=wiki", "{\"kind\":\"noun\"}", null),
+                400, "invalid-request");
+        assertProblem(send("GET", "/api/v1/term-relations/refresh-jobs/unbekannt", null, null), 404,
+                "job-not-found");
+    }
+
+    @Test
     void theRoutesAreDocumented() throws Exception {
         JsonNode paths = json.readTree(send("GET", "/v3/api-docs", null, null).body()).get("paths");
 
         assertThat(paths.has("/api/v1/term-relations")).isTrue();
         assertThat(paths.has("/api/v1/term-relations/{id}/reject")).isTrue();
+        assertThat(paths.has("/api/v1/term-relations/refresh")).isTrue();
+        assertThat(paths.has("/api/v1/term-relations/refresh-jobs/{jobId}")).isTrue();
     }
 
     private void assertProblem(HttpResponse<String> response, int status, String type) throws Exception {
