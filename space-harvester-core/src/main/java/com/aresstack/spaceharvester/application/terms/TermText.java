@@ -16,8 +16,8 @@ public final class TermText {
     private TermText() {
     }
 
-    /** Einzelne Buchstaben oder Ziffern mit Punkt, wie {@code u.s.a.} oder {@code u.s.a}. */
-    private static final Pattern DOTTED = Pattern.compile("(?:[\\p{L}\\p{N}]\\.){2,}[\\p{L}\\p{N}]?");
+    /** Einzelne Buchstaben oder Ziffern mit Punkt, mindestens ein Buchstabe, wie {@code u.s.a.}; nie {@code 1.2.3}. */
+    private static final Pattern DOTTED = Pattern.compile("(?=.*\\p{L})(?:[\\p{L}\\p{N}]\\.){2,}[\\p{L}\\p{N}]?");
 
     /**
      * Unicode NFC, Kleinbuchstaben (unabhängig vom Gebietsschema), Leerraum zu einem Leerzeichen; ein Punkt-Akronym

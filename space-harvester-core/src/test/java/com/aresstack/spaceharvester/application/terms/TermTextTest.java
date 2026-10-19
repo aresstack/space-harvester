@@ -18,5 +18,7 @@ class TermTextTest {
         assertThat(TermText.normalize("Version 1.2")).isEqualTo("version 1.2");
         assertThat(TermText.normalize("Ende.")).isEqualTo("ende.");
         assertThat(TermText.normalize("A.")).isEqualTo("a.");
+        assertThat(TermText.normalize("1.2.3")).isEqualTo("1.2.3");
+        assertThat(TermText.normalize("1.2.")).isEqualTo("1.2.");
     }
 }
