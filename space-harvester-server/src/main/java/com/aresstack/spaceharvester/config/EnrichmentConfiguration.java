@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.RelationProc
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
@@ -44,9 +45,10 @@ class EnrichmentConfiguration {
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
         // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
-        // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+        // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
+        // Volltextindex.
         PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector()));
+                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
         return new Enrichments(projector, processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
     }

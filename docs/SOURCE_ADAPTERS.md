@@ -9,7 +9,8 @@ Confluence-Client gibt es nicht.
 ## Auswahl
 
 `ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
-(`ConfiguredSourceCatalog.TYPES`, heute nur `confluence` über `ConfluenceSourceProvider`). Unbekannte Typen,
+(`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider` und `files` über
+`LocalFilesSourceProvider`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
@@ -52,6 +53,51 @@ Darauf bauen:
 - `snapshot.SourceSnapshots`: `PageSnapshot` aus `storedPage`, zugleich `PageContentFetcher` der
   Synchronisierung (#16)
 
+## Quellen ohne Partitionen (#187)
+
+Die meisten Quellen des Enterprise AI Client (MediaWiki, Git, FTP/JES, NDV, Outlook, SharePoint, BetaView) haben
+keine `PartitionListingSource`, sondern nur `KnowledgeSourcePort.discover`/`load`. Der Core liest sie wie die
+Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang der Quelle, dann `load` je Ressource):
+
+- **Umfang:** `SourceAdapter.OpenedSource.discovering(port, scope)`; `KnowledgeSourceProviderAdapter` öffnet einen
+  Upstream-`KnowledgeSourceProvider` wie `KnowledgeSourceManagement.open` (`validate`, Adresse aus `locator` und
+  `KnowledgeSourceType.addressFor`, `open`, `scope`). Einstellungen stehen unter `options` mit den Schlüsseln des
+  Upstream-Typs; Anmeldung, Zertifikate und `base-url` kennt dieser Weg noch nicht (#188). Hat der Port doch eine
+  `PartitionListingSource`, gilt diese, der Umfang wird nicht benutzt.
+- **Partition:** genau eine je Quelle, Schlüssel = Quellen-ID, Name = Titel der Quelle, ohne Startseite.
+  Bereiche des Ports (`partitions()`) gibt es auf diesem Weg nicht.
+- **Seiten-ID:** die Ressourcen-ID als Base64url ohne Auffüllung (`wiki:wiki.intern/w/Start` → `d2lraTp3aWtp…`),
+  zurückgelesen nur in genau dieser Kodierung, sonst `UNSUPPORTED`; `resourceId` bleibt die Ressourcen-ID. Eltern
+  (`parentId`) werden ebenso kodiert, daraus entsteht der Seitenbaum im Cache.
+- **Seitenliste** (`pageMetadata(partition, cursor, limit)`): der erste Stapel ruft immer `discover` auf, Folgestapel
+  lesen aus derselben Discovery (Cursor `d1.<Versatz>.<Fingerabdruck>`). Liefert die Quelle für einen Folgestapel einen
+  anderen Stand, endet die Listung mit `UNAVAILABLE` statt zwei Stände zu mischen. Höchstzahl und Tiefe bestimmt der
+  Umfang der Quelle (`SourceScope.maxResources`, `maxDepth`).
+- **Einzelseite und Inhalt** (`pageMetadata(pageId)`, `storedPage`): über `load`. Abgelegt wird der Lesetext des
+  Adapters (`KnowledgeDocument.text()`) als UTF-8, Medientyp `text/markdown`, Format `knowledge-document`
+  (`NativePayload.DOCUMENT_TEXT`); Kopfdaten aus demselben Laden. Eine Weiterleitung (Wiki-Redirect) ist für die
+  angefragte Seite `NOT_FOUND`, wie im Enterprise AI Client gilt sie nur unter ihrem Ziel. `NOT_FOUND` bestätigt keine
+  Löschung (`confirmsDeletion` bleibt `false`).
+- **Suche:** Volltext über den Cache (#180) mit `KnowledgeDocumentTextProjector` (`knowledge-document-text/v1`,
+  Text unverändert), ebenso für Anreicherungen und Embeddings; eine Quelle mit `SearchableKnowledgeSource` sucht
+  zusätzlich selbst, mit denselben Seiten-IDs. Titelsuche ohne eigene Suche über die Discovery; Adressen sind
+  Ressourcen-IDs und Bookmarks der Quelle (`<schema>:<locator>/…`, `<schema>://<locator>/…`).
+- **Export:** wie jede Partition; Markdown, Word und PDF lesen den Lesetext als Blöcke (Überschriften, Absätze,
+  Listen, Codeblöcke), statt auf fehlendes Storage-Format hinzuweisen.
+- **Fehler:** nur die Art (`Quelle: NOT_FOUND` …), ohne die Meldung des Adapters, die Seitentitel, Pfade oder Jobnamen
+  nennen kann.
+
+Die Rechte je Seite gelten wie bei jeder Quelle über die `AccessPolicy`; nicht lesbare Seiten fehlen in Listen,
+Suche und Export.
+
+**Freigegebene Ordner** für `type: files`: `new LocalFilesSourceAdapter(() -> new LocalFileGrants(allowAll, roots))`,
+eingehängt über `Harvester.builder().sourceAdapter`, wie `LocalFileAccessPolicy`/`FileAccessConfig` im Enterprise AI
+Client. Das Verzeichnis der Quelle ist immer freigegeben; ein Link hinaus führt nur in einen freigegebenen Ordner,
+sonst `ACCESS_DENIED`. Gelesen wird die Freigabe bei jedem Zugriff. Ohne Angabe gilt wie bisher nur das Verzeichnis.
+
+Noch offen in #187: die einzelnen Quelltypen (je Typ ein PR), Anmeldung über `SecretProvider` (#188), Bereiche
+(`partitions()`) für Quellen ohne Seitenliste, Freigaben in der Konfiguration des Dienstes.
+
 ## Dokumente: Typerkennung und Text (#183)
 
 Erkennung und Extraktion kommen wie die Adapter aus der Kopie (`deigma/document-tika`, `DocumentSourceFileTextExtractor`,
@@ -93,12 +139,19 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
    Commons Net, #187), `source-ndv` (Natural Development Server, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
    ohne Partitionen.
-3. Den Typ in `ConfiguredSourceCatalog` registrieren. `KnowledgeSourceHarvestSource` bildet jeden
-   `KnowledgeSourcePort` mit seinen Fähigkeiten ab.
+3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
+   `KnowledgeSourceProviderAdapter`. `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen
+   Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
 
 ## Tests
 
-- `KnowledgeSourceHarvestSourceTest`: Abbildung der Ressourcen, fehlende Fähigkeiten ergeben `UNSUPPORTED`.
+- `KnowledgeSourceHarvestSourceTest`: Abbildung der Ressourcen, fehlende Fähigkeiten ergeben `UNSUPPORTED`; Quellen
+  ohne Partitionen mit `InMemoryKnowledgeSource` aus den Fixtures der Kopie (eine Discovery je Listung, fremder Cursor,
+  Änderung während der Listung, Weiterleitung, Fehlertexte, Titelsuche, Adressen).
+- `HarvesterDiscoveredSourceTest`: dieselbe Fake-Quelle ohne Partitionen und ohne Suche über
+  `KnowledgeSourceProviderAdapter` durch Abgleich, Katalog, Cache, Volltextsuche und Markdown-Export; nicht lesbare
+  Seiten fehlen in Liste und Suche.
+- `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
 - `PageMetadataApiTest`, `SinglePageMetadataApiTest`, `NativeSnapshotSourceTest`: alle Wege über echtes HTTP gegen
   die Fake-Confluence aus den Test-Fixtures der Kopie.
 - `TikaDocumentTextTest`, `LocalFilesTextProjectorTest`, `AssetDocumentTextTest`: Text aus zur Laufzeit erzeugten

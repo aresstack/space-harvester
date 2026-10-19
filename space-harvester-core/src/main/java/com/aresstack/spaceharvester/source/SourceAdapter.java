@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
+import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
@@ -66,12 +67,32 @@ public interface SourceAdapter {
      *
      * @param port      der Port aus {@code enterprise-ai-sources}
      * @param delegated delegierte Aufrufe mit Nutzertoken (#24) oder {@code null}, wenn der Typ keine hat
+     * @param scope     Umfang für Quellen ohne {@code PartitionListingSource} (#187): Startpunkte, Tiefe und
+     *                  Höchstzahl, mit denen der Core {@code discover} aufruft, wie die Indexierung im Enterprise AI
+     *                  Client ({@code KnowledgeSourceProvider.scope}); {@code null} ohne diesen Weg
      */
-    record OpenedSource(KnowledgeSourcePort port, DelegatedConfluenceHttp delegated) {
+    record OpenedSource(KnowledgeSourcePort port, DelegatedConfluenceHttp delegated, SourceScope scope) {
         public OpenedSource {
             if (port == null) {
                 throw new IllegalArgumentException("port must not be null");
             }
+        }
+
+        /** Eine Quelle ohne Umfang für {@code discover}, etwa mit eigener Seitenliste je Partition. */
+        public OpenedSource(KnowledgeSourcePort port, DelegatedConfluenceHttp delegated) {
+            this(port, delegated, null);
+        }
+
+        /**
+         * Eine Quelle, deren Seiten der Core über {@code discover} im Umfang {@code scope} findet und über
+         * {@code load} liest, als eine Partition je Quelle (#187); hat der Port eine eigene Seitenliste je Partition,
+         * gilt diese.
+         */
+        public static OpenedSource discovering(KnowledgeSourcePort port, SourceScope scope) {
+            if (scope == null) {
+                throw new IllegalArgumentException("scope must not be null");
+            }
+            return new OpenedSource(port, null, scope);
         }
     }
 }
