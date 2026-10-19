@@ -110,6 +110,7 @@ public final class EacParityExport {
         write(tree, ExportFormat.DOCX, new File(out, "parity.docx"), new File(out, "problems-docx.txt"));
         write(tree, ExportFormat.PDF, new File(out, "parity.pdf"), new File(out, "problems-pdf.txt"));
         write(tree, ExportFormat.MARKDOWN, new File(out, "parity.md"), new File(out, "problems-md.txt"));
+        scopes(source, never, out);
         readingViews(source, new File(out, "reading"));
         navigation(source, new File(out, "navigation.properties"));
         management(confluence, none, new File(out, "management.properties"));
@@ -522,6 +523,26 @@ public final class EacParityExport {
         } finally {
             images.close();
         }
+    }
+
+    /**
+     * Exportumfang (#186) wie „Exportieren“ an einem Seitenknoten der Navigation: {@link KnowledgeExportUseCase#page}
+     * für eine einzelne Seite ohne Unterseiten ({@code scope-page.md}) und {@link KnowledgeExportUseCase#subtree} ab
+     * der Seite {@link ParitySpace#SCOPE_ROOT} mit ihr als Kapitelwurzel ({@code scope-subtree.md}).
+     */
+    private static void scopes(ConfluenceKnowledgeSource source, BooleanSupplier never, File out) throws Exception {
+        KnowledgeExportUseCase.Progress quiet = new KnowledgeExportUseCase.Progress() {
+            @Override
+            public void pageLoaded(int loaded, int found, String title) {
+            }
+        };
+        KnowledgeExportUseCase export = new KnowledgeExportUseCase(new PageNavigationUseCase());
+        NavigationNode root = source.position(pageId(ParitySpace.SCOPE_ROOT)).page();
+        ExportDocumentNode page = export.page(source, root.resource(), root.title(), quiet, never);
+        write(page, ExportFormat.MARKDOWN, new File(out, "scope-page.md"), new File(out, "problems-scope-page.txt"));
+        ExportDocumentNode subtree = export.subtree(source, root, quiet, never);
+        write(subtree, ExportFormat.MARKDOWN, new File(out, "scope-subtree.md"),
+                new File(out, "problems-scope-subtree.txt"));
     }
 
     private static void write(ExportDocumentNode tree, ExportFormat format, File target, File problems)

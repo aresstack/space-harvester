@@ -111,6 +111,65 @@ class ExportsTest {
     }
 
     @Test
+    void singlePageExportLeavesTheChildPagesOut() {
+        publishTwoBranches();
+
+        JobStatus job = exports(cache).start(ExportRequest.of("confluence", "DEV", "client-a", List.of())
+                .withPage("100"));
+
+        JobStatus status = jobs.status(job.id());
+        assertThat(status.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(status.rootPageId()).isEqualTo("100");
+        assertThat(status.rootTitle()).isEqualTo("Seite 100");
+        assertThat(status.progress()).isEqualTo(new JobProgress(1, 1, 1, 0));
+        RecordingExportArtifactWriter.Published artifact = writer.published.get(job.id());
+        assertThat(artifact.pageIds()).containsExactly("100");
+        assertThat(artifact.tree().roots()).containsExactly(new PageTree.Node("100", List.of()));
+        assertThat(artifact.summary().warnings()).isEmpty();
+        assertThat(artifact.summary().complete()).isTrue();
+    }
+
+    @Test
+    void depthLimitsTheLevelsBelowTheStartPage() {
+        publishTwoBranches();
+
+        JobStatus job = exports(cache).start("confluence", "DEV", "100", 1, "client-a", List.of());
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        RecordingExportArtifactWriter.Published artifact = writer.published.get(job.id());
+        assertThat(artifact.pageIds()).containsExactly("100", "101", "103");
+        assertThat(artifact.tree().roots()).containsExactly(new PageTree.Node("100", List.of(
+                new PageTree.Node("101", List.of()), new PageTree.Node("103", List.of()))));
+        assertThat(artifact.summary().warnings()).isEmpty();
+        JobStatus deep = exports(cache).start("confluence", "DEV", "100", 5, "client-a", List.of());
+        assertThat(writer.published.get(deep.id()).pageIds()).containsExactly("100", "101", "102", "103");
+    }
+
+    @Test
+    void theStartPageStaysTheFirstRootWhenAnUnreadablePageOrphansALowerId() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "300", null),
+                page("confluence", "DEV", "301", "300"), page("confluence", "DEV", "050", "301")));
+
+        JobStatus job = exports(cache).start(ExportRequest.of("confluence", "DEV", "client-a", List.of())
+                .withRoot("300").withVisible(header -> !header.key().pageId().equals("301")));
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        // 050 hängt nur wegen der gesperrten 301 lose; die Startseite bleibt vorn und damit Kapitel 1.
+        assertThat(writer.published.get(job.id()).tree().roots()).extracting(PageTree.Node::pageId)
+                .containsExactly("300", "050");
+    }
+
+    @Test
+    void depthNeedsAStartPageAndIsNotNegative() {
+        ExportRequest request = ExportRequest.of("confluence", "DEV", "client-a", List.of());
+        assertThatThrownBy(() -> request.withDepth(0)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> request.withRoot("100").withDepth(-1)).isInstanceOf(IllegalArgumentException.class);
+        assertThat(request.withPage("100").depth()).isZero();
+        assertThat(request.withPage("100").withRoot(null).depth()).isNull();
+        assertThat(request.withRoot("100").depth()).isNull();
+    }
+
+    @Test
     void withoutStartPageTheWholeSpaceIsExportedAsBefore() {
         publishTwoBranches();
 

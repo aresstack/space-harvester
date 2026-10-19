@@ -50,15 +50,19 @@ public final class DocxConverter implements ExportConverter {
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         String title = ExportChapters.title(input);
+        ExportChapters.Layout layout = ExportChapters.layout(input);
         ExportGraphics graphics = ExportGraphics.rendering();
         DocxExportWriter writer = new DocxExportWriter(graphics, "Space Harvester");
         try (DocxExportWriter.Chapters chapters = writer.open(title, !input.headers().isEmpty())) {
-            chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            if (ExportChapters.spaceChapter(input)) {
+                chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            }
             input.forEachPage(page -> {
                 ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                 figures.notices().forEach(input::report);
                 chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                        figures.markdown(), figures.images(), ExportChapters.depth(page));
+                        layout.text(input, page, figures.markdown(), VERSION), figures.images(),
+                        layout.depth(page));
                 ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
             });
             chapters.finish(out);

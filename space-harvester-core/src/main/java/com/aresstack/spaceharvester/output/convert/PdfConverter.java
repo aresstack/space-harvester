@@ -84,6 +84,7 @@ public final class PdfConverter implements ExportConverter {
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         String title = ExportChapters.title(input);
+        ExportChapters.Layout layout = ExportChapters.layout(input);
         Set<String> anchors = new HashSet<>();
         for (PageHeader header : input.headers()) {
             anchors.add(PageLinks.anchor(header.key().pageId()));
@@ -92,8 +93,11 @@ public final class PdfConverter implements ExportConverter {
         identity.update((input.sourceId() + "\n" + input.spaceKey() + "\n").getBytes(StandardCharsets.UTF_8));
         ExportGraphics graphics = ExportGraphics.rendering();
         PdfExportWriter writer = new PdfExportWriter(graphics, font, maxPages, "Space Harvester");
-        try (PdfExportWriter.Chapters chapters = writer.open(title, input.headers().size() + 1, anchors)) {
-            chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+        int chapterCount = input.headers().size() + (ExportChapters.spaceChapter(input) ? 1 : 0);
+        try (PdfExportWriter.Chapters chapters = writer.open(title, chapterCount, anchors)) {
+            if (ExportChapters.spaceChapter(input)) {
+                chapters.chapter(title, null, ExportChapters.rootText(input, VERSION), List.of(), 1);
+            }
             try {
                 input.forEachPage(page -> {
                     identity.update((page.pageId() + "\t" + page.snapshot().payload().rawSha256() + "\n")
@@ -102,7 +106,8 @@ public final class PdfConverter implements ExportConverter {
                         ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                         figures.notices().forEach(input::report);
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                                figures.markdown(), figures.images(), ExportChapters.depth(page));
+                                layout.text(input, page, figures.markdown(), VERSION), figures.images(),
+                                layout.depth(page));
                         ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);

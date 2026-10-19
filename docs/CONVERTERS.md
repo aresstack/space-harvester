@@ -61,7 +61,10 @@ ihn nur aus. Keiner der drei interpretiert die Seiten selbst.
   Baumreihenfolge (Markdown: `#` Space, `##` Wurzelseiten …, tiefer als sechs Ebenen eine fette Zeile; Abschnitte
   „Word“ und „PDF“). Jede Seite beginnt mit Seiten-ID, Version und Link „In Confluence öffnen“. Verweise auf Seiten
   desselben Exports springen innerhalb der Datei zur Seite (Markdown: `#page-<id>`, Word: Textmarke `page_<id>`,
-  PDF: Sprungziel). Den Seitentitel wiederholt der Core nicht als Überschrift im Kapitelinhalt (gewollte Abweichung,
+  PDF: Sprungziel). Bei einem Teilbaum oder einer Einzelseite (`rootPageId` im Manifest, #186) ist wie bei
+  `KnowledgeExportUseCase.subtree`/`page` im Enterprise AI Client die Startseite Kapitel 1 (Titel des Dokuments,
+  davor kein Space-Kapitel), ihre Unterseiten folgen eine Ebene darunter; für Word und PDF gilt dasselbe. Den
+  Seitentitel wiederholt der Core nicht als Überschrift im Kapitelinhalt (gewollte Abweichung,
   [PARITY.md](PARITY.md)).
 - **Inhalt.** Aus `body.storage.value` über dasselbe Markdown für alle drei Formate (Tabelle unten).
 - **Bilder.** Eingebettet wird nur, was der Auftrag „Bilder beschaffen“ nach dem Herunterladen abgelegt hat

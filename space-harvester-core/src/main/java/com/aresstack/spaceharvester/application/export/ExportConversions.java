@@ -198,6 +198,11 @@ public class ExportConversions {
             }
 
             @Override
+            public String rootPageId() {
+                return dataset.rootPageId();
+            }
+
+            @Override
             public com.aresstack.spaceharvester.application.tree.PageTree tree() {
                 return dataset.tree();
             }
