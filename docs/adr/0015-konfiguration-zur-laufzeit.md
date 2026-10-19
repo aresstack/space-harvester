@@ -95,3 +95,13 @@ setzt Routen, Anmeldung und Vertrauen neu und öffnet alle Quellen neu. Für lau
   `AsyncSnapshotTransports` liegen, je Quelle ein Scheduler samt Evictor-Thread; ihre Pools sind schon verworfen.
   Sie zu schließen bräche Aufträge, die die alte Quelleninstanz noch halten. Umstellungen sind selten und manuell,
   und laufende Aufträge abzubrechen wöge schwerer als die liegen gebliebenen Threads.
+
+## Nachtrag 19.10.2026: Neue Prozessorversionen ohne Handarbeit
+
+Hebt ein Update die Version eines lokalen Prozessors (ohne Netz: `acronyms`, `outline`, `entities`, `properties`,
+`activities`, `relations`, `terms`, ohne Embedding-Modell auch `passages` und `navigation`), rechnet der Start seine
+älteren Ergebnisse einmal aus dem Cache neu (`VersionRecomputation`), Seite für Seite in einem eigenen Thread und ohne
+den Start aufzuhalten. Sonst zählten sie nicht mehr, etwa im Begriffsindex, der nur die aktuelle Version von `terms`
+liest, und kämen erst seitenweise zurück. Nur gespeicherte Ergebnisse einer anderen Version von Prozessoren, die die
+Seite bearbeiten; ein fehlendes Ergebnis entsteht wie bisher beim nächsten Abgleich. Prozessoren über den KI-Dienst
+bleiben bei der Neuberechnung nach Freigabe (Embeddings) und der Suche. Das Log nennt nur Quelle und Anzahl.
