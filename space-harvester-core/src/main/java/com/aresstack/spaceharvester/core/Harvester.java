@@ -38,6 +38,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -96,6 +97,7 @@ import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -472,6 +474,7 @@ public final class Harvester implements AutoCloseable {
             opened.add(changeEvents);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
+                    new AnalysisConverter(new EnrichmentAnalyses(enrichments)),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
