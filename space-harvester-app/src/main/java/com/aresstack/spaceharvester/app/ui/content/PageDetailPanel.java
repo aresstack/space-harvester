@@ -83,7 +83,7 @@ public final class PageDetailPanel extends JPanel {
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
-    private final PageTerms terms = new PageTerms();
+    private final TermsTab terms = new TermsTab();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -835,7 +835,7 @@ public final class PageDetailPanel extends JPanel {
         return references;
     }
 
-    PageTerms terms() {
+    TermsTab terms() {
         return terms;
     }
 

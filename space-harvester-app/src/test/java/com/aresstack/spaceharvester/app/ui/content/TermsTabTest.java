@@ -13,7 +13,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Der Reiter „Begriffe“ der Leseansicht (#339) mit den Akronymen der Core-Analyse. */
-class PageTermsTest {
+class TermsTabTest {
 
     private static final Enrichment RESULT = new Enrichment(new PageKey("wiki", "100"), PageAcronyms.PROCESSOR, "1",
             "sha", "3", Enrichment.Status.OK, "{}", List.of(), null, Instant.parse("2026-10-18T20:00:00Z"));
@@ -27,7 +27,7 @@ class PageTermsTest {
         List<String> seen = new ArrayList<>();
         List<String> jumped = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            PageTerms terms = new PageTerms();
+            TermsTab terms = new TermsTab();
             terms.onJump(acronym -> jumped.add(acronym.acronym()));
             assertThat(terms.stateLabel()).isEqualTo("Nicht durchgeführt");
             terms.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(rsl, iar), List.of()));
@@ -49,7 +49,7 @@ class PageTermsTest {
     void aStaleAnalysisCountsNothingAndSaysHowToRecompute() throws Exception {
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            PageTerms terms = new PageTerms();
+            TermsTab terms = new TermsTab();
             terms.show(new PageAcronyms(PageAcronyms.State.STALE, RESULT, List.of(), List.of()));
             seen.add(terms.stateLabel());
             seen.add(terms.counts().get(0));
@@ -57,7 +57,7 @@ class PageTermsTest {
             seen.add(String.valueOf(terms.analysis().startsWith("Analyse vom letzten Seitenabgleich · ")));
         });
         assertThat(seen.get(0)).isEqualTo("Veraltet");
-        assertThat(seen.get(1)).isEqualTo(PageTerms.NOT_YET);
+        assertThat(seen.get(1)).isEqualTo(TermsTab.NOT_YET);
         assertThat(seen.get(2)).contains("Analyse neu berechnen");
         assertThat(seen.get(3)).isEqualTo("true");
     }

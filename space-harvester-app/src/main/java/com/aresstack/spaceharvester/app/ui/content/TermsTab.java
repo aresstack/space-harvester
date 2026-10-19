@@ -31,7 +31,7 @@ import java.util.function.Consumer;
  * aus dem Core ({@link PageAcronyms}); Bezeichner und Beziehungen folgen mit dem Begriffsindex (#119/#120). Nur auf dem
  * EDT.
  */
-final class PageTerms extends JPanel {
+final class TermsTab extends JPanel {
 
     static final String NOT_YET = "–";
 
@@ -47,7 +47,7 @@ final class PageTerms extends JPanel {
     private Consumer<PageAcronyms.Acronym> onJump = acronym -> { };
     private PageAcronyms shown;
 
-    PageTerms() {
+    TermsTab() {
         super(new BorderLayout(0, 10));
         setOpaque(false);
         setBorder(BorderFactory.createEmptyBorder(6, 2, 2, 2));
