@@ -128,6 +128,40 @@ class SignInApiTest {
         assertThat(codes).containsExactly("1", "424242");
     }
 
+    /** Lesen auf Abruf: die Anforderung, die ein Leser angelegt hat, sieht und beantwortet nur dieser Client. */
+    @Test
+    void aRequestOpenedWhileReadingBelongsToItsHolder() throws Exception {
+        List<String> codes = new ArrayList<>();
+        String owner = ExportsController.owner(AccessContext.technicalClient(TestClient.ID));
+        // Eigene Quelle: eine Freischaltung von "wiki" gälte sonst auch für den wartenden Auftrag im Nachbartest.
+        String id = signIns.open("reader-wiki", owner, challenge(codes, "")).id();
+
+        JsonNode own = json.readTree(send("GET", "/api/v1/sign-ins", null, null).body()).path("signIns");
+        assertThat(own).hasSize(1);
+        assertThat(own.get(0).path("id").asString()).isEqualTo(id);
+        assertThat(own.get(0).path("jobIds")).isEmpty();
+        assertThat(json.readTree(send("GET", "/api/v1/sign-ins", null, OTHER_TOKEN).body()).path("signIns"))
+                .isEmpty();
+        assertThat(send("POST", "/api/v1/sign-ins/" + id + "/code", "{\"code\":\"424242\"}", OTHER_TOKEN)
+                .statusCode()).isEqualTo(404);
+
+        HttpResponse<byte[]> right = send("POST", "/api/v1/sign-ins/" + id + "/code", "{\"code\":\"424242\"}",
+                null);
+        assertThat(json.readTree(right.body()).path("answer").asString()).isEqualTo("accepted");
+        assertThat(codes).containsExactly("424242");
+    }
+
+    /** Bild, Anhang, Vorschau: 403 sign-in-required mit der Anforderung, nie mit Code oder Token. */
+    @Test
+    void aPendingSignInIsAProblemNamingTheRequest() {
+        org.springframework.http.ProblemDetail problem = new SourceErrorHandler().signInPending(
+                new com.aresstack.spaceharvester.application.signin.SignInPendingException("wiki", "req-1", null));
+
+        assertThat(problem.getStatus()).isEqualTo(403);
+        assertThat(problem.getType().toString()).endsWith("/problems/sign-in-required");
+        assertThat(problem.getProperties()).containsEntry("signInRequestId", "req-1").containsEntry("sourceId", "wiki");
+    }
+
     private static SignInChallenge challenge(List<String> codes, String error) {
         return new SignInChallenge() {
             @Override
