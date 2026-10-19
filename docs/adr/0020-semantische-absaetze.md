@@ -5,9 +5,10 @@
   (Embeddings nur über den externen Dienst) und [ADR 0012](0012-core-als-gemeinsame-bibliothek.md) (Parität).
 - Umgesetzt (Teil von #181): Prozessor `passages`, `PassageSegmentation`, `OpenNlpSentenceSegmenter`,
   `PagePassages.read` für die Leseansicht, `PassageQueries` (`harvester.passages()`), REST
-  `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`.
-- Offen: Reiter „Absätze“ in der App (#354, Strang L); Passagen als Einheiten für Such-Snippets, Passage-Embeddings
-  und Re-Ranking (#181, eigene PRs).
+  `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`; Suchschnipsel aus Absätzen (`PassageSnippets`).
+- Embeddings je Absatz: `EmbeddingProcessor.withPassages(PassageChunks)` (Punkt 8).
+- Re-Ranking auf Absatzebene: der Reranker der semantischen Suche bekommt genau den ähnlichsten Absatz (Punkt 9).
+- Offen: Reiter „Absätze“ in der App (#354, Strang L).
 
 ## Kontext
 
@@ -40,6 +41,123 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Text selbst und keine erfundene Konfidenz. Den Wortlaut liefert `PagePassages.read` aus dem Text mit demselben
    Hash. Ändern sich Text, Modell, Satzverfahren oder Zerlegung, veraltet das Ergebnis.
 6. **Rechte wie der Abruf der Seite** (`GET …/pages/{pageId}`, ADR 0014 Punkt 4): ohne `content` keine Absätze.
+7. **Suchschnipsel aus Absätzen** wie im Client, wo ein Schlagworttreffer seine Passage als Auszug bringt
+   (`RetrieveKnowledgeUseCase`): `PassageSnippets` legt sich um den Volltextindex; Treffer und Rangfolge bleiben die
+   des Index, nur der Auszug ist der Absatz mit den meisten Suchwörtern (höchstens 480 Zeichen um die erste
+   Fundstelle). Das Ergebnis trägt dafür `textSha256` des Textes, zu dem seine Stellen gehören (Format 2); passt er
+   nicht zum abgelegten Text, fehlen Absätze oder enthält keiner ein Suchwort, bleibt das Fenster des Index. Die
+   Schlagwortsuche liefert Auszüge weiter nur mit `content`.
+8. **Ein Embedding je Absatz** wie `IndexKnowledgeUseCase.withPassages` im Client: Mit Modell zerlegt der Prozessor
+   `embedding` die Seite mit derselben `PassageSegmentation` statt nach Token-Budget und bettet jeden Absatz ohne
+   Vorspann ein; ein Absatz über `embedding-chunk-chars` wird wie bisher geteilt. Format der Vektoren, semantische
+   Suche und Freigabe bleiben; die Version nennt die Zerlegung (`+passages:<Fingerabdruck>`), vorhandene Embeddings
+   veralten einmal und werden aus dem Cache neu berechnet. Die Satzvektoren der Themengrenzen kosten den Prozessor
+   `embedding` wie `passages` je einen Aufruf je 32 Sätze.
+9. **Re-Ranking auf Absatzebene**: Der Reranker der semantischen Suche (`ModelReranker`, `/rerank`) bekommt je Treffer
+   den Titel und genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (Punkt 8), statt eines auf
+   2 000 Zeichen aufgefüllten Fensters; ohne aktuelle Absätze (veraltete Revision, Zerlegung ohne Absätze) bleibt das
+   Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
+   Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
+10. **Stabile Passage-IDs** (EAC-Lücke 5, Kopie von `KnowledgePassageId`): Jeder Absatz trägt
+   `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`. `capture` ist der volle SHA-256 der angezeigten
+   Fassung (Text und Gliederung, siehe Nachtrag), `position` zählt ab 0, `zerlegung` und `modell` sind 8 Hex aus
+   SHA-256 über `PassageSegmentation.fingerprint()` und das Embedding-Modell (ohne Modell `structure`). Ändert sich
+   Text, Gliederung, Zerlegung oder Modell, ändert sich die ID.
+   Berechnet beim Lesen aus dem gespeicherten Ergebnis, ohne Schemaänderung. `PassageQueries.resolve` und
+   `GET /api/v1/passages?id=` lösen sie wie `KnowledgeResourceReader` auf: gefunden mit je einem Nachbarn
+   (`found`), sonst alle aktuellen Absätze mit `older-version` (andere Capture) oder `changed` (Zerlegung oder Modell
+   gewechselt); eine unbekannte oder nicht sichtbare Seite antwortet gleich mit 404. Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; der Modellteil ist der Modellname aus dem Ergebnis statt des Fingerabdrucks des Embedding-Raums (zwei Dienste mit gleichem Modellnamen geben dieselbe ID, ein Dienstwechsel rechnet über die Prozessorversion ohnehin neu); eine unbekannte Quelle antwortet wie eine unsichtbare Seite; die Versionsteile
+   stammen aus dem gespeicherten Ergebnis statt aus der aktuellen Einstellung, ein veraltetes Ergebnis desselben
+   Textes behält also seine IDs bis zur Neuberechnung; ohne Absätze gibt es zusätzlich `unavailable`; die ID steht im
+   Parameter statt im Pfad, weil sie `#` und Seiten-IDs `/` enthalten.
+
+## Dokumentnavigation
+
+Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigationUseCase`,
+`DocumentNavigationBuilder`, `TopicClusterer`) in `application/passages`:
+
+1. **Überschriften zuerst** (FA-01, FA-02): Die Überschriften der Textprojektion bilden die Kapitelhierarchie und
+   bleiben unverändert; ein einziges oberstes Kapitel, das die Seite umschließt, wird aufgelöst.
+2. **Themenabschnitte nur im Fließtext** (FA-03, FA-04): Hat der eigene Fließtext eines Kapitels (oder die Seite ohne
+   Überschriften) mindestens drei Absätze, gruppiert `TopicClusterer` deren Vektoren (Average Linkage, Distanz
+   1 − Kosinus, Grenze 0,55, zwei Repräsentanten, wie im Client); aufeinanderfolgende Absätze eines Themas bilden
+   einen Abschnitt `origin=topic` unter dem Kapitel, ein einziger Lauf unterteilt nichts. Text vor der ersten
+   Überschrift wird immer anspringbar. Bezeichnung ist der erste Satz des Repräsentanten (höchstens 80 Zeichen).
+3. **Stellen statt Wiederfinden** (FA-05): Jeder Abschnitt trägt `start`, `end` und einen Anker (60 Zeichen bis zum
+   ersten Zeilenumbruch) im angezeigten Text; `TextLocator` entfällt, weil die Absätze schon Stellen sind.
+4. **Prozessor `navigation`** nach `passages`, im vorhandenen `LuceneEnrichmentStore`, ohne Schemaänderung. Er bettet
+   nichts ein, sondern liest die aktuellen Embeddings je Absatz des Prozessors `embedding` (Punkt 8) für genau diesen
+   Text, wie der Client die indexierten Passagen der Fassung. Ohne sie bleiben die Überschriften mit
+   `analysis=headings` und Grund: `no-model`, `no-sentence-model` (kein OpenNLP-Satzmodell, wie `NO_SENTENCE_MODEL`
+   im Client: kein Clustern über Absätze aus dem Regel-Splitter), `source-not-approved`, `not-embedded` (wird
+   wiederholt, sobald die Embeddings da sind), `indexing-failed` (Embeddings dieses Textes gescheitert, wie
+   `INDEXING_FAILED`; gilt bis zum Wechsel von Text oder Modell), `no-topic-change`, `model-unavailable`. Bei `analysis=semantic` heißt
+   `model-unavailable`, dass das Chat-Modell nicht benennen konnte (Punkt 6). Ein nicht erreichbares Modell ist nie
+   ein Fehler der Anfrage.
+5. **Lesen** über `Harvester.documentNavigation().page(caller, sourceId, pageId)` → `DocumentNavigationView(state,
+   analysis, reason, chapters, title, inputSha256, textSha256)` mit `flatten()` und `find(sectionId)` wie
+   `DocumentNavigation` im Client; `inputSha256` und `textSha256` nennen den Text, zu dem die Stellen gehören, damit
+   der Reader wie mit der Capture-ID im Client eine verspätete Antwort gegen den gezeigten Text prüft, und `GET /api/v1/sources/{sourceId}/pages/{pageId}/navigation`, Rechte wie
+   `…/passages`. Fehlt ein Ergebnis für diesen Text, zeigt die Antwort sofort die Überschriften und stößt die
+   Berechnung an.
+
+6. **Benennung über das Chat-Modell** wie im Client: Die unveränderte `ChatSectionLabeler` (Kopie in
+   `enterprise-ai-sources`) bekommt über den vorhandenen Chat-Port mit dem Titel der Seite (nur auf diesem Weg, also
+   nur für freigegebene Quellen, nie geloggt) je 40 Themenabschnitte eine Anfrage mit höchstens 700 Zeichen je
+   Abschnitt und liefert Bezeichnungen aus zwei bis fünf Wörtern; ohne Chat-Modell bleibt der erste Satz. Nur in der
+   Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer Anfrage; eigene Frist
+   (60 s) und höchstens zwei Benennungen zugleich; nur für Quellen in `external-processing-sources`. Antwortet das
+   Modell nicht, bleiben die Bezeichnungen der Analyse mit `reason=model-unavailable`, und der nächste Lauf versucht
+   es wieder. Nach einem Fehler gehen die übrigen Pakete der Seite nicht mehr ans Netz, und fünf Minuten lang benennt
+   keine Seite (gleiches Modell, gleicher Dienst): Die Hintergrund-Warteschlange, die Navigation und Embeddings
+   teilen, wartet so höchstens eine Frist je Pause. Die Verfahrensversion enthält Modell und einen Fingerabdruck der
+   Dienstadresse; ein Wechsel berechnet neu. Abweichung: Der Titel gehört nicht zum Eingabe-Hash des Textes (sonst
+   veralteten alle Prozessoren); ändert sich nur der Titel, bleiben die Bezeichnungen bis zur nächsten Text- oder
+   Versionsänderung. Bezeichnungen und Texte sind Inhalt und werden nie geloggt, auch nicht die Antwort bei einem
+   Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist interne Verarbeitung wie progressive Suche
+   (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die EAC-Kopie ChatSectionLabeler ist
+   Paritätspflicht.
+
+## Nachtrag 2026-10-19: Stabile Passage-IDs (#452, #456, #460)
+
+Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
+
+- **Aufbau:** `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`, z. B.
+  `confluence:47110815@aa2b0cb3…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 der angezeigten
+  Fassung, `inputSha256` der Textprojektion über Schema, Gliederung und Text (anfangs nur der Text, siehe „Gewollt
+  anders“), `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
+  über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `versionTag("structure")`). Gelesen wird
+  von hinten, die Quellen-ID endet am ersten `:`; Seiten-IDs dürfen `@`, `#`, `:` und `/` enthalten.
+- **Nachschlagen:** `GET /api/v1/passages?id=` antwortet wie `KnowledgeResourceReader` mit `match`:
+  `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: Text oder Gliederung haben sich
+  geändert, es folgen alle aktuellen Absätze), `changed` (gleiche Fassung, aber Zerlegung oder Modell gewechselt oder
+  die Position gibt es nicht, alle aktuellen Absätze) und
+  zusätzlich `unavailable` (die Seite hat gerade keine Absätze; `state` sagt warum). Zwischen einer Änderung von
+  Text oder Gliederung und der Neuberechnung der Absätze antwortet auch eine eben vergebene Treffer-ID mit
+  `unavailable` (`state: stale`), danach mit `older-version`; nie mit einem falschen `found`. Eine unbekannte Seite, eine
+  unbekannte Quelle und eine Seite ohne `metadata`- oder `content`-Freigabe antworten gleich mit 404 `cache-miss`, nie
+  403: Eine ID verrät nicht, ob es die Seite gibt. Keine Passage-ID (falsche Form) ist 400 `invalid-request`; die
+  Meldung nennt die ID nicht.
+- **An allen Trefferarten** (wie `passage:` je Treffer in `KnowledgeSearchTool`), immer nur mit `content`-Freigabe und
+  nur aus dem schon geladenen Ergebnis, ohne weitere Abfrage je Treffer:
+  - Absätze der Leseansicht: `passages[].id` (`GET …/pages/{pageId}/passages`);
+  - Themenabschnitte der Navigation: `sections[].passageId`, die ID ihres ersten Absatzes;
+  - Schlagwort- und progressive Treffer: `passageId` des Absatzes, aus dem der Auszug stammt; ein Auszug der
+    Quellensuche statt des Caches trägt keine;
+  - semantische Treffer: `relevance.passageId` (bei `sort=relevance`) bzw. `passageId` der semantischen Variante,
+    der Absatz, der das ähnlichste Stück ganz enthält.
+- **Keine ID** gibt es, wenn die Absätze der Seite nicht aus genau dem Text stammen, aus dem Auszug oder Stück stammen
+  (anderer `inputSha256`), wenn kein Absatz das Stück ganz enthält (Stücke nach Zeichenlänge über eine Absatzgrenze)
+  und, nur an Treffern, wenn sich Absätze im Ergebnis überlappen: Ohne den Text ist ein kaputtes Ergebnis nur daran
+  zu erkennen, und eine ID darf nie still auf einen anderen Absatz zeigen. Leseansicht und Treffer zählen gleich
+  (Stelle im Ergebnis), auch wenn die Leseansicht einen Absatz hinter dem Textende auslässt. Eine Position gilt nur in
+  kanonischer Form (`#p7`, nie `#p007`).
+- **Gewollt anders als der Client** (siehe auch Punkt 10): Seite als `sourceId:pageId` statt Resource-ID;
+  Capture über Text und Gliederung statt nur über den Text, denn die Grenzen hängen an den Abschnitten (eine umgestufte
+  Überschrift bei gleichem Text schneidet neu, die alte ID darf dann nicht als `found` auf den neuen Schnitt zeigen);
+  Modellteil aus dem Modellnamen statt aus dem Fingerabdruck des Embedding-Raums; Versionsteile aus dem gespeicherten
+  Ergebnis; zusätzlicher Fall `unavailable`; ID im Parameter statt im Pfad; Themenabschnitte behalten `p<start>` als
+  `id` und tragen die Passage-ID zusätzlich; unsichtbar und unbekannt antworten gleich.
 
 ## Abweichungen vom Client
 
@@ -47,10 +165,14 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
   kann. Die Blöcke einer Confluence-Projektion sind ihre Zeilen, wie die Strukturblöcke aus dem Dokumentbaum im Client.
 - Die Sätze aller Absätze gehen in Stapeln an das Modell statt je Absatz (gleiche Vektoren), höchstens 2 000 je
   Seite, danach nur Struktur mit Warnung.
-- Kein eigenes Embedding je Passage und kein `TopicClusterer` in diesem Schritt: Passage-Embeddings gehören in den
-  Prozessor `embedding`, sobald er nach Passagen statt nach Token-Budget zerlegt (#181).
+- Die Embeddings je Absatz liegen im Prozessor `embedding` statt in einer eigenen Ablage; `TopicClusterer` nutzt
+  nur die Dokumentnavigation (unten), die Absatzgrenzen messen weiter die Satzfenster.
 
 ## Folgen
 
+- Die Navigation ist ein gespeichertes Ergebnis der Anreicherung statt einer Berechnung je Aufruf; ändert sich das
+  Verfahren oder das Modell, wird sie neu berechnet. Labeler-Wechsel löst Neuberechnung aus: Ein anderes Chat-Modell
+  (`ai.chat-model`) macht alle gespeicherten Navigationen alt.
+- Den Dokumenttitel bekommt das Chat-Modell nicht mit, denn der Prozessor kennt nur Seite und Text.
 - Der Core hängt an `opennlp-tools` und dem Satzmodell (zusammen rund 1,5 MB, Apache-2.0).
 - Mit Modell kostet jede Seite einen Embedding-Aufruf je 32 Sätze zusätzlich zum Prozessor `embedding`.

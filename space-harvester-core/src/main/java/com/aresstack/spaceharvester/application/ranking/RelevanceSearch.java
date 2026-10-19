@@ -11,9 +11,12 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.query.PageSearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchScope;
@@ -352,7 +355,8 @@ public class RelevanceSearch {
             Reranking custom = new Reranking(configured);
             List<SearchHit> reranked = custom.apply(new SearchReranker.Request(query, queryText,
                     hits.stream().map(RankedHit::hit).toList(),
-                    hit -> document(caller, hit, scores.get(hit), partitions.get(hit))));
+                    hit -> document(caller, hit, scores.get(hit), byHit.get(hit).relevance(),
+                            partitions.get(hit))));
             hits = reranked.stream().map(byHit::get).toList();
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
@@ -518,7 +522,8 @@ public class RelevanceSearch {
         if (live.version() != null && (staleScore || !live.version().equals(hit.page().header().revision()))) {
             renew(caller, key);
             if (checked != null) {
-                checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE);
+                checked = new Score(checked.similarity(), checked.charStart(), checked.charEnd(), Freshness.STALE,
+                        checked.inputSha256(), checked.passageId());
             }
         }
         return new Verified(ranked(hit, checked), false, live.partitionKey());
@@ -536,7 +541,7 @@ public class RelevanceSearch {
     private static RankedHit ranked(SearchHit hit, Score score) {
         return score == null ? new RankedHit(hit, null)
                 : new RankedHit(hit, new Relevance(score.similarity(), score.charStart(), score.charEnd(),
-                        score.freshness()));
+                        score.freshness(), score.passageId()));
     }
 
     private static String indexed(SearchHit hit) {
@@ -649,9 +654,12 @@ public class RelevanceSearch {
         }
         PageHeader header = hit.page().header();
         Enrichment result = null;
+        Enrichment passages = null;
         for (Enrichment found : store.find(header.key())) {
             if ("embedding".equals(found.processorId())) {
                 result = found;
+            } else if (PassageProcessor.ID.equals(found.processorId())) {
+                passages = found;
             }
         }
         if (result == null || result.status() != Enrichment.Status.OK
@@ -681,7 +689,7 @@ public class RelevanceSearch {
             }
             double similarity = Math.max(-1, Math.min(1, dot));
             if (best == null || similarity > best.similarity()) {
-                best = new Score(similarity, chunk.charStart(), chunk.charEnd(), null);
+                best = new Score(similarity, chunk.charStart(), chunk.charEnd(), null, null, null);
             }
         }
         if (best == null) {
@@ -689,14 +697,19 @@ public class RelevanceSearch {
         }
         Freshness freshness = Objects.equals(result.revision(), header.revision()) ? Freshness.CURRENT
                 : Freshness.STALE;
-        return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness);
+        // Die Passage-ID nur aus dem schon geladenen Ergebnis der Absätze, ohne weitere Abfrage je Treffer.
+        return new Score(best.similarity(), best.charStart(), best.charEnd(), freshness, result.inputSha256(),
+                PagePassages.idAt(header.key(), passages, result.inputSha256(), best.charStart(), best.charEnd()));
     }
 
     /**
-     * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, ein Auszug des
-     * Lesetexts aus dem Volltextindex, um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
+     * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, aus dem
+     * Lesetext des Volltextindex genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (ADR 0020);
+     * sonst ein Auszug um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
+     *
+     * @param checked der Stand nach der Live-Prüfung ({@code verify}), nicht der des gespeicherten Embeddings
      */
-    private String document(AccessContext caller, SearchHit hit, Score score, String partition) {
+    private String document(AccessContext caller, SearchHit hit, Score score, Relevance checked, String partition) {
         String title = hit.page().header().metadata().title();
         title = title == null ? "" : title.strip();
         PageKey key = hit.page().header().key();
@@ -705,15 +718,26 @@ public class RelevanceSearch {
             return title;
         }
         String text;
+        boolean sameText;
         try {
-            text = texts.text(hit.page().header().key()).orElse("");
+            text = texts.text(key).orElse("");
+            // Die Stellen des Embeddings gelten nur für genau den Text, aus dem es entstand; der Volltextindex kann
+            // schon den neuen Text haben, bevor das Embedding nachgerechnet ist.
+            sameText = score != null && score.inputSha256() != null && texts.inputSha256(key)
+                    .filter(PageTextIndexing.entryState(score.inputSha256(), hit.page().header().metadata())::equals)
+                    .isPresent();
         } catch (RuntimeException e) {
             return title;
         }
         int start = score == null ? 0 : Math.clamp(score.charStart(), 0, text.length());
         int end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
-        if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
-            // Das Stück mittig, soweit der Text reicht.
+        if (score != null && score.charEnd() > start && sameText && checked != null
+                && checked.freshness() == Freshness.CURRENT && embedding.passages()) {
+            // Re-Ranking auf Absatzebene (#181, ADR 0020): genau der ähnlichste aktuelle Absatz, ohne Nachbartext,
+            // der seine Bewertung verwässert.
+            end = Math.min(end, score.charEnd());
+        } else if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
+            // Ohne aktuelle Absätze wie bisher: das Stück mittig, soweit der Text reicht.
             int spare = MAX_DOCUMENT_CHARS - (Math.min(score.charEnd(), text.length()) - start);
             start = Math.max(0, start - spare / 2);
             end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
@@ -729,7 +753,12 @@ public class RelevanceSearch {
                 key.pageId()), kind);
     }
 
-    private record Score(double similarity, int charStart, int charEnd, Freshness freshness) {
+    /**
+     * @param inputSha256 Eingabe-Hash der Textprojektion, aus der das Embedding entstand
+     * @param passageId   Passage-ID des Absatzes, der das Stück enthält, oder {@code null}
+     */
+    private record Score(double similarity, int charStart, int charEnd, Freshness freshness, String inputSha256,
+                         String passageId) {
     }
 
     /** Ob das Embedding hinter einer Ähnlichkeit zur aktuellen Revision der Seite gehört. */
@@ -745,8 +774,14 @@ public class RelevanceSearch {
      * @param charStart  Anfang dieses Stücks in der Textprojektion
      * @param charEnd    Ende (exklusiv)
      * @param freshness  ob das Embedding aus der aktuellen Revision stammt
+     * @param passageId  stabile Adresse des Absatzes, der dieses Stück enthält ({@code PassageId}, EAC-Lücke 5), oder
+     *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen
      */
-    public record Relevance(double similarity, int charStart, int charEnd, Freshness freshness) {
+    public record Relevance(double similarity, int charStart, int charEnd, Freshness freshness, String passageId) {
+
+        public Relevance(double similarity, int charStart, int charEnd, Freshness freshness) {
+            this(similarity, charStart, charEnd, freshness, null);
+        }
     }
 
     /**

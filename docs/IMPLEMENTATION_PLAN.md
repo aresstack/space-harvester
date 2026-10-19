@@ -200,6 +200,29 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 - [ ] #31: ausgewählte Confluence-kompatible Read-only-Endpunkte erst nach Kompatibilitätstests.
 - [ ] #17/#18: optionale UI und weitere Quellenadapter.
 
+**Stand der Folgearbeiten auf `main` (ceb6c84, PR #399)** – nur, was gemergte PRs belegen; Einzelheiten in
+[SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md), [CONFIGURATION.md](CONFIGURATION.md) und
+[ADR 0020](adr/0020-semantische-absaetze.md):
+- [x] **#181 Semantische Absätze:** im Core abgeschlossen. Absätze je Seite (PR #360, ADR 0020), Suchschnipsel aus
+  Absätzen (PR #373), ein Embedding je semantischem Absatz (PR #388), Re-Ranking auf Absatzebene (PR #392, schließt
+  #181), Dokumentnavigation mit Kapiteln und Themenabschnitten (PR #396, Prozessor `navigation`,
+  `GET …/pages/{pageId}/navigation`). Offen laut ADR 0020 nur der Reiter „Absätze“ in der App (#354).
+- [x] **#183 Dokumenttext:** im Core abgeschlossen. Typerkennung und Text über Tika (PR #328), Vorschau und
+  PDF-Konvertierung von Anhängen (PR #365), Anhangstexte im Volltextindex und `GET …/assets/{attachmentId}/text`
+  (PR #385).
+- [x] **#184 Bildbeschreibung:** im Core abgeschlossen. Bildanalyse mit eigenem Vision-Modell
+  (`space-harvester.ai.vision-model`, PR #371, ADR 0021), Bildanhänge mit vorhandener Beschreibung im Volltextindex
+  (PR #385).
+- [ ] **#182 Fakten:** Suchlauf-Protokoll und Metadaten-Fakten (PR #348), `EVENT` und `RELATION` (PR #374),
+  manuelle und geprüfte Fakten mit Protokoll unter `space-harvester.facts.directory` (PR #383), Grenze von 2000
+  Fakten je Prozessor und Seite mit `truncated` im Faktenblatt (PR #399). Offen laut PARITY.md: die Entscheidung
+  zum Chat-Modell-Weg des Enterprise AI Client.
+- [ ] **#187 Weitere Quelltypen:** Quellen ohne Partitionen über `discover`/`load` (PR #357), MediaWiki (PR #370),
+  registriert git (PR #368), ftp, jes, ndv, sharepoint (PR #372), betaview (PR #378), outlook (PR #380), Typenliste
+  mit Anzeigenamen, Adressfeld, Feldern und Anmeldearten (PR #375, #387, #394); Anmeldung und TLS über den
+  `SecretProvider` (#188: git PR #377 und #393, ftp/jes/ndv/sharepoint/betaview PR #390, ADR 0022). Offen: Bereiche für Quellen ohne
+  Seitenliste, Freigaben für `files` in der Konfiguration des Dienstes, asynchroner Transport für MediaWiki.
+
 ## 8. Teststrategie / Definition of Done
 
 **Tests pro Ausbaustufe**: Unit-Tests für reine Ports/DTOs/Hashes/Tree-Bildung; HTTP-Integrationstests mit Fake-Confluence (Basic/PAT und Fehler), bei #33 mit erzwungenem Clientzertifikat und bei #34 mit PAC-/Proxy-Route inklusive `CONNECT` und Java-21-/Executable-JAR-Prüfung; Lucene-Dateisystemtests auf temporären Verzeichnissen; Neustart-/Recovery-/Sync-Generationen; ArchUnit für Schichtgrenzen; OpenAPI/Problem-Details-Tests. Später Live-Testplan für Confluence Data Center, TLS/mTLS, OAuth-Application-Link und tatsächliche Berechtigungswechsel.

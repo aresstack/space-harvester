@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.AssetStoreFullException;
 import com.aresstack.spaceharvester.application.assets.AssetTooLargeException;
+import com.aresstack.spaceharvester.application.assets.DocumentTextException;
 import com.aresstack.spaceharvester.application.assets.ImageDescriptionException;
 import java.net.URI;
 import org.slf4j.Logger;
@@ -48,6 +49,9 @@ class AssetErrorHandler {
         return switch (e.reason()) {
             case NOT_CONFIGURED -> problem(HttpStatus.SERVICE_UNAVAILABLE, "image-description-unavailable",
                     "Keine Bildbeschreibung verfügbar", "Für diesen Dienst ist kein Bildbeschreiber konfiguriert.");
+            case NOT_RELEASED -> problem(HttpStatus.FORBIDDEN, "image-description-not-released",
+                    "Quelle nicht für den KI-Dienst freigegeben",
+                    "Bilder dieser Quelle gehen nicht an den KI-Dienst (ai.external-processing-sources).");
             case NOT_AN_IMAGE -> problem(HttpStatus.BAD_REQUEST, "asset-not-an-image", "Kein Bild",
                     "Nur Bilder werden beschrieben; Diagrammdaten und Dokumente sind bereits lesbar.");
             case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "image-description-not-found",
@@ -62,6 +66,25 @@ class AssetErrorHandler {
                 yield problem(HttpStatus.BAD_GATEWAY, "image-description-failed", "Bildbeschreibung fehlgeschlagen",
                         "Das Modell hat keine verwertbare Beschreibung geliefert.");
             }
+        };
+    }
+
+    @ExceptionHandler(DocumentTextException.class)
+    ProblemDetail documentText(DocumentTextException e) {
+        String type = e.reason().code();
+        return switch (e.reason()) {
+            case NOT_CONFIGURED -> problem(HttpStatus.SERVICE_UNAVAILABLE, type, "Keine Textextraktion",
+                    "Für diesen Dienst ist keine Textextraktion konfiguriert.");
+            case UNSUPPORTED -> problem(HttpStatus.UNSUPPORTED_MEDIA_TYPE, type, "Kein lesbares Dokument",
+                    "Nur Dokumente haben hier Text; Bilder, Grafiken und Diagrammdaten nicht.");
+            case TOO_LARGE -> problem(HttpStatus.UNPROCESSABLE_CONTENT, type, "Dokument zu groß",
+                    "Das Dokument ist größer als die Grenze der Textextraktion.");
+            case FAILED -> problem(HttpStatus.UNPROCESSABLE_CONTENT, type, "Text nicht lesbar",
+                    "Das Dokument ist defekt, verschlüsselt oder nicht lesbar.");
+            case TIMEOUT -> problem(HttpStatus.SERVICE_UNAVAILABLE, type, "Textextraktion abgebrochen",
+                    "Die Textextraktion lief zu lange; die Anfrage kann später wiederholt werden.");
+            case BUSY -> problem(HttpStatus.TOO_MANY_REQUESTS, type, "Textextraktion ausgelastet",
+                    "Es laufen schon zu viele Textextraktionen; die Anfrage kann später wiederholt werden.");
         };
     }
 

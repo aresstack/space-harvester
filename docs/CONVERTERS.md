@@ -67,7 +67,8 @@ entsteht die Datei erst beim Klick.
                               "inputSha256": "sha256:…", "revision": "3", "computedAt": "…", "warnings": [],
                               "errorCode": null, "payload": { … } },
                 "outline":  { "state": "MISSING", "processorVersion": null, …, "payload": null } },
-              "facts": [{ "id": "…", "type": "ACRONYM_DEFINITION", "role": "DEFINES", "processorId": "acronyms",
+              "facts": [{ "id": "…", "type": "ACRONYM_DEFINITION", "role": "DEFINES", "origin": "AUTOMATIC",
+                          "review": "UNREVIEWED", "processorId": "acronyms",
                           "processorVersion": "2", "inputSha256": "sha256:…", "revision": "3",
                           "payload": { … }, "arguments": [{ "role": "SHORT_FORM", "ordinal": 0, "value": "api" }],
                           "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }] }] }
@@ -86,7 +87,8 @@ entsteht die Datei erst beim Klick.
   `FAILED` (`errorCode`, `payload` null), `MISSING` (nichts gespeichert). Nichts wird nachgerechnet, keine Ablage
   verändert; fehlende Ergebnisse berechnet der übliche Anreicherungslauf.
 - **Fakten** (#182) sind die aus den Ergebnissen abgeleiteten `MetadataFact`s der Seite mit Herkunft
-  (`processorId`, `processorVersion`, `inputSha256`, `revision`).
+  (`processorId`, `processorVersion`, `inputSha256`, `revision`), dazu manuelle (`origin` `MANUAL`, `processorId`
+  `manual`) und der Prüfstatus `review` wie im Faktenblatt.
 - Die Lese-Ansicht (`reading-view`) ist keine Analyse und fehlt; Suchläufe und Begriffsbeziehungen sind nicht
   seitenbezogen und gehören nicht in diese Datei.
 - Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher
@@ -200,7 +202,7 @@ Confluence-Format. Fehlt er, steht an seiner Stelle ein sichtbarer Hinweis.
 | PlantUML | Codeblock mit der Textquelle des Diagramms |
 | draw.io (auch `inc-drawio`) | die beim Beschaffen gezeichnete Grafik (`rendition`), sonst gezeichnet aus den abgelegten Quelldaten (JGraphX, `Diagrams`, #190), sonst die abgelegte Vorschau des Plugins, sonst „[Abbildung nicht verfügbar: Diagramm (draw.io) …]“ |
 | Gliffy | Hinweis mit Diagrammnamen: die Quelle ist ein Seitenanhang und nicht Teil der Payload |
-| `include`, `excerpt-include`, `children` | Inhalt aus der abgelegten Lese-Ansicht: das n-te Makro eines Namens ist das n-te äußerste Element mit diesem `data-macro-name`, Unsichtbares (`display:none`, Skripte) entfällt, Bilder der Ansicht über ihre Adresse. Ohne verfügbare Ansicht Hinweis auf die eingebundene Seite bzw. die berechnete Liste, gemeldet als `OMITTED_CONTENT` (Verweis: Seitentitel oder `children`; Grund `not-collected`, `foreign-content`, `no-reading-view`, `page-changed`, `source-unavailable`, `not-rendered`) |
+| `include`, `excerpt-include`, `children` und jedes andere berechnete Makro (z. B. `toc`, `contentbylabel`, Jira-Abfrage) | Inhalt aus der abgelegten Lese-Ansicht: das n-te Makro eines Namens ist das n-te äußerste Element mit diesem `data-macro-name`, nur wenn Speicherformat und Ansicht gleich viele davon haben; eine Jira-Abfrage mit Tabelle wird ein eigener Block. Selbst umgesetzte Makros (Code, Diagramme, Panels, Status, einzelnes Jira-Ticket …) bleiben, wie sie sind; Unsichtbares (`display:none`, Skripte) entfällt, Bilder der Ansicht über ihre Adresse. Ohne verfügbare Ansicht Hinweis auf die eingebundene Seite bzw. die berechnete Liste, gemeldet als `OMITTED_CONTENT` (Verweis: Seitentitel oder `children`; Grund `not-collected`, `foreign-content`, `no-reading-view`, `page-changed`, `source-unavailable`, `not-rendered`, `view-count-mismatch`). Andere berechnete Makros ohne Ansicht behalten ihren Hinweis ohne Meldung |
 | `toc` und andere berechnete Makros | Hinweis, dass Confluence sie berechnet |
 | andere Makros | Hinweis mit Makronamen; vorhandener Text- oder Rich-Text-Inhalt folgt |
 

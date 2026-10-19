@@ -92,6 +92,9 @@ public final class ParityComparison {
      * Ausgeführte Makros im Export (#218): wie viele der Sätze, die nur ein ausgeführtes {@code include} oder
      * {@code excerpt-include} in die Seite bringt, im Export stehen, und welche Makros der Core als nicht ausgeführt
      * gemeldet hat ({@code OMITTED_CONTENT}). Der Enterprise AI Client meldet nichts; er schreibt die Ansicht.
+     * Meldungen mit {@value #VIEW_COUNT_MISMATCH} sind gewollt anders (PARITY.md, #426): Zählt die Ansicht andere
+     * äußerste Makros als der Storage, setzt der Core nichts ungeprüft ein, der EAC übernimmt die Ansicht trotzdem.
+     * Sie stehen im Detail, sind aber keine Lücke.
      *
      * @param omitted die Meldungen des Core über nicht ausgeführte Makros, je eine Zeile
      */
@@ -105,13 +108,23 @@ public final class ParityComparison {
         if (!missing.isEmpty()) {
             problems.add("fehlt: " + listed(missing));
         }
-        if (!omitted.isEmpty()) {
-            problems.add("nicht ausgeführt: " + listed(omitted));
+        List<String> intended = omitted.stream().filter(line -> line.endsWith("(" + VIEW_COUNT_MISMATCH + ")"))
+                .toList();
+        List<String> gaps = omitted.stream().filter(line -> !intended.contains(line)).toList();
+        if (!gaps.isEmpty()) {
+            problems.add("nicht ausgeführt: " + listed(gaps));
+        }
+        String detail = String.join("; ", problems);
+        if (!intended.isEmpty()) {
+            detail += (detail.isEmpty() ? "" : "; ") + "gewollt anders: " + listed(intended);
         }
         return new Finding(format, "makros", "Ausgeführte Makros (include, excerpt-include, children)",
                 expected + " Sätze", found + " Sätze" + (omitted.isEmpty() ? "" : ", " + omitted.size() + " Hinweise"),
-                problems.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER, String.join("; ", problems));
+                problems.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER, detail);
     }
+
+    /** Grund einer gewollt nicht ausgeführten Ansicht: Ansicht und Storage zählen verschieden viele Makros. */
+    static final String VIEW_COUNT_MISMATCH = "view-count-mismatch";
 
     private static boolean contains(DocumentOutline outline, String sentence) {
         return outline.text().replaceAll("\\s+", " ").contains(sentence);
@@ -200,7 +213,11 @@ public final class ParityComparison {
             } else {
                 verdict = items(actual).containsAll(items(expected)) ? Verdict.CORE_MEHR : Verdict.CORE_WENIGER;
             }
-            String title = key.startsWith("prefetch.") ? "Live-Treffer " + key.substring("prefetch.".length())
+            String title = key.startsWith("anhang.") ? (key.endsWith(".gelesen")
+                    ? "Anhangstext gefunden, nachdem der Anhang geladen ist: "
+                    + key.substring("anhang.".length(), key.length() - ".gelesen".length())
+                    : "Anhangstext gefunden, ohne den Anhang zu öffnen: " + key.substring("anhang.".length()))
+                    : key.startsWith("prefetch.") ? "Live-Treffer " + key.substring("prefetch.".length())
                     + " vorgeladen"
                     : key.endsWith(".snippet") ? "Auszug zeigt den Suchbegriff: "
                     + key.substring("search.".length(), key.length() - ".snippet".length())
@@ -309,6 +326,83 @@ public final class ParityComparison {
     }
 
     /**
+     * Git-Quelle (#187): je Stand ({@code main}, {@code tag}) die gelisteten Pfade (Core ⊇ EAC), der Titel je Pfad
+     * (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC). Ein fehlender Pfad oder Satz ist eine Lücke.
+     */
+    public static List<Finding> git(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("git", eac, core);
+    }
+
+    /**
+     * Dateiquelle (#193) wie {@link #git}: je Umfang ({@code all} mit Ausschluss, {@code start} ab Startpunkt) die
+     * gelisteten Pfade (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> files(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("files", eac, core);
+    }
+
+    /**
+     * FTP-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade (Core ⊇ EAC),
+     * der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> ftp(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("ftp", eac, core);
+    }
+
+    /**
+     * SharePoint-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade
+     * (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC); Leerzeichen im Pfad
+     * stehen im Schlüssel als {@code _}.
+     */
+    public static List<Finding> sharePoint(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("sharepoint", eac, core);
+    }
+
+    /**
+     * BetaView-Quelle (#193) wie {@link #git}: die Dokumente der Ergebnisliste (Core ⊇ EAC), der Titel je Dokument
+     * (gleich) und die Sätze im Inhalt je Dokument (Core ⊇ EAC).
+     */
+    public static List<Finding> betaView(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("betaview", eac, core);
+    }
+
+    /**
+     * JES-Quelle (#193) wie {@link #git}: je Filter ({@code all}, {@code zauf}) die Jobs (Core ⊇ EAC), der Titel je Job
+     * (gleich) und die Sätze in der Ausgabe je Job (Core ⊇ EAC).
+     */
+    public static List<Finding> jes(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("jes", eac, core);
+    }
+
+    private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String key = entry.getKey();
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(key, "fehlt");
+            String check = key.substring(format.length() + 1);
+            String state = check.substring(0, check.indexOf('.'));
+            String rest = check.substring(state.length() + 1);
+            Verdict verdict;
+            String title;
+            if (rest.startsWith("title.")) {
+                verdict = expected.equals(actual) ? Verdict.GLEICH : Verdict.CORE_WENIGER;
+                title = "Titel von " + rest.substring("title.".length()) + " (" + state + ")";
+            } else {
+                Set<String> wanted = expected.equals("-") ? Set.of() : items(expected);
+                Set<String> got = actual.equals("-") || actual.equals("fehlt") ? Set.of() : items(actual);
+                verdict = !core.containsKey(key) || !got.containsAll(wanted) ? Verdict.CORE_WENIGER
+                        : got.size() > wanted.size() ? Verdict.CORE_MEHR : Verdict.GLEICH;
+                title = rest.equals("documents") ? "Dokumente (" + state + ")"
+                        : "Sätze in " + rest.substring("sentences.".length()) + " (" + state + ")";
+            }
+            findings.add(new Finding(format, check, title, expected, actual, verdict,
+                    verdict == Verdict.CORE_WENIGER ? "im Core weniger oder anders" : ""));
+        }
+        return findings;
+    }
+
+    /**
      * Suchlauf-Protokoll (#182) der Live-Suche: Suchtext, Zahl der gefragten und der ausgefallenen Quellen und der
      * erhaltenen Kandidaten. Jede Abweichung ist eine Lücke, denn ein Protokoll soll zeigen, was die Suche bekam.
      */
@@ -388,6 +482,74 @@ public final class ParityComparison {
                 : extra > 0 ? extra + " zusätzliche Überschrift(en)" : "";
         return new Finding(format, "kapitel", "Kapitel und Überschriften", eacCount + " verschiedene",
                 coreCount + " verschiedene", verdict, detail);
+    }
+
+    /**
+     * Reihenfolge der Kapitel (#417): die gemeinsamen Überschriften in der Reihenfolge beider Exporte. Der EAC folgt
+     * der Position aus Confluence, der Core ordnet Geschwister nach Position, sonst nach Titel. Solange der Fake keine
+     * Position liefert (Upstream-Patch 09), ist die Reihenfolge nicht vergleichbar: dann {@link Verdict#NICHT_MESSBAR}
+     * mit der ersten Abweichung im Detail; mit {@code strict} ist eine Abweichung eine Lücke.
+     *
+     * @param strict ob der Fake Positionen liefert und der Vergleich scharf ist
+     */
+    public static Finding chapterOrder(String format, DocumentOutline eac, DocumentOutline core, boolean strict) {
+        List<String> eacTitles = chapterTitles(eac);
+        List<String> coreTitles = chapterTitles(core);
+        List<String> eacCommon = common(eacTitles, coreTitles);
+        List<String> coreCommon = common(coreTitles, eacTitles);
+        int first = 0;
+        while (first < eacCommon.size() && first < coreCommon.size()
+                && eacCommon.get(first).equals(coreCommon.get(first))) {
+            first++;
+        }
+        boolean same = first == eacCommon.size() && first == coreCommon.size();
+        String detail = same ? "" : "erste Abweichung an Stelle " + (first + 1) + ": EAC „"
+                + (first < eacCommon.size() ? eacCommon.get(first) : "–") + "“, Core „"
+                + (first < coreCommon.size() ? coreCommon.get(first) : "–") + "“"
+                + (strict ? "" : " (scharf erst mit Position im Fake, Upstream-Patch 09)");
+        return new Finding(format, "kapitel-reihenfolge", "Reihenfolge der Kapitel", eacCommon.size() + " gemeinsame",
+                same ? "gleiche Reihenfolge" : "andere Reihenfolge",
+                same ? Verdict.GLEICH : strict ? Verdict.CORE_WENIGER : Verdict.NICHT_MESSBAR, detail);
+    }
+
+    /** Die Titel aus {@code titles}, die auch in {@code other} vorkommen, mit Vielfachheit, in ihrer Reihenfolge. */
+    private static List<String> common(List<String> titles, List<String> other) {
+        Map<String, Integer> remaining = counts(other);
+        List<String> common = new ArrayList<>();
+        for (String title : titles) {
+            Integer left = remaining.get(title);
+            if (left != null && left > 0) {
+                common.add(title);
+                remaining.put(title, left - 1);
+            }
+        }
+        return common;
+    }
+
+    /**
+     * Erwähnungen von Personen (#413): Jeder Anzeigename, den der EAC aus der Ansicht schreibt, steht auch im Core;
+     * was der EAC nicht zeigt (Kennungen aus dem Storage, versteckte Erwähnungen der Ansicht), zeigt auch der Core
+     * nicht.
+     *
+     * @param names  Anzeigenamen, die im Export stehen sollen
+     * @param absent was nicht im Export stehen soll
+     */
+    public static Finding mentions(String format, DocumentOutline eac, DocumentOutline core, List<String> names,
+                                   List<String> absent) {
+        List<String> expected = names.stream().filter(name -> contains(eac, name)).toList();
+        List<String> missing = expected.stream().filter(name -> !contains(core, name)).toList();
+        List<String> leaked = absent.stream().filter(value -> contains(core, value) && !contains(eac, value))
+                .toList();
+        List<String> problems = new ArrayList<>();
+        if (!missing.isEmpty()) {
+            problems.add("Name fehlt: " + listed(missing));
+        }
+        if (!leaked.isEmpty()) {
+            problems.add("nur im Core: " + listed(leaked));
+        }
+        return new Finding(format, "erwaehnungen", "Erwähnungen von Personen", expected.size() + " Namen",
+                (expected.size() - missing.size()) + " Namen", problems.isEmpty() ? Verdict.GLEICH
+                : Verdict.CORE_WENIGER, String.join("; ", problems));
     }
 
     /** Überschriften ohne direkte Wiederholung (der Enterprise AI Client wiederholt den Seitentitel als H1). */

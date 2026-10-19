@@ -10,4 +10,9 @@ public interface SourceCatalog {
     List<HarvestSource> all();
 
     Optional<HarvestSource> find(String sourceId);
+
+    /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
+    default List<SourceType> types() {
+        return List.of();
+    }
 }

@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.app.runtime.FollowUpJobs;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
@@ -78,9 +79,9 @@ class ReaderAcronymsTest {
 
         assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
         assertThat(shown.acronyms().result().processorId()).isEqualTo("acronyms");
-        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("2");
+        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("3");
         assertThat(shown.acronyms().result().key().sourceId()).isEqualTo("wiki");
-        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 2")
+        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 3")
                 .contains("Fundstellen markiert");
         String text = onEdt(() -> panel.reader().getDocument().getText(0, panel.reader().getDocument().getLength()));
         assertThat(text).isEqualTo(shown.text().text());
@@ -256,6 +257,8 @@ class ReaderAcronymsTest {
             Thread.sleep(50);
         }
         assertThat(workspace.job(job).state()).isEqualTo(JobState.COMPLETED);
+        // Akronyme rechnet die Anreicherung zuerst, Begriffe zuletzt: auf den ganzen Folgeauftrag warten.
+        FollowUpJobs.awaitEnrichments(workspace);
     }
 
     private static FakeConfluence confluence(String pageId, String title, String storage) {

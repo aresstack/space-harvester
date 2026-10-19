@@ -4,8 +4,17 @@ import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTest
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -45,7 +54,7 @@ class EnrichmentsTest {
         assertThat(store.find(page.key())).extracting(Enrichment::processorId, Enrichment::processorVersion,
                 Enrichment::revision, Enrichment::status, Enrichment::computedAt)
                 .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple("acronyms", "2", "3", Enrichment.Status.OK,
+                        org.assertj.core.groups.Tuple.tuple("acronyms", "3", "3", Enrichment.Status.OK,
                                 CLOCK.instant()),
                         org.assertj.core.groups.Tuple.tuple("outline", "1", "3", Enrichment.Status.OK,
                                 CLOCK.instant()));
@@ -220,6 +229,43 @@ class EnrichmentsTest {
     }
 
     @Test
+    void navigationOfAnUnapprovedSourceIsComputedAtOnceAndStaysCurrent() {
+        // Ein geschlossener Hintergrund nähme nichts an: Was eingeplant würde, fehlte im Ergebnis.
+        ExecutorService closed = Enrichments.background(1);
+        closed.shutdown();
+        EmbeddingProcessor embedding = new EmbeddingProcessor(() -> new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return "remote@1";
+            }
+
+            @Override
+            public int dimensions() {
+                return 3;
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                throw new AssertionError("nicht freigegeben");
+            }
+        }, 1000, KnowledgeTextSegmentation.defaults(), sourceId -> sourceId.equals("approved"))
+                .withPassages(new PassageChunks(new PassageSegmentation(OpenNlpSentenceSegmenter.german(
+                        SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults())),
+                        KnowledgeTextSegmentation.defaults())));
+        NavigationProcessor navigation = new NavigationProcessor(new DocumentNavigationBuilder(), embedding,
+                store::find);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK, closed);
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(navigation.background(page.key())).isFalse();
+        assertThat(navigation.background(new PageKey("approved", "101"))).isTrue();
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 1, 0));
+        assertThat(store.find(page.key())).singleElement()
+                .satisfies(result -> assertThat(result.payloadJson()).contains("\"reason\":\"source-not-approved\""));
+    }
+
+    @Test
     void processorsSkipPagesTheyDoNotApplyTo() {
         Remote remote = new Remote(key -> key.sourceId().equals("approved"), new CountDownLatch(0));
         Enrichments enrichments = enrichments(remote);
@@ -231,6 +277,42 @@ class EnrichmentsTest {
         assertThat(enrichments.refresh(text("approved", "101", "1", "Text")))
                 .isEqualTo(new Enrichments.Run(true, 1, 0, 0));
         assertThat(remote.calls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aReleaseWithdrawnWhileSavingLeavesNoResult() {
+        // Gilt bei der Auswahl und vor dem Speichern, danach nicht mehr: Der Entzug kam zwischen Prüfung und Speichern.
+        AtomicInteger checks = new AtomicInteger();
+        Remote remote = new Remote(key -> checks.incrementAndGet() <= 2, new CountDownLatch(0));
+        PageSnapshot page = text("approved", "101", "1", "Text");
+
+        assertThat(enrichments(remote).recompute(page, null)).isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(remote.calls.get()).isEqualTo(1);
+        assertThat(store.find(page.key())).isEmpty();
+    }
+
+    @Test
+    void aProcessorThatMayNotProcessThePageStoresNothing() {
+        Enrichments enrichments = enrichments(new EnrichmentProcessor() {
+            @Override
+            public String id() {
+                return "remote";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public EnrichmentOutput process(PageText text) {
+                throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+            }
+        });
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(store.find(page.key())).isEmpty();
     }
 
     private Enrichments enrichments(EnrichmentProcessor... processors) {

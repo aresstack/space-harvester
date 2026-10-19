@@ -61,6 +61,17 @@ class SearchRunAndFactApiTest {
         registry.add("space-harvester.security.clients[2].manage-configuration", () -> "true");
         client(registry, 3, "dev-reader", DEV_TOKEN, "DEV", "metadata,content");
         client(registry, 4, "metadata-only", METADATA_TOKEN, "*", "metadata");
+        registry.add("space-harvester.facts.directory", () -> FACTS.toString());
+    }
+
+    private static final java.nio.file.Path FACTS;
+
+    static {
+        try {
+            FACTS = java.nio.file.Files.createTempDirectory("facts");
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
     }
 
     private static void client(DynamicPropertyRegistry registry, int index, String id, String token, String space,
@@ -174,6 +185,15 @@ class SearchRunAndFactApiTest {
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&spaceKey=OPS", DEV_TOKEN)).isEmpty();
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION", METADATA_TOKEN)).isEmpty();
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION", ADMIN_TOKEN)).isEmpty();
+        // Nur Fakten eines Prozessors; MENTION entsteht aus entities und, eingeschaltet, aus statements.
+        assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&processor=acronyms", DEV_TOKEN))
+                .containsOnly("701").isNotEmpty();
+        assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&processor=statements", DEV_TOKEN)).isEmpty();
+        assertThat(json.readTree(get("/api/v1/sources/wiki/pages/701/facts?processor=statements", DEV_TOKEN)
+                .body()).get("facts")).isEmpty();
+        HttpResponse<String> invalid = get("/api/v1/facts?type=MENTION&processor=..%2Fx", DEV_TOKEN);
+        assertThat(invalid.statusCode()).isEqualTo(400);
+        assertThat(invalid.body()).contains("processor").doesNotContain("../x");
         HttpResponse<String> walk = get("/api/v1/facts?type=ACRONYM_CANDIDATE&limit=1", DEV_TOKEN);
         JsonNode first = json.readTree(walk.body());
         assertThat(first.get("facts")).hasSize(1);
@@ -182,6 +202,78 @@ class SearchRunAndFactApiTest {
             assertThat(factPages("/api/v1/facts?type=ACRONYM_CANDIDATE&limit=1&cursor=" + cursor, DEV_TOKEN))
                     .doesNotContain("702");
         }
+    }
+
+    @Test
+    void manualAndReviewedFactsNeedSyncAndCarryOriginReviewAndRevision() throws Exception {
+        publish("DEV", "711", "<p>Die API (Application Programming Interface) im Betrieb.</p>");
+        assertThat(post("/api/v1/sources/wiki/pages/711/enrichments", TestClient.TOKEN).statusCode())
+                .isEqualTo(200);
+        String manual = "{\"type\":\"PROPERTY\",\"payload\":{\"subject\":\"Dienst\",\"value\":\"Team A\"},"
+                + "\"arguments\":[{\"role\":\"SUBJECT\",\"value\":\"Dienst\"},{\"role\":\"VALUE\","
+                + "\"value\":\"Team A\"}]}";
+
+        // Ohne sync: lesen ja, ändern nein.
+        HttpResponse<String> denied = send("POST", "/api/v1/sources/wiki/pages/711/facts", DEV_TOKEN, manual);
+        assertThat(denied.statusCode()).as(denied.body()).isEqualTo(403);
+        HttpResponse<String> created = send("POST", "/api/v1/sources/wiki/pages/711/facts", TestClient.TOKEN,
+                manual);
+        assertThat(created.statusCode()).isEqualTo(201);
+        JsonNode fact = json.readTree(created.body());
+        assertThat(fact.get("origin").asString()).isEqualTo("MANUAL");
+        assertThat(fact.get("review").asString()).isEqualTo("UNREVIEWED");
+        assertThat(fact.get("revision").asLong()).isEqualTo(1);
+        assertThat(factPages("/api/v1/facts?argument=VALUE:team a".replace(" ", "%20"), DEV_TOKEN))
+                .containsExactly("711");
+
+        JsonNode definition = json.readTree(get("/api/v1/sources/wiki/pages/711/facts?type=ACRONYM_DEFINITION",
+                DEV_TOKEN).body()).get("facts").get(0);
+        assertThat(definition.get("origin").asString()).isEqualTo("AUTOMATIC");
+        assertThat(definition.get("revision").asLong()).isZero();
+        String review = "/api/v1/sources/wiki/pages/711/facts/" + definition.get("id").asString() + "/review";
+        HttpResponse<String> confirmed = send("PUT", review, TestClient.TOKEN,
+                "{\"review\":\"CONFIRMED\",\"revision\":0}");
+        assertThat(confirmed.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(confirmed.body()).get("review").asString()).isEqualTo("CONFIRMED");
+        HttpResponse<String> stale = send("PUT", review, TestClient.TOKEN, "{\"review\":\"REJECTED\",\"revision\":0}");
+        assertThat(stale.statusCode()).isEqualTo(409);
+        assertThat(json.readTree(stale.body()).get("revision").asLong()).isEqualTo(1);
+        assertThat(send("PUT", "/api/v1/sources/wiki/pages/711/facts/" + "0".repeat(32) + "/review",
+                TestClient.TOKEN, "{\"review\":\"CONFIRMED\"}").statusCode()).isEqualTo(404);
+
+        String manualPath = "/api/v1/sources/wiki/pages/711/facts/" + fact.get("id").asString();
+        assertThat(send("DELETE", manualPath + "?revision=1", TestClient.TOKEN, null).statusCode()).isEqualTo(204);
+        JsonNode history = json.readTree(get(manualPath + "/history", DEV_TOKEN).body());
+        assertThat(history.get("entries")).extracting(entry -> entry.get("action").asString())
+                .containsExactly("add", "remove");
+        assertThat(java.nio.file.Files.exists(FACTS.resolve("facts.json"))).isTrue();
+    }
+
+    @Test
+    void manualFactsOfUnreadablePagesStayHiddenInSearchSheetAndHistory() throws Exception {
+        publish("OPS", "712", "<p>Notfallplan.</p>");
+        HttpResponse<String> created = send("POST", "/api/v1/sources/wiki/pages/712/facts", TestClient.TOKEN,
+                "{\"type\":\"MENTION\",\"payload\":{\"term\":\"Geheimsache\"},\"arguments\":[{\"role\":"
+                        + "\"TERM\",\"value\":\"Geheimsache\"}]}");
+        assertThat(created.statusCode()).isEqualTo(201);
+        String id = json.readTree(created.body()).get("id").asString();
+
+        assertThat(factPages("/api/v1/facts?argument=TERM:geheimsache", TestClient.TOKEN)).containsExactly("712");
+        assertThat(factPages("/api/v1/facts?argument=TERM:geheimsache", DEV_TOKEN)).isEmpty();
+        assertThat(factPages("/api/v1/facts?argument=TERM:geheimsache", METADATA_TOKEN)).isEmpty();
+        for (String token : List.of(DEV_TOKEN, METADATA_TOKEN)) {
+            for (String path : List.of("/api/v1/sources/wiki/pages/712/facts",
+                    "/api/v1/sources/wiki/pages/712/facts/" + id + "/history")) {
+                HttpResponse<String> hidden = get(path, token);
+                assertThat(hidden.statusCode()).as(path).isIn(403, 404);
+                assertThat(hidden.body()).doesNotContain("eheimsache", "\"entries\"", "\"facts\"");
+            }
+        }
+        // Über eine lesbare Seite kommt das Protokoll eines fremden Fakts nicht heraus.
+        publish("DEV", "713", "<p>Betrieb.</p>");
+        HttpResponse<String> foreign = get("/api/v1/sources/wiki/pages/713/facts/" + id + "/history", DEV_TOKEN);
+        assertThat(foreign.statusCode()).isEqualTo(404);
+        assertThat(foreign.body()).doesNotContain("\"entries\"");
     }
 
     @Test
@@ -244,6 +336,16 @@ class SearchRunAndFactApiTest {
     private HttpResponse<String> post(String path, String token) throws Exception {
         return http.send(HttpRequest.newBuilder(uri(path)).header("Authorization", "Bearer " + token)
                 .POST(HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private HttpResponse<String> send(String method, String path, String token, String body) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri(path)).header("Authorization", "Bearer " + token);
+        if (body == null) {
+            request.method(method, HttpRequest.BodyPublishers.noBody());
+        } else {
+            request.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body));
+        }
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofString());
     }
 
     private URI uri(String path) {

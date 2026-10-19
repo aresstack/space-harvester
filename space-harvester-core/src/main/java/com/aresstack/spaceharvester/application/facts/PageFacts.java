@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -46,6 +47,8 @@ public final class PageFacts {
     static final int MAX_SCANNED = 5_000;
 
     private static final Pattern CURSOR = Pattern.compile("[0-9a-f]{32}");
+    /** Prozessor-IDs wie {@code entities}, {@code reading-view} oder {@code manual}. */
+    private static final Pattern PROCESSOR = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
@@ -53,19 +56,28 @@ public final class PageFacts {
     private final Enrichments enrichments;
     private final FactStore store;
     private final Function<PageKey, Optional<PageHeader>> headers;
+    private final FactEditStore edits;
+
+    /** Ohne Prüfablage: jeder Fakt hat Revision 0. */
+    public PageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages, Enrichments enrichments,
+                     FactStore store, Function<PageKey, Optional<PageHeader>> headers) {
+        this(catalog, access, pages, enrichments, store, headers, null);
+    }
 
     /**
      * @param enrichments für die Aktualität im Faktenblatt oder {@code null}, dann gilt jeder Fakt als veraltet
      * @param headers     Kopfdaten einer Seite im Cache (Space für die Rechteprüfung)
+     * @param edits       Prüfablage für die Revision im Faktenblatt oder {@code null}
      */
     public PageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages, Enrichments enrichments,
-                     FactStore store, Function<PageKey, Optional<PageHeader>> headers) {
+                     FactStore store, Function<PageKey, Optional<PageHeader>> headers, FactEditStore edits) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
         this.pages = Objects.requireNonNull(pages, "pages");
         this.enrichments = enrichments;
         this.store = Objects.requireNonNull(store, "store");
         this.headers = Objects.requireNonNull(headers, "headers");
+        this.edits = edits;
     }
 
     /**
@@ -74,25 +86,51 @@ public final class PageFacts {
      * @param type nur dieser Typ oder {@code null}
      */
     public Sheet factsOf(AccessContext caller, String sourceId, String pageId, String type) {
+        return factsOf(caller, sourceId, pageId, type, null);
+    }
+
+    /**
+     * Wie {@link #factsOf(AccessContext, String, String, String)}, nur Fakten eines Prozessors, etwa {@code entities}
+     * oder {@code statements} ({@code MENTION} entsteht aus beiden), oder {@value FactEdits#MANUAL_PROCESSOR}.
+     *
+     * @param processor nur Fakten dieses Prozessors oder {@code null}
+     * @throws InvalidQueryException bei einem ungültigen Prozessornamen
+     */
+    public Sheet factsOf(AccessContext caller, String sourceId, String pageId, String type, String processor) {
         if (type != null) {
             MetadataFact.requireName("type", type);
         }
+        requireProcessor(processor);
         DeliveredPage page = pages.page(caller, sourceId, pageId, false);
         Map<String, Enrichment.Freshness> freshness = new HashMap<>();
+        String input = null;
+        Set<String> truncated = new TreeSet<>();
         if (enrichments != null) {
-            for (Enrichments.View view : enrichments.view(page.snapshot())) {
+            Enrichments.Inspection inspection = enrichments.inspect(page.snapshot());
+            input = inspection.inputSha256();
+            for (Enrichments.View view : inspection.stored()) {
                 freshness.put(view.enrichment().processorId() + '\u0000' + view.enrichment().inputSha256(),
                         view.freshness());
+                if (EnrichmentFacts.truncated(view.enrichment())) {
+                    truncated.add(view.enrichment().processorId());
+                }
             }
         }
         List<Entry> entries = new ArrayList<>();
         for (MetadataFact fact : store.factsOf(page.header().key())) {
-            if (type == null || type.equals(fact.type())) {
-                entries.add(new Entry(fact, freshness.getOrDefault(fact.provenance().processorId() + '\u0000'
-                        + fact.provenance().inputSha256(), Enrichment.Freshness.STALE)));
+            if ((type == null || type.equals(fact.type()))
+                    && (processor == null || processor.equals(fact.provenance().processorId()))) {
+                // Manuelle Fakten gelten für den Text, gegen den sie angelegt wurden.
+                Enrichment.Freshness current = fact.origin() == FactOrigin.MANUAL
+                        ? input != null && input.equals(fact.provenance().inputSha256())
+                        ? Enrichment.Freshness.CURRENT : Enrichment.Freshness.STALE
+                        : freshness.getOrDefault(fact.provenance().processorId() + '\u0000'
+                        + fact.provenance().inputSha256(), Enrichment.Freshness.STALE);
+                long revision = edits == null ? 0 : edits.find(fact.id()).map(FactEdit::revision).orElse(0L);
+                entries.add(new Entry(fact, current, revision));
             }
         }
-        return new Sheet(sourceId, pageId, page.header().metadata().partitionKey(), entries);
+        return new Sheet(sourceId, pageId, page.header().metadata().partitionKey(), entries, List.copyOf(truncated));
     }
 
     /**
@@ -105,7 +143,18 @@ public final class PageFacts {
      *                                                                              {@link SearchScope#authorize}
      */
     public Results search(AccessContext caller, Search search, String cursor, int limit) {
+        return search(caller, search, null, cursor, limit);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, Search, String, int)}, nur Fakten eines Prozessors. Gefiltert wird nach dem
+     * Lesen; ein Stapel kann dadurch kürzer als das Limit sein, auch wenn noch Fakten folgen.
+     *
+     * @param processor nur Fakten dieses Prozessors oder {@code null}
+     */
+    public Results search(AccessContext caller, Search search, String processor, String cursor, int limit) {
         Objects.requireNonNull(search, "search");
+        requireProcessor(processor);
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
@@ -134,6 +183,9 @@ public final class PageFacts {
                 used++;
                 scanned++;
                 after = fact.id();
+                if (processor != null && !processor.equals(fact.provenance().processorId())) {
+                    continue;
+                }
                 if (readable.computeIfAbsent(fact.page(), key -> readable(caller, key, search.spaceKeys()))) {
                     found.add(fact);
                 }
@@ -142,6 +194,12 @@ public final class PageFacts {
             exhausted = next.size() < batch && used == next.size();
         }
         return new Results(found, exhausted ? null : after);
+    }
+
+    private static void requireProcessor(String processor) {
+        if (processor != null && !PROCESSOR.matcher(processor).matches()) {
+            throw new InvalidQueryException("processor ist kein gültiger Prozessorname");
+        }
     }
 
     /** Lesbar an den Kopfdaten im Cache, im gewünschten Space; ohne Kopfdaten nicht. */
@@ -224,14 +282,27 @@ public final class PageFacts {
     }
 
     /** Das Faktenblatt einer Seite. */
-    public record Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts) {
+    public record Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts, List<String> truncated) {
 
         public Sheet {
             facts = List.copyOf(facts);
+            truncated = List.copyOf(truncated);
+        }
+
+        public Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts) {
+            this(sourceId, pageId, spaceKey, facts, List.of());
         }
     }
 
-    /** Ein Fakt mit seiner Aktualität gegenüber der ausgelieferten Payload. */
-    public record Entry(MetadataFact fact, Enrichment.Freshness freshness) {
+    /**
+     * Ein Fakt mit seiner Aktualität gegenüber der ausgelieferten Payload.
+     *
+     * @param revision Revision in der Prüfablage für {@link FactEdits}, {@code 0} außerhalb
+     */
+    public record Entry(MetadataFact fact, Enrichment.Freshness freshness, long revision) {
+
+        public Entry(MetadataFact fact, Enrichment.Freshness freshness) {
+            this(fact, freshness, 0);
+        }
     }
 }

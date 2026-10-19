@@ -1,27 +1,40 @@
 package com.aresstack.spaceharvester.application.assets;
 
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.signin.SignInPendingException;
+import com.aresstack.spaceharvester.application.signin.SignInRequest;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import java.io.ByteArrayInputStream;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -33,6 +46,13 @@ import java.util.concurrent.TimeoutException;
  * Anwendungsfälle der Asset-Ernte (#19). Arbeitet immer auf einer frisch gelesenen Anhangsliste ({@link
  * com.aresstack.spaceharvester.application.sources.SourceQueries#attachments}), deren Space der Aufrufer vorher gegen
  * die Freigaben geprüft hat. Ein Anhang derselben Version wird nie zweimal übertragen.
+ *
+ * <p>Mit einem {@link PageTextIndex} kommt jeder abgelegte Anhangstext in den Volltextindex (#183), wie im Enterprise
+ * AI Client ({@code SourceAttachmentReader}: jeder gelesene Anhang ein eigenes Dokument mit der Seite als Eltern, in
+ * Roh- und Wissensindex): Dokumente mit ihrem Text aus {@link DocumentText}, Bilder mit einer vorhandenen
+ * Beschreibung, jeweils mit dem Dateinamen als Titel; auch ohne Text steht der Dateiname im Index. Gelesen wird wie
+ * bisher beim Ablegen ({@link #harvest}) und auf Abruf ({@link #text}, {@link #describe}); der Index übernimmt nur, was
+ * abgelegt ist, und prüft nie Rechte: die Suche gibt einen Anhangstreffer nur mit seiner lesbaren Seite aus.
  */
 public class Assets {
 
@@ -44,6 +64,9 @@ public class Assets {
     private final Clock clock;
     private final ImageDescriber describer;
     private final DocumentText documents;
+    private final PageTextIndex texts;
+    private final LargeFileGate gate;
+    private final SignInRequests signIns;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
@@ -66,6 +89,46 @@ public class Assets {
      */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
                   DocumentText documents) {
+        this(catalog, store, maxBytes, clock, describer, documents, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts) {
+        this(catalog, store, maxBytes, clock, describer, documents, texts, LargeFileGate.defaults());
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     * @param gate      Schranke für große Dateien, gemeinsam für alle speicherintensiven Wege dieser Instanz
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts, LargeFileGate gate) {
+        this(catalog, store, maxBytes, clock, describer, documents, texts, gate, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     * @param gate      Schranke für große Dateien, gemeinsam für alle speicherintensiven Wege dieser Instanz
+     * @param signIns   Anmeldeanforderungen für Lesen auf Abruf (ADR 0018) oder {@code null}: dann bleibt ein
+     *                  verlangter Einmalcode „keine Berechtigung“
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts, LargeFileGate gate, SignInRequests signIns) {
+        this.gate = Objects.requireNonNull(gate, "gate");
+        this.signIns = signIns;
+        this.texts = texts;
         this.describer = describer;
         this.documents = documents;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -118,35 +181,44 @@ public class Assets {
         String pageId = list.attachments().pageId();
         List<AssetHarvest.Entry> entries = new ArrayList<>();
         String stop = null;
+        boolean indexed = false;
         for (PageAttachment attachment : list.attachments().attachments()) {
             if (stop != null) {
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
                 continue;
             }
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
             if (stored.isPresent()) {
                 backfillText(stored.get());
+                indexed |= indexStored(list, stored.get());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.REUSED,
                         stored.get(), null));
                 continue;
             }
-            try {
+            // Download und Textextraktion derselben Datei belegen zusammen einen Platz der Schranke.
+            try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
                 AssetContent content = download(source, pageId, attachment);
                 harvestText(content);
+                indexed |= indexStored(list, content.asset());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
                         content.asset(), null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
+                indexed |= forgetStale(list, attachment);
             } catch (AssetStoreFullException e) {
                 stop = "asset-store-full";
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
             } catch (SourceAccessException e) {
                 if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
                     stop = code(e.reason());
                 }
                 entries.add(failed(list, attachment, code(e.reason())));
+                indexed |= forgetStale(list, attachment);
             }
         }
+        finishIndexing(list, indexed);
         return new AssetHarvest(list.sourceId(), pageId, list.spaceKey(), list.attachments().complete(), entries,
                 clock.instant());
     }
@@ -171,9 +243,99 @@ public class Assets {
         PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
-            return new AssetContent(stored.get(), store.read(stored.get()));
+            return read(stored.get());
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
+    }
+
+    /** Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}). */
+    private AssetContent read(Asset asset) {
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            return new AssetContent(asset, store.read(asset));
+        }
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean)} für Lesen auf Abruf durch {@code owner} (ADR 0018):
+     * verlangt die Quelle einen Einmalcode, legt dies die Anforderung an ({@link SignInRequests#open}) und wirft
+     * {@link SignInPendingException}, statt den Code still abzufragen. Der Aufrufer hat die Seite vorher auf
+     * Leserechte geprüft; ohne Oberfläche oder mit {@code owner == null} gilt das Verhalten ohne Anmeldung.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> content(list, attachmentId, mayStore));
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean, String)}, aber ein abgelegter Anhang kommt als Strom
+     * aus der Ablage, ohne ganz im Speicher zu liegen. Eine große Datei hält ihren Platz an der Schranke
+     * ({@link LargeFileGate}), bis der Aufrufer den Strom schließt, auch aus einem anderen Thread. Ein nicht
+     * abgelegter Anhang wird wie bisher geladen und aus dem Speicher geliefert.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> stream(list, attachmentId, mayStore));
+    }
+
+    private AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        if (stored.isPresent()) {
+            Asset asset = stored.get();
+            LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+            try {
+                return new AssetStream(asset, store.open(asset), permit);
+            } catch (RuntimeException e) {
+                permit.close();
+                throw e;
+            }
+        }
+        AssetContent content = download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
+        return new AssetStream(content.asset(), new ByteArrayInputStream(content.content()), null);
+    }
+
+    /**
+     * Wie {@link #preview(PageAttachmentList, String, AttachmentPreview, boolean)} für Lesen auf Abruf durch
+     * {@code owner}; Einmalcode wie bei {@link #content(PageAttachmentList, String, boolean, String)}.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent preview(PageAttachmentList list, String attachmentId, AttachmentPreview preview,
+                                boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> preview(list, attachmentId, preview, mayStore));
+    }
+
+    /**
+     * Wie {@link #viewImage(String, String, String, HarvestSource.ViewImage)} für Lesen auf Abruf durch
+     * {@code owner}; Einmalcode wie bei {@link #content(PageAttachmentList, String, boolean, String)}.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image,
+                                  String owner) {
+        return unlocking(sourceId, owner, () -> viewImage(sourceId, pageId, pageVersion, image));
+    }
+
+    /**
+     * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
+     * ist, sonst die Anforderung angelegt. Code und Token sieht diese Stelle nie.
+     */
+    private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
+        java.time.Instant started = clock.instant();
+        try {
+            return read.get();
+        } catch (SignInRequiredException e) {
+            if (owner == null || signIns == null || !signIns.interactive()) {
+                throw e;
+            }
+            if (signIns.unlockedSince(sourceId, started)) {
+                return read.get();
+            }
+            SignInRequest request = signIns.open(sourceId, owner, e.challenge());
+            throw new SignInPendingException(sourceId, request.id(), e);
+        }
     }
 
     /**
@@ -192,7 +354,7 @@ public class Assets {
         String version = image.attachmentId() != null ? image.version() : pageVersion;
         Optional<Asset> stored = store.find(sourceId, attachmentId, version);
         if (stored.isPresent()) {
-            return new AssetContent(stored.get(), store.read(stored.get()));
+            return read(stored.get());
         }
         byte[] content;
         try {
@@ -215,12 +377,16 @@ public class Assets {
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
-        String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
-                ? image.mediaType() : sniff(content), content, viewFileName(image));
-        Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
-                AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
-        store.put(asset, content);
-        return new AssetContent(asset, content);
+        // Die Größe eines Bildes der Lese-Ansicht steht erst nach dem Download fest; Typerkennung und Ablegen laufen
+        // dann unter der Schranke.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, (long) content.length)) {
+            String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
+                    ? image.mediaType() : sniff(content), content, viewFileName(image));
+            Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
+                    AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
+            store.put(asset, content);
+            return new AssetContent(asset, content);
+        }
     }
 
     /**
@@ -253,9 +419,12 @@ public class Assets {
             return Optional.empty();
         }
         PageAttachment found = diagram;
-        byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
-                .orElseGet(() -> download(source, pageId, found).content());
-        Rendered rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
+        Rendered rendered;
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
+            byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+                    .orElseGet(() -> download(source, pageId, found).content());
+            rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
+        }
         if (rendered.asset() == null) {
             return Optional.empty();
         }
@@ -288,6 +457,29 @@ public class Assets {
         return image.title() == null ? "" : image.title();
     }
 
+    /** Die Anhänge einer Seite, live von der Quelle; lädt keine Bytes. */
+    public List<PageAttachment> pageAttachments(String sourceId, String pageId) {
+        return source(sourceId).attachments(pageId).attachments();
+    }
+
+    /**
+     * Ob ein Bild der Lese-Ansicht die Vorschau eines draw.io-Diagramms dieser Anhänge ist, wie bei
+     * {@link #viewDiagram}: dann gilt die textuelle Quelle des Diagramms, nicht das Bild (Angelo, 16.10.).
+     */
+    public static boolean diagramPreview(List<PageAttachment> attachments, HarvestSource.ViewImage image) {
+        String filename = viewFileName(image);
+        if (!filename.toLowerCase(Locale.ROOT).endsWith(".png")) {
+            return false;
+        }
+        for (PageAttachment attachment : attachments) {
+            if (Diagrams.isDrawio(attachment.mediaType(), attachment.title())
+                    && Diagrams.isDrawioPreview(filename, Diagrams.drawioName(attachment.title()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Die Lese-Ansicht einer Seite mit Lesetext und Bildern ({@link HarvestSource#readingPage}); lädt keine Bytes. */
     public HarvestSource.ReadingPage readingPage(String sourceId, String pageId) {
         return source(sourceId).readingPage(pageId);
@@ -308,11 +500,12 @@ public class Assets {
         if (sha256 == null) {
             return Optional.empty();
         }
-        Asset asset = store.find(sourceId, attachmentId, version).filter(found -> found.sha256().equals(sha256))
-                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
-                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        Optional<Asset> found = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256));
+        Asset asset = found.orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId,
+                version, null, null, AssetKind.OTHER, 0, sha256, clock.instant()));
         byte[] content;
-        try {
+        // Ohne Eintrag ist die Größe unbekannt und zählt als groß.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null))) {
             content = store.read(asset);
         } catch (AssetStoreException e) {
             return Optional.empty();
@@ -384,24 +577,195 @@ public class Assets {
      *                               {@code TIMEOUT}, {@code BUSY} oder {@code FAILED}
      */
     public AssetText text(PageAttachmentList list, String attachmentId) {
+        return text(list, attachmentId, true);
+    }
+
+    /**
+     * Wie {@link #text(PageAttachmentList, String)}; mit {@code mayStore=false} wird weder der Anhang noch sein Text
+     * abgelegt, wie bei {@link #content(PageAttachmentList, String, boolean)}: Ein vorhandener Text kommt aus der
+     * Ablage, sonst wird er nur gelesen und ausgeliefert. In den Volltextindex kommt nur ein abgelegter Text.
+     */
+    public AssetText text(PageAttachmentList list, String attachmentId, boolean mayStore) {
         DocumentText extraction = documents();
-        return text(extraction, content(list, attachmentId));
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        // Ein abgelegter Text braucht die Bytes nicht: weder Lesen der Datei noch ein Platz der Schranke.
+        Optional<AssetText> existing = stored.isPresent() ? storedText(extraction, stored.get()) : Optional.empty();
+        Asset asset;
+        AssetText text;
+        if (existing.isPresent()) {
+            asset = stored.get();
+            text = existing.get();
+        } else {
+            try (LargeFileGate.Permit permit = gate.enter(list.sourceId(),
+                    stored.map(Asset::size).orElse(attachment.fileSize()))) {
+                AssetContent content = content(list, attachmentId, mayStore);
+                asset = content.asset();
+                existing = storedText(extraction, asset);
+                text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
+            }
+        }
+        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), extractionKey(extraction))) {
+            flushIndex();
+        }
+        return text;
     }
 
     private AssetText text(DocumentText extraction, AssetContent content) {
-        Asset asset = content.asset();
+        return storedText(extraction, content.asset()).orElseGet(() -> extract(extraction, content, true));
+    }
+
+    /** Der abgelegte Text eines Dokuments; für alles andere {@code UNSUPPORTED}. */
+    private Optional<AssetText> storedText(DocumentText extraction, Asset asset) {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        Optional<AssetText> existing = store.text(asset.sha256(), extraction.id(), extraction.version());
-        if (existing.isPresent()) {
-            return existing.get();
-        }
+        return store.text(asset.sha256(), extraction.id(), extraction.version());
+    }
+
+    private AssetText extract(DocumentText extraction, AssetContent content, boolean keep) {
+        Asset asset = content.asset();
         DocumentText.Extracted extracted = extraction.extract(asset.title(), asset.mediaType(), content.content());
         AssetText text = new AssetText(asset.sha256(), extraction.id(), extraction.version(), extracted.text(),
                 extracted.truncated(), clock.instant());
-        store.putText(text);
+        if (keep) {
+            store.putText(text);
+        }
         return text;
+    }
+
+    /**
+     * Übernimmt den abgelegten Text eines Anhangs in den Volltextindex: bei Dokumenten den Text der Extraktion, bei
+     * Bildern eine vorhandene Beschreibung des eingestellten Modells ({@link #storedDescription}); erzeugt nichts und
+     * ruft nie ein Modell auf. Ein Dokument ohne Text (nicht
+     * lesbar, noch nicht gelesen) steht nur mit seinem Dateinamen darin, wie im Enterprise AI Client.
+     *
+     * @return ob der Index geändert wurde
+     */
+    private boolean indexStored(PageAttachmentList list, Asset asset) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            if (asset.kind() == AssetKind.OTHER && documents != null) {
+                String text = store.text(asset.sha256(), documents.id(), documents.version()).map(AssetText::text)
+                        .orElse("");
+                return indexText(list, asset, text, text.isEmpty() ? "" : extractionKey(documents));
+            }
+            if (asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR) {
+                // Wie im EAC (DocumentSourceFileTextExtractor → describe), aber ohne Modellaufruf: nur die vorhandene
+                // Beschreibung des eingestellten Modells aus der Ablage (ADR 0021); ohne sie nur der Dateiname. Keine
+                // OCR.
+                Optional<ImageDescription> description = storedDescription(asset.sha256());
+                return description.isPresent() ? indexDescription(list, asset, description.get())
+                        : indexText(list, asset, "", "");
+            }
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Anhangstext nicht lesbar: source={0} ({1})", asset.sourceId(),
+                    e.getClass().getName());
+            return false;
+        }
+        // Diagrammdaten (draw.io) und Dokumente ohne Extraktion: nur der Dateiname, wie Bilder ohne Beschreibung.
+        return indexText(list, asset, "", "");
+    }
+
+    /**
+     * Nach einem gescheiterten Ablegen: Liegt die aktuelle Version des Anhangs nicht in der Ablage, stammt ein
+     * vorhandener Indexeintrag von einer älteren Version (oder fehlt); er fällt heraus, damit die Suche keinen Text alter
+     * Bytes liefert. Die nächste erfolgreiche Ernte legt ihn neu an.
+     *
+     * @return ob der Index geändert worden sein kann
+     */
+    private boolean forgetStale(PageAttachmentList list, PageAttachment attachment) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            if (store.find(list.sourceId(), attachment.attachmentId(), attachment.version()).isPresent()) {
+                return false;
+            }
+            PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+            if (texts.attachmentInputSha256(page, attachment.attachmentId()).isEmpty()) {
+                return false;
+            }
+            texts.removeAttachment(page, attachment.attachmentId());
+            return true;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Veralteter Anhangstext in {0} nicht entfernt ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return false;
+        }
+    }
+
+    private boolean indexDescription(PageAttachmentList list, Asset asset, ImageDescription description) {
+        return indexText(list, asset, description.text(),
+                "describer:" + description.describer() + ":" + description.modelVersion());
+    }
+
+    private static String extractionKey(DocumentText extraction) {
+        return "text:" + extraction.id() + ":" + extraction.version();
+    }
+
+    /**
+     * Legt den Text eines Anhangs mit Seite und Space der Anhangsliste im Volltextindex ab, wenn er dort nicht schon in
+     * diesem Stand liegt. Fehler bleiben hier; der Index ist neu aufbaubar.
+     *
+     * @param origin woher der Text stammt (Extraktion oder Modell mit Version), leer ohne Text
+     * @return ob der Index geändert wurde
+     */
+    private boolean indexText(PageAttachmentList list, Asset asset, String text, String origin) {
+        if (texts == null) {
+            return false;
+        }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        String title = asset.title() == null ? "" : asset.title();
+        String input = sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
+                .getBytes(StandardCharsets.UTF_8));
+        try {
+            if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+                return false;
+            }
+            texts.putAttachment(new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
+                    text, input));
+            return true;
+        } catch (RuntimeException e) {
+            // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Anhangs in {0} nicht aktualisiert ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return false;
+        }
+    }
+
+    /**
+     * Nach einer Ernte: Anhänge, die die vollständige Liste nicht mehr nennt, fallen aus dem Index; Änderungen werden
+     * dauerhaft.
+     */
+    private void finishIndexing(PageAttachmentList list, boolean indexed) {
+        if (texts == null) {
+            return;
+        }
+        try {
+            if (list.attachments().complete()) {
+                Set<String> current = new HashSet<>();
+                list.attachments().attachments().forEach(a -> current.add(a.attachmentId()));
+                texts.retainAttachments(new PageKey(list.sourceId(), list.attachments().pageId()), current);
+                indexed = true;
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex der Anhänge in {0} nicht bereinigt ({1})",
+                    list.sourceId(), e.getClass().getName());
+        }
+        if (indexed) {
+            flushIndex();
+        }
+    }
+
+    private void flushIndex() {
+        try {
+            texts.flush();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex nicht gesichert ({0})", e.getClass().getName());
+        }
     }
 
     /**
@@ -442,15 +806,22 @@ public class Assets {
         if (!backfilled.add(asset.sha256())) {
             return;
         }
-        byte[] content;
-        try {
-            content = store.read(asset);
-        } catch (AssetStoreException e) {
-            LOG.log(System.Logger.Level.WARNING, "Dokument nicht lesbar: source={0} ({1})", asset.sourceId(),
-                    e.getClass().getName());
-            return;
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            byte[] content;
+            try {
+                content = store.read(asset);
+            } catch (AssetStoreException e) {
+                LOG.log(System.Logger.Level.WARNING, "Dokument nicht lesbar: source={0} ({1})", asset.sourceId(),
+                        e.getClass().getName());
+                return;
+            }
+            harvestText(new AssetContent(asset, content));
+        } catch (SourceAccessException e) {
+            // Schranke für große Dateien voll: vorübergehend, die nächste Ernte versucht es erneut.
+            backfilled.remove(asset.sha256());
+            LOG.log(System.Logger.Level.INFO, "Dokumenttext später nachholen: source={0}, code={1}",
+                    asset.sourceId(), code(e.reason()));
         }
-        harvestText(new AssetContent(asset, content));
     }
 
     private DocumentText documents() {
@@ -575,7 +946,7 @@ public class Assets {
         for (AttachmentPreview kind : kinds) {
             Optional<Asset> stored = store.find(sourceId, previewId(attachmentId, kind), version);
             if (stored.isPresent()) {
-                return new AssetContent(stored.get(), store.read(stored.get()));
+                return read(stored.get());
             }
         }
         HarvestSource source = source(sourceId);
@@ -583,6 +954,16 @@ public class Assets {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }
+        // Die Größe der Vorschau ist vorher unbekannt; es gilt die des Anhangs (unbekannt zählt als groß).
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, attachment.fileSize())) {
+            return fetchPreview(list, attachment, source, kinds, version, mayStore);
+        }
+    }
+
+    private AssetContent fetchPreview(PageAttachmentList list, PageAttachment attachment, HarvestSource source,
+                                      List<AttachmentPreview> kinds, String version, boolean mayStore) {
+        String sourceId = list.sourceId();
+        String attachmentId = attachment.attachmentId();
         SourceAccessException last = null;
         for (AttachmentPreview kind : kinds) {
             byte[] content;
@@ -687,11 +1068,12 @@ public class Assets {
         ImageDescriber model = describer();
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        return store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
+        DescribedImage described = store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
                 .flatMap(asset -> store.description(asset.sha256(), model.id(), model.modelVersion())
                         .map(description -> new DescribedImage(asset, description, false)))
                 .orElseThrow(() -> new ImageDescriptionException(ImageDescriptionException.Reason.NOT_FOUND,
                         "Noch keine Beschreibung", null));
+        return indexed(list, described);
     }
 
     /**
@@ -703,10 +1085,53 @@ public class Assets {
      *                                   {@code FAILED}
      */
     public DescribedImage describe(PageAttachmentList list, String attachmentId) {
-        ImageDescriber model = describer();
+        ImageDescriber model = describer(list.sourceId());
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        AssetContent content = content(list, attachmentId);
+        // Laden bzw. Lesen und der Modellaufruf belegen die Schranke je für sich (content, generate): Der Modellaufruf
+        // kann Minuten dauern und hält einen Platz nur, wenn das Bild nach seiner bekannten Größe groß ist.
+        return indexed(list, describe(model, content(list, attachmentId)));
+    }
+
+    /**
+     * Beschreibt ein Bild der Lese-Ansicht einer Seite (ADR 0021) wie {@link #describe(PageAttachmentList, String)}:
+     * lädt es bei Bedarf wie {@link #viewImage}, fragt das Modell je Bildbytes und Modell nur einmal. Nur Rasterbilder;
+     * SVG und andere Arten melden {@code NOT_AN_IMAGE}.
+     *
+     * @throws ImageDescriptionException {@code NOT_CONFIGURED}, {@code NOT_RELEASED}, {@code NOT_AN_IMAGE},
+     *                                   {@code BUSY} oder {@code FAILED}
+     * @throws SourceAccessException     wie {@link #viewImage}
+     * @throws AssetTooLargeException    wie {@link #viewImage}
+     */
+    public DescribedImage describeViewImage(String sourceId, String pageId, String pageVersion,
+                                            HarvestSource.ViewImage image) {
+        ImageDescriber model = describer(sourceId);
+        AssetContent content = viewImage(sourceId, pageId, pageVersion, image);
+        // Nur Rasterbilder: SVG ist Text und geht als Quelle in die Analyse, nicht als Bild an das Modell.
+        if (content.asset().kind() != AssetKind.IMAGE) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_AN_IMAGE, "Kein Rasterbild",
+                    null);
+        }
+        return describe(model, content);
+    }
+
+    /**
+     * Die vorhandene Beschreibung genau dieser Bildbytes durch das eingestellte Modell; erzeugt nichts und fragt die
+     * Quelle nicht.
+     */
+    public Optional<ImageDescription> storedDescription(String imageSha256) {
+        if (describer == null || !describer.available() || imageSha256 == null) {
+            return Optional.empty();
+        }
+        return store.description(imageSha256, describer.id(), describer.modelVersion());
+    }
+
+    /** Der eingestellte Beschreiber, leer ohne Beschreiber oder ohne Modell (ADR 0021). */
+    public Optional<ImageDescriber> describerInUse() {
+        return describer == null || !describer.available() ? Optional.empty() : Optional.of(describer);
+    }
+
+    private DescribedImage describe(ImageDescriber model, AssetContent content) {
         Asset asset = content.asset();
         Optional<ImageDescription> existing = store.description(asset.sha256(), model.id(), model.modelVersion());
         if (existing.isPresent()) {
@@ -736,7 +1161,21 @@ public class Assets {
         }
     }
 
+    /** Die Beschreibung kommt wie der Text eines Dokuments in den Volltextindex (#183). */
+    private DescribedImage indexed(PageAttachmentList list, DescribedImage described) {
+        if (indexDescription(list, described.asset(), described.description())) {
+            flushIndex();
+        }
+        return described;
+    }
+
     private ImageDescription generate(ImageDescriber model, AssetContent content) {
+        try (LargeFileGate.Permit permit = gate.enter(content.asset().sourceId(), content.asset().size())) {
+            return generateGated(model, content);
+        }
+    }
+
+    private ImageDescription generateGated(ImageDescriber model, AssetContent content) {
         if (!descriptions.tryAcquire()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
                     "Zu viele gleichzeitige Bildbeschreibungen", null);
@@ -781,11 +1220,21 @@ public class Assets {
     }
 
     private ImageDescriber describer() {
-        if (describer == null) {
+        if (describer == null || !describer.available()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_CONFIGURED,
                     "Kein Bildbeschreiber konfiguriert", null);
         }
         return describer;
+    }
+
+    /** Der Beschreiber für Bilder dieser Quelle; nicht freigegebene Bilder gehen nie an das Modell. */
+    private ImageDescriber describer(String sourceId) {
+        ImageDescriber model = describer();
+        if (!model.mayDescribe(sourceId)) {
+            throw new ImageDescriptionException(ImageDescriptionException.Reason.NOT_RELEASED,
+                    "Quelle nicht für den KI-Dienst freigegeben", null);
+        }
+        return model;
     }
 
     private static void requireImage(String mediaType, String title) {
@@ -811,6 +1260,13 @@ public class Assets {
         if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
         }
+        // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
+        try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
+            return downloadGated(source, pageId, attachment, keep);
+        }
+    }
+
+    private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
         AttachmentFile file;
         // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
         try {
@@ -900,6 +1356,42 @@ public class Assets {
 
     private HarvestSource source(String sourceId) {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
+    }
+
+    /**
+     * Ein Anhang als Strom; {@link #close()} schließt den Strom und gibt einen belegten Platz an der Schranke frei,
+     * mehrfaches Schließen ist harmlos.
+     */
+    public static final class AssetStream implements Closeable {
+
+        private final Asset asset;
+        private final InputStream content;
+        private final LargeFileGate.Permit permit;
+
+        AssetStream(Asset asset, InputStream content, LargeFileGate.Permit permit) {
+            this.asset = asset;
+            this.content = content;
+            this.permit = permit;
+        }
+
+        public Asset asset() {
+            return asset;
+        }
+
+        public InputStream content() {
+            return content;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                content.close();
+            } finally {
+                if (permit != null) {
+                    permit.close();
+                }
+            }
+        }
     }
 
     /** Ein Anhang mit seinen Bytes; die Bytes erscheinen nie in {@link #toString()}. */

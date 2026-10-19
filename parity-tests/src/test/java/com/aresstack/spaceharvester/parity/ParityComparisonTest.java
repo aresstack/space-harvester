@@ -91,6 +91,14 @@ class ParityComparisonTest {
         assertThat(missing.detail()).contains("Satz India.");
         assertThat(ParityComparison.macros("md", eac, eac, sentences, List.of("1009 children (not-collected)"))
                 .verdict()).isEqualTo(Verdict.CORE_WENIGER);
+        // Ungleiche Zählung von Ansicht und Storage: gewollt nicht eingesetzt (#426), steht im Detail, keine Lücke
+        Finding mismatch = ParityComparison.macros("md", eac, eac, sentences,
+                List.of("1012 contentbylabel (view-count-mismatch)"));
+        assertThat(mismatch.verdict()).isEqualTo(Verdict.GLEICH);
+        assertThat(mismatch.detail()).startsWith("gewollt anders: ").contains("1012 contentbylabel");
+        assertThat(ParityComparison.macros("md", eac, eac, sentences, List.of(
+                "1012 contentbylabel (view-count-mismatch)", "1009 children (not-collected)")).verdict())
+                .isEqualTo(Verdict.CORE_WENIGER);
     }
 
     @Test
@@ -145,6 +153,23 @@ class ParityComparisonTest {
     }
 
     @Test
+    void aGitSourceLacksWhatTheCoreDoesNotListOrLoad() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("git.main.documents", "README.md,docs/bilder/logo.png");
+        eac.put("git.main.title.README.md", "README.md");
+        eac.put("git.main.sentences.README.md", "0");
+        eac.put("git.tag.sentences.docs/a.md", "old");
+        Map<String, String> core = new LinkedHashMap<>();
+        core.put("git.main.documents", "README.md");
+        core.put("git.main.title.README.md", "README.md");
+        core.put("git.main.sentences.README.md", "0,1");
+
+        assertThat(ParityComparison.git(eac, core)).extracting(Finding::verdict).containsExactly(
+                Verdict.CORE_WENIGER, Verdict.GLEICH, Verdict.CORE_MEHR, Verdict.CORE_WENIGER);
+        assertThat(ParityComparison.git(eac, core)).extracting(Finding::key).startsWith("git.main.documents");
+    }
+
+    @Test
     void aSearchRunDiffersOnlyWhereTheCoreLoggedSomethingElse() {
         Map<String, String> eac = new LinkedHashMap<>();
         eac.put("run.live.query", "Architektur");
@@ -176,6 +201,43 @@ class ParityComparisonTest {
                         tuple("dokument-b.pdf.text", Verdict.CORE_WENIGER),
                         tuple("dokument-c.rtf.typ", Verdict.GLEICH),
                         tuple("dokument-c.rtf.text", Verdict.CORE_WENIGER));
+    }
+
+    @Test
+    void theChapterOrderCountsOnlyOnceTheFakeKnowsPositions() {
+        DocumentOutline eac = withHeadings(List.of(new DocumentOutline.Heading(1, "Handbuch"),
+                new DocumentOutline.Heading(2, "Zweck"), new DocumentOutline.Heading(2, "Betrieb"),
+                new DocumentOutline.Heading(2, "Nur EAC")));
+        DocumentOutline sameOrder = withHeadings(List.of(new DocumentOutline.Heading(1, "Handbuch"),
+                new DocumentOutline.Heading(2, "Zweck"), new DocumentOutline.Heading(2, "Nur Core"),
+                new DocumentOutline.Heading(2, "Betrieb")));
+        DocumentOutline otherOrder = withHeadings(List.of(new DocumentOutline.Heading(1, "Handbuch"),
+                new DocumentOutline.Heading(2, "Betrieb"), new DocumentOutline.Heading(2, "Zweck")));
+
+        // Was nur eine Seite hat, zählt hier nicht (das prüft „kapitel“), nur die Folge der gemeinsamen.
+        assertThat(ParityComparison.chapterOrder("md", eac, sameOrder, true).verdict()).isEqualTo(Verdict.GLEICH);
+        Finding loose = ParityComparison.chapterOrder("md", eac, otherOrder, false);
+        assertThat(loose.verdict()).isEqualTo(Verdict.NICHT_MESSBAR);
+        assertThat(loose.detail()).contains("Stelle 2", "zweck", "betrieb", "Patch 09");
+        assertThat(ParityComparison.chapterOrder("md", eac, otherOrder, true).verdict())
+                .isEqualTo(Verdict.CORE_WENIGER);
+    }
+
+    @Test
+    void aMentionShowsTheNameOfTheViewAndNothingTheEacHides() {
+        DocumentOutline eac = outline("Ansprechpartnerin ist Anna Schmidt. Von Bernd Wagner.", 0, 0);
+        List<String> names = List.of("Anna Schmidt", "Bernd Wagner", "Carla Conrad");
+        List<String> absent = List.of("8a7f0c1d", "Versteckte Person");
+
+        Finding same = ParityComparison.mentions("md", eac, eac, names, absent);
+        assertThat(same.verdict()).isEqualTo(Verdict.GLEICH);
+        assertThat(same.eac()).isEqualTo("2 Namen");
+        Finding id = ParityComparison.mentions("md", eac,
+                outline("Ansprechpartnerin ist @8a7f0c1d. Von Bernd Wagner.", 0, 0), names, absent);
+        assertThat(id.verdict()).isEqualTo(Verdict.CORE_WENIGER);
+        assertThat(id.detail()).contains("Name fehlt: Anna Schmidt", "nur im Core: 8a7f0c1d");
+        assertThat(ParityComparison.mentions("md", eac, outline(eac.text() + " Versteckte Person", 0, 0), names,
+                absent).verdict()).isEqualTo(Verdict.CORE_WENIGER);
     }
 
     private static DocumentOutline outline(String text, int images, int notes) {

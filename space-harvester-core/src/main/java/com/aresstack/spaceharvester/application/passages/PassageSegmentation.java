@@ -119,6 +119,11 @@ public final class PassageSegmentation {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
     }
 
+    /** Ob ein Satzmodell die Sätze trennt, nicht der Regel-Splitter ({@link SentenceSegmenter#splitter}). */
+    public boolean sentenceModel() {
+        return !"splitter".equals(sentences.id());
+    }
+
     /**
      * Was die Passagen bestimmt (Verfahren, Parameter, Satzmodell), z. B.
      * {@code semantic-v2;window=3;threshold=0.35;min=2;max=8;maxTokens=350;sentences=opennlp-de}, wie im Client.
@@ -316,8 +321,11 @@ public final class PassageSegmentation {
         return result;
     }
 
-    /** Die Blöcke des Textes ohne Überschriften, mit dem Abschnittspfad, in dem sie stehen. */
-    static List<Block> blocks(PageText text) {
+    /**
+     * Die Blöcke des Textes ohne Überschriften, mit dem Abschnittspfad, in dem sie stehen; auch die Absätze der
+     * Satzanalyse ({@code statements}, #108).
+     */
+    public static List<Block> blocks(PageText text) {
         String content = text.text();
         List<PageText.Section> sections = text.sections();
         boolean lines = text.schema().startsWith("confluence-storage-text/");
@@ -429,7 +437,15 @@ public final class PassageSegmentation {
         return path.length() == 0 ? null : path.toString();
     }
 
-    record Block(Kind kind, String section, int start, int end) {
+    /**
+     * Ein Strukturblock.
+     *
+     * @param kind    Art
+     * @param section Überschriftenkette oder {@code null}
+     * @param start   erstes Zeichen in {@link PageText#text()}
+     * @param end     Ende, exklusiv
+     */
+    public record Block(Kind kind, String section, int start, int end) {
     }
 
     private record Split(int from, int to, Boundary boundary, Double similarity) {

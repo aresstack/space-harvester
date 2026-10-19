@@ -226,8 +226,9 @@ class HarvesterFullTextTest {
     }
 
     private Harvester files(Harvester.Builder builder) {
-        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt.
-        return builder.searchWait(Duration.ofSeconds(10)).source(new SourceSettingsConfig("docs", "files", "Dokumente", null, null,
+        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt. Die Suche
+        // wartet, bis der Stapel geladen ist; die Grenze gilt nur gegen Hänger, unter CI-Last darf Laden länger dauern.
+        return builder.searchWait(Duration.ofSeconds(120)).source(new SourceSettingsConfig("docs", "files", "Dokumente", null, null,
                 Map.of("directory", files.toString()))).dataDirectory(data).build();
     }
 

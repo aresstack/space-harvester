@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.ProcessingNotAllowedException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,11 +22,18 @@ import java.util.regex.Pattern;
  * <p>Zerlegung (#181, wie {@code KnowledgeChunker} im Enterprise AI Client): Abschnitte sind harte Grenzen. Innerhalb
  * eines Abschnitts werden Sätze bis zum Token-Budget der {@link TextSegmentation} gepackt (Standard 350 Tokens,
  * gezählt nach Wörtern und Symbolen); das nächste Stück
- * beginnt mit dem letzten Satz des vorigen. Ein Satz über dem Budget wird an Wortgrenzen geteilt. Zusätzlich hat kein
- * Stück mehr als {@link #maxChunkChars} Zeichen. Eingebettet wird jedes Stück mit der Überschriftenkette seines
- * Abschnitts davor, wenn es nicht selbst mit der Überschrift beginnt; {@code charStart}/{@code charEnd} bleiben
+ * beginnt mit dem letzten Satz des vorigen. Ein Satz über dem Budget wird an Wortgrenzen geteilt. Eine Zeichengrenze
+ * je Stück gibt es wie dort nur, wenn {@link #maxChunkChars} gesetzt ist (Schutz für Dienste mit Zeichengrenze;
+ * {@code 0}, der Standard, schaltet sie ab). Eingebettet wird jedes Stück mit der Überschriftenkette seines
+ * Abschnitts davor, wenn es nicht selbst mit der Überschrift beginnt; die Kette belegt wie {@code fitHeading} dort
+ * höchstens das halbe Token-Budget, äußere Überschriften entfallen zuerst. {@code charStart}/{@code charEnd} bleiben
  * Stellen in der Textprojektion. Anders als dort entstehen die Stücke als Ausschnitte des Textes, damit Treffer auf
  * ihre Stelle zeigen.
+ *
+ * <p>Länge der Anfrage (#181, wie {@code RetrieveKnowledgeUseCase.MAX_QUERY_TOKENS} im Enterprise AI Client): Eine
+ * Suchanfrage über dem Token-Budget der {@link TextSegmentation} (dieselbe Grenze wie für die eingebetteten Stücke,
+ * {@code embedding-chunk-tokens}) wird vor dem Einbetten an einer Wortgrenze gekürzt, statt den Dienst mit einem Text
+ * über dessen Tokengrenze scheitern zu lassen. Ins Log kommen nur die Tokenzahlen, nie die Anfrage.
  *
  * <p>Die Version enthält Modell und Dimension: Ein Modellwechsel macht genau diese Ergebnisse veraltet, wie eine neue
  * Prozessorversion. Wie jeder Prozessor sieht er nur die sichere Projektion, nie Makroinhalte oder Anhänge.
@@ -34,7 +42,11 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     /** Version der Zerlegung und des Ergebnisformats; 2 seit der Zerlegung nach Sätzen und Token-Budget (#181). */
     static final String FORMAT = "2";
+    /** Kürzung der Überschriftenkette wie {@code KnowledgeChunker.fitHeading} im Enterprise AI Client. */
+    static final String HEADING = "heading:eac";
     static final int MAX_CHUNKS = 200;
+
+    private static final System.Logger LOG = System.getLogger(EmbeddingProcessor.class.getName());
 
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._@/:-]{1,100}");
 
@@ -43,6 +55,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     private final TextSegmentation segmentation;
     private final Predicate<String> sources;
     private final boolean remote;
+    /** Absätze wie askai arch statt fester Stücke; {@code null}: Zerlegung nach Token-Budget. */
+    private final PassageChunking passages;
 
     /** Für alle Quellen, im aufrufenden Thread (Tests, eingebettete Modelle). */
     public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation) {
@@ -80,10 +94,40 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         this.sources = Objects.requireNonNull(sources, "sources");
         this.remote = remote;
         this.provider = Objects.requireNonNull(provider, "provider");
-        if (maxChunkChars < 100) {
-            throw new IllegalArgumentException("maxChunkChars muss mindestens 100 sein");
+        if (maxChunkChars != 0 && maxChunkChars < 100) {
+            throw new IllegalArgumentException("maxChunkChars muss 0 (ohne Zeichengrenze) oder mindestens 100 sein");
         }
         this.maxChunkChars = maxChunkChars;
+        this.passages = null;
+    }
+
+    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages) {
+        this.segmentation = base.segmentation;
+        this.sources = base.sources;
+        this.remote = base.remote;
+        this.provider = base.provider;
+        this.maxChunkChars = base.maxChunkChars;
+        this.passages = passages;
+    }
+
+    /**
+     * Derselbe Prozessor, der wie {@code IndexKnowledgeUseCase.withPassages} im Enterprise AI Client je semantischem
+     * Absatz ein eigenes Embedding bildet (#181, ADR 0020) statt Sätze bis zum Token-Budget zu packen. Die Sätze für die
+     * Themengrenzen bettet dasselbe Modell ein; nur bei gesetzter Zeichengrenze wird ein Absatz darüber wie bisher geteilt.
+     * Die Version nennt die Zerlegung: Vorhandene Embeddings veralten und werden aus dem Cache neu berechnet.
+     */
+    public EmbeddingProcessor withPassages(PassageChunking value) {
+        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"));
+    }
+
+    /** Ob die Stücke semantische Absätze sind ({@link #withPassages}). */
+    public boolean passages() {
+        return passages != null;
+    }
+
+    /** Ob die Absätze ({@link #passages}) Sätze aus einem Satzmodell bilden statt aus dem Regel-Splitter. */
+    public boolean sentenceModel() {
+        return passages != null && passages.sentenceModel();
     }
 
     private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
@@ -147,14 +191,28 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     private String version(EmbeddingProvider current) {
         return FORMAT + "+" + current.modelId() + "+" + current.dimensions() + "+" + maxChunkChars + "+"
-                + segmentation.id();
+                + segmentation.id() + "+" + HEADING + (passages == null ? "" : "+passages:" + passages.fingerprint());
+    }
+
+    /**
+     * Prüft die Freigabe der Quelle erst hier, beim Rechnen: Eine Berechnung, die vor dem Entzug eingereiht wurde,
+     * schickt danach nichts mehr an den Dienst (ADR 0015).
+     *
+     * @throws ProcessingNotAllowedException wenn Inhalte der Quelle nicht an den Dienst gehen dürfen
+     */
+    @Override
+    public EnrichmentOutput process(PageKey key, PageText text) {
+        if (!sources.test(key.sourceId())) {
+            throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+        }
+        return process(text);
     }
 
     @Override
     public EnrichmentOutput process(PageText text) {
         // Ein Modell für den ganzen Lauf, auch wenn es währenddessen gewechselt wird.
         EmbeddingProvider provider = provider();
-        List<Chunk> chunks = chunks(text);
+        List<Chunk> chunks = passages == null ? chunks(text) : passageChunks(text, provider);
         List<String> warnings = new ArrayList<>();
         if (chunks.size() > MAX_CHUNKS) {
             warnings.add("Nur die ersten " + MAX_CHUNKS + " von " + chunks.size() + " Abschnitten eingebettet");
@@ -246,7 +304,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
          *                                       liefert
          */
         public float[] embedQuery(String text) {
-            return EmbeddingProcessor.embedQuery(provider, text);
+            return EmbeddingProcessor.this.embedQuery(provider, text);
         }
     }
 
@@ -260,9 +318,9 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return embedQuery(provider(), text);
     }
 
-    private static float[] embedQuery(EmbeddingProvider provider, String text) {
+    private float[] embedQuery(EmbeddingProvider provider, String text) {
         Objects.requireNonNull(text, "text");
-        List<float[]> vectors = provider.embedQueries(List.of(text));
+        List<float[]> vectors = provider.embedQueries(List.of(shortened(text)));
         float[] vector = vectors == null || vectors.size() != 1 ? null : vectors.get(0);
         if (vector == null || vector.length != provider.dimensions()) {
             throw new EmbeddingUnavailableException("Modell lieferte keinen Vektor der Dimension "
@@ -274,6 +332,41 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             }
         }
         return vector.clone();
+    }
+
+    /**
+     * Die Anfrage, höchstens {@link TextSegmentation#maxTokens()} Token lang, an einer Wortgrenze gekürzt; wie
+     * {@code RetrieveKnowledgeUseCase.shortened} im Enterprise AI Client.
+     */
+    String shortened(String query) {
+        int limit = segmentation.maxTokens();
+        int tokens = segmentation.tokens(query);
+        if (tokens <= limit) {
+            return query;
+        }
+        StringBuilder kept = new StringBuilder();
+        int keptTokens = 0;
+        for (String word : query.trim().split("\\s+")) {
+            int wordTokens = segmentation.tokens(word);
+            if (keptTokens + wordTokens > limit) {
+                break;
+            }
+            if (kept.length() > 0) {
+                kept.append(' ');
+            }
+            kept.append(word);
+            keptTokens += wordTokens;
+        }
+        if (kept.length() == 0) {
+            // ein einziges überlanges "Wort": höchstens ein Token je Zeichen
+            String head = query.trim().substring(0, Math.min(query.trim().length(), limit));
+            kept.append(head);
+            keptTokens = segmentation.tokens(head);
+        }
+        // Nur Tokenzahlen, nie die Anfrage.
+        LOG.log(System.Logger.Level.INFO, "Anfrage für die semantische Suche von {0} auf {1} Token gekürzt"
+                + " (Tokengrenze des Embedding-Modells)", tokens, keptTokens);
+        return kept.toString();
     }
 
     private static void vector(StringBuilder json, float[] vector, int dimensions) {
@@ -290,6 +383,24 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         json.append(']');
     }
 
+    /** Je Absatz ein Stück, eingebettet ohne Vorspann wie im Client; zu lange Absätze wie bisher geteilt. */
+    private List<Chunk> passageChunks(PageText text, EmbeddingProvider provider) {
+        Generation generation = new Generation(provider, version(provider));
+        List<Chunk> chunks = new ArrayList<>();
+        for (PassageChunking.Piece piece : passages.passages(text, generation::embed)) {
+            if (piece.end() <= piece.start()) {
+                continue;
+            }
+            if (!charLimited() || piece.end() - piece.start() <= maxChunkChars) {
+                chunks.add(new Chunk(piece.start(), piece.end(), "", piece.section()));
+            } else {
+                chunk(text.text(), new Span(piece.start(), piece.end(), piece.section() == null
+                        || piece.section().isBlank() ? List.of() : List.of(piece.section().strip())), chunks);
+            }
+        }
+        return chunks;
+    }
+
     /** Stücke je Abschnitt, Sätze bis zum Budget gepackt, mit einem Satz Überlappung. */
     List<Chunk> chunks(PageText text) {
         List<Span> spans = new ArrayList<>();
@@ -297,20 +408,18 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         int previous = 0;
         for (PageText.Section section : text.sections()) {
             if (section.start() > previous) {
-                spans.add(new Span(previous, section.start(), null, null));
+                spans.add(new Span(previous, section.start(), List.of()));
             }
             while (!open.isEmpty() && open.getLast().level() >= section.level()) {
                 open.removeLast();
             }
-            String ancestors = open.isEmpty() ? null
-                    : String.join(" > ", open.stream().map(PageText.Section::heading).toList());
             open.add(section);
-            spans.add(new Span(section.start(), section.end(),
-                    String.join(" > ", open.stream().map(PageText.Section::heading).toList()), ancestors));
+            spans.add(new Span(section.start(), section.end(), open.stream().map(PageText.Section::heading)
+                    .filter(heading -> heading != null && !heading.isBlank()).map(String::strip).toList()));
             previous = section.end();
         }
         if (previous < text.text().length()) {
-            spans.add(new Span(previous, text.text().length(), null, null));
+            spans.add(new Span(previous, text.text().length(), List.of()));
         }
         List<Chunk> chunks = new ArrayList<>();
         for (Span span : spans) {
@@ -320,12 +429,12 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     }
 
     private void chunk(String text, Span span, List<Chunk> chunks) {
-        String section = span.heading() == null || span.heading().isBlank() ? null : span.heading().strip();
+        String section = span.headings().isEmpty() ? null : String.join(" > ", span.headings());
         String heading = section;
-        String prefix = prefix(section);
+        String prefix = prefix(span.headings());
         // Beginnt das Stück mit der Überschrift selbst, stehen davor nur die übergeordneten Überschriften.
-        String opening = prefix(span.ancestors() == null || span.ancestors().isBlank() ? null
-                : span.ancestors().strip());
+        String opening = prefix(span.headings().isEmpty() ? List.of()
+                : span.headings().subList(0, span.headings().size() - 1));
         List<int[]> units = new ArrayList<>();
         for (int[] sentence : sentences(text, span.start(), span.end())) {
             units.addAll(fit(text, sentence, prefix));
@@ -351,14 +460,56 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         }
     }
 
-    /** Überschriftenkette als Vorspann, höchstens ein Viertel eines Stücks, die hinteren Glieder zuerst. */
-    private String prefix(String headings) {
-        if (headings == null) {
-            return "";
+    /** Überschriftenkette als Vorspann, gekürzt wie {@link #fitHeading}; leer ohne Überschrift. */
+    private String prefix(List<String> headings) {
+        List<String> path = new ArrayList<>(fitHeading(headings));
+        if (charLimited()) {
+            // Schutz bei gesetzter Zeichengrenze: nach Zeichen höchstens ein Viertel des Stücks, gekürzt wie
+            // fitHeading: äußere Überschriften zuerst, dann die innerste an einer Wortgrenze.
+            int limit = maxChunkChars / 4;
+            while (path.size() > 1 && String.join(" > ", path).length() > limit) {
+                path.removeFirst();
+            }
+            if (path.size() == 1 && path.getFirst().length() > limit) {
+                int cut = path.getFirst().lastIndexOf(' ', limit);
+                path = cut > 0 ? List.of(path.getFirst().substring(0, cut)) : List.of();
+            }
         }
-        String kept = headings.length() > maxChunkChars / 4 ? headings.substring(headings.length() - maxChunkChars / 4)
-                : headings;
-        return kept + "\n\n";
+        return path.isEmpty() ? "" : String.join(" > ", path) + "\n\n";
+    }
+
+    /**
+     * Kopie von {@code KnowledgeChunker.fitHeading} im Enterprise AI Client: Begrenzt die Überschriftenzeile auf das
+     * halbe Budget; zuerst entfallen äußere Überschriften, dann wird die innerste an Wortgrenzen gekürzt; passt nicht
+     * einmal ihr erstes Wort, entfällt die Überschrift. So bleibt für den Text immer mindestens die Hälfte.
+     */
+    private List<String> fitHeading(List<String> headingPath) {
+        int limit = segmentation.maxTokens() / 2;
+        List<String> path = new ArrayList<>(headingPath);
+        while (path.size() > 1 && segmentation.tokens(String.join(" > ", path)) > limit) {
+            path.removeFirst();
+        }
+        if (path.size() == 1 && segmentation.tokens(path.getFirst()) > limit) {
+            String[] words = path.getFirst().split("\\s+");
+            if (segmentation.tokens(words[0]) > limit) {
+                return List.of();
+            }
+            StringBuilder kept = new StringBuilder(words[0]);
+            for (int i = 1; i < words.length; i++) {
+                String longer = kept + " " + words[i];
+                if (segmentation.tokens(longer) > limit) {
+                    break;
+                }
+                kept.setLength(0);
+                kept.append(longer);
+            }
+            path.set(0, kept.toString());
+        }
+        return path;
+    }
+
+    private boolean charLimited() {
+        return maxChunkChars > 0;
     }
 
     /** Sätze als Stellen im Text, ohne Leerraum am Rand; Zeilen und Absätze sind eigene Grenzen. */
@@ -421,7 +572,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     /** Das späteste Ende ab {@code start + 1}, bei dem das Stück noch passt; mindestens ein Zeichen. */
     private int longestFit(String text, String prefix, int start, int limit) {
         int low = start + 1;
-        int high = Math.min(limit, start + Math.max(1, maxChunkChars - prefix.length()));
+        int high = charLimited() ? Math.min(limit, start + Math.max(1, maxChunkChars - prefix.length())) : limit;
         while (low < high) {
             int middle = (low + high + 1) >>> 1;
             if (fits(text, prefix, start, middle)) {
@@ -434,12 +585,12 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     }
 
     private boolean fits(String text, String prefix, int start, int end) {
-        return prefix.length() + end - start <= maxChunkChars
+        return (!charLimited() || prefix.length() + end - start <= maxChunkChars)
                 && segmentation.tokens(prefix + text.substring(start, end)) <= segmentation.maxTokens();
     }
 
-    /** Ein Abschnitt oder Text zwischen Abschnitten mit seiner Überschriftenkette. */
-    private record Span(int start, int end, String heading, String ancestors) {
+    /** Ein Abschnitt oder Text zwischen Abschnitten mit seiner Überschriftenkette, die äußere zuerst. */
+    private record Span(int start, int end, List<String> headings) {
     }
 
     /**

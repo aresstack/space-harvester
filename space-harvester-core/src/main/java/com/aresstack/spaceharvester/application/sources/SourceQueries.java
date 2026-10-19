@@ -26,6 +26,11 @@ public class SourceQueries {
         return catalog.all();
     }
 
+    /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
+    public List<SourceType> types() {
+        return catalog.types();
+    }
+
     /**
      * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws SourceAccessException  wenn die Quelle nicht antworten kann
@@ -143,6 +148,15 @@ public class SourceQueries {
      */
     public boolean confirmsDeletion(String sourceId) {
         return source(sourceId).confirmsDeletion();
+    }
+
+    /**
+     * Ob eine Seite außerhalb des Umfangs der Quelle liegt ({@link HarvestSource#outsideScope}).
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public boolean outsideScope(String sourceId, String pageId) {
+        return source(sourceId).outsideScope(pageId);
     }
 
     /**

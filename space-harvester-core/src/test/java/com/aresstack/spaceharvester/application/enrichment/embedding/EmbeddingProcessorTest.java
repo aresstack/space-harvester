@@ -155,6 +155,65 @@ class EmbeddingProcessorTest {
     }
 
     @Test
+    void withoutACharacterLimitOnlyTheTokenBudgetCountsAsInTheClient() {
+        // 300 Tokens in rund 2 700 Zeichen: wie KnowledgeChunker ein Stück, die frühere Grenze von 1 500 Zeichen teilte.
+        String text = "Donaudampfschifffahrtsgesellschaftskapitän ".repeat(60).strip() + ".";
+        EmbeddingProcessor processor = new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 0, SEGMENTS);
+
+        List<EmbeddingProcessor.Chunk> chunks = processor.chunks(new PageText("t/v1", text, List.of()));
+
+        assertThat(text.length()).isGreaterThan(1500);
+        assertThat(chunks).singleElement().satisfies(chunk -> {
+            assertThat(chunk.start()).isZero();
+            assertThat(chunk.end()).isEqualTo(text.length());
+        });
+        assertThat(new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 1500, SEGMENTS).chunks(
+                new PageText("t/v1", text, List.of()))).hasSizeGreaterThan(1);
+        assertThat(processor.version()).contains("+" + EmbeddingProcessor.HEADING)
+                .isNotEqualTo(new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 1500, SEGMENTS).version());
+        assertThatThrownBy(() -> new EmbeddingProcessor(new FakeEmbeddingProvider("m", 2), 99, SEGMENTS))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aLongHeadingPathKeepsAtMostHalfTheBudgetDroppingOuterHeadingsFirstAsInTheClient() {
+        // Wie KnowledgeChunker.fitHeading: höchstens 175 von 350 Tokens; äußere Überschriften entfallen zuerst.
+        String outer = "Außen " + "breit ".repeat(150).strip();
+        String inner = "Innen " + "eng ".repeat(40).strip();
+        String body = "Ein Satz über den Betrieb. ".repeat(80).strip();
+        String text = outer + "\n" + inner + "\n" + body;
+        int at = text.indexOf(inner);
+        PageText page = new PageText("t/v1", text, List.of(new PageText.Section(outer, 1, 0, at),
+                new PageText.Section(inner, 2, at, text.length())));
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+
+        new EmbeddingProcessor(provider, 0, SEGMENTS).process(page);
+
+        assertThat(provider.calls.getFirst()).anySatisfy(input ->
+                assertThat(input).startsWith(inner + "\n\nEin Satz"));
+        assertThat(provider.calls.getFirst()).noneSatisfy(input ->
+                assertThat(input).contains(outer + " > " + inner));
+    }
+
+    @Test
+    void anOverlongInnermostHeadingIsShortenedAtWordBoundariesAsInTheClient() {
+        String heading = "Kapitel " + "lang ".repeat(400).strip();
+        String text = heading + "\n" + "Ein Satz über den Betrieb. ".repeat(30).strip();
+        PageText page = new PageText("t/v1", text, List.of(new PageText.Section(heading, 1, 0, text.length())));
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+
+        new EmbeddingProcessor(provider, 0, SEGMENTS).process(page);
+
+        List<String> headed = provider.calls.getFirst().stream().filter(input -> input.contains("\n\n")).toList();
+        assertThat(headed).isNotEmpty().allSatisfy(input -> {
+            String line = input.substring(0, input.indexOf("\n\n"));
+            assertThat(line).startsWith("Kapitel lang").endsWith("lang");
+            assertThat(SEGMENTS.tokens(line)).isLessThanOrEqualTo(SEGMENTS.maxTokens() / 2);
+            assertThat(SEGMENTS.tokens(input)).isLessThanOrEqualTo(SEGMENTS.maxTokens());
+        });
+    }
+
+    @Test
     void anEmptyPageCallsNoModel() {
         FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
 
@@ -213,6 +272,59 @@ class EmbeddingProcessorTest {
 
         assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 2, 0, 1));
         assertThat(store.find(page.key()).get(0).errorCode()).isEqualTo(Enrichments.PROCESSOR_ERROR);
+    }
+
+    @Test
+    void aLongQueryIsShortenedAtAWordBoundaryToTheChunkBudgetBeforeItIsEmbedded() {
+        // 40 Sätze zu je 10 Tokens: über dem Standardbudget von 350 Tokens.
+        StringBuilder query = new StringBuilder();
+        for (int i = 0; i < 40; i++) {
+            query.append("Satz ").append(i).append(" fragt etwas über den nächtlichen Betrieb. ");
+        }
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+        EmbeddingProcessor processor = new EmbeddingProcessor(provider, 1500, SEGMENTS);
+
+        processor.current().orElseThrow().embedQuery(query.toString());
+
+        String embedded = provider.calls.getLast().getFirst();
+        assertThat(query.toString()).startsWith(embedded);
+        assertThat(SEGMENTS.tokens(embedded)).isLessThanOrEqualTo(350).isGreaterThan(340);
+
+        // Die Grenze ist das eingestellte Budget je Stück (embedding-chunk-tokens), gekürzt wie im Client an einer
+        // Wortgrenze, auch mitten im zweiten Satz.
+        FakeEmbeddingProvider small = new FakeEmbeddingProvider("m", 2);
+        new EmbeddingProcessor(small, 1500, KnowledgeTextSegmentation.of(10, 1))
+                .embedQuery("Der Drucker im zweiten Stock druckt nicht. Er zeigt einen Papierstau an.");
+        assertThat(small.calls).containsExactly(List.of("Der Drucker im zweiten Stock druckt nicht. Er zeigt"));
+    }
+
+    @Test
+    void aShortQueryIsEmbeddedUnchanged() {
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+
+        new EmbeddingProcessor(provider, 1500, SEGMENTS).embedQuery("  Wer druckt nachts?  ");
+
+        assertThat(provider.calls).containsExactly(List.of("  Wer druckt nachts?  "));
+    }
+
+    @Test
+    void aSingleOverlongSentenceIsShortenedAtAWordBoundary() {
+        String query = "wort ".repeat(400) + "Ende.";
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+
+        new EmbeddingProcessor(provider, 1500, SEGMENTS).embedQuery(query);
+
+        assertThat(provider.calls).containsExactly(List.of("wort ".repeat(350).strip()));
+    }
+
+    @Test
+    void aSingleOverlongWordIsCutToOneTokenPerCharacter() {
+        String query = "(){}".repeat(200);
+        FakeEmbeddingProvider provider = new FakeEmbeddingProvider("m", 2);
+
+        new EmbeddingProcessor(provider, 1500, SEGMENTS).embedQuery(query);
+
+        assertThat(provider.calls).containsExactly(List.of(query.substring(0, 350)));
     }
 
     private static Enrichments enrichments(InMemoryEnrichmentStore store, EmbeddingProvider provider) {

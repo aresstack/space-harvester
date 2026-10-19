@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import java.util.function.Consumer;
@@ -179,6 +180,97 @@ class SpaceSyncJobsTest {
             assertThat(store.confirmed("wiki", "DOC")).isPresent();
             assertThat(reconciliation.cancel("wiki", "DOC")).isTrue();
             assertThat(reconciliation.schedules()).isEmpty();
+        }
+    }
+
+    @Test
+    void aScheduledInventoryListsTheWholeSpace() {
+        syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+        source.remove("2");
+
+        try (Reconciliation inventories = Reconciliation.inventories(syncs, null, FakeSource.CLOCK,
+                InventoryLog.inMemory())) {
+            inventories.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.FULL);
+            inventories.due(inventories.entry("wiki", "DOC"));
+            runQueued();
+
+            Reconciliation.Schedule done = inventories.schedules().get(0);
+            assertThat(done.lastOutcome()).isEqualTo(Reconciliation.Outcome.STARTED);
+            // Die Inventur sieht, dass Seite 2 fehlt; das Nachholen der Änderungen sähe es nicht (ADR 0014).
+            SpaceSyncJobs.SyncJob job = syncs.status(done.lastJobId(), null);
+            assertThat(job.status().state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.summary().withheld()).isEqualTo(1);
+            assertThat(job.summary().generation()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void theInventoryIsDueAnIntervalAfterTheLastOneNotAfterTheRestart() {
+        InventoryLog log = InventoryLog.inMemory();
+        Instant now = FakeSource.CLOCK.instant();
+        try (Reconciliation first = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, log)) {
+            // Ohne Vermerk zählt der Abstand ab dem ersten Einplanen, und das wird vermerkt.
+            assertThat(first.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY).nextAt())
+                    .isEqualTo(now.plus(Duration.ofDays(7)));
+        }
+        assertThat(log.since("wiki", "DOC")).contains(now);
+
+        // Ein Neustart sechs Tage später setzt die Uhr nicht zurück: fällig bleibt Tag 7.
+        log.mark("wiki", "DOC", now.minus(Duration.ofDays(6)));
+        try (Reconciliation restarted = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, log)) {
+            assertThat(restarted.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY).nextAt())
+                    .isEqualTo(now.plus(Duration.ofDays(1)));
+        }
+
+        // Überfällig: kurz nach dem Einplanen.
+        log.mark("wiki", "DOC", now.minus(Duration.ofDays(30)));
+        try (Reconciliation overdue = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, log)) {
+            assertThat(overdue.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY).nextAt())
+                    .isEqualTo(now.plus(Reconciliation.CATCH_UP));
+        }
+    }
+
+    @Test
+    void anUnwritableLogDoesNotStopTheSchedule() {
+        InventoryLog broken = new InventoryLog() {
+            @Override
+            public java.util.Optional<Instant> since(String sourceId, String spaceKey) {
+                return java.util.Optional.empty();
+            }
+
+            @Override
+            public void mark(String sourceId, String spaceKey, Instant at) {
+                throw new java.io.UncheckedIOException(new java.io.IOException("schreibgeschützt"));
+            }
+        };
+        try (Reconciliation inventories = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, broken)) {
+            assertThat(inventories.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY).nextAt())
+                    .isEqualTo(FakeSource.CLOCK.instant().plus(Duration.ofDays(7)));
+            inventories.due(inventories.entry("wiki", "DOC"));
+            assertThat(inventories.schedules().get(0).lastOutcome()).isEqualTo(Reconciliation.Outcome.STARTED);
+            runQueued();
+        }
+    }
+
+    @Test
+    void anInventoryBlockedByARunningSyncIsRetriedAfterAMinute() {
+        InventoryLog log = InventoryLog.inMemory();
+        syncs.start("wiki", "DOC", "client:a");
+        try (Reconciliation inventories = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, log)) {
+            inventories.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY);
+            inventories.due(inventories.entry("wiki", "DOC"));
+
+            Reconciliation.Schedule blocked = inventories.schedules().get(0);
+            assertThat(blocked.lastOutcome()).isEqualTo(Reconciliation.Outcome.ALREADY_RUNNING);
+            assertThat(blocked.nextAt()).isEqualTo(FakeSource.CLOCK.instant().plus(Reconciliation.MIN_INTERVAL));
+            // Kein Vermerk: Die Inventur lief nicht.
+            assertThat(log.since("wiki", "DOC")).contains(FakeSource.CLOCK.instant());
+
+            runQueued();
+            inventories.due(inventories.entry("wiki", "DOC"));
+            assertThat(inventories.schedules().get(0).nextAt())
+                    .isEqualTo(FakeSource.CLOCK.instant().plus(Duration.ofDays(7)));
         }
     }
 

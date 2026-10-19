@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.sun.net.httpserver.HttpServer;
@@ -36,6 +37,9 @@ class RemoteAiTest {
     private final List<String> authorizations = new CopyOnWriteArrayList<>();
     private final List<String> bodies = new CopyOnWriteArrayList<>();
     private volatile int status = 200;
+    private volatile String chatAnswer = """
+            {"choices":[{"index":0,"message":{"role":"assistant",
+              "content":"{\\"queries\\":[{\\"text\\":\\"Nachtlauf Abbruch\\",\\"priority\\":1}]}"}}]}""";
 
     @BeforeEach
     void start() throws IOException {
@@ -64,9 +68,7 @@ class RemoteAiTest {
         server.createContext("/v1/chat/completions", exchange -> {
             authorizations.add(String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             bodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            respond(exchange, """
-                    {"choices":[{"index":0,"message":{"role":"assistant",
-                      "content":"{\\"queries\\":[{\\"text\\":\\"Nachtlauf Abbruch\\",\\"priority\\":1}]}"}}]}""");
+            respond(exchange, chatAnswer);
         });
         server.start();
     }
@@ -169,6 +171,76 @@ class RemoteAiTest {
                     assertThat(e.reason()).isEqualTo(AiServiceException.Reason.UNAUTHORIZED);
                     assertThat(e.getMessage()).doesNotContain(KEY).doesNotContain("Nachtlauf");
                 });
+    }
+
+    @Test
+    void asksTheChatModelForAcronymExpansionsAndFollowsTheReleasePerSource() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null,
+                Set.of("wiki"));
+        ChatAcronymExpansionModel model = new ChatAcronymExpansionModel(() -> settings, this::remote);
+
+        String answer = model.complete("Schreibe Akronyme aus.", "{\"acronyms\":[]}");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"gpt-x\"")
+                .contains("Schreibe Akronyme aus.");
+        assertThat(model.available()).isTrue();
+        assertThat(model.mayProcess("wiki")).isTrue();
+        assertThat(model.mayProcess("intern")).isFalse();
+        assertThat(model.version()).startsWith(ChatAcronymExpansionModel.ID + ":gpt-x@")
+                .doesNotContain(base().getHost());
+        assertThat(new ChatAcronymExpansionModel(() -> AiServiceSettings.NONE, this::remote).available()).isFalse();
+    }
+
+    @Test
+    void describesAnImageWithTheVisionModelAndThePromptOfTheEnterpriseAiClient() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of(),
+                null, "qwen-vl");
+
+        String answer = remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"qwen-vl\"")
+                .contains("Beschreibe dieses Bild sachlich auf Deutsch in höchstens fünf Sätzen")
+                .contains("\"type\":\"image_url\"").contains("data:image/png;base64,AQID")
+                .doesNotContain("gpt-x");
+    }
+
+    @Test
+    void namesTopicSectionsWithTheChatSectionLabelerOfTheEnterpriseAiClient() {
+        chatAnswer = """
+                {"choices":[{"index":0,"message":{"role":"assistant","content":"1: Belegimport\\n2) Urlaubsantrag"}}]}""";
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        NavigationLabelModel.Labels labels = remote(settings).sectionLabels(null,
+                List.of("Belege kommen über den Import. " + "x".repeat(800), "Urlaub beantragt man."));
+
+        assertThat(labels.complete()).isTrue();
+        assertThat(labels.labels()).containsExactly("Belegimport", "Urlaubsantrag");
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"gpt-x\"")
+                .contains("Du benennst Abschnitte eines Dokuments").contains("x".repeat(600))
+                .doesNotContain("x".repeat(700));
+    }
+
+    @Test
+    void aFailingChatModelKeepsTheAnalysisLabelsAndSaysSo() {
+        status = 503;
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        NavigationLabelModel.Labels labels = remote(settings).sectionLabels("Titel", List.of("Text eins.", "Zwei."));
+
+        assertThat(labels.complete()).isFalse();
+        assertThat(labels.labels()).containsExactly(null, null);
+    }
+
+    @Test
+    void withoutVisionModelNoImageIsSent() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        assertThatThrownBy(() -> remote(settings).describeImage(new byte[] {1}, "image/png"))
+                .isInstanceOfSatisfying(AiServiceException.class,
+                        e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.NOT_CONFIGURED));
+        assertThat(bodies).isEmpty();
     }
 
     @Test

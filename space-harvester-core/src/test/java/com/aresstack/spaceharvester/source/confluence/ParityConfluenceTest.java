@@ -6,9 +6,11 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -60,6 +62,26 @@ class ParityConfluenceTest {
             }
             assertThat(harvester.readingViews().view(caller, "wiki", "1009", false).text())
                     .contains(ParityConfluence.MACRO_SENTENCES);
+
+            // Mit den Ansichten, die die Mediensammlung im Datenbestand ablegt: Erwähnungen tragen deren Namen,
+            // versteckte und eingebundene zählen für die Zuordnung nicht.
+            List<JobStatus> collections = harvester.jobs().list(Harvester.OWNER, JobType.ASSETS);
+            assertThat(collections).isNotEmpty();
+            for (JobStatus assets : collections) {
+                assertThat(harvester.await(assets.id(), Duration.ofSeconds(60)).state())
+                        .isEqualTo(JobState.COMPLETED);
+            }
+            ExportConversions.ConvertedFile withViews = harvester.conversions().convert(export.id(), Harvester.OWNER,
+                    "markdown", Files.createTempDirectory(data, "md"));
+            String viewed = Files.readString(withViews.path());
+            for (String[] mention : ParityConfluence.MENTIONS) {
+                assertThat(viewed).contains(mention[1]).doesNotContain(mention[0]);
+            }
+            assertThat(viewed).contains(ParityConfluence.INCLUDED_MENTION)
+                    .doesNotContain(ParityConfluence.HIDDEN_MENTION);
+            // Die Ansicht hat nur eines der beiden Makros gerendert: keins wird geraten, beide werden gemeldet.
+            assertThat(withViews.notices()).contains(new ConversionNotice(ParityConfluence.MISMATCH_PAGE,
+                    ConversionNotice.Kind.OMITTED_CONTENT, "contentbylabel", "view-count-mismatch"));
             ReadingView attachments = harvester.readingViews().view(caller, "wiki",
                     ParityConfluence.ATTACHMENTS_PAGE, false);
             // Die Ansicht kommt aus export_view mit dem gerenderten Vorgang; der Lesetext des Adapters liest body.view

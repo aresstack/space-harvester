@@ -26,7 +26,7 @@ space-harvester:
     timeout: PT30S                      # Standard
     trust-bundle: ki                    # optional, ein spring.ssl.bundle; sonst Vertrauen der JVM
     external-processing-sources: confluence,wiki2   # Standard: keine
-    embedding-chunk-chars: 1500         # nur Server: Zeichen je eingebettetem Stück
+    embedding-chunk-chars: 0            # nur Server: Zeichen je Stück; 0 (Standard) ohne Grenze wie im EAC, sonst ≥ 100
     embedding-chunk-tokens: 350         # nur Server: Budget je Stück (wie knowledge.chunk.maxTokens), mindestens 8
     embedding-chunk-overlap-sentences: 1  # nur Server: wiederholte Schlusssätze (wie knowledge.chunk.overlapSentences)
     rerank-model: bge-reranker-v2-m3    # optional (#181): Cross-Encoder über POST /rerank
@@ -51,11 +51,16 @@ Hintergrund (ein Thread, höchstens 1000 wartende Seiten); Abgleich, Lesen und E
 Zerlegung (#181, wie `KnowledgeChunker` im Enterprise AI Client): Abschnitte der Textprojektion sind harte Grenzen.
 Innerhalb eines Abschnitts packt der Prozessor Sätze (`SentenceSplitter`) bis 350 Tokens (gezählt nach Wörtern und
 Symbolen, `KnowledgeChunkingPolicy.defaults()`); das nächste Stück beginnt mit dem letzten Satz des vorigen. Ein Satz
-über dem Budget wird an Wortgrenzen geteilt; zusätzlich hat kein Stück mehr als `embedding-chunk-chars` Zeichen.
-Eingebettet wird jedes Stück mit der Überschriftenkette seines Abschnitts davor (`Betrieb > Nachtlauf`), wenn es nicht
-selbst mit der Überschrift beginnt. `charStart`/`charEnd` bleiben Stellen in der Textprojektion, damit Treffer auf
+über dem Budget wird an Wortgrenzen geteilt. Eine Zeichengrenze gibt es wie im Client nicht; nur wer einen Dienst mit
+eigener Zeichengrenze anbindet, setzt `embedding-chunk-chars` (mindestens 100). Eingebettet wird jedes Stück mit der
+Überschriftenkette seines Abschnitts davor (`Betrieb > Nachtlauf`), wenn es nicht selbst mit der Überschrift beginnt;
+wie `KnowledgeChunker.fitHeading` belegt die Kette höchstens das halbe Token-Budget, äußere Überschriften entfallen
+zuerst, dann wird die innerste an Wortgrenzen gekürzt (Version `+heading:eac`). `charStart`/`charEnd` bleiben Stellen in der Textprojektion, damit Treffer auf
 ihre Stelle zeigen. Seit dieser Zerlegung trägt die Prozessorversion Format `2`; ältere Vektoren zählen nicht mehr und
-werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet.
+werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet. Ebenso beim Umstieg auf die Zerlegung ohne
+Zeichengrenze und mit gekürzter Überschriftenkette: Vorhandene Embeddings werden beim nächsten Start einmal im gedrosselten Hintergrund aus
+dem Cache neu eingebettet; bis dahin findet die Relevanzsuche eine noch nicht neu eingebettete Seite nur über ihre
+Schlagworte.
 
 Die Seiten kommen über die normale Beschaffung in den Cache: Jede gelesene Seite, auch ein vorgeladener Treffer der
 nativen Schlagwortsuche, landet im Volltextindex und bekommt ihre Embeddings im Hintergrund. Für `sort=relevance` ist
@@ -121,6 +126,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
   Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
   Kopfdaten; es wird beim nächsten Abgleich neu berechnet.
+  Dazu `passageId`: die stabile Adresse des Absatzes, der dieses Stück ganz enthält (ADR 0020, Nachtrag „Stabile
+  Passage-IDs“), lesbar über `GET /api/v1/passages?id=<passageId>` (ID URL-kodiert, sie enthält `#`). Ohne
+  `content`-Freigabe gibt es weder `relevance` noch die ID. Sie fehlt (`null`), wenn die Absätze der Seite nicht aus
+  derselben Fassung (Text und Gliederung) stammen wie das Embedding, kein Absatz das Stück ganz enthält oder sich
+  Absätze im gespeicherten Ergebnis überlappen (kaputtes Ergebnis).
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.

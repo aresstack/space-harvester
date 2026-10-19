@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.api;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
@@ -32,17 +33,17 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.CHAT_MODEL, "ai." + AiServiceSettings.EMBEDDING_MODEL,
             "ai." + AiServiceSettings.EMBEDDING_DIMENSIONS, "ai." + AiServiceSettings.TIMEOUT,
             "ai." + AiServiceSettings.TRUST_BUNDLE, "ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            "ai." + AiServiceSettings.RERANK_MODEL,
+            "ai." + AiServiceSettings.RERANK_MODEL, "ai." + AiServiceSettings.VISION_MODEL,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
             SyncSettings.WITHHELD_RETENTION, SyncSettings.CATCH_UP_ON_START, SyncSettings.MODE,
             SyncSettings.INVENTORY_INTERVAL, SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM,
-            StorageSettings.DATA_DIRECTORY);
+            StorageSettings.DATA_DIRECTORY, LocalFileSettings.ALLOW_ALL, LocalFileSettings.ROOTS);
 
     /** Listen dürfen auch als {@code key[0]}, {@code key[1]}, … kommen, wie Spring sie bindet. */
     private static final Set<String> LISTS = Set.of("ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            SyncSettings.SPACES);
+            SyncSettings.SPACES, LocalFileSettings.ROOTS);
 
     private static final Pattern INDEXED = Pattern.compile("(.+)\\[\\d+]");
 
@@ -73,6 +74,7 @@ public final class ConfigurationOverlay {
                     String.join(",", new TreeSet<>(ai.externalProcessingSources())));
         }
         put(properties, "ai." + AiServiceSettings.RERANK_MODEL, ai.rerankModel());
+        put(properties, "ai." + AiServiceSettings.VISION_MODEL, ai.visionModel());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());
@@ -95,6 +97,11 @@ public final class ConfigurationOverlay {
         sync.sources().forEach((id, override) -> fields(override)
                 .forEach((field, value) -> properties.setProperty(SourceSyncOverride.key(id, field), value)));
         put(properties, StorageSettings.DATA_DIRECTORY, configuration.storage().dataDirectory());
+        put(properties, LocalFileSettings.ALLOW_ALL, configuration.localFiles().allowAll());
+        if (!configuration.localFiles().roots().isEmpty()) {
+            put(properties, LocalFileSettings.ROOTS, String.join(LocalFileSettings.SEPARATOR,
+                    configuration.localFiles().roots().stream().map(Object::toString).toList()));
+        }
         return properties;
     }
 
@@ -135,7 +142,9 @@ public final class ConfigurationOverlay {
                         : "Unbekannter Schlüssel"));
                 continue;
             }
-            String text = text(entry.getValue());
+            // Ordner trennt ; wie im Client, weil Kommas in Pfaden vorkommen.
+            String text = text(entry.getValue(), key.equals(LocalFileSettings.ROOTS) ? LocalFileSettings.SEPARATOR
+                    : ",");
             if (text == null) {
                 problems.add(new ConfigurationProblem(key, "Erwartet Text, Zahl, true/false oder eine Liste von Texten"));
             } else if (text.isBlank()) {
@@ -153,7 +162,7 @@ public final class ConfigurationOverlay {
                 : parsed;
     }
 
-    private static String text(Object value) {
+    private static String text(Object value, String separator) {
         if (value == null) {
             return "";
         }
@@ -161,7 +170,7 @@ public final class ConfigurationOverlay {
             return value.toString();
         }
         if (value instanceof List<?> list && list.stream().allMatch(item -> item instanceof String)) {
-            return String.join(",", list.stream().map(String.class::cast).toList());
+            return String.join(separator, list.stream().map(String.class::cast).toList());
         }
         return null;
     }

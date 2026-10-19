@@ -243,15 +243,29 @@ public final class BackgroundFill implements AutoCloseable {
 
     /** Zieht übergebene Anfragen von Quellen zurück, die nicht mehr geladen werden dürfen; laufende enden regulär. */
     public void revalidate() {
-        List<AcquisitionScheduler.Ticket> tickets = new ArrayList<>();
+        Map<PageKey, AcquisitionScheduler.Ticket> tickets = new LinkedHashMap<>();
         synchronized (monitor) {
             inFlight.forEach((key, ticket) -> {
                 if (!allowed(key.sourceId())) {
-                    tickets.add(ticket);
+                    tickets.put(key, ticket);
                 }
             });
         }
-        tickets.forEach(AcquisitionScheduler.Ticket::cancel);
+        cancel(tickets);
+    }
+
+    /**
+     * Zieht Anfragen zurück und nimmt die zurückgezogenen gleich aus {@code inFlight}: Nach der Rückkehr zählt
+     * {@link #status()} sie nicht mehr, auch wenn {@link #feed} den Abschluss-Rückruf noch nicht angehängt hat.
+     */
+    private void cancel(Map<PageKey, AcquisitionScheduler.Ticket> tickets) {
+        tickets.forEach((key, ticket) -> {
+            if (ticket.cancel()) {
+                synchronized (monitor) {
+                    inFlight.remove(key, ticket);
+                }
+            }
+        });
     }
 
     /** Sucht bald wieder im Katalog, etwa nach einem Abgleich. */
@@ -476,6 +490,10 @@ public final class BackgroundFill implements AutoCloseable {
             // Was gleich endet, kommt hier schon zurück; danach gleich weiter in der Schlange.
             again = true;
             ticket.done().whenComplete((stored, failure) -> completed(gap.key(), ticket, stored, failure));
+            if (!allowed(sourceId)) {
+                // Lief revalidate() zwischen der Prüfung oben und inFlight.put, sah es diese Anfrage nicht.
+                cancel(Map.of(gap.key(), ticket));
+            }
         }
         synchronized (monitor) {
             return again || !inFlight.isEmpty();
@@ -587,11 +605,11 @@ public final class BackgroundFill implements AutoCloseable {
 
     /** Zieht die übergebenen Anfragen zurück; die Einträge bleiben in der Warteschlange. */
     private void withdraw() {
-        List<AcquisitionScheduler.Ticket> tickets;
+        Map<PageKey, AcquisitionScheduler.Ticket> tickets;
         synchronized (monitor) {
-            tickets = List.copyOf(inFlight.values());
+            tickets = new LinkedHashMap<>(inFlight);
         }
-        tickets.forEach(AcquisitionScheduler.Ticket::cancel);
+        cancel(tickets);
     }
 
     /**

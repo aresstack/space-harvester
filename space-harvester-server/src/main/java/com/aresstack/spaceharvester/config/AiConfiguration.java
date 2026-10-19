@@ -1,33 +1,56 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.StatementChatModels;
+import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
+import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
+import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Predicate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Embeddings über den externen KI-Dienst (ADR 0011). Ohne {@code space-harvester.ai.embedding-model} gibt es keinen
- * Embedding-Prozessor, und {@code sort=relevance} antwortet mit {@code semantic-search-unavailable}. Mit ihm müssen
- * {@code base-url} und {@code embedding-dimensions} gesetzt sein, sonst startet der Dienst nicht. Eingebettet wird im
+ * Embeddings über den externen KI-Dienst (ADR 0011). Ohne {@code space-harvester.ai.embedding-model} bettet der
+ * Embedding-Prozessor nichts ein, und {@code sort=relevance} antwortet mit {@code semantic-search-unavailable}. Mit ihm
+ * müssen {@code base-url} und {@code embedding-dimensions} gesetzt sein, sonst startet der Dienst nicht. Eingebettet wird im
  * begrenzten Hintergrund der Anreicherungen und nur für Quellen aus {@code external-processing-sources}; die Freigabe je
  * Quelle, Embedding- und Rerank-Modell folgen der Konfiguration zur Laufzeit ({@link LiveConfiguration}).
  */
@@ -43,15 +66,15 @@ class AiConfiguration {
     /**
      * Das Embedding-Modell wechselt mit der Konfiguration ({@code ai.embedding-model}, {@code embedding-dimensions},
      * {@code base-url}, ADR 0015); ohne Modell bettet der Prozessor nichts ein und {@code sort=relevance} antwortet mit
-     * {@code semantic-search-unavailable}. Die Kette (Prozessor, Hintergrund) entsteht nur, wenn beim Start ein Modell
-     * eingestellt ist: Embeddings erstmals einschalten wirkt erst nach einem Neustart.
+     * {@code semantic-search-unavailable}. Die Kette (Prozessor, Hintergrund) steht immer, wie in der Bibliothek mit
+     * {@code Harvester.builder().configuration(...)}: Embeddings lassen sich ohne Neustart erstmals einschalten.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
-        if (!settings.embeddings()) {
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          ObjectProvider<SentenceSegmenter> sentences) {
+        if (properties.embeddingModel() != null && !settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
         }
@@ -75,10 +98,14 @@ class AiConfiguration {
         });
         // Freigabe aus denselben Einstellungen wie das Modell: Eine geänderte Freigabe baut ohnehin eine neue
         // Generation, und neu freigegebene Inhalte gehen nie an den Endpunkt einer früheren.
+        // #181: je semantischem Absatz ein Embedding, wie im Client mit withPassages (ADR 0020).
+        TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         return new EmbeddingProcessor(() -> model.get().provider().orElse(null), properties.embeddingChunkChars(),
                 KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
                         properties.embeddingChunkOverlapSentences()),
-                sourceId -> model.get().ai().mayProcessExternally(sourceId));
+                sourceId -> model.get().ai().mayProcessExternally(sourceId))
+                .withPassages(new PassageChunks(new PassageSegmentation(sentences.getIfAvailable(
+                        () -> EnrichmentConfiguration.sentences(rules)), rules)));
     }
 
     /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */
@@ -154,17 +181,126 @@ class AiConfiguration {
         return "space-harvester/" + (info != null ? info.getVersion() : "unknown");
     }
 
+    /**
+     * Bildbeschreibung über das Vision-Modell (ADR 0021): folgt {@code ai.vision-model}, {@code base-url} und
+     * {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell antworten die Bildrouten mit
+     * {@code image-description-unavailable}.
+     */
+    @Bean
+    ImageDescriber visionImageDescriber(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                  ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new VisionImageDescriber(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /**
+     * Benennung der Themenabschnitte der Dokumentnavigation über das Chat-Modell (#181, ADR 0020): folgt
+     * {@code ai.chat-model} und {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell gelten die
+     * Bezeichnungen der Analyse.
+     */
+    @Bean
+    NavigationLabelModel navigationLabels(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatNavigationLabeler(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /**
+     * Akronymauflösung über das Chat-Modell (#122): folgt {@code ai.chat-model}, {@code base-url} und
+     * {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell antwortet
+     * {@code POST /api/v1/term-relations/refresh} mit {@code ai-unavailable}.
+     */
+    @Bean
+    AcronymExpansionModel acronymExpansions(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                            ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
     @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ExecutorService relevanceRenewals() {
         return Enrichments.background(100);
     }
 
-    /** Hintergrund der Anreicherungen, die über das Netz rechnen. */
+    /**
+     * Satzanalyse über das Chat-Modell (Prozessor {@code statements}, #108), nur mit
+     * {@code space-harvester.enrichment.statements.enabled=true} (Standard aus, wie im Enterprise AI Client). Das
+     * Chat-Modell ({@code ai.chat-model}, {@code base-url}) und die Freigabe je Quelle
+     * ({@code ai.external-processing-sources}) folgen der wirksamen Konfiguration; ohne Chat-Modell wird der Prozessor
+     * übersprungen, und Inhalte nicht freigegebener Quellen gehen nie an den Dienst. {@code verify},
+     * {@code max-paragraphs} und {@code max-paragraph-chars} wirken beim Start.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
+    StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          SentenceSegmenter sentences,
+                                          @Value("${space-harvester.enrichment.statements.verify:"
+                                                  + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraphs:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPHS + "}") int maxParagraphs,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraph-chars:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPH_CHARS + "}")
+                                          int maxParagraphChars) {
+        StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
+        StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
+                userAgent(build));
+        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally());
+    }
+
+    /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */
     @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ExecutorService enrichmentBackground() {
         return Enrichments.background(1000);
+    }
+
+    /**
+     * Wechselt die Freigabe {@code ai.external-processing-sources} einer Quelle, rechnet der Dienst {@code embedding},
+     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, eingeschaltet auch
+     * {@code statements} (#108), ohne neuen Abruf und ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
+     * Embedding-Modells, weil {@code covers} die Freigabe so fragt, wie das Modell sie sieht.
+     */
+    @Bean(destroyMethod = "close")
+    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, ObjectProvider<EmbeddingProcessor> embedding,
+                                              ObjectProvider<StatementProcessor> statements,
+                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+        LucenePageCache pages = cache.getIfAvailable();
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        boolean withStatements = statements.getIfAvailable() != null;
+        List<String> processorIds = new ArrayList<>();
+        if (embeddings != null) {
+            processorIds.addAll(List.of(embeddings.id(), PassageProcessor.ID, NavigationProcessor.ID));
+        }
+        // #108: Die Satzanalyse hängt ebenso an der Freigabe; ein Entzug entfernt ihre Ergebnisse. Sie fragt die
+        // Freigabe selbst, denn ohne Embedding-Modell bliebe covers beim alten Stand.
+        if (withStatements) {
+            processorIds.add(StatementProcessor.ID);
+        }
+        Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
+                || withStatements && live.current().ai().mayProcessExternally(sourceId);
+        ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
+                released, processorIds);
+        live.listen(recomputation);
+        return recomputation;
+    }
+
+    /**
+     * Gleicht beim Start einmal ab, was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach:
+     * Seiten, deren gespeicherte Ergebnisse nicht zur Freigabe passen, rechnen im Hintergrund der Neuberechnung neu,
+     * ohne den Start aufzuhalten.
+     */
+    @Bean
+    org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
+            releaseReconciliationOnStart(ReleaseRecomputation recomputation,
+                                         ObjectProvider<EmbeddingProcessor> embedding,
+                                         ObjectProvider<StatementProcessor> statements,
+                                         ConfiguredSourceCatalog catalog) {
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        StatementProcessor statementProcessor = statements.getIfAvailable();
+        // Mit Satzanalyse (#108) auch nur mit Chat-Modell.
+        return event -> recomputation.reconcileOnStart(
+                catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                () -> embeddings != null && embeddings.available()
+                        || statementProcessor != null && statementProcessor.available(),
+                PassagePayload.REASON_NOT_APPROVED);
     }
 }

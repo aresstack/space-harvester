@@ -5,3 +5,5 @@
 127.0.0.1 confluence.sentinel.test
 127.0.0.1 secure.proxied.test
 127.0.0.1 localhost
+127.0.0.1 wiki.proxied.test
+127.0.0.1 wiki.direct.test

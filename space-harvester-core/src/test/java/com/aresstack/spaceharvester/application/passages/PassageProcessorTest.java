@@ -33,7 +33,7 @@ class PassageProcessorTest {
             embedding);
 
     /** Ein Modell, das Sätze nach Thema einbettet. */
-    static final class TopicModel implements EmbeddingProvider {
+    static class TopicModel implements EmbeddingProvider {
 
         boolean unavailable;
 
@@ -137,6 +137,102 @@ class PassageProcessorTest {
         assertThat(PagePassages.read(new PageKey("wiki", "other"),
                 List.of(new Enrichments.View(stored, Enrichment.Freshness.CURRENT)), TEXT).state())
                 .isEqualTo(PagePassages.State.MISSING);
+    }
+
+    @Test
+    void everyPassageHasAStableIdThatChangesWithTextOrModel() {
+        EnrichmentOutput output = processor.process(KEY, TEXT);
+        PagePassages passages = read(output);
+
+        assertThat(passages.passages()).extracting(PagePassages.Passage::id).doesNotHaveDuplicates()
+                .allSatisfy(id -> assertThat(PassageId.looksLike(id)).isTrue());
+        PassageId first = PassageId.parse(passages.passages().get(1).id());
+        assertThat(first.sourceId()).isEqualTo("wiki");
+        assertThat(first.pageId()).isEqualTo("101");
+        assertThat(first.position()).isEqualTo(1);
+        assertThat(first.capture()).isEqualTo(PassageId.captureOf(TEXT.inputSha256()));
+        assertThat(first.embedding()).isEqualTo(PassageId.versionTag("topics@1"));
+        assertThat(read(output).passages()).extracting(PagePassages.Passage::id)
+                .isEqualTo(passages.passages().stream().map(PagePassages.Passage::id).toList());
+
+        approved.set(false);
+        PagePassages structure = read(processor.process(KEY, TEXT));
+        assertThat(PassageId.parse(structure.passages().get(0).id()).embedding())
+                .isEqualTo(PassageId.versionTag(PassageId.NO_MODEL));
+        assertThat(PassageId.parse(structure.passages().get(0).id()).capture()).isEqualTo(first.capture());
+    }
+
+    @Test
+    void aPassageIdIsFoundWithItsNeighboursOrTellsWhyNot() {
+        PagePassages current = read(processor.process(KEY, TEXT));
+        List<PagePassages.Passage> all = current.passages();
+        assertThat(all).hasSize(2);
+
+        PassageLookup second = PassageLookup.of(PassageId.parse(all.get(1).id()), current, 1);
+        assertThat(second.match()).isEqualTo(PassageLookup.Match.FOUND);
+        assertThat(second.passages()).containsExactly(all.get(0), all.get(1));
+        assertThat(PassageLookup.of(PassageId.parse(all.get(1).id()), current, 0).passages())
+                .containsExactly(all.get(1));
+
+        PassageId found = PassageId.parse(all.get(1).id());
+        PassageId olderText = PassageId.of("wiki", "101", "0".repeat(64), 1, found.segmentation(), found.embedding());
+        assertThat(PassageLookup.of(olderText, current, 1)).satisfies(lookup -> {
+            assertThat(lookup.match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
+            assertThat(lookup.passages()).isEqualTo(all);
+        });
+        PassageId otherModel = PassageId.of("wiki", "101", found.capture(), 1, found.segmentation(), "00000000");
+        assertThat(PassageLookup.of(otherModel, current, 1).match()).isEqualTo(PassageLookup.Match.CHANGED);
+        assertThat(PassageLookup.of(found, PagePassages.read(KEY, List.of(), TEXT), 1).match())
+                .isEqualTo(PassageLookup.Match.UNAVAILABLE);
+    }
+
+    @Test
+    void theIdOfAHitsRangeIsTheIdTheReadingViewShowsAndNoneForABrokenResult() {
+        Enrichment stored = enrichment(processor.process(KEY, TEXT));
+        for (PagePassages.Passage passage : read(processor.process(KEY, TEXT)).passages()) {
+            assertThat(PagePassages.idAt(KEY, stored, TEXT.inputSha256(), passage.start(), passage.end()))
+                    .isEqualTo(passage.id());
+        }
+        // Ein Absatz hinter dem Textende wird nie gezeigt; die übrigen behalten ihre Stelle im Ergebnis.
+        String broken = stored.payloadJson().replaceFirst("\"end\":\\d+", "\"end\":999999");
+        Enrichment damaged = new Enrichment(KEY, PassageProcessor.ID, stored.processorVersion(), stored.inputSha256(),
+                "1", Enrichment.Status.OK, broken, List.of(), null, Instant.EPOCH);
+        List<PagePassages.Passage> shown = PagePassages.read(KEY, List.of(new Enrichments.View(damaged,
+                Enrichment.Freshness.CURRENT)), TEXT).passages();
+
+        assertThat(shown).singleElement().satisfies(passage -> {
+            assertThat(passage.index()).isEqualTo(1);
+            assertThat(PassageId.parse(passage.id()).position()).isEqualTo(1);
+            // Ohne Text ist der kaputte Absatz nur an der Überlappung zu erkennen: dann keine ID statt einer, die auf
+            // ihn zeigt.
+            assertThat(PagePassages.idAt(KEY, damaged, TEXT.inputSha256(), passage.start(), passage.end())).isNull();
+        });
+        assertThat(PagePassages.idAt(KEY, stored, "sha256:" + "0".repeat(64), shown.getFirst().start(),
+                shown.getFirst().end())).as("anderer Text").isNull();
+    }
+
+    @Test
+    void aRegradedHeadingWithTheSameTextGivesNewIds() {
+        // Die Grenzen hängen auch an der Gliederung: gleicher Text, andere Abschnitte, also andere Capture. Sonst zeigte
+        // eine alte ID still auf einen anders geschnittenen Absatz. Hier ändert sich nur die Gliederung (ein leerer
+        // Abschnitt am Ende), der Schnitt bleibt; die ID ändert sich trotzdem.
+        int end = TEXT.text().length();
+        PageText regraded = new PageText(TEXT.schema(), TEXT.text(), List.of(new PageText.Section("", 2, end, end)));
+        Enrichment before = enrichment(processor.process(KEY, TEXT));
+        EnrichmentOutput output = processor.process(KEY, regraded);
+        Enrichment after = new Enrichment(KEY, PassageProcessor.ID, processor.version(), regraded.inputSha256(), "1",
+                Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, Instant.EPOCH);
+
+        String old = PagePassages.read(KEY, List.of(new Enrichments.View(before, Enrichment.Freshness.CURRENT)),
+                TEXT).passages().getFirst().id();
+        List<PagePassages.Passage> now = PagePassages.read(KEY, List.of(new Enrichments.View(after,
+                Enrichment.Freshness.CURRENT)), regraded).passages();
+
+        assertThat(regraded.text()).isEqualTo(TEXT.text());
+        assertThat(PassageId.parse(now.getFirst().id()).capture())
+                .isEqualTo(PassageId.captureOf(regraded.inputSha256())).isNotEqualTo(PassageId.parse(old).capture());
+        assertThat(PassageLookup.of(PassageId.parse(old), PagePassages.read(KEY, List.of(new Enrichments.View(after,
+                Enrichment.Freshness.CURRENT)), regraded), 1).match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
     }
 
     @Test

@@ -14,15 +14,17 @@ import com.aresstack.spaceharvester.output.convert.StorageDocument.Paragraph;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Rule;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Table;
 import com.aresstack.spaceharvester.output.convert.StorageDocument.Text;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Deque;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
+import java.util.function.Predicate;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.CDataNode;
 import org.jsoup.nodes.Element;
@@ -40,16 +42,23 @@ import org.jsoup.parser.Parser;
  * steht ein {@link Note} mit dem Diagrammnamen. Bilder bleiben {@link ImageRef}. Was sich nicht abbilden lässt, wird als
  * {@link Note} sichtbar, nie still verworfen.
  *
- * <p>Ausgeführte Makros ({@code include}, {@code excerpt-include}, {@code children}) zeigen ihren Inhalt nur in der
- * gerenderten Lese-Ansicht der Quelle. Mit {@link #parse(String, String, String)} nimmt der Parser ihn von dort: das
- * n-te Makro eines Namens im Storage ist das n-te Element mit diesem {@code data-macro-name} in der Ansicht (nur
- * äußerste). Fehlt es, bleibt der Hinweis, und das Makro steht in {@link Parsed#omitted()}.
+ * <p>Makros, die der Parser nicht selbst abbildet ({@code include}, {@code excerpt-include}, {@code children},
+ * {@code toc}, {@code contentbylabel}, Jira-Abfragen, unbekannte Makros …), zeigen ihren Inhalt nur in der gerenderten
+ * Lese-Ansicht der Quelle. Mit {@link #parse(String, String, String)} nimmt der Parser ihn von dort: das n-te Makro
+ * eines Namens im Storage ist das n-te Element mit diesem {@code data-macro-name} in der Ansicht (je Seite nur die
+ * äußersten solcher Makros). Das gilt nur, wenn Storage und Ansicht für den Namen gleich viele äußerste Makros haben;
+ * sonst nimmt der Parser für diesen Namen nichts aus der Ansicht (anders als der Enterprise AI Client, der die Ansicht
+ * ungeprüft schreibt). Ohne Inhalt aus der Ansicht bleibt der Hinweis, und das Makro steht in
+ * {@link Parsed#omitted()}; ohne Ansicht nur {@code include}, {@code excerpt-include} und {@code children}.
  *
  * <p>Verschachtelung ist auf {@link #MAX_NESTING} Ebenen begrenzt (#90): Tiefer liegender Inhalt wird als reiner Text
  * übernommen, mit einem Hinweis. So bleiben Parser und Converter bei bösartig tiefem Storage ohne
  * {@code StackOverflowError}; jsoup selbst parst und liest Text ohne Rekursion.
  */
 public final class StorageParser {
+
+    /** Größter {@code colspan}, den HTML erlaubt; größere Werte zählen als dieser. */
+    private static final int MAX_COLSPAN = 1000;
 
     private static final Map<String, String> PANELS = Map.of("info", "Info", "note", "Hinweis", "warning", "Warnung",
             "tip", "Tipp", "panel", "Kasten", "expand", "Aufklappbar");
@@ -61,7 +70,10 @@ public final class StorageParser {
             "ac:layout-section", "ac:layout-cell", "ac:rich-text-body", "center");
     private static final Set<String> TRANSPARENT_MACROS = Set.of("details", "section", "column", "div", "excerpt",
             "ui-tabs", "ui-tab", "ui-expand", "center");
-    /** Makros, deren Inhalt Confluence beim Rendern aus anderen Seiten berechnet. */
+    /**
+     * Makros, deren Inhalt Confluence beim Rendern aus anderen Seiten berechnet; ohne Ansicht steht nur ihr Fehlen in
+     * {@link Parsed#omitted()}.
+     */
     static final Set<String> RENDERED_MACROS = Set.of("include", "excerpt-include", "children");
     private static final Set<String> INLINE_MACROS = Set.of("status", "anchor", "jira", "emoticon");
 
@@ -74,18 +86,37 @@ public final class StorageParser {
     /** Findet zu Space und Titel einer verlinkten Seite das Ziel im Export, sonst {@code null}. */
     private final BiFunction<String, String, String> pageTargets;
 
-    /** Gerenderte Inhalte der ausgeführten Makros aus der Lese-Ansicht, je Makroname in Dokumentreihenfolge. */
-    private Map<String, Deque<Element>> rendered = Map.of();
+    /** Gerenderter Inhalt aus der Lese-Ansicht je Makro des Storage (Identität des Elements). */
+    private Map<Element, Element> rendered = Map.of();
 
-    /** Ausgeführte Makros ohne Inhalt aus der Lese-Ansicht: Titel der eingebundenen Seite oder Makroname. */
-    private final List<String> omitted = new ArrayList<>();
+    /** Anzeigenamen erwähnter Benutzer aus der Lese-Ansicht, je {@code ac:link} des Storage. */
+    private Map<Element, String> mentions = Map.of();
+    /** Makros des Storage, deren Name in Storage und Ansicht unterschiedlich oft vorkommt (Identität). */
+    private Set<Element> mismatched = Set.of();
+
+    /** Ob für die Seite eine Lese-Ansicht vorliegt. */
+    private boolean withView;
+
+    /** Ausgeführte Makros ohne Inhalt aus der Lese-Ansicht. */
+    private final List<Omission> omitted = new ArrayList<>();
 
     /**
      * Blöcke einer Seite und die ausgeführten Makros, deren Inhalt fehlt.
      *
-     * @param omitted Titel der eingebundenen Seite ({@code include}, {@code excerpt-include}) oder {@code children}
+     * @param omitted die Makros ohne Inhalt aus der Lese-Ansicht, in Dokumentreihenfolge
      */
-    public record Parsed(List<Block> blocks, List<String> omitted) {
+    public record Parsed(List<Block> blocks, List<Omission> omitted) {
+    }
+
+    /**
+     * Ein ausgeführtes Makro ohne Inhalt aus der Lese-Ansicht.
+     *
+     * @param reference     Titel der eingebundenen Seite ({@code include}, {@code excerpt-include}), sonst der
+     *                      Makroname
+     * @param countMismatch die Ansicht hat für diesen Makronamen eine andere Zahl äußerster Makros als der Storage;
+     *                      sonst markiert sie das Makro nicht, oder es liegt keine Ansicht vor
+     */
+    public record Omission(String reference, boolean countMismatch) {
     }
 
     /**
@@ -110,33 +141,173 @@ public final class StorageParser {
         Element root = Jsoup.parse("<body>" + storage + "</body>", "", Parser.xmlParser()).selectFirst("body");
         depth = 0;
         omitted.clear();
-        rendered = view == null || view.isBlank() ? Map.of() : rendered(view, baseUri == null ? "" : baseUri);
+        withView = view != null && !view.isBlank();
+        if (withView) {
+            pair(outermost(root), rendered(view, baseUri == null ? "" : baseUri));
+        }
+        mentions = withView ? mentions(root, view) : Map.of();
         try {
             return new Parsed(blocks(root), List.copyOf(omitted));
         } finally {
             rendered = Map.of();
+            mentions = Map.of();
+            mismatched = Set.of();
         }
     }
 
-    /** Äußerste gerenderte Makros der Ansicht je Name; Unsichtbares (Diagrammdaten, Skripte) ist entfernt. */
-    private static Map<String, Deque<Element>> rendered(String view, String baseUri) {
-        Element body = Jsoup.parse(view, baseUri).body();
-        body.select("script, style, noscript, [style~=(?i)display\\s*:\\s*none], [hidden]").remove();
-        Map<String, Deque<Element>> rendered = new HashMap<>();
-        for (Element macro : body.select("[data-macro-name]")) {
-            String name = macro.attr("data-macro-name").toLowerCase(Locale.ROOT);
-            if (!RENDERED_MACROS.contains(name)) {
+    /**
+     * Ordnet je Name das n-te äußerste Makro des Storage dem n-ten der Ansicht zu, aber nur bei gleicher Anzahl;
+     * sonst gelten alle Makros dieses Namens als abweichend (markiert die Ansicht keines, als nicht gerendert).
+     */
+    private void pair(Map<String, List<Element>> storage, Map<String, List<Element>> view) {
+        rendered = new IdentityHashMap<>();
+        mismatched = Collections.newSetFromMap(new IdentityHashMap<>());
+        storage.forEach((name, macros) -> {
+            List<Element> views = view.getOrDefault(name, List.of());
+            if (views.size() == macros.size()) {
+                for (int i = 0; i < macros.size(); i++) {
+                    rendered.put(macros.get(i), views.get(i));
+                }
+            } else if (!views.isEmpty()) {
+                mismatched.addAll(macros);
+            }
+        });
+    }
+
+    /** Äußerste Makros des Storage je Name, die ihren Inhalt aus der Ansicht nehmen können, in Dokumentreihenfolge. */
+    private static Map<String, List<Element>> outermost(Element root) {
+        Map<String, List<Element>> macros = new LinkedHashMap<>();
+        for (Element macro : root.getAllElements()) {
+            if (fromViewMacro(macro) && !nested(macro, StorageParser::fromViewMacro)) {
+                macros.computeIfAbsent(macroName(macro), n -> new ArrayList<>()).add(macro);
+            }
+        }
+        return macros;
+    }
+
+    private static boolean fromViewMacro(Element element) {
+        String name = element.normalName();
+        return (name.equals("ac:structured-macro") || name.equals("ac:macro")) && fromView(macroName(element));
+    }
+
+    /** Kennung einer Erwähnung ohne Anzeigenamen: Benutzername, sonst Benutzerschlüssel, sonst Account-ID. */
+    private static String userId(Element user) {
+        for (String attribute : List.of("ri:username", "ri:userkey", "ri:account-id")) {
+            if (!user.attr(attribute).isEmpty()) {
+                return user.attr(attribute);
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Anzeigenamen der Benutzererwähnungen wie im Enterprise AI Client, der den Linktext der Lese-Ansicht übernimmt.
+     * Zuordnung über {@code ri:username} bzw. {@code ri:account-id} zu {@code data-username} bzw.
+     * {@code data-account-id}; sonst (etwa nur {@code ri:userkey}) über die Reihenfolge, aber nur wenn Storage und Ansicht
+     * gleich viele Erwähnungen haben. Erwähnungen in eingebundenen Seiten und Unsichtbares zählen nicht mit, solche in berechneten Makros nur über die Kennung.
+     */
+    private static Map<Element, String> mentions(Element storage, String view) {
+        List<Element> shown = new ArrayList<>();
+        Map<String, String> byName = new HashMap<>();
+        Element body = Jsoup.parse(view).body();
+        body.select("script, style, noscript, .hidden, [hidden], [style~=(?i)display\\s*:\\s*none]").remove();
+        for (Element mention : body.select("a.user-mention")) {
+            boolean foreign = false;
+            boolean computed = false;
+            for (Element parent = mention.parent(); parent != null && !foreign; parent = parent.parent()) {
+                String macro = parent.attr("data-macro-name").toLowerCase(Locale.ROOT);
+                foreign = RENDERED_MACROS.contains(macro);
+                computed |= fromView(macro);
+            }
+            String name = collapse(mention.text()).trim();
+            if (foreign || name.isEmpty()) {
                 continue;
             }
-            boolean nested = false;
-            for (Element parent = macro.parent(); parent != null && !nested; parent = parent.parent()) {
-                nested = RENDERED_MACROS.contains(parent.attr("data-macro-name").toLowerCase(Locale.ROOT));
+            // Erwähnungen in berechneten Makros zählen nicht für die Reihenfolge, wohl aber für die Kennung: Ein
+            // ungepaartes Makro fällt auf seinen Körper im Storage zurück.
+            if (!computed) {
+                shown.add(mention);
             }
-            if (!nested) {
-                rendered.computeIfAbsent(name, n -> new ArrayDeque<>()).add(macro);
+            for (String attribute : List.of("data-username", "data-account-id")) {
+                if (!mention.attr(attribute).isEmpty()) {
+                    byName.put(attribute + "=" + mention.attr(attribute), name);
+                }
+            }
+        }
+        List<Element> ordered = new ArrayList<>();
+        Map<Element, String> names = new IdentityHashMap<>();
+        for (Element link : storage.select("ac|link")) {
+            Element user = link.selectFirst("ri|user");
+            if (user == null) {
+                continue;
+            }
+            String name = user.attr("ri:username").isEmpty() ? null
+                    : byName.get("data-username=" + user.attr("ri:username"));
+            if (name == null && !user.attr("ri:account-id").isEmpty()) {
+                name = byName.get("data-account-id=" + user.attr("ri:account-id"));
+            }
+            if (name != null) {
+                names.put(link, name);
+            }
+            if (!nested(link, StorageParser::fromViewMacro)) {
+                ordered.add(link);
+            }
+        }
+        if (ordered.size() == shown.size()) {
+            for (int i = 0; i < ordered.size(); i++) {
+                names.putIfAbsent(ordered.get(i), collapse(shown.get(i).text()).trim());
+            }
+        }
+        return names;
+    }
+
+    /** Äußerste gerenderte Makros der Ansicht je Name; Unsichtbares (Diagrammdaten, Skripte) ist entfernt. */
+    private static Map<String, List<Element>> rendered(String view, String baseUri) {
+        Element body = Jsoup.parse(view, baseUri).body();
+        body.select("script, style, noscript, [style~=(?i)display\\s*:\\s*none], [hidden]").remove();
+        Map<String, List<Element>> rendered = new HashMap<>();
+        for (Element macro : body.select("[data-macro-name]")) {
+            String name = macro.attr("data-macro-name").toLowerCase(Locale.ROOT);
+            if (fromView(name) && !nested(macro,
+                    parent -> fromView(parent.attr("data-macro-name").toLowerCase(Locale.ROOT)))) {
+                rendered.computeIfAbsent(name, n -> new ArrayList<>()).add(macro);
             }
         }
         return rendered;
+    }
+
+    private static boolean nested(Element element, Predicate<Element> macro) {
+        for (Element parent = element.parent(); parent != null; parent = parent.parent()) {
+            if (macro.test(parent)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Ob ein Makro seinen Inhalt aus der Ansicht nehmen kann: alles, was der Parser nicht selbst abbildet. Jira zählt
+     * immer mit, damit die Reihenfolge stimmt; ein einzelner Vorgang ({@code key}) bleibt trotzdem Text.
+     */
+    private static boolean fromView(String name) {
+        return !name.isEmpty() && !name.equals("code") && !name.equals("noformat") && !TEXT_DIAGRAMS.contains(name)
+                && !ATTACHMENT_DIAGRAMS.contains(name) && !PANELS.containsKey(name)
+                && !TRANSPARENT_MACROS.contains(name) && !name.equals("status") && !name.equals("anchor")
+                && !name.equals("emoticon");
+    }
+
+    /** Jira-Abfrage (ohne {@code key}), für die die Ansicht eine Tabelle liefert: sie wird ein Block. */
+    private boolean jiraTable(Element macro) {
+        Element view = rendered.get(macro);
+        return view != null && macroName(macro).equals("jira") && parameter(macro, "key", "").isBlank()
+                && view.selectFirst("table") != null;
+    }
+
+    /** Merkt ein Makro ohne Inhalt aus der Ansicht; ohne Ansicht nur die aus anderen Seiten berechneten. */
+    private void omit(Element macro, String reference) {
+        if (withView || RENDERED_MACROS.contains(macroName(macro))) {
+            omitted.add(new Omission(reference, mismatched.contains(macro)));
+        }
     }
 
     /** Blöcke eines Containers; lose Inline-Inhalte werden zu Absätzen zusammengefasst. */
@@ -187,7 +358,8 @@ public final class StorageParser {
         return switch (name) {
             case "p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "pre", "blockquote", "hr",
                  "ac:task-list" -> true;
-            case "ac:structured-macro", "ac:macro" -> !INLINE_MACROS.contains(macroName(element));
+            case "ac:structured-macro", "ac:macro" -> !INLINE_MACROS.contains(macroName(element))
+                    || jiraTable(element);
             default -> CONTAINERS.contains(name);
         };
     }
@@ -236,29 +408,78 @@ public final class StorageParser {
         return new ListBlock(false, items, checked);
     }
 
+    /**
+     * Tabelle auf ihrem Raster wie {@code MarkdownTable} des Enterprise AI Client: eine Zelle mit {@code colspan} oder
+     * {@code rowspan} wiederholt ihren Inhalt an jeder Stelle, die sie überdeckt, damit kein Wert in die Nachbarspalte
+     * rutscht; {@code rowspan="0"} reicht bis zur letzten Zeile, freie Stellen bleiben leer.
+     */
     private void table(Element element, List<Block> blocks) {
-        List<List<List<Block>>> rows = new ArrayList<>();
-        boolean headerRow = false;
+        List<Element> rows = new ArrayList<>();
         for (Element row : element.select("tr")) {
-            if (row.closest("table") != element) {
-                continue;
+            if (row.closest("table") == element) {
+                rows.add(row);
             }
-            List<List<Block>> cells = new ArrayList<>();
+        }
+        Map<Long, List<Block>> taken = new HashMap<>();
+        boolean headerRow = false;
+        int width = 0;
+        for (int r = 0; r < rows.size(); r++) {
+            int column = 0;
             boolean allHeaders = true;
-            for (Element cell : row.children()) {
-                if (cell.normalName().equals("td") || cell.normalName().equals("th")) {
-                    cells.add(blocks(cell));
-                    allHeaders &= cell.normalName().equals("th");
+            boolean anyCell = false;
+            for (Element cell : rows.get(r).children()) {
+                if (!cell.normalName().equals("td") && !cell.normalName().equals("th")) {
+                    continue;
                 }
+                while (taken.containsKey(gridKey(r, column))) {
+                    column++;
+                }
+                int colspan = Math.min(MAX_COLSPAN, Math.max(1, span(cell, "colspan")));
+                int rowspan = span(cell, "rowspan");
+                int lastRow = rowspan == 0 ? rows.size() : Math.min(rows.size(), r + Math.max(1, rowspan));
+                List<Block> content = blocks(cell);
+                for (int covered = r; covered < lastRow; covered++) {
+                    for (int c = column; c < column + colspan; c++) {
+                        taken.put(gridKey(covered, c), content);
+                    }
+                }
+                column += colspan;
+                anyCell = true;
+                allHeaders &= cell.normalName().equals("th");
             }
-            if (rows.isEmpty()) {
-                headerRow = allHeaders && !cells.isEmpty();
+            if (r == 0) {
+                headerRow = allHeaders && anyCell;
             }
-            rows.add(cells);
+            width = Math.max(width, column);
         }
-        if (!rows.isEmpty()) {
-            blocks.add(new Table(rows, headerRow));
+        for (Long key : taken.keySet()) {
+            width = Math.max(width, (int) (key & 0xffffffffL) + 1);
         }
+        List<List<List<Block>>> grid = new ArrayList<>();
+        for (int r = 0; r < rows.size(); r++) {
+            List<List<Block>> cells = new ArrayList<>();
+            for (int c = 0; c < width; c++) {
+                cells.add(taken.getOrDefault(gridKey(r, c), List.of()));
+            }
+            grid.add(cells);
+        }
+        if (!grid.isEmpty()) {
+            blocks.add(new Table(grid, headerRow));
+        }
+    }
+
+    /** {@code colspan}/{@code rowspan} der Zelle; fehlend oder unlesbar 1, negativ 1. */
+    private static int span(Element cell, String attribute) {
+        try {
+            int value = Integer.parseInt(cell.attr(attribute).trim());
+            return value < 0 ? 1 : value;
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    private static long gridKey(int row, int column) {
+        return ((long) row << 32) | (column & 0xffffffffL);
     }
 
     /**
@@ -301,28 +522,28 @@ public final class StorageParser {
             blocks.add(new Panel(label, blocks(richBody)));
         } else if (TRANSPARENT_MACROS.contains(name)) {
             blocks.addAll(blocks(richBody));
+        } else if (rendered.containsKey(macro)) {
+            // Gerenderter Inhalt aus der Lese-Ansicht; ihre Bilder über ihre Adresse wie bei include
+            blocks.addAll(blocks(rendered.get(macro)));
+        } else if (name.equals("children")) {
+            omit(macro, name);
+            blocks.add(new Note("Liste der Unterseiten wird in Confluence berechnet und ist nicht übernommen"));
         } else if (RENDERED_MACROS.contains(name)) {
-            Deque<Element> views = rendered.get(name);
-            Element view = views == null ? null : views.poll();
-            if (view != null) {
-                blocks.addAll(blocks(view));
-            } else if (name.equals("children")) {
-                omitted.add(name);
-                blocks.add(new Note("Liste der Unterseiten wird in Confluence berechnet und ist nicht übernommen"));
-            } else {
-                Element page = macro.selectFirst("ri|page");
-                String title = page == null || page.attr("ri:content-title").isBlank() ? "unbekannt"
-                        : page.attr("ri:content-title");
-                omitted.add(page == null || page.attr("ri:content-title").isBlank() ? name : title);
-                blocks.add(new Note("Eingebundener Inhalt der Seite „" + title + "“ wird dort exportiert"));
-            }
+            Element page = macro.selectFirst("ri|page");
+            String title = page == null || page.attr("ri:content-title").isBlank() ? "unbekannt"
+                    : page.attr("ri:content-title");
+            omit(macro, page == null || page.attr("ri:content-title").isBlank() ? name : title);
+            blocks.add(new Note("Eingebundener Inhalt der Seite „" + title + "“ wird dort exportiert"));
         } else if (richBody != null) {
+            omit(macro, name);
             blocks.add(new Note("Makro „" + name + "“ nicht unterstützt; sein Inhalt folgt"));
             blocks.addAll(blocks(richBody));
         } else if (plainBody != null) {
+            omit(macro, name);
             blocks.add(new Note("Makro „" + name + "“ nicht unterstützt; sein Text folgt"));
             blocks.add(new CodeBlock("", plainText(plainBody)));
         } else {
+            omit(macro, name);
             blocks.add(new Note("Makro „" + name + "“ wird in Confluence berechnet und ist nicht übernommen"));
         }
     }
@@ -399,14 +620,28 @@ public final class StorageParser {
     }
 
     private void inlineMacro(Element macro, List<Inline> out) {
-        switch (macroName(macro)) {
+        String name = macroName(macro);
+        boolean issue = name.equals("jira") && !parameter(macro, "key", "").isBlank();
+        switch (name) {
             case "status" -> out.add(new Text("[" + parameter(macro, "title", "") + "]", true, false, false));
-            case "jira" -> out.add(Text.plain("Jira " + parameter(macro, "key", "")));
             case "emoticon" -> out.add(Text.plain(":" + parameter(macro, "name", "") + ":"));
             case "anchor" -> {
                 // Sprungmarke ohne sichtbaren Inhalt.
             }
-            default -> out.add(Text.plain("[Makro " + macroName(macro) + "]"));
+            default -> {
+                if (!issue && rendered.containsKey(macro)) {
+                    // Im Fließtext (Überschrift, Jira-Abfrage ohne Tabelle) bleibt der gerenderte Inhalt Text
+                    children(rendered.get(macro), out, false, false, false);
+                } else if (name.equals("jira")) {
+                    if (!issue) {
+                        omit(macro, name);
+                    }
+                    out.add(Text.plain("Jira " + parameter(macro, "key", "")));
+                } else {
+                    omit(macro, name);
+                    out.add(Text.plain("[Makro " + name + "]"));
+                }
+            }
         }
     }
 
@@ -432,7 +667,8 @@ public final class StorageParser {
             target = emptyToNull(url.attr("ri:value"));
             label = label.isEmpty() ? url.attr("ri:value") : label;
         } else if (user != null && label.isEmpty()) {
-            label = "@" + (user.hasAttr("ri:username") ? user.attr("ri:username") : user.attr("ri:userkey"));
+            String name = mentions.get(link);
+            label = name != null ? name : "@" + userId(user);
         }
         if (!link.attr("ac:anchor").isEmpty() && target == null && page == null) {
             label = label.isEmpty() ? link.attr("ac:anchor") : label;

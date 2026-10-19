@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
+import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
@@ -44,16 +45,16 @@ import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.facts.FactStore;
-import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.facts.PageFacts;
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import java.time.Clock;
@@ -150,7 +151,10 @@ class QueryConfiguration {
      * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
      * {@code space-harvester.search.candidate-selection} ({@code order}, {@code top-n}, {@code adaptive}; ADR 0016)
      * wählt, welche Funde jetzt laden; ohne Angabe {@code adaptive}, mit gesetztem {@code search.loads} aber
-     * {@code top-n} wie bisher.
+     * {@code top-n} wie bisher. {@code space-harvester.search.prefetch-hits} (Standard {@code true}) gilt je Stapel aus
+     * der wirksamen Konfiguration (ADR 0015); aus findet die Suche nur, was schon im Cache liegt. Ebenso
+     * {@code space-harvester.sync.before-search}: Zu Beginn jeder Suche startet das Nachholen ihrer Quellen, ohne dass
+     * die Suche darauf wartet.
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
@@ -159,10 +163,17 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:}") String loadsValue,
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
-                                SearchRunLog runs, FindingCatalog findings) {
-        return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
+                                SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store,
+                                LiveConfiguration live, ObjectProvider<SyncBeforeSearch> syncBeforeSearch) {
+        // Auszüge aus semantischen Absätzen, wo welche zum abgelegten Text gespeichert sind (#181, ADR 0020).
+        PageTextIndex index = texts.getIfAvailable();
+        EnrichmentStore enrichments = store.getIfAvailable();
+        PageTextIndex snippets = index == null || enrichments == null ? index
+                : new PassageSnippets(index, enrichments::find);
+        return new KeywordSearch(catalog, access, snippets, prefetch, maxQueries,
                 excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
-                findings);
+                findings, () -> live.current().search().prefetchHits(),
+                sourceIds -> syncBeforeSearch.ifAvailable(before -> before.searching(sourceIds)));
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -312,32 +323,19 @@ class QueryConfiguration {
 
     /**
      * Fakten je Seite aus den Anreicherungen (#182), aus derselben Ablage wie die Anreicherungen (Lucene-Cache oder
-     * Speicher). Rechte je Seite an ihrem Space im Cache.
+     * Speicher), mit den manuellen und geprüften. Rechte je Seite an ihrem Space im Cache.
      */
     @Bean
     PageFacts pageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages,
                         ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
-                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader) {
+                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader,
+                        FactEditStore edits) {
         Enrichments available = enrichments.getIfAvailable();
-        FactStore facts = (available == null ? Optional.<FactStore>empty() : available.facts())
-                .orElseGet(() -> store.getIfUnique(() -> NO_FACTS));
+        FactStore facts = FactEditConfiguration.facts(available, store, edits);
         LucenePageCache lucene = cache.getIfAvailable();
         PageCacheReader any = reader.getIfAvailable();
         Function<PageKey, Optional<PageHeader>> headers = lucene != null ? lucene::findHeader
                 : any != null ? key -> any.page(key).map(CachedPage::header) : key -> Optional.empty();
-        return new PageFacts(catalog, access, pages, available, facts, headers);
+        return new PageFacts(catalog, access, pages, available, facts, headers, edits);
     }
-
-    /** Ohne Ablage: keine Fakten. */
-    private static final FactStore NO_FACTS = new FactStore() {
-        @Override
-        public List<MetadataFact> factsOf(PageKey page) {
-            return List.of();
-        }
-
-        @Override
-        public List<MetadataFact> facts(Query query, String after, int limit) {
-            return List.of();
-        }
-    };
 }

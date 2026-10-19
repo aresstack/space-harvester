@@ -91,7 +91,7 @@ class AnalysisConverterTest {
         assertThat(analysis.path("sourceId").asString()).isEqualTo("confluence");
         assertThat(analysis.path("spaceKey").asString()).isEqualTo("DEV");
         assertThat(analysis.path("processors").valueStream().map(p -> p.path("id").asString() + "@"
-                + p.path("version").asString()).toList()).containsExactly("acronyms@2", "outline@1", "broken@1");
+                + p.path("version").asString()).toList()).containsExactly("acronyms@3", "outline@1", "broken@1");
         JsonNode pages = analysis.path("pages");
         assertThat(pages.valueStream().map(p -> p.path("pageId").asString()).toList()).containsExactly("100", "101");
 
@@ -113,6 +113,8 @@ class AnalysisConverterTest {
         assertThat(first.path("facts").valueStream().map(f -> f.path("type").asString()).toList())
                 .contains("ACRONYM_DEFINITION");
         assertThat(first.path("facts").get(0).path("processorId").asString()).isEqualTo("acronyms");
+        assertThat(first.path("facts").get(0).path("origin").asString()).isEqualTo("AUTOMATIC");
+        assertThat(first.path("facts").get(0).path("review").asString()).isEqualTo("UNREVIEWED");
 
         JsonNode second = pages.get(1);
         assertThat(second.path("parentPageId").asString()).isEqualTo("100");

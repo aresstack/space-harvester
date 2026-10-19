@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.spaceharvester.source.network.ReconfigurableTrustManager;
+import com.aresstack.spaceharvester.source.network.TrustSettings;
 import javax.net.ssl.X509TrustManager;
 
 /**
@@ -25,6 +27,46 @@ public interface TrustBundles {
      */
     default X509TrustManager defaultTrust() {
         return null;
+    }
+
+    /**
+     * Stellt das Vertrauen ohne Bundle auf {@code trust} um (ADR 0015); wirkt ab dem nächsten Handshake auch für
+     * Verbindungen, die {@link #defaultTrust} schon übernommen haben.
+     *
+     * @return {@code false}, wenn diese Bundles das Vertrauen ohne Bundle nicht umstellen können (nur
+     *         {@link #reconfigurable} kann es)
+     * @throws IllegalArgumentException mit den Problemen der Einstellungen; dann bleibt das bisherige Vertrauen
+     */
+    default boolean reconfigure(TrustSettings trust) {
+        return false;
+    }
+
+    /**
+     * Dieselben Bundles mit einem Vertrauen ohne Bundle, das {@link #reconfigure} zur Laufzeit umstellt: Anders als
+     * {@link #withDefault} ist {@link #defaultTrust} nie {@code null}, sondern ein {@link ReconfigurableTrustManager},
+     * der je Handshake die zuletzt gesetzte Regel liest.
+     *
+     * @throws IllegalArgumentException mit den Problemen von {@code trust}
+     */
+    static TrustBundles reconfigurable(TrustBundles named, TrustSettings trust) {
+        ReconfigurableTrustManager fallback = new ReconfigurableTrustManager(trust);
+        return new TrustBundles() {
+            @Override
+            public X509TrustManager trustManager(String name) {
+                return named.trustManager(name);
+            }
+
+            @Override
+            public X509TrustManager defaultTrust() {
+                return fallback;
+            }
+
+            @Override
+            public boolean reconfigure(TrustSettings next) {
+                fallback.reconfigure(next);
+                return true;
+            }
+        };
     }
 
     /**

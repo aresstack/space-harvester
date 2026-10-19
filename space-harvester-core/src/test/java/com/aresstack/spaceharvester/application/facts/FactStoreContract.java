@@ -113,6 +113,23 @@ public abstract class FactStoreContract {
         assertThat(rest).hasSize(1).doesNotContainAnyElementsOf(first);
     }
 
+    @Test
+    void theLimitHoldsPerProcessorSoNoProcessorCrowdsOutTheOthers() {
+        List<String> processors = List.of(EnrichmentFacts.ACRONYMS, EnrichmentFacts.ENTITIES,
+                EnrichmentFacts.PROPERTIES, EnrichmentFacts.RELATIONS);
+        for (String processor : processors) {
+            store().save(FactTestResults.many(NIGHT, processor, EnrichmentFacts.MAX_PER_RESULT + 1));
+        }
+
+        List<MetadataFact> facts = facts().factsOf(NIGHT);
+
+        assertThat(facts).hasSize(processors.size() * EnrichmentFacts.MAX_PER_RESULT);
+        for (String processor : processors) {
+            assertThat(facts).filteredOn(fact -> fact.provenance().processorId().equals(processor))
+                    .hasSize(EnrichmentFacts.MAX_PER_RESULT);
+        }
+    }
+
     private static List<MetadataFact> concat(List<MetadataFact> a, List<MetadataFact> b) {
         List<MetadataFact> all = new ArrayList<>(a);
         all.addAll(b);

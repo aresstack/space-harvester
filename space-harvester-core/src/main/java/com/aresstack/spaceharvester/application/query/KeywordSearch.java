@@ -37,6 +37,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -67,7 +68,9 @@ import java.util.regex.Pattern;
  *       erreichbaren Quellen des Umfangs, auch solcher ohne eigene Suche (lokale Dateien, #180). Nur von hier kommen
  *       Treffer; Ergebnislisten werden nicht zusammengeführt. Jeder Treffer braucht {@link AccessKind#METADATA} und
  *       {@link AccessKind#CONTENT}, weil Fundstelle und Auszug aus dem Inhalt stammen, und wird live geprüft, wenn er
- *       nicht eben erst gefunden wurde.</li>
+ *       nicht eben erst gefunden wurde. Liegt die Fundstelle im Text eines Anhangs (#183), ist der Treffer die Seite
+ *       mit {@link Hit#matchedIn()} {@link MatchedIn#ATTACHMENT} und dem Anhang; geprüft wird wie jede Seite, ein
+ *       Anhang wird nie ohne seine lesbare Seite sichtbar.</li>
  * </ol>
  *
  * <p>Der Space-Filter gilt in beiden Suchen. Nicht freigegebene Seiten erscheinen nirgends, auch nicht als Titel,
@@ -129,6 +132,8 @@ public class KeywordSearch {
     private final AccessGuard access;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
+    private final BooleanSupplier prefetching;
+    private final BeforeSearch before;
     private final int maxQueries;
     private final ExcerptPriority excerpts;
     private final CandidateSelectionStrategy selection;
@@ -205,6 +210,30 @@ public class KeywordSearch {
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, () -> true);
+    }
+
+    /**
+     * @param prefetching ob ein Stapel jetzt lädt (ADR 0015: {@code search.prefetch-hits} zur Laufzeit); ohne
+     *                    {@code prefetch} lädt nie einer. Stand und Abbruch schon ladender Stapel bleiben erreichbar.
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, prefetching,
+                BeforeSearch.NONE);
+    }
+
+    /**
+     * @param before erfährt zu Beginn jeder Suche (erster Stapel, nicht bei Folgestapeln über den Cursor) die Quellen,
+     *               die der Aufrufer darin lesen darf ({@code sync.before-search}, ADR 0015); hält die Suche nicht auf
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
+                         BeforeSearch before) {
+        this.before = Objects.requireNonNull(before, "before");
+        this.prefetching = Objects.requireNonNull(prefetching, "prefetching");
         this.findings = Objects.requireNonNull(findings, "findings");
         this.selection = Objects.requireNonNull(selection, "selection");
         this.runs = Objects.requireNonNull(runs, "runs");
@@ -348,6 +377,20 @@ public class KeywordSearch {
                 state.status().name()), state.reason());
     }
 
+    /**
+     * Was vor einer Suche geschieht, etwa das Nachholen der Änderungen ihrer Quellen ({@code sync.before-search}). Muss
+     * sofort zurückkehren und darf nicht werfen: Die Suche antwortet aus dem Stand, den sie vorfindet.
+     */
+    @FunctionalInterface
+    public interface BeforeSearch {
+
+        BeforeSearch NONE = sourceIds -> {
+        };
+
+        /** @param sourceIds die Quellen der Suche, die der Aufrufer lesen darf */
+        void searching(Set<String> sourceIds);
+    }
+
     /** Zahlen eines Stapels für das Suchlauf-Protokoll; nur geprüfte Seiten. */
     private static final class Tally {
 
@@ -366,6 +409,9 @@ public class KeywordSearch {
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
         scope.requireKnown(catalog);
         Position position = cursor == null || cursor.isEmpty() ? null : decode(cursor, fingerprint(query));
+        if (position == null && !scope.sourceIds().isEmpty()) {
+            before.searching(scope.sourceIds());
+        }
         Map<String, Integer> offsets = position == null ? null : position.offsets();
         boolean cached = texts != null;
 
@@ -485,7 +531,7 @@ public class KeywordSearch {
             for (Map.Entry<String, List<SourceSearchMatch>> entry : pending.entrySet()) {
                 int index = taken.get(entry.getKey());
                 if (index < entry.getValue().size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null));
+                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null, null));
                     taken.put(entry.getKey(), index + 1);
                     added = true;
                 }
@@ -523,12 +569,13 @@ public class KeywordSearch {
         List<Hit> found = discovered.hits();
         ExcerptPriority.Priority priority = excerpts.prioritize(query.text(), found);
         List<Hit> ranked = priority.apply(found);
-        List<Hit> toLoad = new ArrayList<>(prefetch == null ? List.of() : select(found, ranked, priority.ranked()));
+        boolean loads = prefetch != null && prefetching.getAsBoolean();
+        List<Hit> toLoad = new ArrayList<>(loads ? select(found, ranked, priority.ranked()) : List.of());
         if (!finalListOnly) {
             // Für Endnutzer sind die Funde ungeprüft: keine Zahl, auch nicht im Protokoll.
             tally.discovered = OptionalInt.of(found.size());
         }
-        if (position != null) {
+        if (loads && position != null) {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
             for (Hit hit : position.pending()) {
@@ -540,7 +587,7 @@ public class KeywordSearch {
         }
         List<Hit> stillLoading = List.of();
         Progress progress = null;
-        if (prefetch != null && !toLoad.isEmpty()) {
+        if (loads && !toLoad.isEmpty()) {
             try {
                 Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
                 stillLoading = fill.pending().size() > MAX_LIMIT ? fill.pending().subList(0, MAX_LIMIT)
@@ -593,7 +640,9 @@ public class KeywordSearch {
                                         m.parentPageId()))
                                 .orElse(null);
                     }
-                    fromCache.add(new Candidate(match.sourceId(), hit, true, seen));
+                    fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
+                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle()) : null,
+                            match.passageId()));
                 }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
@@ -718,7 +767,8 @@ public class KeywordSearch {
             boolean snippet = content.computeIfAbsent(sourceId,
                     id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT));
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
-                    match.url(), match.version(), match.modifiedAt(), null));
+                    match.url(), match.version(), match.modifiedAt(), null, null,
+                    snippet ? candidate.passageId() : null));
         }
         return new Checked(hits, complete);
     }
@@ -781,11 +831,13 @@ public class KeywordSearch {
                 return Optional.empty();
             }
             // Steht das Wort nur im Titel, hat der Cache kein Textfenster; dann bleibt der Auszug der Quelle.
-            String snippet = candidate.match().snippet() == null || candidate.match().snippet().isEmpty()
-                    ? known.snippet() : candidate.match().snippet();
+            // Ein Anhangstreffer behält den Auszug aus dem Anhang, auch einen leeren (Wort nur im Dateinamen).
+            boolean fromSource = candidate.attachment() == null && (candidate.match().snippet() == null
+                    || candidate.match().snippet().isEmpty());
+            String snippet = fromSource ? known.snippet() : candidate.match().snippet();
             return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
                     known.url(), known.version(), known.modifiedAt(),
-                    known.parentPageId()));
+                    known.parentPageId(), candidate.attachment(), fromSource ? null : candidate.passageId()));
         }
         PageMetadata metadata;
         HarvestSource source = catalog.find(candidate.sourceId()).orElse(null);
@@ -818,12 +870,13 @@ public class KeywordSearch {
         SourceSearchMatch match = candidate.match();
         // Auch der Auszug der Quelle stammt aus dem Inhalt: ohne Freigabe für den Inhalt kein Auszug.
         String snippet = candidate.indexed() || access.permits(caller, page, AccessKind.CONTENT) ? match.snippet() : "";
+        // Die Passage-ID nennt den Texthash: nur mit dem Auszug des Index, also nur mit content.
         return Optional.of(new Hit(candidate.sourceId(), metadata.pageId(), metadata.partitionKey(),
                 metadata.title().isEmpty() ? match.title() : metadata.title(), snippet,
                 metadata.url() != null ? metadata.url() : match.url(),
                 metadata.version() != null ? metadata.version() : match.version(),
                 metadata.modifiedAt() != null ? metadata.modifiedAt() : match.modifiedAt(),
-                metadata.parentPageId()));
+                metadata.parentPageId(), candidate.attachment(), candidate.indexed() ? candidate.passageId() : null));
     }
 
     /**
@@ -932,8 +985,17 @@ public class KeywordSearch {
     private record LiveSearch(HarvestSource source, int offset, int wanted, int state) {
     }
 
-    /** @param known eben live geprüfter Treffer derselben Seite oder {@code null} */
-    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known) {
+    /**
+     * @param known      eben live geprüfter Treffer derselben Seite oder {@code null}
+     * @param attachment der Anhang der Seite, in dem der Volltextindex fand, oder {@code null}
+     * @param passageId  Passage-ID des Absatzes, aus dem der Auszug des Index stammt, oder {@code null}
+     */
+    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known,
+                             AttachmentMatch attachment, String passageId) {
+
+        Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known, AttachmentMatch attachment) {
+            this(sourceId, match, indexed, known, attachment, null);
+        }
     }
 
     /**
@@ -1137,12 +1199,55 @@ public class KeywordSearch {
     }
 
     /**
-     * Ein Treffer; Kopfdaten live von der Quelle, Auszug aus dem Cache (ohne Cache aus der Suche der Quelle).
+     * Ein Treffer, immer eine Seite; Kopfdaten live von der Quelle, Auszug aus dem Cache (ohne Cache aus der Suche der
+     * Quelle).
      *
-     * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
+     * @param snippet    Textauszug als Klartext, leer, wenn es keinen gibt; bei einem Anhangstreffer aus dem Anhang
+     * @param attachment der Anhang der Seite, in dessen Text der Volltextindex fand (#183), oder {@code null}, wenn die
+     *                   Seite selbst passt
+     * @param passageId  die Passage-ID ({@code PassageId}) des Absatzes, aus dem der Auszug stammt, wie
+     *                   {@code passage:} an den Treffern im Enterprise AI Client; {@code null} ohne Auszug aus Absätzen
      */
     public record Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
-                      String version, Instant modifiedAt, String parentPageId) {
+                      String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment,
+                      String passageId) {
+
+        public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
+                   String version, Instant modifiedAt, String parentPageId) {
+            this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, null);
+        }
+
+        public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
+                   String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment) {
+            this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, attachment,
+                    null);
+        }
+
+        /** Wo der Treffer liegt: in der Seite oder in einem ihrer Anhänge. */
+        public MatchedIn matchedIn() {
+            return attachment == null ? MatchedIn.PAGE : MatchedIn.ATTACHMENT;
+        }
+    }
+
+    /** Trefferart: wo die Fundstelle liegt. */
+    public enum MatchedIn {
+        /** Titel oder Text der Seite (oder die Suche der Quelle). */
+        PAGE,
+        /** Text eines Anhangs der Seite (#183). */
+        ATTACHMENT
+    }
+
+    /**
+     * Der Anhang eines Anhangstreffers. Sichtbar nur mit der Seite, deren Rechte er trägt.
+     *
+     * @param title Dateiname
+     */
+    public record AttachmentMatch(String attachmentId, String title) {
+
+        public AttachmentMatch {
+            Objects.requireNonNull(attachmentId, "attachmentId");
+            title = title == null ? "" : title;
+        }
     }
 
     /**

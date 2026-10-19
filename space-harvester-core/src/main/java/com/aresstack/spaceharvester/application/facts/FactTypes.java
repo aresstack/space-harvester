@@ -31,8 +31,17 @@ import java.util.Locale;
  *       <td>{@code kind, subject, subjectNormalized, predicate, object, objectNormalized, negated, cue, section}</td></tr>
  * </table>
  *
+ * <p>Die Satzanalyse über das Chat-Modell ({@code statements}, #108) ergibt dieselben Typen {@code MENTION}
+ * ({@code TERM}, {@code STATUS}; Payload {@code term, normalized, lemmaCandidate, pronoun, status, section}),
+ * {@code EVENT} ({@code PREDICATE}, Rollen auch {@code LOCATION}, {@code STATUS}, {@code QUALIFIER}; Payload
+ * {@code predicate, lemma, participants, negation, modality, condition, status, section}) und {@code RELATION}
+ * ({@code KIND} {@code attribute}, {@code state} oder {@code before}, {@code SUBJECT}, {@code OBJECT} nur bei
+ * {@code before}, {@code VALUE}, {@code STATUS}, {@code QUALIFIER}). {@code STATUS} ist dort der Extraktionsstatus
+ * des Client ({@code extracted}, {@code model_validated}, {@code uncertain}, {@code unresolved_reference}).
+ *
  * <p>Gleiche Argumentrollen in einem Fakt zählen ihre Ordnungszahl ab 0 hoch (zwei {@code ACTOR}, zwei
- * {@code QUALIFIER}). {@code QUALIFIER} ist {@code negated} oder {@code modal} wie im Client.
+ * {@code QUALIFIER}). {@code QUALIFIER} ist {@code negated} oder {@code modal} wie im Client, bei {@code statements}
+ * auch {@code conditional}.
  *
  * <p>Argumentwerte sind {@link #normalize normalisiert}: Unicode NFKC, Kleinbuchstaben, Leerraum zusammengefasst.
  */

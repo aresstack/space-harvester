@@ -183,6 +183,26 @@ class WebClientConfluenceTransportTest {
                         e -> assertThat(e.maxBytes()).isEqualTo(5000));
     }
 
+    /** Mit angekündigter Länge liegt der Körper in genau einem passenden Feld, ohne Schlusskopie. */
+    @Test
+    void aBodyOfAnnouncedLengthIsFilledInPlace() {
+        WebClientConfluenceTransport.Body known = new WebClientConfluenceTransport.Body(3000, 5000);
+        byte[] first = known.bytes;
+        for (int i = 0; i < 3; i++) {
+            known.reserve(1000);
+            known.size += 1000;
+        }
+        assertThat(known.bytes()).isSameAs(first).hasSize(3000);
+
+        WebClientConfluenceTransport.Body unknown = new WebClientConfluenceTransport.Body(-1, 50_000);
+        for (int i = 0; i < 20; i++) {
+            unknown.reserve(1000);
+            unknown.size += 1000;
+        }
+        assertThat(unknown.bytes()).hasSize(20_000);
+        assertThat(unknown.bytes.length).isLessThanOrEqualTo(50_000);
+    }
+
     @Test
     void theRouteIsChosenPerTargetOffTheNettyEventLoop() throws Exception {
         List<String> threads = new CopyOnWriteArrayList<>();
@@ -305,11 +325,13 @@ class WebClientConfluenceTransportTest {
     @Test
     void cancellingTheStageClosesTheConnection() throws Exception {
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            CountDownLatch arrived = new CountDownLatch(1);
             CompletableFuture<Boolean> closedByClient = CompletableFuture.supplyAsync(() -> {
                 try (Socket socket = silent.accept()) {
                     socket.setSoTimeout(5000);
                     InputStream in = socket.getInputStream();
                     readHead(in);
+                    arrived.countDown();
                     return in.read() == -1;
                 } catch (IOException e) {
                     return true; // Reset zählt ebenfalls als geschlossen
@@ -318,7 +340,8 @@ class WebClientConfluenceTransportTest {
             CompletableFuture<ConfluenceHttpResponse> stage = transport().getAsync(
                     URI.create("http://127.0.0.1:" + silent.getLocalPort() + "/page"), HEADERS, 1024)
                     .toCompletableFuture();
-            Thread.sleep(300);
+            // Abgebrochen wird eine gesendete Anfrage, nicht eine, die noch die Verbindung aufbaut.
+            assertThat(arrived.await(10, TimeUnit.SECONDS)).as("Anfrage beim Server angekommen").isTrue();
 
             assertThat(stage.cancel(true)).isTrue();
             assertThat(closedByClient.get(10, TimeUnit.SECONDS)).isTrue();
@@ -352,6 +375,64 @@ class WebClientConfluenceTransportTest {
 
         assertThat(failure(transport.getAsync(base.resolve("/status/200"), HEADERS, 1024)))
                 .isInstanceOf(IOException.class).hasMessageContaining("geschlossen");
+    }
+
+    @Test
+    void aRequestInFlightEndsNormallyWhenClientsAreDiscardedOrTheTransportClosesGracefully() throws Exception {
+        WebClientConfluenceTransport transport = transport();
+        CompletableFuture<ConfluenceHttpResponse> running =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 1);
+
+        transport.discardClients();
+        assertThat(transport.clientCount()).isZero();
+        CompletableFuture<ConfluenceHttpResponse> second =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 2);
+        transport.closeGracefully();
+
+        release.countDown();
+        assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(second.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(failure(transport.getAsync(base.resolve("/status/200"), HEADERS, 1024)))
+                .isInstanceOf(IOException.class).hasMessageContaining("geschlossen");
+    }
+
+    @Test
+    void aRequestWaitingForAConnectionStillEndsNormallyWhenClientsAreDiscarded() throws Exception {
+        // Eine Verbindung: die zweite Anfrage wartet im Pool, während die Clients verworfen werden.
+        WebClientConfluenceTransport transport = transport(WebClientConfluenceTransport.builder().maxConnections(1));
+        CompletableFuture<ConfluenceHttpResponse> running =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 1);
+        CompletableFuture<ConfluenceHttpResponse> waiting =
+                transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
+        // Die Anfrage wartet im alten Pool, dessen einzige Verbindung belegt ist.
+        waitFor(() -> transport.pendingAcquires() == 1);
+        assertThat(waiting).isNotDone();
+
+        transport.discardClients();
+        release.countDown();
+
+        assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(waiting.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        transport.close();
+    }
+
+    @Test
+    void closingHardAfterAGracefulCloseEndsWaitingRequestsAtOnce() throws Exception {
+        WebClientConfluenceTransport transport = transport(WebClientConfluenceTransport.builder().maxConnections(1));
+        transport.getAsync(base.resolve("/slow"), HEADERS, 1024);
+        waitFor(() -> requests.get() == 1);
+        CompletableFuture<ConfluenceHttpResponse> waiting =
+                transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> transport.pendingAcquires() == 1);
+
+        transport.closeGracefully();
+        transport.close();
+
+        // Ohne hartes Schließen wartete die Anfrage bis pendingAcquireTimeout (connect + read).
+        assertThatThrownBy(() -> waiting.get(2, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class);
     }
 
     @Test

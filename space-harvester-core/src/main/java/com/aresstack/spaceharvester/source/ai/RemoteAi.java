@@ -1,11 +1,19 @@
 package com.aresstack.spaceharvester.source.ai;
 
+import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysis;
+import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysisCache;
+import com.aresstack.enterpriseai.astu.acropolis.image.SourceImageAnalysisUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.navigation.ChatSectionLabeler;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
+import com.aresstack.enterpriseai.astu.chat.ChatResponse;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelDescriptor;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
+import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
+import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
+import com.aresstack.enterpriseai.chat.api.ChatTask;
 import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatAdapter;
 import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatConfig;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
@@ -23,17 +31,22 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementChat;
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.net.SocketTimeoutException;
 import java.security.GeneralSecurityException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BinaryOperator;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -43,7 +56,7 @@ import javax.net.ssl.X509TrustManager;
  * Der externe KI-Dienst über die unveränderten Adapter des Enterprise AI Client (ADR 0011):
  * {@code OpenAiCompatibleEmbeddingAdapter} für {@code POST /embeddings}, {@code KipitzModelCatalogAdapter} für
  * {@code GET /models}, {@code KipitzRerankAdapter} für {@code POST /rerank} und {@code OpenAiCompatibleChatAdapter} für
- * {@code POST /chat/completions} (ADR 0017). Alle verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
+ * {@code POST /chat/completions} (ADR 0017, Bildbeschreibung ADR 0021). Alle verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
  * Proxy, fail-closed) und über das Vertrauen aus {@code trust-bundle} oder der JVM. Der API-Key geht je Anfrage als
  * Bearer-Token mit und wird nie protokolliert; Meldungen der Adapter nennen nur Statuscodes und Pfade.
  */
@@ -163,6 +176,165 @@ public final class RemoteAi {
         };
     }
 
+    /** Obergrenze der Antwort des Chat-Modells für Akronym-Ausschreibungen in Tokens (#122). */
+    static final int MAX_EXPANSION_TOKENS = 4096;
+    /** Eigene Frist je Anfrage der Akronymauflösung, unabhängig von {@code ai.timeout} (#122). */
+    public static final Duration EXPANSION_TIMEOUT = Duration.ofSeconds(90);
+
+    /**
+     * Das Chat-Modell als Ausschreiber von Akronymen ({@code POST /chat/completions}, #122) über den unveränderten
+     * {@code OpenAiCompatibleChatAdapter}, mit eigener Frist ({@link #EXPANSION_TIMEOUT}). An den Dienst gehen nur die
+     * kurzen Fundstellen, die der Auftrag freigegebener Quellen zusammenstellt; geprüft wird die Antwort dort. Scheitert
+     * ein Aufruf, meldet das Modell {@link AiServiceException} ohne Text, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public BinaryOperator<String> acronymExpansions() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
+                (int) EXPANSION_TIMEOUT.toMillis()));
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_EXPANSION_TOKENS).build();
+        return (instructions, input) -> {
+            try {
+                return adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)).content();
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        };
+    }
+
+    /** Eigene Frist je Anfrage der Abschnittsbenennung, unabhängig von {@code ai.timeout} (#181). */
+    public static final Duration LABEL_TIMEOUT = Duration.ofSeconds(60);
+
+    /**
+     * Benennt Themenabschnitte der Dokumentnavigation mit dem Chat-Modell ({@code POST /chat/completions}, #181,
+     * ADR 0020) über die unveränderte {@code ChatSectionLabeler} des Enterprise AI Client: dieselbe Anweisung, je 40
+     * Abschnitte eine Anfrage, höchstens 700 Zeichen je Abschnitt. Scheitert eine Anfrage, gehen die folgenden Pakete nicht
+     * mehr ans Netz; sie und das gescheiterte behalten die Bezeichnungen der Analyse, und das Ergebnis ist
+     * unvollständig. Weder Text noch Antwort werden geloggt oder in
+     * eine Meldung übernommen.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public NavigationLabelModel.Labels sectionLabels(String documentTitle, List<String> sectionTexts) {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
+                (int) LABEL_TIMEOUT.toMillis()));
+        AtomicBoolean failed = new AtomicBoolean();
+        ChatCompletionPort port = new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                if (failed.get()) {
+                    // Nach dem ersten Fehler kein weiteres Paket ans Netz: jedes wartete sonst bis zur Frist.
+                    throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell nicht erreichbar");
+                }
+                try {
+                    return adapter.complete(request);
+                } catch (RuntimeException e) {
+                    failed.set(true);
+                    throw e;
+                }
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                throw new UnsupportedOperationException("Abschnittsbenennung streamt nicht");
+            }
+        };
+        String model = settings.chatModel();
+        List<String> labels = new ChatSectionLabeler(port, () -> model).labels(documentTitle, sectionTexts);
+        return new NavigationLabelModel.Labels(labels, !failed.get());
+    }
+
+    /**
+     * Das Chat-Modell der Satzanalyse ({@code POST /chat/completions}, Prozessor {@code statements}, #108) über den
+     * unveränderten {@code OpenAiCompatibleChatAdapter}, wie {@code ChatStatementExtractor} im Enterprise AI Client:
+     * nur das Modell gesetzt, keine Token-Grenze, keine Sampling-Optionen. Hier geht Seitentext an den Dienst; das
+     * dürfen nur Quellen in {@code external-processing-sources}, was der Prozessor je Seite prüft. Scheitert ein
+     * Aufruf, meldet das Modell {@link AiServiceException} ohne Nachrichten, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public StatementChat statementChat() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        String model = settings.chatModel();
+        String endpoint = ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
+        ChatOptions options = ChatOptions.builder().model(model).build();
+        return new StatementChat() {
+            @Override
+            public String model() {
+                return model;
+            }
+
+            @Override
+            public String endpoint() {
+                return endpoint;
+            }
+
+            @Override
+            public String complete(List<Message> messages) {
+                List<ChatMessage> request = new ArrayList<>(messages.size());
+                for (Message message : messages) {
+                    request.add(switch (message.role()) {
+                        case SYSTEM -> ChatMessage.system(message.content());
+                        case USER -> ChatMessage.user(message.content());
+                        case ASSISTANT -> ChatMessage.assistant(message.content());
+                    });
+                }
+                try {
+                    return adapter.complete(new ChatRequest(request, options)).content();
+                } catch (ChatCompletionException e) {
+                    throw chatFailure(e);
+                }
+            }
+        };
+    }
+
+    /**
+     * Beschreibt ein Bild mit dem Vision-Modell ({@code POST /chat/completions} mit Bild, ADR 0021) über die
+     * unveränderte {@code SourceImageAnalysisUseCase} des Enterprise AI Client: derselbe Prompt, dieselbe Anfrage (nur
+     * das Modell gesetzt). Gespeichert wird hier nichts; das übernimmt die Asset-Ablage je SHA-256 und Modell.
+     * Scheitert der Aufruf, meldet er {@link AiServiceException} ohne Bild, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Vision-Modell
+     */
+    public String describeImage(byte[] image, String mediaType) {
+        if (!settings.vision()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel()));
+        String model = settings.visionModel();
+        SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
+                () -> model, NO_CACHE);
+        try {
+            ImageAnalysis analysis = useCase.describe("image", "", "", mediaType, image);
+            return analysis == null ? null : analysis.description();
+        } catch (ChatCompletionException e) {
+            throw chatFailure(e);
+        }
+    }
+
+    /** Kein Zwischenspeicher im Anwendungsfall: Die Asset-Ablage hält die Beschreibungen je Bildbytes und Modell. */
+    private static final ImageAnalysisCache NO_CACHE = new ImageAnalysisCache() {
+        @Override
+        public ImageAnalysis get(String cacheKey) {
+            return null;
+        }
+
+        @Override
+        public void put(String cacheKey, ImageAnalysis analysis) {
+            // nichts
+        }
+    };
+
     /**
      * Die Modelle des Dienstes ({@code GET /models}).
      *
@@ -226,12 +398,20 @@ public final class RemoteAi {
 
     /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
     private OpenAiCompatibleChatConfig chatConfig() {
+        return chatConfig(settings.chatModel());
+    }
+
+    private OpenAiCompatibleChatConfig chatConfig(String model) {
+        return chatConfig(model, timeoutMillis());
+    }
+
+    private OpenAiCompatibleChatConfig chatConfig(String model, int timeoutMillis) {
         OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
-                .builder(settings.baseUrl(), settings.chatModel())
+                .builder(settings.baseUrl(), model)
                 .routes(routes)
                 .userAgent(userAgent)
-                .connectTimeoutMillis(timeoutMillis())
-                .readTimeoutMillis(timeoutMillis());
+                .connectTimeoutMillis(timeoutMillis)
+                .readTimeoutMillis(timeoutMillis);
         if (settings.apiKey() != null) {
             config.bearerToken(OpenAiCompatibleChatConfig.TokenSource.fixed(settings.apiKey()));
         }

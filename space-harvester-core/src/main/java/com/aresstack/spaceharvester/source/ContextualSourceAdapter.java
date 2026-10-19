@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -14,20 +15,47 @@ import java.util.function.Function;
 public final class ContextualSourceAdapter implements SourceAdapter {
 
     private final String type;
+    private final String displayName;
+    private final boolean needsCredentials;
     private final Function<Context, KnowledgeSourceProvider> provider;
 
     /**
-     * @param type     Wert von {@code type} in der Quellenkonfiguration, gleich dem Typ des Providers
-     * @param provider baut den Provider zum Kontext; mit {@code null} für die Prüfung
+     * @param type             Wert von {@code type} in der Quellenkonfiguration, gleich dem Typ des Providers
+     * @param displayName      Anzeigename für Auswahllisten
+     * @param needsCredentials ob der Typ {@code options.credentialRef} verlangt
+     * @param provider         baut den Provider zum Kontext; mit {@code null} für die Prüfung
      */
-    public ContextualSourceAdapter(String type, Function<Context, KnowledgeSourceProvider> provider) {
+    public ContextualSourceAdapter(String type, String displayName, boolean needsCredentials,
+                                   Function<Context, KnowledgeSourceProvider> provider) {
         this.type = Objects.requireNonNull(type, "type");
+        this.displayName = Objects.requireNonNull(displayName, "displayName");
+        this.needsCredentials = needsCredentials;
         this.provider = Objects.requireNonNull(provider, "provider");
     }
 
     @Override
     public String type() {
         return type;
+    }
+
+    @Override
+    public String displayName() {
+        return displayName;
+    }
+
+    @Override
+    public boolean needsCredentials() {
+        return needsCredentials;
+    }
+
+    @Override
+    public String addressOption() {
+        return new KnowledgeSourceProviderAdapter(provider.apply(null)).addressOption();
+    }
+
+    @Override
+    public List<SourceField> fields() {
+        return new KnowledgeSourceProviderAdapter(provider.apply(null)).fields();
     }
 
     @Override

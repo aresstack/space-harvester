@@ -3,6 +3,9 @@ package com.aresstack.spaceharvester.source;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
 import com.aresstack.spaceharvester.source.confluence.ClientCertificateException;
@@ -47,6 +50,25 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     @Override
     public String type() {
         return TYPE;
+    }
+
+    @Override
+    public String displayName() {
+        return "Confluence";
+    }
+
+    /**
+     * Die Felder des Upstream-Typs ohne die, die der Adapter selbst setzt: Adresse ({@code base-url}), Titel,
+     * Anmeldung ({@code auth}) und Zertifikat ({@code client-certificate}) stehen außerhalb von {@code options}.
+     */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(ConfluenceSources.anonymousProvider(null).type(), RESERVED_OPTIONS);
+    }
+
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
     }
 
     @Override
@@ -130,7 +152,11 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
                     context.routes(), context.userAgent(), trust, thumbprint,
                     certificate.enabled() ? certificate.alias().trim() : null, pkcs12 ? certificate.path() : null,
                     pkcs12 ? ConfiguredSecrets.certificateRefFor(config.id()) : null, context.proxyCredentials());
-            return new OpenedSource(port, delegated);
+            // Startpunkte und Tiefe wie beim Indexieren im Client gelten auch beim Abgleich; ohne eigene Startpunkte
+            // (Standard alle Spaces) bleibt die Auflistung je Space unverändert.
+            SourceScope scope = provider.scope(settings);
+            return new OpenedSource(port, delegated,
+                    scope.startPoints().equals(List.of(ALL_SPACES)) ? null : scope);
         } catch (ClientCertificateException e) {
             throw new InvalidSourceConfigurationException(List.of("client-certificate: " + e.getMessage()));
         }
@@ -227,6 +253,9 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     private static boolean present(String value) {
         return value != null && !value.isBlank();
     }
+
+    /** Standard-Startpunkt von {@code ConfluenceSourceProvider}: alle Spaces. */
+    static final String ALL_SPACES = "space:*";
 
     static SourceSettings settings(SourceSettingsConfig config) {
         Map<String, String> values = new LinkedHashMap<>(config.options());

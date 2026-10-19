@@ -8,7 +8,7 @@
 # parity.docx, parity.pdf, parity.md, problems-<format>.txt (nicht eingebettete Bilder), reading/ (Leseansicht),
 # scope-page.md und scope-subtree.md (Einzelseite und Teilbaum ab Seite, #186), navigation.properties (Kinder,
 # Breadcrumbs, Querverweise), management.properties (Quellenverwaltung), addresses.properties (Adressformen),
-# search.properties (Index-Rückfall, Auszüge, Vorladen) und documents/ (Typerkennung und Dokumenttext der Dateien aus
+# search.properties (Index-Rückfall, Auszüge, Vorladen, Anhangstexte) und documents/ (Typerkennung und Dokumenttext der Dateien aus
 # src/test/resources/documents).
 # Braucht JDK 8 oder neuer (übersetzt mit --release 8, läuft headless). PARITY_KEEP=1 behält den Arbeitsordner zur Fehlersuche.
 set -euo pipefail
@@ -56,6 +56,11 @@ cp="$(cat "$work/cp.txt")"
 mkdir -p "$work/classes"
 javac --release 8 -nowarn -encoding UTF-8 -cp "$cp" -d "$work/classes" \
   "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/ParityConfluence.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/git/ParityGit.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/localfiles/ParityFiles.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/ftp/ParityFtp.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/sharepoint/ParitySharePoint.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/betaview/ParityBetaView.java" \
   "$repo/parity-tests/src/test/java/com/aresstack/spaceharvester/parity/ParitySpace.java" \
   "$here/EacParityExport.java" "$here/EacDocumentText.java"
 java -Djava.awt.headless=true -cp "$work/classes${cp:+:$cp}" EacParityExport "$target"

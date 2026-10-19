@@ -6,11 +6,15 @@ import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -45,6 +49,15 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     }
 
     /**
+     * Mit den freigegebenen Ordnern der wirksamen Konfiguration ({@code local-files.*}, ADR 0015), bei jedem Zugriff
+     * gelesen: Ein Wechsel wirkt ohne Neustart.
+     */
+    public static LocalFilesSourceAdapter following(ConfigurationManager manager) {
+        Objects.requireNonNull(manager, "manager");
+        return new LocalFilesSourceAdapter(() -> manager.current().configuration().localFiles().grants());
+    }
+
+    /**
      * Mit weiteren freigegebenen Ordnern wie im Enterprise AI Client ({@code FileAccessConfig}); gelesen bei jedem
      * Dateizugriff, Änderungen gelten ohne Neustart.
      */
@@ -53,14 +66,33 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
         this.provider = new LocalFilesSourceProvider(DocumentExtraction.detector(), DocumentExtraction.registry(),
                 () -> {
                     LocalFileGrants granted = grants.get();
+                    // Nur Verzeichnisse zählen, beim Zugriff statt beim Speichern der Konfiguration: Eine Datei als
+                    // Wurzel gäbe über den Präfixvergleich sonst genau sich selbst frei.
                     return granted == null ? LocalFileAccessPolicy.none()
-                            : LocalFileAccessPolicy.of(granted.allowAll(), granted.roots());
+                            : LocalFileAccessPolicy.of(granted.allowAll(),
+                                    granted.roots().stream().filter(Files::isDirectory).toList());
                 });
     }
 
     @Override
     public String type() {
         return TYPE;
+    }
+
+    @Override
+    public String displayName() {
+        return "Ordner";
+    }
+
+    @Override
+    public String addressOption() {
+        return "directory";
+    }
+
+    /** Die Felder des Upstream-Typs ohne {@code title}, der außerhalb von {@code options} steht. */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(provider.type(), Set.of("title"));
     }
 
     @Override

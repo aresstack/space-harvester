@@ -8,7 +8,8 @@ import java.util.Set;
  *
  * @param id          Kennung, wie sie in {@code chat-model} bzw. {@code embedding-model} gehört
  * @param displayName Anzeigename des Dienstes, sonst die Kennung
- * @param categories  Einordnung des Dienstes, z. B. {@code chat}, {@code embedding}, {@code rerank}; leer, wenn er
+ * @param categories  Einordnung des Dienstes, z. B. {@code chat}, {@code embedding}, {@code rerank},
+ *                    {@code vision}; leer, wenn er
  *                    keine meldet
  */
 public record AiModel(String id, String displayName, Set<String> categories) {
@@ -17,6 +18,8 @@ public record AiModel(String id, String displayName, Set<String> categories) {
     public static final String EMBEDDING = "embedding";
     /** Kategorie der Chat-Modelle. */
     public static final String CHAT = "chat";
+    /** Kategorie der Modelle mit Bildeingabe, wie {@code ModelCategory.VISION} im Enterprise AI Client (ADR 0021). */
+    public static final String VISION = "vision";
 
     public AiModel {
         Objects.requireNonNull(id, "id");

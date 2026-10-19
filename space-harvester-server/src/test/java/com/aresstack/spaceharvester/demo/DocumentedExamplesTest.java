@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -117,9 +118,12 @@ class DocumentedExamplesTest {
     Stream<DynamicTest> documentedCurlExamplesWork() throws IOException {
         String token = token();
         Map<String, String> variables = new HashMap<>();
+        AtomicBoolean synced = new AtomicBoolean();
         return examples().stream().map(example -> DynamicTest.dynamicTest(example.curl(), () -> {
             Matcher used = VARIABLE.matcher(example.path());
-            boolean polling = used.find();
+            // Nach einem Abgleich füllt ein eigener Anreicherungsauftrag Volltextindex und Anreicherungen; Lesende
+            // Beispiele danach warten auf diesen Stand wie die mit einer Auftrags-ID.
+            boolean polling = used.find() || synced.get() && !example.post();
             String path = used.replaceAll(match -> {
                 assertThat(variables).as("$" + match.group(1) + " vorher zugewiesen").containsKey(match.group(1));
                 return variables.get(match.group(1));
@@ -143,6 +147,9 @@ class DocumentedExamplesTest {
                     assertContains(actual, expected, "$");
                     if (example.variable() != null) {
                         variables.put(example.variable(), actual.get("id").asString());
+                    }
+                    if (example.post() && example.path().contains("/syncs")) {
+                        synced.set(true);
                     }
                     return;
                 } catch (AssertionError e) {

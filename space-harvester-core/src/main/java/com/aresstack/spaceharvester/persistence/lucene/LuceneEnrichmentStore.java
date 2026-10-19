@@ -172,8 +172,12 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     /** Reihenfolge innerhalb einer Seite: Prozessor und Position im Ergebnis. */
     private static final String FACT_ORDER = "factOrder";
     private static final String FACT = "fact";
-    /** Mehr Fakten je Seite liefert {@link #factsOf} nicht. */
-    private static final int MAX_FACTS_PER_PAGE = 3 * EnrichmentFacts.MAX_PER_RESULT;
+    /**
+     * Mehr Fakten je Seite liefert {@link #factsOf} nicht: so viele, wie alle faktentragenden Prozessoren zusammen
+     * ablegen. Die Grenze gilt beim Schreiben je Prozessor ({@link EnrichmentFacts#MAX_PER_RESULT}), damit ein
+     * großer Prozessor die übrigen nicht verdrängt.
+     */
+    private static final int MAX_FACTS_PER_PAGE = EnrichmentFacts.PROCESSORS.size() * EnrichmentFacts.MAX_PER_RESULT;
     private static final JsonMapper JSON = JsonMapper.builder().build();
     /** Trennzeichen in zusammengesetzten Schlüsseln; kommt in Quellen-, Seiten- und Prozessorkennungen nicht vor. */
     private static final char SEPARATOR = '\u0000';
@@ -302,6 +306,21 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         try {
             writer.deleteDocuments(new Term(PAGE, page(key)), new Term(VECTOR_PAGE, page(key)),
                     new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)));
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    @Override
+    public synchronized void remove(PageKey key, String processorId) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(processorId, "processorId");
+        requireOpen();
+        try {
+            String id = id(key, processorId);
+            writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
+                    new Term(FACT_OF, id));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);

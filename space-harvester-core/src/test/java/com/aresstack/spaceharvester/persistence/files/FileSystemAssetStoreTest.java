@@ -81,6 +81,24 @@ class FileSystemAssetStoreTest {
     }
 
     @Test
+    void aStreamReadsTheContentAndReportsAChangeAtItsEnd() throws Exception {
+        FileSystemAssetStore store = new FileSystemAssetStore(root);
+        byte[] content = bytes("original");
+        Asset asset = asset("att1", "1", content);
+        store.put(asset, content);
+        try (java.io.InputStream in = store.open(asset)) {
+            assertThat(in.readAllBytes()).isEqualTo(content);
+        }
+        try (Stream<Path> blobs = Files.walk(root.resolve("blobs"))) {
+            Files.writeString(blobs.filter(Files::isRegularFile).findFirst().orElseThrow(), "verändert");
+        }
+
+        try (java.io.InputStream in = store.open(asset)) {
+            assertThatThrownBy(in::readAllBytes).isInstanceOf(java.io.IOException.class);
+        }
+    }
+
+    @Test
     void contentMustMatchItsHash() {
         FileSystemAssetStore store = new FileSystemAssetStore(root);
 

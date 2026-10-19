@@ -110,6 +110,25 @@ class SourcesApiTest {
     }
 
     @Test
+    void listsTheKnownSourceTypesWithDisplayNamesAndAddressOptions() throws Exception {
+        HttpResponse<String> response = get("/api/v1/sources/types");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body())
+                .contains("{\"id\":\"confluence\",\"displayName\":\"Confluence\",\"needsCredentials\":false,\"addressOption\":null,")
+                .contains("{\"id\":\"files\",\"displayName\":\"Ordner\",\"needsCredentials\":false,\"addressOption\":\"directory\",")
+                .contains("{\"id\":\"ftp\",\"displayName\":\"FTP\",\"needsCredentials\":false,\"addressOption\":\"host\",")
+                .contains("{\"id\":\"jes\",\"displayName\":\"JES\",\"needsCredentials\":true,\"addressOption\":\"host\",")
+                .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false,\"addressOption\":\"siteUrl\",")
+                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true,\"addressOption\":\"baseUrl\",")
+                .contains("\"authModes\":[\"none\",\"basic\",\"pat\"]", "\"kind\":\"SECRET_REF\"")
+                .containsPattern("\\{\"id\":\"sharepoint\"(?:(?!\\{\"id\").)*\"tls\":true")
+                .containsPattern("\\{\"id\":\"ftp\"(?:(?!\\{\"id\").)*\"tls\":false")
+                .doesNotContain("vaultValue")
+                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false,\"addressOption\":\"mailbox\",");
+    }
+
+    @Test
     void listsAllSpacesOfASourceWithBasicAuth() throws Exception {
         HttpResponse<String> response = get("/api/v1/sources/basic-wiki/spaces");
 

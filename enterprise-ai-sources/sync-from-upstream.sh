@@ -23,10 +23,13 @@ modules=(
   proasteion/emporion/deigma
   proasteion/emporion/deigma/document-tika
   proasteion/emporion/holkas/source-localfiles
+  proasteion/emporion/holkas/source-mediawiki
   proasteion/emporion/holkas/source-git
   proasteion/emporion/holkas/source-ftp
   proasteion/emporion/holkas/source-ndv
   proasteion/emporion/holkas/source-sharepoint
+  proasteion/emporion/holkas/source-betaview
+  proasteion/emporion/holkas/source-outlook
   embedding-api
   embedding-openai
   chat-api
@@ -44,7 +47,12 @@ module_classes=(
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysis
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysisCache
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/SourceImageAnalysisUseCase
+  # Dokumentnavigation (#181): Benennung der Themenabschnitte über den Chat-Port, wie im Upstream
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/SectionLabeler
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/ChatSectionLabeler
   proasteion/application:com/aresstack/enterpriseai/proasteion/application/knowledge/DocumentSourceFileTextExtractor
+  # MediaWiki (#187): Brücke vom SecretProvider zur Anmeldung am Wiki, wie AdapterAssembly.sourceProviders im Upstream
+  proasteion/application:com/aresstack/enterpriseai/proasteion/application/security/SecretBackedMediaWikiCredentialsProvider
   model-api:com/aresstack/enterpriseai/model/api/ModelCatalogPort
   model-api:com/aresstack/enterpriseai/model/api/ModelCatalogException
   model-kipitz:com/aresstack/enterpriseai/model/kipitz/KipitzModelCatalogAdapter

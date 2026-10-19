@@ -1,7 +1,10 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
@@ -40,11 +43,12 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     /**
      * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und die Kopien aus dem Enterprise AI Client
-     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint).
+     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook) und MediaWiki (#187).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
             new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
-            EacSourceAdapters.sharePoint());
+            EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
+            EacSourceAdapters.outlook(), MediaWikiSources.adapter());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
     public static final Set<String> TYPES = DEFAULT_ADAPTERS.stream().map(SourceAdapter::type)
@@ -72,7 +76,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * gelesen ohne Sperre.
      */
     private volatile Map<String, Opened> opened;
-    private final ProxyAuthenticator authenticator;
+    /** Die Proxy-Anmeldung für {@code HttpURLConnection}; {@link #reconfigure} setzt sie neu. */
+    private volatile ProxyAuthenticator authenticator;
 
     /**
      * Eine geöffnete Quelle mit ihren Einstellungen. Eine abgeschaltete ({@code enabled = false}) behält Einstellungen
@@ -88,6 +93,13 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         void close() {
             if (delegated != null) {
                 delegated.close();
+            }
+        }
+
+        /** Wie {@link #close()}, laufende delegierte Aufrufe enden noch normal. */
+        void closeGracefully() {
+            if (delegated != null) {
+                delegated.closeGracefully();
             }
         }
     }
@@ -173,7 +185,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets(secretProvider);
-        ProxyCredentials proxyCredentials = ProxyCredentials.of(proxy.authentication(), secretProvider);
+        // Eine eigene Instanz auch ohne Anmeldung: reconfigure() stellt sie für alle Halter um.
+        ProxyCredentials proxyCredentials = ProxyCredentials.reconfigurable(proxy.authentication(), secretProvider);
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent, proxyCredentials) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
@@ -263,6 +276,14 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return active(sourceId).map(Opened::source);
+    }
+
+    @Override
+    public List<SourceType> types() {
+        return adapters.values().stream()
+                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials(),
+                        adapter.addressOption(), adapter.fields(), adapter.authModes(), adapter.tls()))
+                .toList();
     }
 
     private Optional<Opened> active(String sourceId) {
@@ -407,11 +428,22 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * @throws UnknownSourceException wenn es keine Quelle mit dieser ID gibt
      */
     public synchronized SourceSettingsConfig replace(SourceSettingsConfig config) {
+        return replace(config, false);
+    }
+
+    /**
+     * @param graceful ob laufende delegierte Aufrufe der bisherigen Instanz noch zu Ende laufen; so öffnet
+     *                 {@link #reconfigure} dieselben Einstellungen neu, ohne sie erneut gegen die übrigen Quellen zu
+     *                 prüfen (beim Start sind Quellen mit demselben Ziel nur eine Warnung)
+     */
+    private SourceSettingsConfig replace(SourceSettingsConfig config, boolean graceful) {
         Opened previous = opened.get(Objects.requireNonNull(config, "config").id());
         if (previous == null) {
             throw new UnknownSourceException(config.id());
         }
-        requireValid(config, true);
+        if (!graceful) {
+            requireValid(config, true);
+        }
         ConfiguredSecrets.Saved saved = secrets.save(config.id());
         secrets.forget(config.id());
         Opened source;
@@ -424,7 +456,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         Map<String, Opened> next = new LinkedHashMap<>(opened);
         next.put(config.id(), source.enabled(previous.enabled()));
         opened = Collections.unmodifiableMap(next);
-        previous.close();
+        if (graceful) {
+            previous.closeGracefully();
+        } else {
+            previous.close();
+        }
         return previous.config();
     }
 
@@ -491,6 +527,54 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         if (!problems.isEmpty()) {
             throw new InvalidSourceConfigurationException(problems);
         }
+    }
+
+    /**
+     * Stellt Proxy, Proxy-Anmeldung und Vertrauen ohne Bundle zur Laufzeit um (ADR 0015) und öffnet danach alle Quellen
+     * über {@link #replace} neu: Trust-Bundles und Client-Zertifikate werden dabei neu gelesen, die bisherigen
+     * Instanzen schließen, sobald die neuen offen sind. Laufende Anfragen enden über ihre bisherigen Verbindungen, auch
+     * delegierte mit dem Token des Nutzers; die Pools des WebClient-Transports schließen, wenn ihre letzte Verbindung
+     * zurückkommt. Eine Quelle, die sich nicht
+     * neu öffnen lässt (etwa eine inzwischen unlesbare PKCS#12-Datei), behält ihre bisherige Instanz; das Protokoll
+     * nennt nur Quelle und Art des Fehlers.
+     *
+     * <p>Das Vertrauen ohne Bundle stellen nur {@link TrustBundles#reconfigurable} um; mit anderen Bundles bleibt es.
+     *
+     * @throws InvalidNetworkConfigurationException mit den Problemen aus {@link NetworkSettings#problems()}; dann
+     *                                              ändert sich nichts
+     */
+    public synchronized void reconfigure(NetworkSettings network) {
+        List<String> problems = network.problems().stream().map(ConfigurationProblem::message).toList();
+        if (!problems.isEmpty()) {
+            throw new InvalidNetworkConfigurationException(problems);
+        }
+        routes.reconfigure(network.proxy());
+        context.proxyCredentials().reconfigure(network.proxy().authentication());
+        // Der Authenticator liest die umstellbare Anmeldung je Anfrage: nur ein- oder austragen, nie neu setzen, damit
+        // keine HttpURLConnection zwischendurch ohne Anmeldung eine 407 erhält.
+        if (authenticator == null) {
+            authenticator = ProxyAuthenticator.install(context.proxyCredentials());
+        } else if (!context.proxyCredentials().configured()) {
+            authenticator.uninstall();
+            authenticator = null;
+        }
+        if (!context.trustBundles().reconfigure(network.trust()) && !network.trust().jvmOnly()) {
+            LOG.warn("Vertrauen ohne trust-bundle bleibt unverändert: die Vertrauensquellen dieses Katalogs lassen "
+                    + "sich nicht umstellen");
+        }
+        if (async != null) {
+            // Die Clients tragen die Proxy-Anmeldung ihres Baus; neue Anfragen bauen neue.
+            async.discardClients();
+        }
+        for (Opened source : opened.values()) {
+            try {
+                replace(source.config(), true);
+            } catch (RuntimeException e) {
+                LOG.warn("Quelle {} nach geänderten Netzwerkeinstellungen nicht neu geöffnet, die bisherige bleibt "
+                        + "({})", source.config().id(), e.getClass().getSimpleName());
+            }
+        }
+        LOG.info("Netzwerkeinstellungen der Quellen umgestellt");
     }
 
     /**

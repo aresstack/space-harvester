@@ -85,7 +85,8 @@ public final class JsonPackageConverter implements ExportConverter {
         Set<String> used = new HashSet<>();
         entry(zip, "assets.json");
         JsonGenerator generator = json.createGenerator(new Unclosed(zip));
-        // Erst die Liste schreiben, Dateien danach: der Generator puffert, das ZIP schreibt nacheinander.
+        // Erst die Liste schreiben, Dateien danach: der Generator puffert, das ZIP schreibt nacheinander. Die Dateien
+        // werden dafür erneut aus der Ablage gelesen, statt bis zum Ende alle im Speicher zu liegen (100 MiB je Anhang).
         List<Runnable> files = new ArrayList<>();
         generator.writeStartObject();
         generator.writeStringProperty("format", ASSETS_FORMAT);
@@ -117,11 +118,10 @@ public final class JsonPackageConverter implements ExportConverter {
                 generator.writeStringProperty("path", path);
                 generator.writeNumberProperty("size", content.get().length);
                 generator.writeStringProperty("sha256", entry.sha256());
-                byte[] bytes = content.get();
-                files.add(() -> file(zip, path, bytes));
+                files.add(() -> file(zip, path, assets.content(entry)));
                 if (entry.reference().kind() == Kind.ATTACHMENT
                         && Diagrams.isDrawio(entry.mediaType(), entry.reference().filename())) {
-                    graph(generator, files, zip, bytes, unique(base + stem(name) + ".graph.json", used));
+                    graph(generator, files, zip, content.get(), unique(base + stem(name) + ".graph.json", used));
                 }
             } else {
                 generator.writeNullProperty("path");
@@ -136,8 +136,7 @@ public final class JsonPackageConverter implements ExportConverter {
                 generator.writeStringProperty("mediaType", entry.rendition().mediaType());
                 generator.writeStringProperty("sha256", entry.rendition().sha256());
                 generator.writeEndObject();
-                byte[] bytes = rendition.get();
-                files.add(() -> file(zip, path, bytes));
+                files.add(() -> file(zip, path, assets.rendition(entry)));
             }
             generator.writeEndObject();
         }
@@ -168,7 +167,7 @@ public final class JsonPackageConverter implements ExportConverter {
         generator.writeStringProperty("graph", path);
         generator.writeStringProperty("text", graph.text());
         byte[] bytes = graphJson(graph);
-        files.add(() -> file(zip, path, bytes));
+        files.add(() -> file(zip, path, Optional.of(bytes)));
     }
 
     private byte[] graphJson(DrawioGraph graph) {
@@ -210,10 +209,13 @@ public final class JsonPackageConverter implements ExportConverter {
         zip.putNextEntry(entry);
     }
 
-    private static void file(ZipOutputStream zip, String path, byte[] bytes) {
+    private static void file(ZipOutputStream zip, String path, Optional<byte[]> bytes) {
         try {
+            if (bytes.isEmpty()) {
+                throw new IOException("Datei verschwand während des Exports: " + path);
+            }
             entry(zip, path);
-            zip.write(bytes);
+            zip.write(bytes.get());
             zip.closeEntry();
         } catch (IOException e) {
             throw new UncheckedIOException(e);

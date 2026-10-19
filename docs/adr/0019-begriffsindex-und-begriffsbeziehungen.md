@@ -1,12 +1,16 @@
 # ADR 0019: Begriffsindex und Begriffsbeziehungen
 
-- Status: **Angenommen, Begriffsindex umgesetzt** (Strang B, 19.10.2026; Festlegung von Angelo, 19.10. 00:33).
+- Status: **Angenommen, Begriffsindex und Beziehungen umgesetzt** (Strang B, 19.10.2026; Festlegung von Angelo, 19.10. 00:33).
   Ergänzt [ADR 0003](0003-lucene-cache.md) (Lucene-Cache) und [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md)
   Punkt 4 (Rechte je Seite).
 - Umgesetzt (#119): Prozessor `terms`, Begriffsdokumente in `LuceneEnrichmentStore`, `TermQueries`
   (`harvester.terms()`), `PageTerms.read` für die Leseansicht, REST `GET /api/v1/terms`,
   `GET /api/v1/terms/occurrences`, `GET /api/v1/terms/snippet`.
-- Geplant (#120): Begriffsbeziehungen als Dateien außerhalb des Cache-Verzeichnisses, Punkt 5.
+- Umgesetzt (#120): `TermRelations` (`harvester.termRelations()`), `FileTermRelationStore` unter
+  `<dataDirectory>/term-relations` (Server: `space-harvester.term-relations.directory`), REST
+  `/api/v1/term-relations` (Punkt 5 und 7); Regelvorschläge aus Ausschreibungen `AcronymRelationRule`
+  (`harvester.acronymRelationRule()`, `POST /api/v1/term-relations/rules/acronyms?sourceId=`).
+- Umgesetzt (#122, Stufe 1): KI-Akronymauflösung `AcronymResolution` (Punkt 8).
 - Bezüge: #119, #120, #122, #336, #339 (Oberfläche, Strang L); `AcronymProcessor`, `EntityProcessor`, `PageAcronyms`.
 
 ## Kontext
@@ -64,14 +68,74 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 6. **Leseansicht und globale Sicht teilen den Datensatz.** `PageTerms.read(key, views, text)` liest dasselbe
    `terms`-Ergebnis für genau den angezeigten Text wie `PageAcronyms.read` und meldet `CURRENT`, `STALE`, `FAILED`
    oder `MISSING`. Positionen der globalen Fundstellen und der Leseansicht sind dieselben.
+7. **Regeln der Beziehungen (#120).** Arten: `abbreviation` (gerichtet, Kurzform → Langform), `synonym`, `variant`
+   (Schreibvariante), `related` (fachlich verwandt). Identität ist der Schlüssel aus normalisierten Endpunkten, Art und
+   Geltungsbereich (global, Quelle oder Space); ungerichtete Arten ohne Reihenfolge. Eine Sperre gilt genau für
+   diesen Schlüssel, nie für andere Bedeutungen derselben Abkürzung.
+   - Manuell angelegt heißt `MANUAL` und `CONFIRMED`; Bestätigen ändert nur den Status, nie die Herkunft.
+   - Ablehnen ist dauerhaft; Entfernen eines automatischen Eintrags lehnt ihn ab, damit der nächste Lauf ihn nicht
+     wiederbringt; nur manuelle verschwinden ganz. Wiederherstellen macht aus der Sperre wieder einen Vorschlag
+     (automatisch) oder eine bestätigte Beziehung (manuell). Jede Änderung trägt eine Revision; eine veraltete
+     Revision ergibt 409.
+   - Ein Vorschlagslauf (`propose`, für #122 und #336) gleicht in einem Schritt ab: neue Schlüssel werden
+     `PROPOSED`, eigene Vorschläge bekommen neue Belege, abgelehnte und fremde Schlüssel bleiben unberührt, eigene
+     unbestätigte, die er nicht mehr nennt, entfallen, eigene bestätigte werden nur als `evidenceStale` markiert.
+     Unverändert belegte werden nicht neu geschrieben, damit ein Lauf je Abgleich weder Revisionen noch Protokoll
+     aufbläht.
+   - Die Akronym-Regel (`AcronymRelationRule`) startet der Core nach jeder Anreicherung einer Quelle selbst, als
+     letzten Schritt des Auftrags `ENRICHMENT` (Phase „Folgeschritte“, nicht nach einem Abbruch); die App braucht
+     dafür keinen Knopf. Der REST-Aufruf `POST …/rules/acronyms` bleibt für den Anstoß von Hand.
+   - Lesen: Quelle oder Space braucht `metadata`; Belege zählen nur von Seiten mit Inhaltsrecht; ein automatischer
+     Vorschlag ohne lesbaren Beleg ist verborgen, weil er aus deren Inhalt stammt. Ändern braucht `sync` auf den
+     Geltungsbereich, global auf jede Quelle. Verborgenes gilt als unbekannt (404).
+   - Suche darf über bestätigte Beziehungen außer `related` ausweiten (`expansions`), nie transitiv; ob die Suche das
+     nutzt, entscheidet ADR 0013/0017.
+8. **KI-Akronymauflösung (#122, Stufe 1).** `AcronymResolution` (`harvester.acronymResolution()`,
+   `POST /api/v1/term-relations/refresh?sourceId=` → 202, Stand unter `…/refresh-jobs/{jobId}`) ist ein Vorschlagslauf
+   je Quelle als Auftrag `ENRICHMENT` ohne Space (Phase „KI-Akronymauflösung“), kein eigener Auftragstyp.
+   - Je Akronym höchstens 6 Fundstellen (2 je Seite) mit 160 Zeichen Kontext, nur aktuelle Seiten und nur aus dem Text
+     mit passendem `inputSha256`; höchstens 200 Akronyme je Lauf (die mit den meisten Seiten), 20 je Anfrage. Akronyme
+     über dem Budget behalten ihre Vorschläge.
+   - Modell über den Port `AcronymExpansionModel`, umgesetzt mit `ChatAcronymExpansionModel` über
+     `RemoteAi.acronymExpansions()` (Chat-Modell der wirksamen Konfiguration, eigene Frist 90 s). Version =
+     Verfahren, Modell und Fingerabdruck der `base-url`, nie die Adresse. Ohne Modell `ai-unavailable` (503), ohne
+     Freigabe der Quelle in `external-processing-sources` `external-processing-not-allowed` (409). Die Freigabe gilt
+     bei Ausführung, nicht beim Einreihen: Sie wird vor jeder Anfrage erneut geprüft, und fällt sie oder das Modell
+     während des Laufs weg, scheitert der Auftrag mit `ai-unavailable` ohne Abgleich (#425).
+   - Die Antwort ist nicht vertrauenswürdig: Eine Ausschreibung zählt nur, wenn sie wörtlich in einer der genannten
+     Fundstellen dieses Akronyms steht; Länge, Zeichen und Anzahl je Akronym sind begrenzt. Verschiedene Bedeutungen
+     sind getrennte Vorschläge. Ergebnis nur `ai`/`proposed` über `propose`; Regel-, manuelle und bestätigte
+     Beziehungen desselben Schlüssels haben Vorrang, Abgelehnte kommen nie wieder.
+   - Scheitert eine Anfrage oder bricht der Auftrag ab, wird nichts abgeglichen. Ins Log kommen nur Quelle, Anzahlen
+     und Ausnahmeklassen.
+   - Ergebnis-Cache `ai-cache.json` neben der Beziehungsablage (Schema `term-relations-ai-cache/v1`): je Akronym ein
+     SHA-256 über Verfahren, Quelle, Modellversion, Akronym und Lage samt Texthash der Fundstellen, dazu nur die Kennungen der
+     Beziehungen aus der Antwort. Ein unveränderter Stand geht nicht noch einmal an das Modell. Keine Begriffe, kein
+     Text, keine Antworten. Geschrieben erst nach dem Abgleich, atomar ersetzt (#430); scheitert das Schreiben, gilt der
+     Lauf trotzdem. Eine unlesbare Antwort wird nicht gemerkt: Die Akronyme ihres Batches behalten ihre Vorschläge und werden beim
+     nächsten Lauf erneut gefragt. Seit der Quelle im Fingerabdruck wird jedes Akronym einmal neu gefragt.
+   - Läufe derselben Quelle gehen nacheinander; ein Akronym ohne lesbare Fundstelle wird nicht gefragt und behält seine
+     Vorschläge. `…/refresh-jobs/{jobId}` kennt nur Aufträge der Akronymauflösung, und zwar
+     seit dem letzten Start; ältere, abgeschlossene Läufe sind dort danach unbekannt (404).
+   - Eine kaputte, unlesbare oder fremde Cache-Datei (anderes Schema, unerwartete Werte) wird verworfen: Der Start
+     scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
+     kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
+     macht alte Einträge damit wirkungslos.
 
 ## Grenzen
 
 - Je Seite höchstens 50 000 Fundstellen und 10 000 Begriffe; `count` zählt weiter alles, eine Warnung nennt die
   Kürzung.
 - Nominalgruppen nur aus Sätzen, die die Satzanalyse als deutsch erkennt; Akronyme aus jedem Text.
-- Ausschreibungen nur nach der Anfangsbuchstabenregel direkt daneben (`RSL` → `Rückmeldeschlüssel` ist keine
-  Ausschreibung, sondern eine Beziehung aus #120 oder ein Vorschlag aus #122).
+- Ausschreibungen nur in Klammern direkt daneben, ausgerichtet wie im EAC (`LongFormMatcher`, Schwartz und Hearst):
+  Buchstaben und Ziffern des Akronyms in Reihenfolge, das erste an einem Wortanfang, im selben Satz, Klammertext bis
+  zum ersten Komma (seit `acronyms` 3, `terms` 2). So gilt auch `Zentrale Datenverarbeitung (ZDV)` oder
+  `Rückmeldeschlüssel (RSL)`. Ohne Klammer bleibt `RSL` → `Rückmeldeschlüssel` eine Beziehung aus #120 oder ein
+  Vorschlag aus #122.
+- Gegenüber dem EAC noch offen (`AcronymExtractor`, `AcronymForms`, `TermScanner`): gemischte Schreibung (`GmbH`,
+  `IoT`), Punkt-Akronyme (`U.S.A.`), Kennungen mit mehr als zwei Ziffern oder Unterstrich als eigene Art,
+  Ausblenden von Versalzeilen, Code, URLs, Mailadressen und Dateinamen, mehrere Ausschreibungen je Akronym. Jede
+  davon hebt die Version von `acronyms` und `terms`.
 - Kein Fachglossar und keine KI in Index und Abfragen.
 
 ## Folgen

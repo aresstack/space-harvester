@@ -45,14 +45,20 @@ class ApiRouteCoverageTest {
     // Der regelmäßige Abgleich (ADR 0014) zeigt nur Spaces mit sync-Freigabe: 200 mit leerer Liste.
     // Die progressive Suche (ADR 0017) ist ebenso global; mit wait=true 200 ohne Treffer.
     private static final String PROGRESSIVE = "/api/v1/search/progressive";
-    // Begriffe und ihre Fundstellen (ADR 0019) sind global wie die Suche: 200 ohne Einträge.
+    // Begriffe, ihre Fundstellen und Beziehungen (ADR 0019) sind global wie die Suche: 200 ohne Einträge. Anlegen
+    // einer Beziehung ist es nicht (403); Einträge mit Methode gelten nur für diese.
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     // Das Suchlauf-Protokoll (#182) zeigt nur eigene Läufe, Fakten (#182) nur lesbarer Seiten: 200 mit leerer Liste.
     private static final String FACTS = "/api/v1/facts";
+    // Eine Passage-ID (EAC-Lücke 5) nennt ihre Quelle und Seite; ohne Freigabe wie eine unbekannte Seite (404).
+    private static final String PASSAGES = "/api/v1/passages";
+    private static final String PASSAGE_ID = java.net.URLEncoder.encode("wiki:x1@" + "0".repeat(64) + "#p0@aa-bb",
+            java.nio.charset.StandardCharsets.UTF_8);
+    // Die Quellentypen (#187) sind Teil des Programms, keine Daten einer Quelle: 200 mit der Typenliste.
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
             "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS, "/api/v1/terms",
-            "/api/v1/terms/occurrences");
+            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "/api/v1/sources/types");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -96,7 +102,7 @@ class ApiRouteCoverageTest {
     void clientWithoutGrantsGetsNoDataFromAnyRoute() throws Exception {
         for (Route route : apiRoutes()) {
             HttpResponse<String> response = send(route, NOBODY_TOKEN);
-            if (WITHOUT_SOURCE.contains(route.path())) {
+            if (WITHOUT_SOURCE.contains(route.path()) || WITHOUT_SOURCE.contains(route.toString())) {
                 assertThat(response.statusCode()).as(route.toString()).isEqualTo(200);
                 assertThat(response.body()).as(route.toString()).doesNotContain("\"wiki\"", "\"pageId\"");
             } else {
@@ -146,14 +152,16 @@ class ApiRouteCoverageTest {
                     parameter.initParameterNameDiscovery(new DefaultParameterNameDiscoverer());
                     name = parameter.getParameterName();
                 }
-                pairs.add(name + "=" + ("sourceId".equals(name) ? "wiki" : "x1"));
+                pairs.add(name + "=" + ("sourceId".equals(name) ? "wiki"
+                        : PASSAGES.equals(route.path()) && "id".equals(name) ? PASSAGE_ID : "x1"));
             }
         }
         return pairs.isEmpty() ? "" : "?" + String.join("&", pairs);
     }
 
     private static boolean takesSourceId(Route route) {
-        return route.path().contains("{sourceId}") || query(route).contains("sourceId=");
+        return route.path().contains("{sourceId}") || query(route).contains("sourceId=")
+                || PASSAGES.equals(route.path());
     }
 
     private record Route(String method, String path, HandlerMethod handler) {

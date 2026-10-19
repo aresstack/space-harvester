@@ -13,7 +13,9 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -51,6 +53,14 @@ public class SourcesController {
     public List<SourceResponse> sources(@Parameter(hidden = true) AccessContext caller) {
         return access.filter(caller, queries.sources(), AccessKind.METADATA,
                 source -> ResourceScope.source(source.id())).stream().map(SourceResponse::of).toList();
+    }
+
+    @GetMapping("/types")
+    @Operation(summary = "Quellentypen, die der Dienst kennt",
+            description = "Für Auswahllisten: Wert von type in der Quellenkonfiguration, Anzeigename und ob der Typ "
+                    + "einen Eintrag options.credentialRef verlangt (#188). Reihenfolge der Registrierung.")
+    public List<SourceTypeResponse> types() {
+        return queries.types().stream().map(SourceTypeResponse::of).toList();
     }
 
     @GetMapping("/{sourceId}/spaces")
@@ -215,6 +225,32 @@ public class SourcesController {
             return new SourceResponse(source.id(), source.type(), source.title(), source.capabilities().stream()
                     .sorted().map(capability -> capability.name().toLowerCase(java.util.Locale.ROOT).replace('_', '-'))
                     .toList());
+        }
+    }
+
+    /**
+     * Ein Quellentyp für Auswahllisten und Formulare: Felder unter {@code options} und erlaubte Werte von
+     * {@code auth.type} ({@code none}, {@code basic}, {@code pat}); {@code tls}, wenn der Typ {@code trust-bundle} und
+     * {@code client-certificate} annimmt.
+     */
+    public record SourceTypeResponse(String id, String displayName, boolean needsCredentials, String addressOption,
+                                     List<SourceFieldResponse> fields, List<String> authModes, boolean tls) {
+
+        static SourceTypeResponse of(SourceType type) {
+            return new SourceTypeResponse(type.id(), type.displayName(), type.needsCredentials(),
+                    type.addressOption(), type.fields().stream().map(SourceFieldResponse::of).toList(),
+                    type.authModes().stream().map(mode -> mode.name().toLowerCase(java.util.Locale.ROOT)).toList(),
+                    type.tls());
+        }
+    }
+
+    /** Ein Eingabefeld unter {@code options}, ohne Wert; {@code kind} wie im Enterprise AI Client. */
+    public record SourceFieldResponse(String key, String label, String hint, String kind, boolean required,
+                                      boolean advanced, String defaultValue) {
+
+        static SourceFieldResponse of(SourceField field) {
+            return new SourceFieldResponse(field.key(), field.label(), field.hint(), field.kind().name(),
+                    field.required(), field.advanced(), field.defaultValue());
         }
     }
 

@@ -3,6 +3,9 @@ package com.aresstack.spaceharvester.source;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -57,6 +60,50 @@ class LocalFileGrantsTest {
         assertThatThrownBy(() -> source.storedPage(id("plan.md"))).isInstanceOf(SourceAccessException.class);
         assertThat(open(new LocalFilesSourceAdapter(() -> new LocalFileGrants(true, List.of())))
                 .storedPage(id("plan.md")).payload()).isNotEmpty();
+    }
+
+    @Test
+    void theConfiguredFoldersApplyAtTheNextAccessAndAFolderConnectedLaterNeedsNoRestart() throws IOException {
+        Path later = elsewhere.resolveSibling(elsewhere.getFileName() + "-laufwerk");
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        KnowledgeSourceHarvestSource source = open(new LocalFilesSourceAdapter(
+                () -> manager.current().configuration().localFiles().grants()));
+        Files.createSymbolicLink(directory.resolve("later.md"), later.resolve("later.md"));
+
+        assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(
+                new LocalFileSettings(false, List.of(later)))).outcome())
+                .as("ein Ordner, den es noch nicht gibt, ist erlaubt")
+                .isEqualTo(ConfigurationManager.Outcome.ACTIVATED);
+        assertThatThrownBy(() -> source.storedPage(id("plan.md"))).isInstanceOf(SourceAccessException.class);
+
+        Files.createDirectory(later);
+        Files.writeString(later.resolve("later.md"), "Verbunden", StandardCharsets.UTF_8);
+        try {
+            assertThat(new String(source.storedPage(id("later.md")).payload(), StandardCharsets.UTF_8))
+                    .isEqualTo("Verbunden");
+
+            manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(
+                    new LocalFileSettings(false, List.of(elsewhere))));
+
+            assertThat(new String(source.storedPage(id("plan.md")).payload(), StandardCharsets.UTF_8))
+                    .isEqualTo("Schichtplan");
+            assertThatThrownBy(() -> source.storedPage(id("later.md"))).isInstanceOf(SourceAccessException.class);
+        } finally {
+            Files.delete(later.resolve("later.md"));
+            Files.delete(later);
+        }
+    }
+
+    @Test
+    void aFileAsGrantedFolderGrantsNothingAndIsNoErrorWhenSaved() {
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        KnowledgeSourceHarvestSource source = open(new LocalFilesSourceAdapter(
+                () -> manager.current().configuration().localFiles().grants()));
+
+        assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(new LocalFileSettings(false,
+                List.of(elsewhere.resolve("plan.md"))))).outcome()).isEqualTo(ConfigurationManager.Outcome.ACTIVATED);
+
+        assertThatThrownBy(() -> source.storedPage(id("plan.md"))).isInstanceOf(SourceAccessException.class);
     }
 
     private KnowledgeSourceHarvestSource open(LocalFilesSourceAdapter adapter) {

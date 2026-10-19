@@ -91,7 +91,8 @@ public final class SemanticVariantSearch implements VariantSearch {
             PageKey key = header.key();
             hits.add(new KeywordSearch.Hit(key.sourceId(), key.pageId(), metadata.partitionKey(), metadata.title(),
                     snippet(key, ranked.relevance()), metadata.url(), metadata.version(), metadata.modifiedAt(),
-                    metadata.parentPageId()));
+                    metadata.parentPageId(), null,
+                    ranked.relevance() == null ? null : ranked.relevance().passageId()));
             if (ranked.relevance() != null) {
                 scores.put(key, ranked.relevance().similarity());
             }

@@ -2,6 +2,8 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.enterpriseai.source.api.KnowledgeSourcePort;
 import com.aresstack.enterpriseai.source.api.SourceScope;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
 import com.aresstack.spaceharvester.source.network.ProxyCredentials;
@@ -19,6 +21,42 @@ public interface SourceAdapter {
 
     /** Wert von {@code type} in der Quellenkonfiguration, z. B. {@code confluence}. */
     String type();
+
+    /** Anzeigename des Typs für Auswahllisten, z. B. {@code Git-Repository}; ohne eigenen Namen der Typ. */
+    default String displayName() {
+        return type();
+    }
+
+    /**
+     * Ob der Typ einen Eintrag {@code options.credentialRef} verlangt, den nur der {@code SecretProvider} des
+     * einbettenden Programms auflöst (#188).
+     */
+    default boolean needsCredentials() {
+        return false;
+    }
+
+    /**
+     * Schlüssel unter {@code options}, unter dem der Typ seine Adresse liest, z. B. {@code host}; {@code null}, wenn
+     * die Adresse nicht unter {@code options} steht.
+     */
+    default String addressOption() {
+        return null;
+    }
+
+    /** Eingabefelder unter {@code options} für Formulare, ohne Werte; leer, wenn der Typ keine beschreibt. */
+    default List<SourceField> fields() {
+        return List.of();
+    }
+
+    /** Erlaubte Werte von {@code auth.type}. */
+    default List<SourceType.AuthMode> authModes() {
+        return List.of(SourceType.AuthMode.NONE);
+    }
+
+    /** Ob der Typ {@code trust-bundle} und {@code client-certificate} annimmt ({@link SourceType#tls()}). */
+    default boolean tls() {
+        return false;
+    }
 
     /**
      * Typeigene Probleme der Einstellungen, ohne etwas zu öffnen; ID und Typ prüft der Katalog.

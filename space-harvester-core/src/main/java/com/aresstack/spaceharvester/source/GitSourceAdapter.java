@@ -1,10 +1,17 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.enterpriseai.adyton.SecretMaterial;
+import com.aresstack.enterpriseai.adyton.SecretProvider;
+import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
+import com.aresstack.enterpriseai.astu.security.SecretRef;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentials;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
-import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.nio.file.Path;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -17,8 +24,15 @@ import java.util.Objects;
  *
  * <p>Die bloßen Kopien der Repositorys liegen unter {@code cloneDirectory}. HTTPS geht über dieselbe Proxy-Route je Ziel
  * wie die übrigen Quellen; PDF- und Office-Dateien im Repository liest dieselbe Extraktion wie bei lokalen Dateien
- * ({@link DocumentExtraction}). Anmeldung ({@code options.credentialRef}, {@code auth}) und eigene Zertifikate gibt es
- * auf diesem Weg noch nicht (#188); bis dahin nur öffentliche und lokale Repositorys.
+ * ({@link DocumentExtraction}).
+ *
+ * <p>Anmeldung wie im Enterprise AI Client ({@code SecretBackedGitCredentialsProvider}, #188, ADR 0022):
+ * {@code auth.type pat} mit {@code token} oder {@code basic} mit Benutzer und Token als Passwort; beides liegt unter
+ * {@code source:<id>}, fehlt das Geheimnis, kommt es vom Anbieter des einbettenden Programms. Ein eigener Verweis
+ * {@code options.credentialRef} geht bei {@code auth.type none} unverändert an diesen Anbieter. Aufgelöst wird erst
+ * beim Abruf, nie gespeichert oder protokolliert; der Adapter löscht das Material danach. Ein Eintrag ohne Benutzer ist
+ * erlaubt (Azure Repos, GitHub werten nur das Token aus). TLS je Quelle: Server-CAs aus {@code trust-bundle}, sonst
+ * das Standardvertrauen des Programms, Client-Zertifikat aus {@code client-certificate} (mTLS).
  */
 public final class GitSourceAdapter implements SourceAdapter {
 
@@ -37,25 +51,67 @@ public final class GitSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public String displayName() {
+        return "Git-Repository";
+    }
+
+    @Override
+    public String addressOption() {
+        return adapter().addressOption();
+    }
+
+    @Override
+    public List<SourceField> fields() {
+        return adapter().fields();
+    }
+
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return adapter().authModes();
+    }
+
+    @Override
+    public boolean tls() {
+        return adapter().tls();
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
-        List<String> problems = new ArrayList<>(adapter(null).check(config));
-        if (config.options().containsKey("credentialRef")) {
-            problems.add("options.credentialRef wird für type git noch nicht unterstützt");
-        }
-        return problems;
+        return adapter().check(config);
+    }
+
+    @Override
+    public List<String> check(SourceSettingsConfig config, boolean externalSecrets) {
+        return adapter().check(config, externalSecrets);
     }
 
     @Override
     public OpenedSource open(SourceSettingsConfig config, Context context) {
-        if (config.options().containsKey("credentialRef")) {
-            throw new InvalidSourceConfigurationException(
-                    List.of("options.credentialRef wird für type git noch nicht unterstützt"));
-        }
-        return adapter(context.routes()).open(config, context);
+        return adapter().open(config, context);
     }
 
-    private KnowledgeSourceProviderAdapter adapter(HttpRoutePort routes) {
-        return new KnowledgeSourceProviderAdapter(new GitSourceProvider(cloneDirectory, null, routes, null,
-                DocumentExtraction.detector(), DocumentExtraction.registry()));
+    private KnowledgeSourceProviderAdapter adapter() {
+        return KnowledgeSourceProviderAdapter.connected(connection -> new GitSourceProvider(cloneDirectory,
+                        ref -> credentials(connection.secrets(), ref), connection.routes(), connection.tls(),
+                        DocumentExtraction.detector(), DocumentExtraction.registry()), "credentialRef", null)
+                .named(displayName()).withCredentialRefPassThrough().acceptingToken();
+    }
+
+    /** Wie {@code SecretBackedGitCredentialsProvider} im Enterprise AI Client: je Abruf frisch, das Material gelöscht. */
+    static GitCredentialsProvider credentials(SecretProvider secrets, SecretRef ref) {
+        return () -> {
+            try (SecretMaterial material = secrets.resolve(ref)) {
+                char[] token = material.copySecret();
+                try {
+                    if (token.length == 0) {
+                        throw new SecretUnavailableException(SecretUnavailableException.Reason.NOT_FOUND, ref,
+                                "Eintrag hat kein Token");
+                    }
+                    return new GitCredentials(material.hasPrincipal() ? material.principal() : null, token);
+                } finally {
+                    Arrays.fill(token, '\0');
+                }
+            }
+        };
     }
 }

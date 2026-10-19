@@ -1,5 +1,6 @@
 // Unveränderte Kopie der Confluence- und der Dateiquelle und ihrer Basismodule aus aresstack/enterprise-ai-client
-// (astu-Auszug, adyton, network, source-api, source-confluence, deigma, source-localfiles, source-git, source-ftp, source-ndv, source-sharepoint, embedding-api,
+// (astu-Auszug, adyton, network, source-api, source-confluence, deigma, source-localfiles, source-mediawiki,
+// source-git, source-ftp, source-ndv, source-sharepoint, source-betaview, source-outlook, embedding-api,
 // embedding-openai, Modellkatalog aus model-api/model-kipitz, document-tika). Herkunft und Abgleich: UPSTREAM.md.
 // Der Code ist Java-8-kompatibel; er wird hier mit Java 21 gebaut, seine JUnit-4-Tests laufen mit.
 plugins {
@@ -24,6 +25,8 @@ dependencies {
     implementation libs.jgit
     // FTP/JES-Quelle (source-ftp, #187): Apache Commons Net nur adapterintern, wie im Upstream
     implementation libs.commons.net
+    // Outlook-Quelle (source-outlook, #187): java-libpst nur adapterintern, wie im Upstream
+    implementation libs.java.libpst
     // Dokument-Extraktion (document-tika, #183) wie im Upstream: tika-core plus Standard-Parser (PDFBox, POI, ...),
     // flexmark ausgeschlossen wie in MainframeMate und im Upstream (Tika zieht eine neuere Linie als document-export).
     implementation libs.tika.core
