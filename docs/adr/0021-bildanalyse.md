@@ -55,3 +55,15 @@ keine Sicht je Seite.
   dann als veraltet.
 - Abweichung ohne Paritätspflicht: Beschreibung einer ganzen Seite in einem Aufruf (der EAC beschreibt im Lesebereich
   Bild für Bild); derselbe Einzelbild-Weg wird je Bild aufgerufen.
+
+## Nachtrag 2026-10-19: Bilder gehören zur gespeicherten Fassung
+
+Review 19.10.: `describe` las die Bilder live aus der Quelle, band das Ergebnis aber an den gespeicherten Text und
+dessen Revision. War die Seite in der Quelle schon weiter, standen Bilder einer neueren Fassung als `CURRENT` am alten
+Text. Jetzt holt `describe` die Lese-Ansicht wie der Export (`ExportAssetCollection.readingView`) mit ihrer Fassung;
+nennt die Quelle eine andere als die gespeicherte oder keine bestätigte, beschreibt es die Bilder trotzdem (die
+Beschreibung je Bildbytes und Modell bleibt nutzbar), legt aber die Warnung `page-changed` ab und `PageImages` meldet
+`STALE`, bis nach dem nächsten Abgleich erneut beschrieben wird; ist der Cache älter als die Quelle, bleibt also
+auch jedes erneute Beschreiben `STALE`, bis der Abgleich die Seite holt. Eine Quelle ohne Lese-Ansicht, die ihre Bilder
+trotzdem kennt, liefert sie wie bisher über `viewImages`; die Fassung gilt dort als unbekannt und bleibt ungeprüft.
+Kein Schemawechsel (`page-images/v1`), keine Änderung an den Asset-Klassen.

@@ -42,7 +42,10 @@ public record PageImages(State state, String reason, Enrichment result, List<Ima
     public enum State {
         /** Aus genau diesem Text mit dem eingestellten Modell. */
         CURRENT,
-        /** Es gibt ein Ergebnis, aber für einen anderen Text oder ein anderes Modell; neu beschreiben. */
+        /**
+         * Es gibt ein Ergebnis, aber für einen anderen Text, ein anderes Modell oder Bilder einer anderen Fassung der
+         * Seite ({@link PageImageAnalysis#PAGE_CHANGED}); neu beschreiben.
+         */
         STALE,
         /** Der letzte Lauf ist fehlgeschlagen. */
         FAILED,
@@ -85,7 +88,8 @@ public record PageImages(State state, String reason, Enrichment result, List<Ima
             return new PageImages(State.FAILED, null, result, List.of(), result.warnings());
         }
         boolean current = view.freshness() == Enrichment.Freshness.CURRENT
-                && result.inputSha256().equals(text.inputSha256());
+                && result.inputSha256().equals(text.inputSha256())
+                && !result.warnings().contains(PageImageAnalysis.PAGE_CHANGED);
         return new PageImages(current ? State.CURRENT : State.STALE, null, result, entries, result.warnings());
     }
 

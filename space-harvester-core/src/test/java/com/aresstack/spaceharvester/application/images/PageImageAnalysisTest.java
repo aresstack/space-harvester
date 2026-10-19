@@ -105,6 +105,38 @@ class PageImageAnalysisTest {
     }
 
     @Test
+    void imagesOfTheStoredRevisionGiveACurrentResult() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "3";
+
+        PageImages images = analysis().describe(page("1", "Text"));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
+        assertThat(images.warnings()).doesNotContain(PageImageAnalysis.PAGE_CHANGED);
+        assertThat(images.describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void imagesOfANewerRevisionInTheSourceAreDescribedButStale() {
+        // Die Quelle ist schon weiter als der gespeicherte Text: die Bilder gehören womöglich zu einer anderen Fassung.
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "4";
+        PageImageAnalysis analysis = analysis();
+
+        PageImages images = analysis.describe(page("1", "Text"));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.STALE);
+        assertThat(images.warnings()).contains(PageImageAnalysis.PAGE_CHANGED);
+        assertThat(images.describedCount()).isEqualTo(1);
+        assertThat(analysis.read(page("1", "Text")).state()).isEqualTo(PageImages.State.STALE);
+
+        source.readingVersion = null;
+        assertThat(analysis.describe(page("1", "Text")).state()).as("ohne bestätigte Fassung")
+                .isEqualTo(PageImages.State.STALE);
+        assertThat(describer.calls).as("je Bildbytes und Modell nur einmal").isEqualTo(1);
+    }
+
+    @Test
     void readingNeverAsksTheModelOrTheSource() {
         source.image("1", "att1", "ablauf.png", PNG);
 
@@ -271,6 +303,9 @@ class PageImageAnalysisTest {
         private final Map<String, byte[]> bytes = new HashMap<>();
         final List<PageAttachment> attachments = new ArrayList<>();
         int loads;
+        /** Fassung der Lese-Ansicht; ohne Lese-Ansicht ({@code UNSUPPORTED}), solange nie gesetzt. */
+        String readingVersion;
+        boolean reading;
 
         void image(String pageId, String attachmentId, String filename, byte[] content) {
             String src = "https://wiki.example.org/download/attachments/" + pageId + "/" + filename;
@@ -283,6 +318,15 @@ class PageImageAnalysisTest {
         @Override
         public List<ViewImage> viewImages(String pageId) {
             return List.copyOf(images.getOrDefault(pageId, List.of()));
+        }
+
+        @Override
+        public ReadingPage readingPage(String pageId) {
+            if (!reading && readingVersion == null) {
+                return HarvestSource.super.readingPage(pageId);
+            }
+            reading = true;
+            return new ReadingPage(readingVersion, "", "", "", viewImages(pageId));
         }
 
         @Override
