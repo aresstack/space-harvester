@@ -78,6 +78,6 @@ ließ das Ergebnis also `CURRENT`. Die Bild-Hashes in den Eingabe-Hash zu nehmen
 `describe` die Version jedes Bildanhangs, wie die Lese-Ansicht sie nannte, additiv in `page-images/v1` ab
 (`attachmentVersions`, Anhang-ID → Version; ältere Ergebnisse haben keine und bleiben ungeprüft). `read` vergleicht
 sie mit der zuletzt abgelegten Lese-Ansicht (#176), sofern diese jünger als das Ergebnis ist, ohne die Quelle zu
-fragen: nennt sie für einen beschriebenen Anhang eine andere Version, ist das Ergebnis `STALE` mit Grund
+fragen: nennt sie für einen beschriebenen Anhang eine andere Version oder zeigt sie ihn nicht mehr, ist das Ergebnis `STALE` mit Grund
 `attachment-changed`. Sichtbar wird ein ersetztes Bild damit, sobald die Lese-Ansicht neu geladen wurde (Neuladen
 bzw. `refresh`, neue Seitenfassung). Kein neues Schema, keine Änderung an Asset-Klassen und App.

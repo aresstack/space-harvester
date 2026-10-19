@@ -215,8 +215,9 @@ public class PageImageAnalysis {
 
     /**
      * Ob die zuletzt abgelegte Lese-Ansicht (#176, jünger als das Ergebnis) für einen beim Beschreiben gesehenen
-     * Bildanhang eine andere Version nennt. Fragt die Quelle nie: Confluence hebt beim Ersetzen eines Anhangs weder die
-     * Seitenversion noch den Text an, also zeigt sich ein neues Bild erst, wenn die Lese-Ansicht neu geladen wurde.
+     * Bildanhang eine andere Version nennt oder ihn nicht mehr zeigt. Fragt die Quelle nie: Confluence hebt beim
+     * Ersetzen eines Anhangs weder die Seitenversion noch den Text an, also zeigt sich ein neues Bild erst, wenn die
+     * Lese-Ansicht neu geladen wurde.
      */
     private boolean attachmentChanged(PageKey key, Enrichment result) {
         Map<String, String> described;
@@ -230,10 +231,18 @@ public class PageImageAnalysis {
         }
         Optional<StoredReadingView> view = new ReadingViewStore(enrichments.store()).find(key)
                 .filter(stored -> stored.renderedAt().isAfter(result.computedAt()));
-        return view.isPresent() && view.get().images().stream()
-                .anyMatch(image -> image.attachmentId() != null && image.version() != null
-                        && described.containsKey(image.attachmentId())
-                        && !described.get(image.attachmentId()).equals(image.version()));
+        if (view.isEmpty()) {
+            return false;
+        }
+        Map<String, String> shown = new LinkedHashMap<>();
+        for (HarvestSource.ViewImage image : view.get().images()) {
+            if (image.attachmentId() != null) {
+                shown.putIfAbsent(image.attachmentId(), image.version());
+            }
+        }
+        // Ersetzt (andere Version) oder aus der Ansicht verschwunden: die Beschreibung gilt nicht mehr sicher.
+        return described.entrySet().stream().anyMatch(entry -> !shown.containsKey(entry.getKey())
+                || shown.get(entry.getKey()) != null && !shown.get(entry.getKey()).equals(entry.getValue()));
     }
 
     private List<PageAttachment> attachments(PageKey key) {

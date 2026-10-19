@@ -163,6 +163,21 @@ class PageImageAnalysisTest {
         assertThat(source.loads).as("liest nie von der Quelle").isEqualTo(1);
     }
 
+    @Test
+    void anImageThatLeftTheReadingViewMakesTheResultStale() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "3";
+        PageImageAnalysis analysis = analysis();
+        analysis.describe(page("1", "Text"));
+
+        new ReadingViewStore(store).save(new StoredReadingView(page("1", "Text").key(), "sha256:" + "a".repeat(64),
+                "3", "<p/>", "", "Text", List.of(), NOW.plusSeconds(60)));
+
+        PageImages gone = analysis.read(page("1", "Text"));
+        assertThat(gone.state()).isEqualTo(PageImages.State.STALE);
+        assertThat(gone.reason()).isEqualTo(PageImages.ATTACHMENT_CHANGED);
+    }
+
     private StoredReadingView view(String pageId, String attachmentVersion, Instant renderedAt) {
         HarvestSource.ViewImage image = source.viewImages(pageId).getFirst();
         return new StoredReadingView(page(pageId, "Text").key(), "sha256:" + "a".repeat(64), "3", "<p/>", "", "Text",
