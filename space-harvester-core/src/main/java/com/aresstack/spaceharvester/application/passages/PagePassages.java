@@ -128,8 +128,8 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
 
     /**
      * Die Passage-ID des Absatzes, der den Bereich {@code [start, end)} ganz enthält, allein aus dem schon geladenen
-     * Ergebnis {@code result} (für Treffer der semantischen Suche, wie {@code passage:} je Treffer im Client): ohne Text,
-     * die Capture steht im Ergebnis. {@code null}, wenn {@code result} kein erfolgreiches Ergebnis von
+     * Ergebnis {@code result} (für Treffer der semantischen Suche, wie {@code passage:} je Treffer im Client): ohne
+     * Text, die Capture steht im Ergebnis. {@code null}, wenn {@code result} kein erfolgreiches Ergebnis von
      * {@value PassageProcessor#ID} für genau diese Seite und denselben Text ({@code inputSha256}) ist, es keine Capture
      * kennt (Format 1) oder kein Absatz den Bereich enthält.
      *
