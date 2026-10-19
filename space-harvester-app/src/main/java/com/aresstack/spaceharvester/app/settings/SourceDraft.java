@@ -46,7 +46,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
      * unbekannte Typen nehmen {@code url}.
      */
     private static final Map<String, String> ADDRESS_OPTIONS = Map.of("ftp", "host", "jes", "host", "ndv", "host",
-            "sharepoint", "siteUrl", "git", "url");
+            "sharepoint", "siteUrl", "git", "url", "betaview", "baseUrl", "outlook", "mailbox");
 
     /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");

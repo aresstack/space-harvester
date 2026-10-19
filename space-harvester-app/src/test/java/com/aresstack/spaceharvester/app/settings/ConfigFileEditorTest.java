@@ -215,6 +215,8 @@ class ConfigFileEditorTest {
         assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org");
         assertThat(SourceDraft.addressOption("git")).isEqualTo("url");
         assertThat(SourceDraft.addressOption("sharepoint")).isEqualTo("siteUrl");
+        assertThat(SourceDraft.addressOption("betaview")).isEqualTo("baseUrl");
+        assertThat(SourceDraft.addressOption("outlook")).isEqualTo("mailbox");
     }
 
     @Test
