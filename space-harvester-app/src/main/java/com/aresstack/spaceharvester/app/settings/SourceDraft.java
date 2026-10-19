@@ -17,8 +17,10 @@ import java.util.regex.Pattern;
  * Token, Zertifikatspasswort) stehen hier nie als Wert, sondern nur als Name der Umgebungsvariable; die Datei
  * enthält dafür einen Platzhalter {@code ${NAME}}.
  *
- * @param type                        {@code confluence} oder {@code files}
- * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); nur bei {@code confluence}
+ * @param type                        {@code confluence}, {@code files} oder ein anderer Typ des Core
+ *                                    ({@code Harvester.sourceTypes()}, #375)
+ * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); bei anderen Typen außer
+ *                                    {@code files} die Adresse unter {@code options} ({@link #addressOption})
  * @param directory                   Ordner; nur bei {@code files}
  * @param include                     Dateimuster, z. B. {@code *.md, *.pdf}, oder leer für den Standard
  * @param secretVariable              Umgebungsvariable mit Passwort bzw. Token; nur bei {@code basic} und {@code pat}
@@ -38,6 +40,13 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
 
     public static final String CONFLUENCE = "confluence";
     public static final String FILES = "files";
+
+    /**
+     * Unter welchem Schlüssel von {@code options} die Kopien des Enterprise AI Client ihre Adresse erwarten (#187);
+     * unbekannte Typen nehmen {@code url}.
+     */
+    private static final Map<String, String> ADDRESS_OPTIONS = Map.of("ftp", "host", "jes", "host", "ndv", "host",
+            "sharepoint", "siteUrl", "git", "url");
 
     /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
@@ -114,8 +123,10 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 options.put(String.valueOf(key), String.valueOf(value));
             }
         });
-        String directory = confluence ? null : options.remove("directory");
-        String include = confluence ? null : options.remove("include");
+        boolean files = FILES.equals(type);
+        String directory = files ? options.remove("directory") : null;
+        String include = files ? options.remove("include") : null;
+        String address = confluence ? text(raw, "base-url") : files ? null : options.remove(addressOption(type));
 
         List<String> plaintext = new ArrayList<>();
         SourceSettingsConfig.AuthType authType = SourceSettingsConfig.AuthType.NONE;
@@ -158,7 +169,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 }
             }
         }
-        SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), text(raw, "base-url"), directory, include,
+        SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), address, directory, include,
                 authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
                 certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
                 text(raw, "trust-bundle"), options);
@@ -203,6 +214,16 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
 
     public boolean confluence() {
         return CONFLUENCE.equals(type);
+    }
+
+    /** Weder Confluence noch Ordner: nur Adresse, Anzeigename und Kennung, Anmeldung folgt mit #188. */
+    public boolean generic() {
+        return type != null && !confluence() && !FILES.equals(type);
+    }
+
+    /** Der Schlüssel der Adresse unter {@code options} für {@code type}. */
+    public static String addressOption(String type) {
+        return ADDRESS_OPTIONS.getOrDefault(type, "url");
     }
 
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
@@ -252,6 +273,12 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         } else if (FILES.equals(type)) {
             if (directory == null) {
                 problems.add("Der Ordner fehlt.");
+            }
+        } else if (generic()) {
+            if (baseUrl == null) {
+                problems.add("Die Adresse fehlt.");
+            } else if (baseUrl.contains("${")) {
+                problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         } else {
             problems.add("Die Art der Quelle fehlt.");
@@ -310,7 +337,10 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         if (!confluence() || !extraOptions.isEmpty()) {
             yaml.append(in).append("options:\n");
-            if (!confluence()) {
+            if (generic()) {
+                yaml.append(in).append("  ").append(addressOption(type)).append(": ").append(scalar(baseUrl))
+                        .append('\n');
+            } else if (!confluence()) {
                 yaml.append(in).append("  directory: ").append(scalar(directory)).append('\n');
                 if (include != null) {
                     yaml.append(in).append("  include: ").append(scalar(include)).append('\n');

@@ -10,7 +10,7 @@ import java.awt.RenderingHints;
 /** Textfeld mit grauem Platzhalter, solange es leer ist; der Platzhalter ist nur Anzeige, nicht der Text. */
 public final class PlaceholderField extends JTextField {
 
-    private final String placeholder;
+    private String placeholder;
 
     public PlaceholderField(int columns, String placeholder) {
         super(columns);
@@ -20,6 +20,12 @@ public final class PlaceholderField extends JTextField {
 
     String placeholder() {
         return placeholder;
+    }
+
+    /** Ein anderer Platzhalter, etwa je Art der Quelle; leer heißt keiner. */
+    void setPlaceholder(String placeholder) {
+        this.placeholder = placeholder == null || placeholder.isEmpty() ? null : placeholder;
+        repaint();
     }
 
     @Override

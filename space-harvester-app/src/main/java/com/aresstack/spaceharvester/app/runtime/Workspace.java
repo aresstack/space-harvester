@@ -83,6 +83,11 @@ public final class Workspace {
     // ------------------------------------------------------------------ Wissensquellen
 
     /** Sichtbare Quellen ({@code GET /api/v1/sources}). */
+    /** Die Quellentypen des Core ({@code GET /api/v1/sources/types}, #375) für das Quellenformular. */
+    public List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes() {
+        return harvester.sourceTypes();
+    }
+
     public List<HarvestSource> sources() {
         return access.filter(caller, harvester.sources().sources(), AccessKind.METADATA,
                 source -> ResourceScope.source(source.id()));

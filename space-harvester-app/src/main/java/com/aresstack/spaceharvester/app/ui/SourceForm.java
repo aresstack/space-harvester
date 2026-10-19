@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
@@ -97,6 +98,12 @@ final class SourceForm {
     final JTextArea notes = Comic.note("");
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
+    /** Bei Typen ohne eigenes Formular, die Zugangsdaten verlangen: Anmeldung kommt erst mit #188. */
+    static final String CREDENTIALS_LATER = "Diese Art braucht eine Anmeldung; sie folgt mit #188. Bis dahin "
+            + "scheitert der erste Zugriff mit „Zugriff verweigert“.";
+    final JLabel credentialsNote = Comic.muted(CREDENTIALS_LATER);
+    /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
+    private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
     private final JLabel certificateSection = Form.section("Client-Zertifikat");
     private final JLabel trustSection = Form.section("Serverzertifikate");
 
@@ -126,8 +133,11 @@ final class SourceForm {
         root.setPreferredSize(new Dimension(680, 600));
         Comic.style(sessionValue);
 
-        kind.addItem(CONFLUENCE);
-        kind.addItem(FILES);
+        for (SourceType type : sourceTypes(context)) {
+            String label = label(type);
+            types.put(label, type);
+            kind.addItem(label);
+        }
         auth.addItem(PAT);
         auth.addItem(BASIC);
         auth.addItem(NONE);
@@ -158,6 +168,7 @@ final class SourceForm {
         form.row("Art", kind);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", row(directory, browse(directory, true)), null);
+        form.row(" ", credentialsNote);
         form.row("Dateien", include, "Muster, durch Komma getrennt");
         form.row("Anzeigename", title, "So heißt die Quelle in der App");
         form.row("Technische Kennung", id, "Wird aus der Adresse vorgeschlagen; nur ändern, wenn nötig");
@@ -257,6 +268,8 @@ final class SourceForm {
     /** Die Eingaben als Eintrag für die Datei. */
     SourceDraft draft() {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
+        String type = typeId();
+        boolean files = SourceDraft.FILES.equals(type);
         SourceSettingsConfig.AuthType authType = !confluence ? SourceSettingsConfig.AuthType.NONE
                 : PAT.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.PAT
                 : BASIC.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.BASIC
@@ -267,9 +280,9 @@ final class SourceForm {
                 : null;
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
         String bundle = String.valueOf(trust.getSelectedItem());
-        return new SourceDraft(id.getText(), confluence ? SourceDraft.CONFLUENCE : SourceDraft.FILES,
-                title.getText(), confluence ? address() : null, confluence ? null : directory.getText(),
-                confluence ? null : include.getText(), authType,
+        return new SourceDraft(id.getText(), type,
+                title.getText(), confluence ? address() : files ? null : baseUrl.getText(),
+                files ? directory.getText() : null, files ? include.getText() : null, authType,
                 authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                 authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
                 pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
@@ -277,6 +290,41 @@ final class SourceForm {
                 certificateType == null ? null : thumbprint.getText(),
                 !confluence || NETWORK_TRUST.equals(bundle) ? null : bundle,
                 editing == null ? null : editing.draft().extraOptions());
+    }
+
+    /** Der Typ des Core zur gewählten Art, etwa {@code confluence}, {@code files} oder {@code git}. */
+    String typeId() {
+        SourceType type = types.get(String.valueOf(kind.getSelectedItem()));
+        return type == null ? SourceDraft.CONFLUENCE : type.id();
+    }
+
+    /**
+     * Die Typen des Core ({@code Harvester.sourceTypes()}, #375) in seiner Reihenfolge; ohne Laufzeit nur Confluence
+     * und Ordner.
+     */
+    private static List<SourceType> sourceTypes(AppContext context) {
+        AppRuntime runtime = context.runtime();
+        if (runtime != null) {
+            try {
+                List<SourceType> listed = runtime.workspace().sourceTypes();
+                if (!listed.isEmpty()) {
+                    return listed;
+                }
+            } catch (RuntimeException e) {
+                // Ohne Liste bleiben die beiden Arten mit eigenem Formular.
+            }
+        }
+        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false),
+                new SourceType(SourceDraft.FILES, "Ordner", false));
+    }
+
+    /** Confluence und Ordner mit den bisherigen Worten, sonst der Anzeigename des Core. */
+    private static String label(SourceType type) {
+        return switch (type.id()) {
+            case SourceDraft.CONFLUENCE -> CONFLUENCE;
+            case SourceDraft.FILES -> FILES;
+            default -> type.displayName();
+        };
     }
 
     /** Die eingetragene Adresse; leer heißt die öffentliche Confluence-Hilfe. */
@@ -446,8 +494,16 @@ final class SourceForm {
     }
 
     private void prefill(SourceDraft source) {
-        boolean confluence = source.confluence();
-        kind.setSelectedItem(confluence ? CONFLUENCE : FILES);
+        String label = types.entrySet().stream().filter(e -> e.getValue().id().equals(source.type()))
+                .map(Map.Entry::getKey).findFirst().orElse(null);
+        if (label == null) {
+            // Ein Typ, den diese Laufzeit nicht anbietet, bleibt beim Bearbeiten stehen.
+            SourceType unknown = new SourceType(source.type(), source.type(), false);
+            label = label(unknown);
+            types.put(label, unknown);
+            kind.addItem(label);
+        }
+        kind.setSelectedItem(label);
         kind.setEnabled(false);
         id.setText(source.id());
         id.setEditable(false);
@@ -590,8 +646,11 @@ final class SourceForm {
         deriving = true;
         try {
             boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
-            String proposedTitle = confluence ? titleFor(address()) : folderName(directory.getText());
-            String proposedId = unique(confluence ? idForUrl(address()) : slug(folderName(directory.getText())));
+            boolean generic = !confluence && !SourceDraft.FILES.equals(typeId());
+            String proposedTitle = confluence ? titleFor(address()) : generic ? genericTitle(baseUrl.getText())
+                    : folderName(directory.getText());
+            String proposedId = unique(confluence ? idForUrl(address()) : generic ? genericId(baseUrl.getText())
+                    : slug(folderName(directory.getText())));
             if (title.getText().isBlank() || title.getText().equals(suggestedTitle)) {
                 title.setText(proposedTitle);
                 suggestedTitle = proposedTitle;
@@ -637,6 +696,17 @@ final class SourceForm {
         } catch (IllegalArgumentException e) {
             return "";
         }
+    }
+
+    /** Rechnername der Adresse, bei einer Adresse ohne Schema (etwa ein Host) die Adresse selbst. */
+    static String genericTitle(String address) {
+        String host = host(address);
+        return host.isEmpty() ? address.trim() : host;
+    }
+
+    static String genericId(String address) {
+        String host = host(address);
+        return host.isEmpty() ? slug(address.trim()) : idForUrl(address);
     }
 
     static String titleFor(String url) {
@@ -739,9 +809,16 @@ final class SourceForm {
 
     private void updateVisibility() {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
-        form.visible(baseUrl, confluence);
-        form.visible(directory, !confluence);
-        form.visible(include, !confluence);
+        SourceType type = types.get(String.valueOf(kind.getSelectedItem()));
+        boolean files = SourceDraft.FILES.equals(typeId());
+        boolean generic = !confluence && !files;
+        form.visible(baseUrl, !files);
+        baseUrl.setPlaceholder(confluence ? DEFAULT_URL : "");
+        form.hint(baseUrl, confluence ? "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe"
+                : "Adresse der Quelle (in der Datei options." + SourceDraft.addressOption(typeId()) + ")");
+        form.visible(directory, files);
+        form.visible(include, files);
+        form.visible(credentialsNote, generic && type != null && type.needsCredentials());
         loginSection.setVisible(confluence);
         certificateSection.setVisible(confluence);
         trustSection.setVisible(confluence);

@@ -15,6 +15,8 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -113,6 +115,52 @@ class SourceFormTest {
                 .containsExactly("handbuch", "notizen");
         assertThat(context.runtime().workspace().sources()).extracting(HarvestSource::id)
                 .containsExactly("handbuch", "notizen");
+    }
+
+    /** Die Art kommt aus der Typenliste des Core (#375); andere Typen fragen nur Adresse, Name und Kennung ab. */
+    @Test
+    void theKindsComeFromTheCoreAndOtherTypesAskOnlyForTheAddress() throws Exception {
+        Path handbuch = Files.createDirectories(home.resolve("handbuch"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), handbuch));
+        start(config, null);
+
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            List<String> kinds = new ArrayList<>();
+            for (int i = 0; i < f.kind.getItemCount(); i++) {
+                kinds.add(f.kind.getItemAt(i));
+            }
+            assertThat(kinds).hasSize(context.runtime().workspace().sourceTypes().size())
+                    .startsWith("Confluence (Data Center/Server)", "Lokale Dateien (Ordner)")
+                    .contains("JES", "SharePoint");
+            f.kind.setSelectedItem("JES");
+            assertThat(f.typeId()).isEqualTo("jes");
+            assertThat(f.auth.isVisible()).isFalse();
+            assertThat(f.include.isVisible()).isFalse();
+            assertThat(f.baseUrl.isVisible()).isTrue();
+            assertThat(f.credentialsNote.isVisible()).as("JES verlangt Zugangsdaten").isTrue();
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.error(f.baseUrl)).isEqualTo("Die Adresse fehlt.");
+            f.baseUrl.setText("mvs.example.org");
+            assertThat(f.id.getText()).isEqualTo("mvs-example-org");
+            assertThat(f.title.getText()).isEqualTo("mvs.example.org");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("type: jes", "options:\n", "host: \"mvs.example.org\"")
+                    .doesNotContain("base-url", "auth:", "directory");
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(f.credentialsNote.isVisible()).isFalse();
+            assertThat(f.draft().yaml("    ")).contains("siteUrl: \"mvs.example.org\"");
+        });
     }
 
     @Test

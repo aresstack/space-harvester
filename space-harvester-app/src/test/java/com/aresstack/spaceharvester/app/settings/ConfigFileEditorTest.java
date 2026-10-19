@@ -195,6 +195,28 @@ class ConfigFileEditorTest {
         assertThat(home.resolve("app.yml.bak")).hasContent(THREE);
     }
 
+    /** Andere Typen des Core (#375): die Adresse steht unter options mit dem Schlüssel des Upstream-Typs. */
+    @Test
+    void otherSourceTypesKeepTheirAddressUnderOptions() throws Exception {
+        Path file = home.resolve("app.yml");
+        SourceDraft jes = new SourceDraft("host-jes", "jes", "Host", "mvs.example.org", null, null, null, null, null,
+                null, null, null, null, null, null, Map.of("credentialRef", "keepass:jes"));
+        assertThat(jes.problems()).isEmpty();
+        editor.save(file, editor.draft(file, jes));
+        assertThat(Files.readString(file)).contains("type: jes", "host: \"mvs.example.org\"",
+                "credentialRef: \"keepass:jes\"").doesNotContain("base-url", "directory");
+
+        SourceDraft read = editor.editable(file, "host-jes").draft();
+        assertThat(read.generic()).isTrue();
+        assertThat(read.baseUrl()).isEqualTo("mvs.example.org");
+        assertThat(read.directory()).isNull();
+        assertThat(read.extraOptions()).containsExactly(Map.entry("credentialRef", "keepass:jes"));
+        AppSettings settings = loader.load(file);
+        assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org");
+        assertThat(SourceDraft.addressOption("git")).isEqualTo("url");
+        assertThat(SourceDraft.addressOption("sharepoint")).isEqualTo("siteUrl");
+    }
+
     @Test
     void removesOnlyTheChosenEntry() throws Exception {
         Path file = home.resolve("app.yml");
