@@ -88,6 +88,19 @@ public abstract class FactStoreContract {
     }
 
     @Test
+    void theMostConditionsAllowedAreOneIndexQuery() {
+        store().save(FactTestResults.acronyms(NIGHT, FactTestResults.TEXT));
+        List<ArgumentCondition> conditions = new ArrayList<>();
+        conditions.add(new ArgumentCondition(FactTypes.SHORT_FORM, "api"));
+        while (conditions.size() < FactStore.Query.MAX_CONDITIONS) {
+            conditions.add(new ArgumentCondition(FactTypes.LONG_FORM, "application programming interface"));
+        }
+
+        assertThat(facts().facts(new FactStore.Query(null, conditions, Set.of("wiki")), null, 10))
+                .extracting(MetadataFact::type).containsExactly(FactTypes.ACRONYM_DEFINITION);
+    }
+
+    @Test
     void afterContinuesBehindTheLastId() {
         store().save(FactTestResults.acronyms(NIGHT, FactTestResults.TEXT));
         store().save(FactTestResults.acronyms(DAY, FactTestResults.TEXT));

@@ -1,14 +1,14 @@
 # enterprise-ai-sources
 
-Unveränderte Kopie der Confluence-Quelle, der MediaWiki-Quelle, der Dokument-Extraktion und des Embedding-Adapters aus
+Unveränderte Kopie der Confluence-, MediaWiki-, Git- und FTP/JES-Quelle, der Dokument-Extraktion und des Embedding-Adapters aus
 [aresstack/enterprise-ai-client](https://github.com/aresstack/enterprise-ai-client). Der Space Harvester baut
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
 `9fb91c3200266169da0bc433894a331d575c2e5a`, der Merge von enterprise-ai-client#192 (Änderungssuche und Papierkorb je
 Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main`. Derselbe Stand enthält schon
-`document-tika`; für #183 und für MediaWiki (#187) kamen nur weitere Module und Klassen in die Auswahl, ohne neuen
-Upstream-Commit.
+`document-tika`; für #183 und für MediaWiki, Git und FTP/JES (#187) kamen nur weitere Module und Klassen in die
+Auswahl, ohne neuen Upstream-Commit.
 
 ## Inhalt
 
@@ -25,6 +25,8 @@ Upstream-Commit.
 | `proasteion/application` | nur `DocumentSourceFileTextExtractor`: Text aus Dateien einer Quelle wie im Enterprise AI Client (#183); `SecretBackedMediaWikiCredentialsProvider`: Anmeldung am Wiki über den `SecretProvider` wie in `AdapterAssembly` (#187) |
 | `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
 | `proasteion/emporion/holkas/source-mediawiki` | vollständig (#187): `MediaWikiSourceProvider`, `MediaWikiKnowledgeSource`, `MediaWikiSiteConfig`, `MediaWikiCredentials(Provider)`, paketintern Action-API-Client, Crawler, HTML-Text, `UrlConnectionMediaWikiTransport`; Fixtures `FakeMediaWikiTransport`, `FakeMediaWikiServer`. Braucht nur Gson und jsoup, die schon da sind |
+| `proasteion/emporion/holkas/source-git` | vollständig (#187): `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`), JGit 5.13 wie im Upstream; im Core noch nicht registriert |
+| `proasteion/emporion/holkas/source-ftp` | vollständig (#187): `FtpSourceProvider`, `FtpKnowledgeSource` (MVS-Datensätze und Member), `JesSourceProvider`, `JesKnowledgeSource` (Spool), Apache Commons Net 3.9.0 wie im Upstream; im Core noch nicht registriert |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |

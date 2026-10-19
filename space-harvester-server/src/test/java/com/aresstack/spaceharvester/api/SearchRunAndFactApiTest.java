@@ -191,6 +191,15 @@ class SearchRunAndFactApiTest {
         assertThat(get("/api/v1/facts?argument=ohne-doppelpunkt", TestClient.TOKEN).statusCode()).isEqualTo(400);
         assertThat(get("/api/v1/facts?type=MENTION&cursor=xyz", TestClient.TOKEN).statusCode()).isEqualTo(400);
         assertThat(get("/api/v1/facts?type=MENTION", null).statusCode()).isEqualTo(401);
+        // Zu viele Bedingungen sprengen die Indexabfrage nicht: 400 statt 500.
+        String many = "&argument=TERM:x".repeat(300);
+        HttpResponse<String> tooMany = get("/api/v1/facts?type=MENTION" + many, TestClient.TOKEN);
+        assertThat(tooMany.statusCode()).isEqualTo(400);
+        assertThat(json.readTree(tooMany.body()).get("type").asString()).endsWith("/invalid-request");
+        assertThat(get("/api/v1/facts?type=MENTION" + "&argument=TERM:x".repeat(17), TestClient.TOKEN)
+                .statusCode()).isEqualTo(400);
+        assertThat(get("/api/v1/facts?type=MENTION" + "&argument=TERM:x".repeat(16), TestClient.TOKEN)
+                .statusCode()).isEqualTo(200);
     }
 
     @Test

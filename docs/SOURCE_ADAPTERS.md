@@ -203,9 +203,13 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    Änderungen an `KnowledgeSourcePort.load()`.
 2. Die Kopie mit `enterprise-ai-sources/sync-from-upstream.sh sync <commit>` übernehmen; die Kopie wird nie lokal
    geändert (`verifyUpstreamCopy` prüft das im Build).
+   Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
+   `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
+   Commons Net, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
+   ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
-   `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`). `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen
-   Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
+   `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
+   `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
 
 ## Tests
 
@@ -229,5 +233,5 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Dokumenten (`DocumentFixtures`: DOCX, XLSX, PPTX, PDF, ODT, RTF), Erkennung am Inhalt gegen eine falsche Angabe,
   Grenzen; `HarvesterFullTextTest` findet Word und PDF lokaler Dateien im Volltextindex.
 - Upstream: `ConfluenceStoredContentTest`, die MediaWiki-Tests (`MediaWikiKnowledgeSourceTest`,
-  `MediaWikiHttpIntegrationTest`, Vertragstest …) und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test`
-  mit.
+  `MediaWikiHttpIntegrationTest`, Vertragstest …), `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die
+  übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
