@@ -17,6 +17,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `markdown-package` | `export-markdown.zip` | `pages.md` wie `markdown`, die Abbildungen aber als Dateien `assets/<sha256>.png` relativ verlinkt statt als `data:`-URI; jede Abbildung einmal ([ADR 0018](adr/0018-medienbeschaffung-und-otp-im-export.md)) |
 | `docx` | `pages.docx` | Word-Dokument mit Inhaltsverzeichnis, Space und Seiten als Kapitelhierarchie (Abschnitt „Word“) |
 | `pdf` | `pages.pdf` | PDF (A4) mit sichtbarem Inhaltsverzeichnis, Seitenzahlen und Lesezeichen; dasselbe Kapitelmodell wie Word (Abschnitt „PDF“) |
+| `analysis` | `analysis.json` | Analysedaten der exportierten Seiten, getrennt von den Originaldaten (#359, Abschnitt „Analyse-Export“) |
 
 ## Gemeinsame Regeln
 
@@ -48,6 +49,48 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
   (`missing-image=2, missing-diagram=1`).
 - **Kein Ergebnis-Cache in V1.** Jeder Export erzeugt seine Dateien neu. Wenn ein Cache kommt, ist sein Schlüssel der
   Input-Hash plus Converter-Version und Parameter.
+
+## Analyse-Export (#359)
+
+`format=analysis` schreibt `analysis.json` (Schema `space-harvester/analysis-export/v1`, Converter `analysis/1`):
+alle Analysedaten der exportierten Seiten, getrennt von den Originaldaten. Am sinnvollsten auf Abruf über die
+Konvertierung eines fertigen Exports (`ExportConversions.convert(…, "analysis", …)`, App: Knopf „Analyse“); dann
+entsteht die Datei erst beim Klick.
+
+```json
+{ "format": "space-harvester/analysis-export/v1", "sourceId": "wiki", "spaceKey": "DEV", "rootPageId": null,
+  "processors": [{ "id": "acronyms", "version": "2" }, { "id": "terms", "version": "1" }],
+  "pages": [{ "sourceId": "wiki", "spaceKey": "DEV", "pageId": "100", "title": "…", "url": "…",
+              "parentPageId": null, "depth": 0, "revision": "3", "rawSha256": "sha256:…", "inputSha256": "sha256:…",
+              "enrichments": {
+                "acronyms": { "state": "CURRENT", "processorVersion": "2", "currentProcessorVersion": "2",
+                              "inputSha256": "sha256:…", "revision": "3", "computedAt": "…", "warnings": [],
+                              "errorCode": null, "payload": { … } },
+                "outline":  { "state": "MISSING", "processorVersion": null, …, "payload": null } },
+              "facts": [{ "id": "…", "type": "ACRONYM_DEFINITION", "role": "DEFINES", "processorId": "acronyms",
+                          "processorVersion": "2", "inputSha256": "sha256:…", "revision": "3",
+                          "payload": { … }, "arguments": [{ "role": "SHORT_FORM", "ordinal": 0, "value": "api" }],
+                          "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }] }] }
+```
+
+- **Zuordnung.** Je Seite `sourceId`, `spaceKey`, `pageId`, die exportierte `revision` und `rawSha256` wie in
+  `pages.json`; `inputSha256` ist der Eingabe-Hash dieser Version, wie ihn die Prozessoren bekämen. Seiten linear in
+  Baumreihenfolge, die Hierarchie nur über `parentPageId`.
+- **Ein Abschnitt je Prozessor** unter `enrichments`, Schlüssel ist die Prozessor-ID: erst die aktuellen Prozessoren,
+  die für die Seite gelten, in Ausführungsreihenfolge, dann gespeicherte Ergebnisse nicht mehr vorhandener Prozessoren
+  nach ID. Neue Prozessoren (Begriffe, Passagen, Bildbeschreibungen) erscheinen ohne Schemaänderung. `payload` ist das
+  JSON des Prozessors unverändert aus der Ablage; Bezüge darin (etwa Asset-ID und SHA-256) bleiben, wie der Prozessor
+  sie schreibt.
+- **Zustand** gegenüber der exportierten Version: `CURRENT` (gleicher Eingabe-Hash, aktuelle Prozessorversion),
+  `STALE` (andere Fassung oder Prozessorversion, oder Prozessor nicht mehr vorhanden: `currentProcessorVersion` null),
+  `FAILED` (`errorCode`, `payload` null), `MISSING` (nichts gespeichert). Nichts wird nachgerechnet, keine Ablage
+  verändert; fehlende Ergebnisse berechnet der übliche Anreicherungslauf.
+- **Fakten** (#182) sind die aus den Ergebnissen abgeleiteten `MetadataFact`s der Seite mit Herkunft
+  (`processorId`, `processorVersion`, `inputSha256`, `revision`).
+- Die Lese-Ansicht (`reading-view`) ist keine Analyse und fehlt; Suchläufe und Begriffsbeziehungen sind nicht
+  seitenbezogen und gehören nicht in diese Datei.
+- Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher
+  Input-Hash ergibt dieselben Seiten, aber nicht unbedingt dieselben Abschnitte.
 
 ## Gemeinsamer Dokumentbaum
 

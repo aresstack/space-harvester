@@ -35,6 +35,7 @@ import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
 import com.aresstack.enterpriseai.source.api.StoredContentSource;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.ChangeEvent;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -185,6 +186,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         if (port instanceof AttachmentListSource) {
             capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
+        }
+        if (port instanceof PageViewSource && port instanceof AttachmentListSource) {
+            // Vorschauen gibt es bei Quellen mit Lese-Ansicht und Anhangsliste (Confluence, #183).
+            capabilities.add(SourceCapability.ATTACHMENT_PREVIEWS);
         }
         if (port instanceof PageNavigationSource && port instanceof ResourceMetadataSource) {
             capabilities.add(SourceCapability.NAVIGATION);
@@ -740,6 +745,45 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     "Download gehört zu einem anderen Anhang", null);
         }
         return new AttachmentFile(described, file.content(), Instant.now());
+    }
+
+    /**
+     * Vorschau über {@link PageViewSource#loadAttachmentPreview} (#183), bei Confluence die Dokumentkonvertierung
+     * ({@code ConfluenceRestClient#conversionPath}); die Angaben des Anhangs liest der Adapter dabei frisch. Die Grenze
+     * der Quelle gilt beim Lesen, die des Aufrufers danach.
+     */
+    @Override
+    public byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
+        if (!(port instanceof PageViewSource views) || !(port instanceof AttachmentListSource)) {
+            return HarvestSource.super.attachmentPreview(attachment, preview, maxBytes);
+        }
+        Objects.requireNonNull(preview, "preview");
+        KnowledgeResourceId resourceId;
+        try {
+            resourceId = KnowledgeResourceId.of(attachment.resourceId());
+        } catch (IllegalArgumentException e) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Keine Ressourcen-ID", null);
+        }
+        if (!views.isAttachment(resourceId)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED, "Kein Anhang der Quelle",
+                    null);
+        }
+        PageView.Preview kind = PageView.Preview.valueOf(preview.name());
+        PageView.Attachment described = new PageView.Attachment(attachment.attachmentId(), null, attachment.title(),
+                attachment.mediaType(), attachment.version(), attachment.fileSize() == null ? -1
+                : attachment.fileSize(), null, null, EnumSet.of(kind));
+        byte[] bytes;
+        try {
+            bytes = views.loadAttachmentPreview(described, kind);
+        } catch (ResponseTooLargeException e) {
+            throw new AttachmentTooLargeException(id, e.maxBytes());
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        if (bytes.length > maxBytes) {
+            throw new AttachmentTooLargeException(id, maxBytes);
+        }
+        return bytes;
     }
 
     @Override

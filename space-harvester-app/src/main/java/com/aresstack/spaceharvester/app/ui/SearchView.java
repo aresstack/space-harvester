@@ -75,6 +75,8 @@ public final class SearchView implements View {
     private ProgressiveSearch running;
     /** Der Umfang aus dem Explorer: „In: Alle Wissensquellen“ bzw. die gewählten Quellen und Spaces. */
     final JLabel scopeLabel = Comic.muted(" ");
+    /** Der Modus der nächsten Suche: Schlagwortsuche oder semantisch, wie der Core ihn meldet. */
+    final JLabel modeLabel = Comic.muted(" ");
     final ComposerButton everywhere = Comic.button("Überall suchen", "Auswahl im Explorer aufheben und in allen "
             + "Wissensquellen suchen");
     private final ComposerButton run = Comic.primary("Suchen", "Im gewählten Umfang suchen (Titel und Inhalt)");
@@ -145,6 +147,7 @@ public final class SearchView implements View {
         cancel.setVisible(false);
         more.setVisible(false);
         semantic.setSelected(false);
+        semantic.addItemListener(e -> mode());
         tags.setOpaque(false);
         tags.setVisible(false);
         everywhere.addActionListener(e -> clearScope.run());
@@ -184,6 +187,7 @@ public final class SearchView implements View {
         scopeRow.setOpaque(false);
         scopeRow.add(scopeLabel);
         scopeRow.add(everywhere);
+        scopeRow.add(modeLabel);
         JPanel head = new JPanel(new BorderLayout(0, 8));
         head.setOpaque(false);
         head.add(bar, BorderLayout.NORTH);
@@ -303,13 +307,39 @@ public final class SearchView implements View {
     /** Woher die Varianten der semantischen Suche kommen; entfernte Quellen fallen aus dem Umfang. */
     private void refreshSources() {
         AppRuntime runtime = context.runtime();
-        semantic.setEnabled(runtime != null);
-        semantic.setToolTipText(runtime == null ? null : runtime.workspace().aiVariants()
-                ? "Sucht zusätzlich mit Varianten der Anfrage vom Chat-Modell des KI-Dienstes und ordnet alle Treffer "
-                + "nach ihrer Nähe zur ursprünglichen Anfrage"
-                : "Sucht zusätzlich mit Varianten der Anfrage nach Regeln (kein Chat-Modell eingerichtet, unter "
-                + "Einstellungen › Modelle) und ordnet alle Treffer nach ihrer Nähe zur ursprünglichen Anfrage");
+        boolean available = runtime != null && runtime.workspace().semanticRanking();
+        semantic.setEnabled(available);
+        if (!available) {
+            semantic.setSelected(false);
+        }
+        semantic.setToolTipText(semanticTip(runtime == null ? null : available, runtime != null
+                && runtime.workspace().aiVariants()));
+        mode();
         scope(scopes);
+    }
+
+    /**
+     * Der Tooltip des Häkchens: mit Modell, woher die Varianten kommen; ohne Modell, warum es gesperrt ist;
+     * {@code null} ohne Laufzeit.
+     */
+    static String semanticTip(Boolean available, boolean aiVariants) {
+        if (available == null) {
+            return null;
+        }
+        if (!available) {
+            return "Gesperrt: kein Embedding-Modell eingerichtet (Einstellungen › Modelle); ohne Modell sucht die App "
+                    + "nach Schlagwörtern";
+        }
+        return aiVariants
+                ? "Sucht semantisch mit Varianten der Anfrage vom Chat-Modell des KI-Dienstes und ordnet alle Treffer "
+                + "nach ihrer Nähe zur ursprünglichen Anfrage"
+                : "Sucht semantisch mit Varianten der Anfrage nach Regeln (kein Chat-Modell eingerichtet, unter "
+                + "Einstellungen › Modelle) und ordnet alle Treffer nach ihrer Nähe zur ursprünglichen Anfrage";
+    }
+
+    /** Nennt den Modus der nächsten Suche neben dem Umfang. */
+    private void mode() {
+        modeLabel.setText(semantic.isSelected() ? "Modus: Semantische Suche" : "Modus: Schlagwortsuche");
     }
 
     private static JCheckBox checkBox(String text, String tooltip) {

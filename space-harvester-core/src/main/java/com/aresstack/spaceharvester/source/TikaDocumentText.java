@@ -132,6 +132,56 @@ public final class TikaDocumentText implements DocumentText {
         return Optional.of(type.mimeType());
     }
 
+    /**
+     * Erst am Inhalt allein ({@link #detect(byte[])}); lässt der den Typ offen, fragt die Kopie wie der Enterprise AI
+     * Client mit dem Dateinamen ({@code TikaContentDetector}: Endung, sonst Tika mit dem Namen als Hinweis). Das
+     * Ergebnis zählt nur, wenn es zum Inhalt passt ({@link #refine}).
+     */
+    @Override
+    public Optional<String> detect(String fileName, byte[] content) {
+        Optional<String> byContent = detect(content);
+        if (fileName == null || fileName.isBlank() || content == null || content.length == 0
+                || byContent.isPresent() && !OPEN.contains(byContent.get())) {
+            return byContent;
+        }
+        byte[] sample = content.length <= maxBytes ? content : Arrays.copyOf(content, PREFIX_BYTES);
+        DetectedContentType named;
+        try {
+            named = limited(() -> engine().detector.detect(fileName, null, sample));
+        } catch (DocumentTextException e) {
+            LOG.log(System.Logger.Level.INFO, "Typerkennung mit Dateiname ohne Ergebnis ({0})", e.reason().code());
+            return byContent;
+        }
+        if (named == null || named.category() == ContentCategory.UNKNOWN || named.mimeType() == null
+                || named.mimeType().isBlank()) {
+            return byContent;
+        }
+        return Optional.of(refine(byContent.orElse(null), named.mimeType().toLowerCase(Locale.ROOT)));
+    }
+
+    /** Am Inhalt erkannte Typen, die den Dateityp offenlassen: Klartext und bloße Behälter. */
+    private static final java.util.Set<String> OPEN = java.util.Set.of("text/plain", "application/zip",
+            "application/x-tika-ooxml", "application/x-tika-msoffice", "application/x-ole-storage");
+
+    /**
+     * Der Typ nach Name, soweit der Inhalt ihn zulässt: ohne Signatur der Name (wie im Enterprise AI Client), bei
+     * Klartext nur ein Textformat (Markdown, CSV …), in einem ZIP nur OOXML oder OpenDocument, in OLE2 nur die alten
+     * Office-Formate; sonst bleibt der Typ des Inhalts.
+     */
+    static String refine(String byContent, String named) {
+        if (byContent == null) {
+            return named;
+        }
+        boolean fits = switch (byContent) {
+            case "text/plain" -> named.startsWith("text/") || named.equals("application/json")
+                    || named.endsWith("/xml") || named.endsWith("+xml") || named.equals("application/x-yaml");
+            case "application/zip", "application/x-tika-ooxml" -> named.startsWith("application/vnd.openxmlformats")
+                    || named.startsWith("application/vnd.oasis.opendocument");
+            default -> named.equals("application/msword") || named.startsWith("application/vnd.ms-");
+        };
+        return fits ? named : byContent;
+    }
+
     @Override
     public Extracted extract(String title, String mediaType, byte[] content) {
         if (content.length > maxBytes) {
