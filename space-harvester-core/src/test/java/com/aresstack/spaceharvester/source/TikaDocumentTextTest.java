@@ -53,6 +53,21 @@ class TikaDocumentTextTest {
     }
 
     @Test
+    void theFileNameRefinesOnlyWhatTheContentLeavesOpen() {
+        byte[] text = "# Überschrift\n\nAbsatz mit Text.\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] unknown = {0, 1, 2, 3, (byte) 0xFE, (byte) 0xFF, 7, 9};
+
+        // Wie TikaContentDetector im Enterprise AI Client: Klartext mit Endung .md ist Markdown, Bytes ohne Signatur
+        // nennt die Endung.
+        assertThat(documents.detect("notizen.md", text)).contains("text/markdown");
+        assertThat(documents.detect("daten.pdf", unknown)).contains(DocumentFixtures.PDF);
+        // Eine Signatur gilt vor der Endung, und Klartext wird nicht zum Binärformat.
+        assertThat(documents.detect("bericht.docx", DocumentFixtures.pdf(TEXT))).contains(DocumentFixtures.PDF);
+        assertThat(documents.detect("bericht.pdf", text)).contains("text/plain");
+        assertThat(documents.detect(null, text)).isEqualTo(documents.detect(text));
+    }
+
+    @Test
     void filesAboveTheSizeLimitAreNotParsed() {
         TikaDocumentText small = new TikaDocumentText(100, 1000, Duration.ofSeconds(30));
         byte[] pdf = DocumentFixtures.pdf(TEXT);

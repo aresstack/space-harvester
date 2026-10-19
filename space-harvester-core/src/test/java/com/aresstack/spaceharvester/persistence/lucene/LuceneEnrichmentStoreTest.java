@@ -158,6 +158,29 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
     }
 
     @Test
+    void aVersionThreeIndexGetsTheFactsOfItsRelations() throws Exception {
+        store.close();
+        Path old = directory.resolve("v3");
+        Enrichment relations = FactTestResults.relations(new PageKey("wiki", "101"), FactTestResults.RELATIONS);
+        try (FSDirectory dir = FSDirectory.open(old);
+                IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+            Document doc = v1Document("relations", relations.payloadJson());
+            doc.removeFields("processorVersion");
+            doc.removeFields("inputSha256");
+            doc.add(new StoredField("processorVersion", relations.processorVersion()));
+            doc.add(new StoredField("inputSha256", relations.inputSha256()));
+            writer.addDocument(doc);
+            writer.setLiveCommitData(Map.of(PageCacheSchema.SCHEMA_KEY, LuceneEnrichmentStore.VERSION_3).entrySet());
+            writer.commit();
+        }
+
+        store = LuceneEnrichmentStore.open(old);
+
+        assertThat(store.factsOf(new PageKey("wiki", "101"))).isNotEmpty()
+                .extracting(MetadataFact::type).containsOnly(FactTypes.RELATION);
+    }
+
+    @Test
     void aVersionOneIndexIsUpgradedAndDropsOnlyItsEmbeddings() throws Exception {
         store.close();
         Path old = directory.resolve("v1");
