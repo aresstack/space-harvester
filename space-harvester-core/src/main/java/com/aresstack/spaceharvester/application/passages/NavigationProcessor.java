@@ -69,12 +69,21 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     }
 
     /**
-     * Mit Modell im Hintergrund wie {@code embedding} (ohne Modell nur Überschriften, sofort): Die Warteschlange rechnet eine Berechnung nach der anderen, die
+     * Mit Modell im Hintergrund wie {@code embedding}: Die Warteschlange rechnet eine Berechnung nach der anderen, die
      * Navigation einer Seite also nach ihren Embeddings.
      */
     @Override
     public boolean background() {
         return embedding != null && embedding.available() && embedding.background();
+    }
+
+    /**
+     * Nur Seiten, für die es Embeddings je Absatz geben kann, warten im Hintergrund auf sie; alle anderen bekommen ihre
+     * Überschriften sofort und belegen keinen Platz in der Warteschlange.
+     */
+    @Override
+    public boolean background(PageKey key) {
+        return background() && embedding.covers(key.sourceId()) && embedding.passages();
     }
 
     @Override
@@ -89,13 +98,18 @@ public final class NavigationProcessor implements EnrichmentProcessor {
             return headings(text, NavigationPayload.REASON_NO_MODEL, version);
         }
         if (!embedding.covers(key.sourceId())) {
-            return headings(text, NavigationPayload.REASON_NOT_APPROVED, version + "+pending");
+            // Wie bei passages: gilt, bis Text, Modell oder Verfahren wechseln.
+            return headings(text, NavigationPayload.REASON_NOT_APPROVED, version);
         }
         Enrichment vectors = stored.apply(key).stream()
                 .filter(e -> e.processorId().equals(embedding.id()) && e.status() == Enrichment.Status.OK
                         && e.freshness(text.inputSha256(), embedding.version()) == Enrichment.Freshness.CURRENT)
                 .findFirst().orElse(null);
-        if (vectors == null || !embedding.passages()) {
+        if (!embedding.passages()) {
+            // Embeddings ohne Absätze: Es kommen keine, auf die sich das Warten lohnte.
+            return headings(text, NavigationPayload.REASON_NOT_EMBEDDED, version);
+        }
+        if (vectors == null) {
             return headings(text, NavigationPayload.REASON_NOT_EMBEDDED, version + "+pending");
         }
         List<DocumentNavigationBuilder.Passage> passages = new ArrayList<>();

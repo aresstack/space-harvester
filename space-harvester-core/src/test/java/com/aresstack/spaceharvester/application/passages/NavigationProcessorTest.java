@@ -91,6 +91,9 @@ class NavigationProcessorTest {
         assertThat(calls.get()).isEqualTo(before);
         assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_NOT_APPROVED);
         assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.HEADINGS);
+        // Gilt bis Text, Modell oder Verfahren wechseln; kein Platz in der Warteschlange.
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(processor.background(KEY)).isFalse();
     }
 
     @Test

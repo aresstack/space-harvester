@@ -42,4 +42,12 @@ public interface EnrichmentProcessor {
     default boolean background() {
         return false;
     }
+
+    /**
+     * Ob der Prozessor für diese Seite über das Netz rechnet; Vorgabe {@link #background()}. Ein Prozessor, der nur für
+     * manche Seiten das Netz braucht, rechnet die übrigen sofort und belegt dafür keinen Platz im Hintergrund.
+     */
+    default boolean background(PageKey key) {
+        return background();
+    }
 }

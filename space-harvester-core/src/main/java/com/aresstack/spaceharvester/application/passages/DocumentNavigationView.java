@@ -17,7 +17,9 @@ import java.util.Objects;
  * @param analysis ob Themenabschnitte erkannt sind
  * @param reason   bei {@link DocumentNavigationBuilder.Analysis#HEADINGS} warum ({@code no-model},
  *                 {@code source-not-approved}, {@code not-embedded}, {@code no-topic-change},
- *                 {@code model-unavailable}), sonst {@code null}; ohne gespeichertes Ergebnis {@code null}
+ *                 {@code model-unavailable}); bei {@link DocumentNavigationBuilder.Analysis#SEMANTIC}
+ *                 {@code model-unavailable}, wenn das Chat-Modell nicht benennen konnte und die Bezeichnungen aus
+ *                 der Analyse stammen; sonst und ohne gespeichertes Ergebnis {@code null}
  * @param chapters Hauptkapitel in Lesereihenfolge
  */
 public record DocumentNavigationView(PagePassages.State state, DocumentNavigationBuilder.Analysis analysis,
