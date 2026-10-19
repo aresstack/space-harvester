@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,6 +41,22 @@ final class ConfiguredSchedules {
      * @throws ConfigurationRejectedException bei unbekannter Quelle oder zu kurzem Abstand, wenn {@code strict}
      */
     static List<Planned> plan(HarvesterConfiguration configuration, SourceCatalog catalog, boolean strict) {
+        return plan(configuration, catalog, strict, SyncSettings::interval, SyncSettings.INTERVAL);
+    }
+
+    /**
+     * Die Bestandsinventuren der Konfiguration: je Eintrag aus {@code sync.spaces} mit {@code inventory-interval} und
+     * Betriebsart seiner Quelle, ohne Abstand keine.
+     *
+     * @throws ConfigurationRejectedException wie {@link #plan(HarvesterConfiguration, SourceCatalog, boolean)}
+     */
+    static List<Planned> planInventories(HarvesterConfiguration configuration, SourceCatalog catalog,
+                                         boolean strict) {
+        return plan(configuration, catalog, strict, SyncSettings::inventoryInterval, SyncSettings.INVENTORY_INTERVAL);
+    }
+
+    private static List<Planned> plan(HarvesterConfiguration configuration, SourceCatalog catalog, boolean strict,
+                                      Function<SyncSettings, Duration> intervalOf, String intervalKey) {
         List<Planned> planned = new ArrayList<>();
         List<ConfigurationProblem> problems = new ArrayList<>();
         for (String entry : configuration.sync().spaces()) {
@@ -51,19 +68,20 @@ final class ConfiguredSchedules {
             }
             String sourceId = entry.substring(0, slash);
             SyncSettings rules = configuration.syncFor(sourceId);
-            if (rules.interval() == null) {
+            Duration interval = intervalOf.apply(rules);
+            if (interval == null) {
                 continue;
             }
             if (catalog.find(sourceId).isEmpty()) {
                 problems.add(new ConfigurationProblem(SyncSettings.SPACES, "Unbekannte Quelle „" + sourceId + "“"));
                 continue;
             }
-            if (rules.interval().compareTo(Reconciliation.MIN_INTERVAL) < 0) {
-                problems.add(new ConfigurationProblem(SyncSettings.INTERVAL,
+            if (interval.compareTo(Reconciliation.MIN_INTERVAL) < 0) {
+                problems.add(new ConfigurationProblem(intervalKey,
                         "Der Abstand muss mindestens eine Minute betragen"));
                 continue;
             }
-            planned.add(new Planned(sourceId, entry.substring(slash + 1), rules.interval(), rules.mode()));
+            planned.add(new Planned(sourceId, entry.substring(slash + 1), interval, rules.mode()));
         }
         if (!problems.isEmpty()) {
             if (strict) {

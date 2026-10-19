@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.InventoryLog;
+import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
@@ -89,6 +91,48 @@ class SyncConfiguration {
             return () -> schedules.replace(planned);
         });
         return reconciliation;
+    }
+
+    /**
+     * Regelmäßige Bestandsinventur (ADR 0014 Punkt 1) der Spaces aus {@code space-harvester.sync.spaces} im Abstand
+     * {@code space-harvester.sync.inventory-interval} bzw. dem ihrer Quelle; ohne Abstand keine. Anders als das
+     * Nachholen listet sie die Metadaten des ganzen Space und findet so auch Löschungen und Verschiebungen. Ein
+     * Konfigurationswechsel ersetzt den Zeitplan wie beim Nachholen.
+     */
+    @Bean(destroyMethod = "close")
+    InventorySchedule inventorySchedule(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live,
+                                        CacheProperties cache) {
+        // Bezugspunkte im Cache-Verzeichnis, damit Neustarts den Abstand nicht zurücksetzen; ohne Cache läuft keine.
+        InventoryLog log = cache.directory() == null ? InventoryLog.inMemory()
+                : new FileInventoryLog(cache.directory());
+        Reconciliation inventories = Reconciliation.inventories(syncJobs, null, Clock.systemUTC(), log);
+        if (!syncJobs.available()) {
+            if (!ConfiguredSchedules.planInventories(live.current(), catalog, false).isEmpty()) {
+                LOG.warn("Bestandsinventur konfiguriert, aber Cache-Speicher oder Inhaltsabruf fehlen; "
+                        + "sie startet nicht");
+            }
+            return new InventorySchedule(inventories);
+        }
+        ConfiguredSchedules schedules = new ConfiguredSchedules(inventories);
+        schedules.replace(ConfiguredSchedules.planInventories(live.current(), catalog, false));
+        live.listen(change -> {
+            if (!change.syncChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            List<ConfiguredSchedules.Planned> planned = ConfiguredSchedules.planInventories(change.next(), catalog,
+                    true);
+            return () -> schedules.replace(planned);
+        });
+        return new InventorySchedule(inventories);
+    }
+
+    /** Die eingeplanten Bestandsinventuren; eigener Typ, damit {@link Reconciliation} eindeutig bleibt. */
+    record InventorySchedule(Reconciliation inventories) implements AutoCloseable {
+
+        @Override
+        public void close() {
+            inventories.close();
+        }
     }
 
     /**
