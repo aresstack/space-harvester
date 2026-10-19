@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.TestClient;
 import com.aresstack.spaceharvester.api.ConfigurationOverlay;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
@@ -54,6 +55,15 @@ class LiveConfigurationTest {
     @Autowired
     private Reconciliation reconciliation;
 
+    @Autowired
+    private QueryVariantModels variants;
+
+    @Autowired
+    private EmbeddingProcessor embedding;
+
+    @Autowired
+    private SyncConfiguration.InventorySchedule inventory;
+
     @Test
     void rulesPerSourceAndTheReleaseToTheAiServiceFollowTheConfiguration() {
         assertThat(live.freshnessFor("wiki").maxAge()).isEqualTo(Duration.ZERO);
@@ -100,6 +110,37 @@ class LiveConfigurationTest {
                 manager.current().configuration(), Map.of("sync.spaces", List.of("nope/X"))).orThrow());
         assertThat(rejected.activated()).isFalse();
         assertThat(reconciliation.schedules()).extracting(Reconciliation.Schedule::spaceKey).containsExactly("DEV");
+    }
+
+    @Test
+    void theInventoryScheduleFollowsTheConfiguration() {
+        assertThat(inventory.inventories().schedules()).isEmpty();
+
+        activate(Map.of("sync.spaces", List.of("wiki/DEV"), "sync.sources.wiki.inventory-interval", "P7D"));
+        assertThat(inventory.inventories().schedules()).singleElement().satisfies(schedule -> {
+            assertThat(schedule.spaceKey()).isEqualTo("DEV");
+            assertThat(schedule.interval()).isEqualTo(Duration.ofDays(7));
+        });
+        // Ohne sync.interval holt kein Zeitplan nach; die Inventur ist unabhängig davon.
+        assertThat(reconciliation.schedules()).isEmpty();
+
+        activate(Map.of("sync.spaces", List.of()));
+        assertThat(inventory.inventories().schedules()).isEmpty();
+    }
+
+    @Test
+    void theChatModelAndTheSemanticSearchFollowTheConfigurationWithoutRestart() {
+        assertThat(variants.get()).isEmpty();
+        assertThat(embedding.available()).isFalse();
+
+        activate(Map.of("ai.chat-model", "gpt-mini", "ai.embedding-model", "nomic-embed",
+                "ai.embedding-dimensions", "768", "search.semantic", "true"));
+        assertThat(variants.get()).isPresent();
+        assertThat(embedding.available()).isTrue();
+
+        activate(Map.of("ai.chat-model", "", "ai.embedding-model", "", "ai.embedding-dimensions", ""));
+        assertThat(variants.get()).isEmpty();
+        assertThat(embedding.available()).isFalse();
     }
 
     private void activate(Map<String, ?> values) {
