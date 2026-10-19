@@ -18,6 +18,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -80,6 +81,9 @@ public final class StorageParser {
     /** Gerenderte Inhalte der ausgeführten Makros aus der Lese-Ansicht, je Makroname in Dokumentreihenfolge. */
     private Map<String, Deque<Element>> rendered = Map.of();
 
+    /** Anzeigenamen erwähnter Benutzer aus der Lese-Ansicht, je {@code ac:link} des Storage. */
+    private Map<Element, String> mentions = Map.of();
+
     /** Ausgeführte Makros ohne Inhalt aus der Lese-Ansicht: Titel der eingebundenen Seite oder Makroname. */
     private final List<String> omitted = new ArrayList<>();
 
@@ -114,11 +118,62 @@ public final class StorageParser {
         depth = 0;
         omitted.clear();
         rendered = view == null || view.isBlank() ? Map.of() : rendered(view, baseUri == null ? "" : baseUri);
+        mentions = view == null || view.isBlank() ? Map.of() : mentions(root, view);
         try {
             return new Parsed(blocks(root), List.copyOf(omitted));
         } finally {
             rendered = Map.of();
+            mentions = Map.of();
         }
+    }
+
+    /**
+     * Anzeigenamen der Benutzererwähnungen wie im Enterprise AI Client, der den Linktext der Lese-Ansicht übernimmt.
+     * Zuordnung über {@code ri:username} bzw. {@code ri:account-id} zu {@code data-username} bzw.
+     * {@code data-account-id}; sonst (etwa nur {@code ri:userkey}) über die Reihenfolge, aber nur wenn Storage und Ansicht
+     * gleich viele Erwähnungen haben. Erwähnungen in eingebundenen Inhalten zählen nicht mit.
+     */
+    private static Map<Element, String> mentions(Element storage, String view) {
+        List<Element> shown = new ArrayList<>();
+        Map<String, String> byName = new HashMap<>();
+        for (Element mention : Jsoup.parse(view).body().select("a.user-mention")) {
+            boolean included = false;
+            for (Element parent = mention.parent(); parent != null && !included; parent = parent.parent()) {
+                included = RENDERED_MACROS.contains(parent.attr("data-macro-name").toLowerCase(Locale.ROOT));
+            }
+            String name = collapse(mention.text()).trim();
+            if (included || name.isEmpty()) {
+                continue;
+            }
+            shown.add(mention);
+            for (String attribute : List.of("data-username", "data-account-id")) {
+                if (!mention.attr(attribute).isEmpty()) {
+                    byName.put(attribute + "=" + mention.attr(attribute), name);
+                }
+            }
+        }
+        List<Element> links = new ArrayList<>();
+        for (Element link : storage.select("ac|link")) {
+            if (link.selectFirst("ri|user") != null) {
+                links.add(link);
+            }
+        }
+        Map<Element, String> names = new IdentityHashMap<>();
+        for (int i = 0; i < links.size(); i++) {
+            Element user = links.get(i).selectFirst("ri|user");
+            String name = byName.get("data-username=" + user.attr("ri:username"));
+            if (name == null || user.attr("ri:username").isEmpty()) {
+                name = user.attr("ri:account-id").isEmpty() ? null
+                        : byName.get("data-account-id=" + user.attr("ri:account-id"));
+            }
+            if (name == null && links.size() == shown.size()) {
+                name = collapse(shown.get(i).text()).trim();
+            }
+            if (name != null) {
+                names.put(links.get(i), name);
+            }
+        }
+        return names;
     }
 
     /** Äußerste gerenderte Makros der Ansicht je Name; Unsichtbares (Diagrammdaten, Skripte) ist entfernt. */
@@ -484,7 +539,9 @@ public final class StorageParser {
             target = emptyToNull(url.attr("ri:value"));
             label = label.isEmpty() ? url.attr("ri:value") : label;
         } else if (user != null && label.isEmpty()) {
-            label = "@" + (user.hasAttr("ri:username") ? user.attr("ri:username") : user.attr("ri:userkey"));
+            String name = mentions.get(link);
+            label = name != null ? name
+                    : "@" + (user.hasAttr("ri:username") ? user.attr("ri:username") : user.attr("ri:userkey"));
         }
         if (!link.attr("ac:anchor").isEmpty() && target == null && page == null) {
             label = label.isEmpty() ? link.attr("ac:anchor") : label;
