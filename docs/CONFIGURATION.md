@@ -270,5 +270,16 @@ Ein Wechsel des Embedding-Modells oder seiner Dimension versioniert den Vektorin
 veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte werden dafür nicht erneut von der
 Quelle geladen.
 
+**Embedding je Absatz (#181, PR #388):** Mit Embedding-Modell bettet der Prozessor `embedding` je semantischem Absatz
+ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Ein Absatz über
+`ai.embedding-chunk-chars` Zeichen wird wie bisher geteilt; Budget und Überlappung der Zerlegung
+(`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
+Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
+Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
+diese Embeddings je Absatz und rechnet selbst nichts beim KI-Dienst; sie hat keine eigenen Schlüssel, auch keine
+Fristen oder Parallelität, und folgt `ai.embedding-model` und der Freigabe `ai.external-processing-sources`. Ein
+Benenner der Themenabschnitte (`SectionLabeler`) ist im Core vorgesehen, aber weder im Server noch im
+`Harvester` verdrahtet.
+
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
 mit dem abgelehnten Wert.
