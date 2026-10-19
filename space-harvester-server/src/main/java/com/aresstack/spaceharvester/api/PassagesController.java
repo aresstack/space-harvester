@@ -91,6 +91,8 @@ public class PassagesController {
     /**
      * Ein Absatz.
      *
+     * @param id         stabile Passage-ID {@code <sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>},
+     *                   auflösbar über {@code GET /api/v1/passages?id=}
      * @param index      Nummer in der Seite, ab 0
      * @param start      erstes Zeichen (UTF-16)
      * @param end        Ende, exklusiv
@@ -100,12 +102,12 @@ public class PassagesController {
      * @param boundary   structure, topic, length oder tokens: warum der Absatz hier beginnt
      * @param similarity bei topic die gemessene Ähnlichkeit der Satzfenster an der Grenze
      */
-    public record PassageEntry(int index, int start, int end, String title, String text,
+    public record PassageEntry(String id, int index, int start, int end, String title, String text,
                                @Schema(nullable = true) String section, int firstSentence, int sentences,
                                String kind, String boundary, @Schema(nullable = true) Double similarity) {
 
         static PassageEntry of(PagePassages.Passage passage) {
-            return new PassageEntry(passage.index(), passage.start(), passage.end(), passage.title(), passage.text(),
+            return new PassageEntry(passage.id(), passage.index(), passage.start(), passage.end(), passage.title(), passage.text(),
                     passage.section(), passage.firstSentence(), passage.sentences(),
                     PassagePayload.name(passage.kind()), PassagePayload.name(passage.boundary()),
                     passage.similarity());

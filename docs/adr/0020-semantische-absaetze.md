@@ -58,6 +58,17 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    2 000 Zeichen aufgefüllten Fensters; ohne aktuelle Absätze (veraltete Revision, Zerlegung ohne Absätze) bleibt das
    Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
    Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
+10. **Stabile Passage-IDs** (EAC-Lücke 5, Kopie von `KnowledgePassageId`): Jeder Absatz trägt
+   `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`. `capture` ist der volle SHA-256 des angezeigten
+   Textes, `position` zählt ab 0, `zerlegung` und `modell` sind 8 Hex aus SHA-256 über `PassageSegmentation.fingerprint()`
+   und das Embedding-Modell (ohne Modell `structure`). Ändert sich Text, Zerlegung oder Modell, ändert sich die ID.
+   Berechnet beim Lesen aus dem gespeicherten Ergebnis, ohne Schemaänderung. `PassageQueries.resolve` und
+   `GET /api/v1/passages?id=` lösen sie wie `KnowledgeResourceReader` auf: gefunden mit je einem Nachbarn
+   (`found`), sonst alle aktuellen Absätze mit `older-version` (andere Capture) oder `changed` (Zerlegung oder Modell
+   gewechselt). Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; die Versionsteile
+   stammen aus dem gespeicherten Ergebnis statt aus der aktuellen Einstellung, ein veraltetes Ergebnis desselben
+   Textes behält also seine IDs bis zur Neuberechnung; ohne Absätze gibt es zusätzlich `unavailable`; die ID steht im
+   Parameter statt im Pfad, weil sie `#` und Seiten-IDs `/` enthalten.
 
 ## Dokumentnavigation
 
