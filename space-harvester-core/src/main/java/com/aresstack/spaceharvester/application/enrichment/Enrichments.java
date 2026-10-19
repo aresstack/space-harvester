@@ -50,6 +50,12 @@ public class Enrichments {
     private final ExecutorService background;
     private final Set<String> queued = ConcurrentHashMap.newKeySet();
 
+    /** Die Fakten aus den Ergebnissen dieser Ablage (#182), wenn sie welche führt. */
+    public java.util.Optional<com.aresstack.spaceharvester.application.facts.FactStore> facts() {
+        return store instanceof com.aresstack.spaceharvester.application.facts.FactStore facts
+                ? java.util.Optional.of(facts) : java.util.Optional.empty();
+    }
+
     /** Ohne Hintergrund: alle Prozessoren rechnen im aufrufenden Thread. */
     public Enrichments(PageTextProjector projector, List<EnrichmentProcessor> processors, EnrichmentStore store,
                        Clock clock) {
@@ -103,6 +109,11 @@ public class Enrichments {
         if (!background.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
             background.shutdownNow();
         }
+    }
+
+    /** Die Ablage der Ergebnisse, etwa für den Begriffsindex (#119), wenn sie ihn mitführt. */
+    public EnrichmentStore store() {
+        return store;
     }
 
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */

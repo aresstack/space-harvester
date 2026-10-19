@@ -67,11 +67,11 @@ class SemanticPreparationTest {
         preparation().prepare(APP, query, "Nachtlauf", Set.of("OPS"));
 
         verify(keywords).search(any(), argThat(q -> q.excludedSpaceKeys().equals(Set.of("OPS"))), isNull(),
-                anyInt());
+                anyInt(), isNull());
     }
 
     private void found(KeywordSearch.Results results) {
-        when(keywords.search(any(), any(), isNull(), anyInt())).thenReturn(results);
+        when(keywords.search(any(), any(), isNull(), anyInt(), any())).thenReturn(results);
     }
 
     private static KeywordSearch.SourceState searched() {

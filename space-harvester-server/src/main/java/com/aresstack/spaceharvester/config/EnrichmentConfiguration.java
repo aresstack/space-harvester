@@ -13,9 +13,11 @@ import com.aresstack.spaceharvester.application.enrichment.language.ActivityProc
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
@@ -29,7 +31,8 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
- * {@code outline}, {@code entities}, {@code properties}, {@code activities} und {@code relations} und die Ablage
+ * {@code outline}, {@code entities}, {@code properties}, {@code activities}, {@code relations} und {@code terms}
+ * (Begriffsindex, #119) und die Ablage
  * (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie
  * nachgezogen,
  * als eigener Auftrag {@code ENRICHMENT}.
@@ -41,12 +44,14 @@ class EnrichmentConfiguration {
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
-                new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
+                new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
+                new TermProcessor()));
         // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
-        // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+        // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
+        // Volltextindex.
         PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector()));
+                new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
         return new Enrichments(projector, processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
     }

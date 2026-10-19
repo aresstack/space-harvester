@@ -54,6 +54,8 @@ dependencies {
     // Vertragstest ConfluenceAsyncHttpTransportContract aus der Kopie ist JUnit 4
     testRuntimeOnly 'org.junit.vintage:junit-vintage-engine'
 
+    // Paritäts-Space (#193) im Paket des kopierten FakeConfluence, damit er unverändert in den Enterprise AI Client passt
+    testFixturesApi testFixtures(project(':enterprise-ai-sources'))
     testFixturesImplementation platform(libs.spring.boot.dependencies)
     testFixturesImplementation 'org.assertj:assertj-core'
 }

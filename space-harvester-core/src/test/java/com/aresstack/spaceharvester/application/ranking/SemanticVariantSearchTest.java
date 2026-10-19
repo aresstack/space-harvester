@@ -21,7 +21,15 @@ import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
+import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
+import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
+import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
+import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
+import com.aresstack.spaceharvester.application.searchrun.InMemorySearchRunLog;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -40,6 +48,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -189,6 +198,52 @@ class SemanticVariantSearchTest {
         // 21 (OPS) wäre der ähnlichste; erst gefiltert, dann gekürzt.
         assertThat(outcome.results().hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("11");
         assertThat(excludedOnDiscovery).containsExactly(Set.of("OPS"));
+    }
+
+    @Test
+    void semanticVariantsAreRunsOfTheirProgressiveSearchAndTheirDiscoveryRunsOfThem() throws Exception {
+        InMemorySearchRunLog log = new InMemorySearchRunLog();
+        List<SearchRunId> preparedFor = Collections.synchronizedList(new ArrayList<>());
+        RelevanceSearch.Preparation preparation = new RelevanceSearch.Preparation() {
+            @Override
+            public int prepare(AccessContext caller, PageSearchQuery query, String text) {
+                throw new AssertionError("ohne Lauf vorbereitet");
+            }
+
+            @Override
+            public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excluded,
+                               SearchRunId partOf) {
+                preparedFor.add(partOf);
+                return 0;
+            }
+        };
+        RelevanceSearch relevance = new RelevanceSearch(CATALOG, index, new AccessGuard(ALLOW_ALL), store, store,
+                processor, null, SearchReranker.NONE, texts(), preparation, log);
+        VariantSearch keywords = (caller, query, limit) -> {
+            throw new AssertionError("semantisch läuft keine Schlagwortsuche als Suchanfrage");
+        };
+        RuleBasedExpansion rules = new RuleBasedExpansion();
+        try (SearchOrchestrator orchestrator = new SearchOrchestrator(keywords,
+                new SemanticVariantSearch(relevance, texts()), rules, rules, HitScorer.none(), log)) {
+            ProgressiveSearch running = orchestrator.searchAsync(CALLER, query(ORIGINAL, Set.of()),
+                    SemanticVariantSearch.profile(SearchProfile.defaults()
+                            .withExpansion(SearchProfile.Expansion.RULES)));
+            running.result().get(30, TimeUnit.SECONDS);
+
+            SearchRunId progressive = new SearchRunId(running.id());
+            assertThat(log.find(progressive)).get().extracting(SearchRun::kind)
+                    .isEqualTo(SearchRun.Kind.PROGRESSIVE);
+            List<SearchRun> parts = log.parts(progressive);
+            assertThat(parts).isNotEmpty().allSatisfy(part -> {
+                assertThat(part.kind()).isEqualTo(SearchRun.Kind.RELEVANCE);
+                assertThat(part.partOf()).isEqualTo(progressive);
+                // Bewertet wird gegen die ursprüngliche Anfrage; sie steht im Teillauf.
+                assertThat(part.query()).isEqualTo(ORIGINAL);
+            });
+            // Die Schlagwortsuche der Vorbereitung hängt am Lauf ihrer Suchanfrage, nicht am Gesamtlauf.
+            assertThat(preparedFor).hasSameSizeAs(parts).doesNotContainNull()
+                    .containsExactlyInAnyOrderElementsOf(parts.stream().map(SearchRun::id).toList());
+        }
     }
 
     private SemanticVariantSearch search(AccessPolicy policy) {

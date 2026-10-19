@@ -22,6 +22,12 @@ import java.util.Objects;
  */
 public final class NativePayload {
 
+    /**
+     * Format einer Quelle ohne eigene Antwortform (#187): die Bytes sind der Lesetext, den der Adapter beim Laden liefert
+     * ({@code KnowledgeDocument.text()} im Enterprise AI Client), als UTF-8 mit Medientyp {@code text/markdown}.
+     */
+    public static final String DOCUMENT_TEXT = "knowledge-document";
+
     private final byte[] bytes;
     private final String mediaType;
     private final String nativeFormat;

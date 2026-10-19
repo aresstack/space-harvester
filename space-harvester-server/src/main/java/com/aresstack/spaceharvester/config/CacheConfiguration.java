@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.util.List;
@@ -83,8 +84,8 @@ class CacheConfiguration {
     /** Hält den Volltextindex beim Ablegen und nach jedem Abgleich nach. */
     @Bean
     PageTextIndexing pageTextIndexing(LucenePageTextIndex index) {
-        return new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(), new LocalFilesTextProjector()),
-                index);
+        return new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(), new LocalFilesTextProjector(),
+                new KnowledgeDocumentTextProjector()), index);
     }
 
     /** Titel- und Metadatensuche (#28) auf demselben Index. */
