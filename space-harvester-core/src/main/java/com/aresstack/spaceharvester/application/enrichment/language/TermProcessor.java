@@ -13,14 +13,15 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 
 /**
- * Begriffe einer Seite mit jeder Fundstelle (#119, ADR 0019), Eingabe des Begriffsindex: Akronyme nach den Regeln
- * von {@link AcronymProcessor} über den ganzen Text, dazu die Begriffe aller Nominalgruppen deutscher Sätze
- * ({@link GermanText}, wie {@link EntityProcessor}). Erkennen beide dieselbe Stelle als Akronym, zählt sie einmal, als
- * Fund des Akronymprozessors mit dessen Ausschreibung; zwei echte Vorkommen bleiben zwei, auch bei gleichem Wortlaut.
+ * Begriffe einer Seite mit jeder Fundstelle (#119, ADR 0019), Eingabe des Begriffsindex: Akronyme und technische
+ * Kennungen nach den Regeln von {@link AcronymProcessor} über den ganzen Text, dazu die Begriffe aller Nominalgruppen deutscher Sätze
+ * ({@link GermanText}, wie {@link EntityProcessor}). Erkennen beide dieselbe Stelle als Akronym oder Kennung, zählt sie
+ * einmal, als Fund des Akronymprozessors mit dessen Ausschreibung; zwei echte Vorkommen bleiben zwei, auch bei gleichem Wortlaut.
  * Gruppiert wird nach Art und Suchwert ({@link TermText#normalize}); nichts wird lemmatisiert.
  *
  * <p>Ergebnis im Format {@link TermPayload}, aufsteigend nach Suchwert, dann Art. Über alle Begriffe zusammen werden
@@ -33,6 +34,18 @@ public class TermProcessor implements EnrichmentProcessor {
     static final int MAX_OCCURRENCES = 50_000;
     static final int MAX_TERMS = 10_000;
 
+    private final AcronymProcessor acronyms;
+
+    /** Mit {@link AcronymProcessor#AcronymProcessor()}. */
+    public TermProcessor() {
+        this(new AcronymProcessor());
+    }
+
+    /** @param acronyms Akronyme und Kennungen nach den Regeln des Prozessors {@code acronyms} */
+    public TermProcessor(AcronymProcessor acronyms) {
+        this.acronyms = Objects.requireNonNull(acronyms, "acronyms");
+    }
+
     @Override
     public String id() {
         return TermPayload.PROCESSOR;
@@ -40,7 +53,7 @@ public class TermProcessor implements EnrichmentProcessor {
 
     @Override
     public String version() {
-        return "2";
+        return "3";
     }
 
     @Override
@@ -48,8 +61,9 @@ public class TermProcessor implements EnrichmentProcessor {
         String content = text.text();
         List<Mention> mentions = new ArrayList<>();
         Set<Integer> acronymStarts = new HashSet<>();
-        for (AcronymProcessor.Mention mention : AcronymProcessor.mentions(content)) {
-            mentions.add(new Mention(TermKind.ACRONYM, mention.acronym(), mention.start(), mention.end()));
+        for (AcronymProcessor.Mention mention : acronyms.mentions(content)) {
+            mentions.add(new Mention(mention.acronym() ? TermKind.ACRONYM : TermKind.IDENTIFIER, mention.term(),
+                    mention.expansion(), mention.start(), mention.end()));
             acronymStarts.add(mention.start());
         }
         GermanText analysis = GermanText.analyze(text);
@@ -57,11 +71,11 @@ public class TermProcessor implements EnrichmentProcessor {
             for (NounGroup group : sentence.nounGroups()) {
                 TermKind kind = TermKind.of(group.kind());
                 int start = group.termStart(sentence);
-                if (kind == TermKind.ACRONYM && acronymStarts.contains(start)) {
+                if ((kind == TermKind.ACRONYM || kind == TermKind.IDENTIFIER) && acronymStarts.contains(start)) {
                     // Dieselbe Stelle hat der Akronymprozessor schon, mit Plural-s und Ausschreibung.
                     continue;
                 }
-                mentions.add(new Mention(kind, group.term(), start, group.charEnd(sentence)));
+                mentions.add(new Mention(kind, group.term(), null, start, group.charEnd(sentence)));
             }
         }
         mentions.sort(Comparator.comparingInt(Mention::start).thenComparingInt(Mention::end));
@@ -84,8 +98,8 @@ public class TermProcessor implements EnrichmentProcessor {
             } else {
                 truncated = true;
             }
-            if (entry.expansion == null && mention.kind() == TermKind.ACRONYM) {
-                entry.expansion = AcronymProcessor.expansion(content, mention.term(), mention.start(), mention.end());
+            if (entry.expansion == null) {
+                entry.expansion = mention.expansion();
             }
         }
 
@@ -117,7 +131,7 @@ public class TermProcessor implements EnrichmentProcessor {
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
 
-    private record Mention(TermKind kind, String term, int start, int end) {
+    private record Mention(TermKind kind, String term, String expansion, int start, int end) {
     }
 
     private static final class Found {

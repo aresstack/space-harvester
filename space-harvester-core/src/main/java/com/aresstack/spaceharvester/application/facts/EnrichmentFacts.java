@@ -107,23 +107,54 @@ public final class EnrichmentFacts {
             }
             String expansion = text(entry, "expansion");
             String section = text(entry, "section");
+            // Wie AcronymFindings im EAC: je unterschiedlicher Ausschreibung ein ACRONYM_DEFINITION (seit acronyms 4).
+            List<String> expansions = new ArrayList<>();
+            entry.path("expansions").forEach(value -> {
+                if (value.isString()) {
+                    expansions.add(value.asString());
+                }
+            });
+            if (expansions.isEmpty() && expansion != null) {
+                expansions.add(expansion);
+            }
             MetadataFact.Anchor anchor = anchor(section, entry, "charStart", null);
             ObjectNode candidate = JSON.createObjectNode();
             candidate.put("shortForm", acronym);
+            putNullable(candidate, "normalized", text(entry, "normalized"));
             candidate.put("count", entry.path("count").asInt());
             putNullable(candidate, "expansion", expansion);
+            if (expansions.size() > 1) {
+                expansions.forEach(candidate.putArray("expansions")::add);
+            }
             putNullable(candidate, "section", section);
             facts.add(fact(key, FactTypes.ACRONYM_CANDIDATE, FactTypes.MENTIONS, candidate, provenance, anchor,
                     facts.size(), List.of(argument(FactTypes.SHORT_FORM, acronym))));
-            if (expansion != null) {
+            for (String longForm : expansions) {
                 ObjectNode definition = JSON.createObjectNode();
                 definition.put("shortForm", acronym);
-                definition.put("longForm", expansion);
+                definition.put("longForm", longForm);
+                if (expansions.size() > 1) {
+                    definition.put("conflictingLongForms", true);
+                }
                 putNullable(definition, "section", section);
                 facts.add(fact(key, FactTypes.ACRONYM_DEFINITION, FactTypes.DEFINES, definition, provenance, anchor,
                         facts.size(), List.of(argument(FactTypes.SHORT_FORM, acronym),
-                                argument(FactTypes.LONG_FORM, expansion))));
+                                argument(FactTypes.LONG_FORM, longForm))));
             }
+        }
+        for (JsonNode entry : payload.path("identifiers")) {
+            String identifier = text(entry, "identifier");
+            if (identifier == null) {
+                continue;
+            }
+            String section = text(entry, "section");
+            ObjectNode candidate = JSON.createObjectNode();
+            candidate.put("identifier", identifier);
+            candidate.put("count", entry.path("count").asInt());
+            putNullable(candidate, "section", section);
+            facts.add(fact(key, FactTypes.TECHNICAL_IDENTIFIER_CANDIDATE, FactTypes.MENTIONS, candidate, provenance,
+                    anchor(section, entry, "charStart", null), facts.size(),
+                    List.of(argument(FactTypes.TERM, identifier))));
         }
     }
 

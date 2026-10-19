@@ -385,9 +385,11 @@ public final class Harvester implements AutoCloseable {
                     Enrichments.stop(started, Duration.ofSeconds(10));
                 });
             }
-            List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
+            // Akronyme mit denselben Satzgrenzen wie die Absätze (EAC: OpenNLP, sonst Splitter).
+            AcronymProcessor acronyms = new AcronymProcessor(sentences);
+            List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms,
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
-                    new RelationProcessor(), new TermProcessor()));
+                    new RelationProcessor(), new TermProcessor(acronyms)));
             if (embedding != null) {
                 processors.add(embedding);
             }

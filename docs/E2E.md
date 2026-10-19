@@ -459,10 +459,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
       "status": "ok",
       "freshness": "current",
       "result": { "acronyms": [
-        { "acronym": "API", "count": 1, "expansion": "Application Programming Interface", "section": "REST-Schnittstelle" },
-        { "acronym": "JSON", "count": 1, "expansion": null },
-        { "acronym": "REST", "count": 1, "expansion": null }
-      ] }
+        { "acronym": "API", "normalized": "API", "count": 1, "expansion": "Application Programming Interface",
+          "expansions": ["Application Programming Interface"], "section": "REST-Schnittstelle" },
+        { "acronym": "JSON", "normalized": "JSON", "count": 1, "expansion": null, "expansions": [] },
+        { "acronym": "REST", "normalized": "REST", "count": 1, "expansion": null, "expansions": [] }
+      ], "identifiers": [] }
     },
     {
       "processor": "activities",

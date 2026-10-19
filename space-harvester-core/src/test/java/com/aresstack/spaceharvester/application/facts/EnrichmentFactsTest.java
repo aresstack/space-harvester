@@ -33,6 +33,23 @@ class EnrichmentFactsTest {
     }
 
     @Test
+    void everyDistinctExpansionIsADefinitionAndIdentifiersAreTheirOwnType() {
+        // Wie AcronymFindings im EAC: je unterschiedlicher Ausschreibung ein ACRONYM_DEFINITION, Kennungen getrennt.
+        Enrichment result = FactTestResults.acronyms(PAGE,
+                "Die Projektgruppe (PG) tagt. Die PG (Programmiergruppe) auch, mit MAX_SIZE.");
+
+        List<MetadataFact> facts = EnrichmentFacts.of(result);
+
+        assertThat(facts).extracting(MetadataFact::type).containsExactly(FactTypes.ACRONYM_CANDIDATE,
+                FactTypes.ACRONYM_DEFINITION, FactTypes.ACRONYM_DEFINITION, FactTypes.TECHNICAL_IDENTIFIER_CANDIDATE);
+        assertThat(facts.subList(1, 3)).extracting(fact -> fact.values(FactTypes.LONG_FORM).get(0))
+                .containsExactly("projektgruppe", "programmiergruppe");
+        assertThat(facts.get(1).payloadJson()).contains("\"conflictingLongForms\":true");
+        assertThat(facts.get(3).values(FactTypes.TERM)).containsExactly("max_size");
+        assertThat(facts.get(3).role()).isEqualTo(FactTypes.MENTIONS);
+    }
+
+    @Test
     void entitiesBecomeMentionsWithTheirTerm() {
         List<MetadataFact> facts = EnrichmentFacts.of(FactTestResults.entities(PAGE, FactTestResults.TEXT));
 

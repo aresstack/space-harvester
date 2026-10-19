@@ -31,7 +31,7 @@ public final class ParitySpace {
 
     /**
      * Dateien einer Quelle ohne eigene Suche (#180): Name und Inhalt. {@code glossar.md} trägt Akronyme mit und ohne
-     * Ausschreibung für den Vergleich der Fakten (#182).
+     * Ausschreibung für den Vergleich der Fakten (#182), dazu die Fälle der Akronymerkennung des EAC.
      */
     public static final String[][] FILES = {
             {"betrieb.md", "# Betrieb\n\nDer Nachtlauf startet um zwei Uhr.\n\nDanach läuft die Sicherung.\n"},
@@ -40,7 +40,14 @@ public final class ParitySpace {
             {"kantine.txt", "Die Kantine öffnet um elf Uhr."},
             {"glossar.md", "# Glossar\n\nDie Schnittstelle Application Programming Interface (API) liefert Daten.\n\n"
                     + "Das LAN (Local Area Network) verbindet die Rechner.\n\n"
-                    + "Die Zentrale Datenverarbeitung (ZDV) prüft das LAN und die API täglich.\n"},
+                    + "Die Zentrale Datenverarbeitung (ZDV) prüft das LAN und die API täglich.\n\n"
+                    // Gemischte Schreibung, Punkt-Akronym, Kennungen, Code, Adressen, Dateinamen, eine Versalzeile
+                    // und zwei Ausschreibungen eines Akronyms (Akronymerkennung wie im EAC, acronyms 4).
+                    + "Die Muster GmbH liefert IoT-Sensoren in die U.S.A. und nach Europa.\n\n"
+                    + "Die Kennungen MAX_SIZE und ABC-1234 sind keine Akronyme.\n\n"
+                    + "Siehe `CSV` und https://example.org/REST, die Datei BERICHT.pdf und info@ZDV.example.org.\n\n"
+                    + "WICHTIGER HINWEIS FÜR ALLE NUTZER\n\n"
+                    + "Die Projektgruppe (PG) tagt montags. Die PG (Programmiergruppe) tagt freitags.\n"},
     };
 
     /** Suchen über {@link #FILES} (#180): Name und Suchbegriff. */
