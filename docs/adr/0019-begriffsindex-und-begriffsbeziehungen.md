@@ -107,6 +107,10 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      Beziehungen desselben Schlüssels haben Vorrang, Abgelehnte kommen nie wieder.
    - Scheitert eine Anfrage oder bricht der Auftrag ab, wird nichts abgeglichen. Ins Log kommen nur Quelle, Anzahlen
      und Ausnahmeklassen.
+   - Ergebnis-Cache `ai-cache.json` neben der Beziehungsablage (Schema `term-relations-ai-cache/v1`): je Akronym ein
+     SHA-256 über Verfahren, Modellversion, Akronym und Lage samt Texthash der Fundstellen, dazu nur die Kennungen der
+     Beziehungen aus der Antwort. Ein unveränderter Stand geht nicht noch einmal an das Modell. Keine Begriffe, kein
+     Text, keine Antworten; unlesbar beginnt er leer. Geschrieben erst nach dem Abgleich.
 
 ## Grenzen
 
