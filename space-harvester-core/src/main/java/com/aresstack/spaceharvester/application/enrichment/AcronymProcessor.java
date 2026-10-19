@@ -96,8 +96,34 @@ public class AcronymProcessor implements EnrichmentProcessor {
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
 
+    /**
+     * Jedes Vorkommen eines Akronyms in Textreihenfolge, nach denselben Regeln wie {@link #process}; für den
+     * Begriffsindex ({@code terms}, #119), der alle Fundstellen ohne Kürzung braucht.
+     */
+    public static List<Mention> mentions(String text) {
+        List<Mention> mentions = new ArrayList<>();
+        Matcher matcher = ACRONYM.matcher(text);
+        while (matcher.find()) {
+            String acronym = matcher.group(1);
+            if (acronym.chars().filter(Character::isUpperCase).count() >= 2) {
+                mentions.add(new Mention(acronym, matcher.start(), matcher.end()));
+            }
+        }
+        return mentions;
+    }
+
+    /**
+     * Ein Vorkommen eines Akronyms.
+     *
+     * @param acronym Schreibweise ohne Plural-{@code s}
+     * @param start   erste Zeichenposition
+     * @param end     Position nach dem Wort, einschließlich eines Plural-{@code s}
+     */
+    public record Mention(String acronym, int start, int end) {
+    }
+
     /** Ausschreibung in Klammern direkt nach oder direkt vor dem Akronym, wenn die Anfangsbuchstaben passen. */
-    static String expansion(String text, String acronym, int start, int end) {
+    public static String expansion(String text, String acronym, int start, int end) {
         Matcher after = AFTER.matcher(text).region(end, text.length());
         if (after.lookingAt() && matches(acronym, after.group(1))) {
             return after.group(1).trim();

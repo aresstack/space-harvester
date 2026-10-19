@@ -1,0 +1,541 @@
+package com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv;
+
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.*;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.transaction.api.*;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.transaction.impl.NdvTransaction;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.*;
+import java.util.logging.Logger;
+
+/**
+ * Wrapper around the NDV (Natural Development Server) PAL Transactions API.
+ * Provides a simple facade for connecting, browsing libraries/objects, and reading source code
+ * via the NATSPOD protocol.
+ *
+ * <p>Übernommen aus MainframeMate ({@code de.bund.zrb.ndv.NdvClient}); hier nur lesend, Ausgaben über
+ * {@code java.util.logging} statt Konsole.
+ */
+class NdvClient implements Closeable {
+
+    private static final Logger LOG = Logger.getLogger(NdvClient.class.getName());
+
+    private IPalTransactions pal;
+    private String host;
+    private int port;
+    private String user;
+    private String currentLibrary;
+    private volatile boolean connected;
+
+    public NdvClient() {
+        this.pal = new NdvTransaction();
+    }
+
+    /**
+     * Connect to the NDV server.
+     */
+    public void connect(String host, int port, String user, String password) throws IOException, NdvException {
+        this.host = host;
+        this.port = port;
+        this.user = user.toUpperCase();
+
+        Map<String, String> params = new HashMap<String, String>();
+        params.put(ConnectKey.HOST, host);
+        params.put(ConnectKey.PORT, String.valueOf(port));
+        params.put(ConnectKey.USERID, this.user);
+        params.put(ConnectKey.PASSWORD, password);
+        // Session parameters: CFICU=ON required by server (NAT7022),
+        // CP=IBM01141 = EBCDIC Germany/Austria (default from NaturalONE Eclipse plugin)
+        params.put(ConnectKey.PARM, "CFICU=ON,CP=IBM01141");
+
+        // The NDV server requires a Single Byte Character Set (SBCS) name as client codepage.
+        // Charset.defaultCharset() on modern JVMs often returns "UTF-8" which the mainframe
+        // rejects with NAT7734 "CP UTF-8 not SBCS".
+        // Pass an explicit SBCS codepage so ConnectionService uses it instead of the JVM default.
+        params.put(ConnectKey.CLIENT_CP, "ISO-8859-1");
+
+        try {
+            pal.connect(params);
+            connected = true;
+            LOG.fine("[NdvClient] Connected to " + host + ":" + port + " as " + this.user);
+        } catch (java.net.ConnectException e) {
+            throw new NdvException(
+                    "Verbindung abgelehnt: " + host + ":" + port
+                    + "\n\nMögliche Ursachen:"
+                    + "\n• NDV-Server läuft nicht oder ist nicht erreichbar"
+                    + "\n• Port " + port + " ist falsch (Standard: 2700)"
+                    + "\n• Firewall/Proxy blockiert die Verbindung"
+                    + "\n• VPN nicht verbunden", e);
+        } catch (java.net.UnknownHostException e) {
+            throw new NdvException(
+                    "Host nicht gefunden: " + host
+                    + "\n\nBitte Hostnamen oder IP-Adresse prüfen.", e);
+        } catch (PalConnectResultException e) {
+            throw new NdvException("NDV-Login fehlgeschlagen: " + e.getMessage(), e);
+        } catch (Exception e) {
+            throw new NdvException("NDV-Verbindung unerwartet fehlgeschlagen: " + e.getClass().getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Logon to a Natural library.
+     */
+    public void logon(String library) throws IOException, NdvException {
+        checkConnected();
+        try {
+            pal.logon(library);
+            this.currentLibrary = library;
+            LOG.fine("[NdvClient] Logged on to library: " + library);
+        } catch (PalResultException e) {
+            throw new NdvException("Logon to library '" + library + "' failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Get the default system file (FNAT/FUSER with 0,0,0 = server defaults).
+     */
+    public IPalTypeSystemFile getDefaultSystemFile() {
+        return PalTypeSystemFileFactory.newInstance();
+    }
+
+    /**
+     * Get all available system files from the server.
+     */
+    public IPalTypeSystemFile[] getSystemFiles() throws IOException, NdvException {
+        checkConnected();
+        try {
+            return pal.getSystemFiles();
+        } catch (PalResultException e) {
+            throw new NdvException("Failed to get system files: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * List libraries on the server.
+     *
+     * @param sysFile system file (use getDefaultSystemFile() for defaults)
+     * @param filter  filter pattern, e.g. "*" for all
+     * @return list of library names
+     */
+    public List<String> listLibraries(IPalTypeSystemFile sysFile, String filter) throws IOException, NdvException {
+        checkConnected();
+        List<String> result = new ArrayList<String>();
+        try {
+            IPalTypeLibrary[] libs = pal.getLibrariesFirst(sysFile, filter);
+            if (libs != null) {
+                for (IPalTypeLibrary lib : libs) {
+                    if (lib != null && lib.getLibrary() != null) {
+                        result.add(lib.getLibrary().trim());
+                    }
+                }
+            }
+            // Fetch remaining pages (getLibrariesNext throws PalResultException when done)
+            if (libs != null && libs.length > 0) {
+                int safetyLimit = 1000; // prevent infinite loops
+                for (int page = 0; page < safetyLimit; page++) {
+                    try {
+                        IPalTypeLibrary[] more = pal.getLibrariesNext();
+                        if (more == null || more.length == 0) break;
+                        for (IPalTypeLibrary lib : more) {
+                            if (lib != null && lib.getLibrary() != null) {
+                                result.add(lib.getLibrary().trim());
+                            }
+                        }
+                    } catch (PalResultException done) {
+                        // End of data
+                        break;
+                    }
+                }
+            }
+        } catch (PalResultException e) {
+            throw new NdvException("Failed to list libraries: " + e.getMessage(), e);
+        }
+        LOG.fine("[NdvClient] Listed " + result.size() + " libraries");
+        return result;
+    }
+
+    /**
+     * Callback interface for progressive object listing.
+     */
+    public interface PageCallback {
+        /** Called for each page of results. Return false to stop loading. */
+        boolean onPage(List<NdvObjectInfo> pageItems, int totalSoFar);
+    }
+
+    /**
+     * List objects in a library with progressive page callbacks.
+     */
+    public int listObjectsProgressive(IPalTypeSystemFile sysFile, String library,
+                                       String filter, int kind, int type,
+                                       PageCallback callback)
+            throws IOException, NdvException {
+        checkConnected();
+        int total = 0;
+        try {
+            IPalTypeObject[] objects = pal.getObjectsFirst(sysFile, library, filter, kind, type);
+            List<NdvObjectInfo> page = toInfoList(objects);
+            total += page.size();
+            LOG.fine("[NdvClient] getObjectsFirst returned " + page.size() + " objects");
+            if (!page.isEmpty() && !callback.onPage(page, total)) {
+                return total;
+            }
+
+            if (objects != null && objects.length > 0) {
+                int safetyLimit = 1000;
+                for (int p = 0; p < safetyLimit; p++) {
+                    // Ende der Daten ist ein leeres Array; eine PalResultException ist ein echter Fehler und darf
+                    // keine verkürzte Auflistung ergeben (sonst räumt der Index gültige Objekte ab).
+                    IPalTypeObject[] more = pal.getObjectsNext();
+                    if (more == null || more.length == 0) break;
+                    List<NdvObjectInfo> morePage = toInfoList(more);
+                    total += morePage.size();
+                    LOG.fine("[NdvClient] getObjectsNext page " + (p + 1) + " returned " + morePage.size() + " objects");
+                    if (!morePage.isEmpty() && !callback.onPage(morePage, total)) {
+                        return total;
+                    }
+                }
+            }
+        } catch (PalResultException e) {
+            throw new NdvException("Failed to list objects in library '" + library + "': " + e.getMessage(), e);
+        }
+        LOG.fine("[NdvClient] Listed " + total + " objects in " + library);
+        return total;
+    }
+
+    /**
+     * List objects in a library (blocking, returns all at once).
+     */
+    public List<NdvObjectInfo> listObjects(IPalTypeSystemFile sysFile, String library,
+                                            String filter, int kind, int type)
+            throws IOException, NdvException {
+        final List<NdvObjectInfo> result = new ArrayList<NdvObjectInfo>();
+        listObjectsProgressive(sysFile, library, filter, kind, type, new PageCallback() {
+            @Override
+            public boolean onPage(List<NdvObjectInfo> pageItems, int totalSoFar) {
+                result.addAll(pageItems);
+                return true;
+            }
+        });
+        return result;
+    }
+
+    private List<NdvObjectInfo> toInfoList(IPalTypeObject[] objects) {
+        List<NdvObjectInfo> list = new ArrayList<NdvObjectInfo>();
+        if (objects == null) return list;
+        for (IPalTypeObject obj : objects) {
+            if (obj != null && (obj.getName() != null || obj.getLongName() != null)) {
+                list.add(NdvObjectInfo.fromPalObject(obj));
+            }
+        }
+        return list;
+    }
+
+    private void addObjects(List<NdvObjectInfo> result, IPalTypeObject[] objects) {
+        if (objects == null) return;
+        for (IPalTypeObject obj : objects) {
+            if (obj != null && (obj.getName() != null || obj.getLongName() != null)) {
+                result.add(NdvObjectInfo.fromPalObject(obj));
+            }
+        }
+    }
+
+    // Cached system file for downloads (resolved once, reused)
+    private volatile IPalTypeSystemFile cachedDownloadSysFile;
+
+    /**
+     * Resolve a system file with real DATENBANK_NUMMER/DATEI_NUMMER for download operations.
+     * Listing operations tolerate (0,0,0) but downloadSource does NOT.
+     * <p>
+     * Strategy:
+     * 1) Prefer FUSER (kind=2) from getSystemFiles()
+     * 2) Fall back to any system file with valid DATENBANK_NUMMER/DATEI_NUMMER > 0
+     * 3) Fall back to first system file at all
+     */
+    private IPalTypeSystemFile resolveDownloadSystemFile() throws IOException, NdvException {
+        if (cachedDownloadSysFile != null) {
+            return cachedDownloadSysFile;
+        }
+
+        IPalTypeSystemFile[] sysFiles = getCachedSystemFiles();
+
+        if (sysFiles == null || sysFiles.length == 0) {
+            throw new NdvException("Server liefert keine SystemFiles – Download nicht möglich");
+        }
+
+        // Log all for diagnostics
+        IPalTypeSystemFile fuserFile = null;
+        IPalTypeSystemFile firstValid = null;
+
+        for (int i = 0; i < sysFiles.length; i++) {
+            IPalTypeSystemFile sf = sysFiles[i];
+            int dbid = sf.getDatabaseId();
+            int fnr = sf.getFileNumber();
+            int kind = sf.getKind();
+            LOG.fine("[NdvClient] sysFile[" + i + "]: kind=" + kind
+                    + ", dbid=" + dbid + ", fnr=" + fnr
+                    + " (" + sysFileKindName(kind) + ")");
+
+            if (kind == IPalTypeSystemFile.FUSER && dbid > 0 && fnr > 0) {
+                fuserFile = sf;
+            }
+            if (firstValid == null && dbid > 0 && fnr > 0) {
+                firstValid = sf;
+            }
+        }
+
+        // Prefer FUSER, then any valid, then just first
+        IPalTypeSystemFile chosen;
+        if (fuserFile != null) {
+            chosen = fuserFile;
+            LOG.fine("[NdvClient] Using FUSER system file: dbid=" + chosen.getDatabaseId()
+                    + ", fnr=" + chosen.getFileNumber());
+        } else if (firstValid != null) {
+            chosen = firstValid;
+            LOG.fine("[NdvClient] No FUSER found, using first valid system file: dbid=" + chosen.getDatabaseId()
+                    + ", fnr=" + chosen.getFileNumber() + ", kind=" + chosen.getKind());
+        } else {
+            // Last resort: use sysFiles[0] even if DATENBANK_NUMMER/DATEI_NUMMER are 0 – let the server decide
+            chosen = sysFiles[0];
+            LOG.fine("[NdvClient] WARNING: No system file with valid DATENBANK_NUMMER/DATEI_NUMMER found! Using sysFile[0]: dbid="
+                    + chosen.getDatabaseId() + ", fnr=" + chosen.getFileNumber());
+        }
+
+        cachedDownloadSysFile = chosen;
+        return chosen;
+    }
+
+    private static String sysFileKindName(int kind) {
+        switch (kind) {
+            case IPalTypeSystemFile.FNAT:     return "FNAT";
+            case IPalTypeSystemFile.FUSER:    return "FUSER";
+            case IPalTypeSystemFile.INACTIVE: return "INACTIVE";
+            case IPalTypeSystemFile.FSEC:     return "FSEC";
+            case IPalTypeSystemFile.FDIC:     return "FDIC";
+            case IPalTypeSystemFile.FDDM:     return "FDDM";
+            default:                          return "UNKNOWN(" + kind + ")";
+        }
+    }
+
+    /**
+     * Download source code of a Natural object.
+     * <p>
+     * Uses the DATENBANK_NUMMER/DATEI_NUMMER from the {@code NdvObjectInfo} (which came from the listing)
+     * to create the correct {@code IPalTypeSystemFile} for this specific object.
+     * {@code downloadSource()} requires the exact system file where the object resides;
+     * a default (0/0/0) causes NAT3017, and a "global guess" can hit the wrong file.
+     *
+     * @param library library name
+     * @param objInfo object info (from listing, carries DATENBANK_NUMMER/DATEI_NUMMER)
+     * @return source code as string (lines joined with \n)
+     */
+    public String readSource(String library, NdvObjectInfo objInfo)
+            throws IOException, NdvException {
+        checkConnected();
+        if (library == null || library.isEmpty()) {
+            throw new NdvException("readSource: library is null or empty");
+        }
+        if (objInfo == null) {
+            throw new NdvException("readSource: objInfo is null");
+        }
+
+        boolean isDdm = objInfo.getType() == ObjectType.DDM;
+
+        // Ensure we are logged on to the correct library
+        if (!library.equals(currentLibrary)) {
+            logon(library);
+        }
+
+        // ── Step 1: Resolve system file for THIS object (not a global guess) ──
+        IPalTypeSystemFile sysFile = resolveSystemFileForObject(objInfo);
+
+        // For DDMs: use the effective name (longName) and empty library,
+        // matching the original Eclipse plugin:
+        //   var3.getType() == 8 ? var3.getLongName() : var3.getName()
+        String effectiveName = isDdm ? objInfo.getEffectiveName() : objInfo.getName();
+        String effectiveLibrary = isDdm ? "" : library;
+
+        LOG.fine("[NdvClient] readSource: library=" + effectiveLibrary
+                + ", obj=" + effectiveName + ", typSchluessel=" + objInfo.getType()
+                + ", isDdm=" + isDdm
+                + ", obj.dbid/fnr=" + objInfo.getDatabaseId() + "/" + objInfo.getFileNumber()
+                + ", sysFile=dbid/fnr/kind=" + sysFile.getDatabaseId()
+                + "/" + sysFile.getFileNumber() + "/" + sysFile.getKind());
+
+        // ── Step 2: Create download transaction context ──
+        ITransactionContextDownload ctx =
+                (ITransactionContextDownload) pal.createTransactionContext(ITransactionContextDownload.class);
+
+        try {
+            // For DDMs, use longName as the object name (original uses getLongName() for type==8)
+            FileProperties.Builder builder = new FileProperties.Builder(effectiveName, objInfo.getType());
+            if (isDdm) {
+                builder.longName(objInfo.getLongName());
+            }
+            IFileProperties props = builder.build();
+            Set<EDownLoadOption> options = EnumSet.of(EDownLoadOption.NONE);
+
+            IDownloadResult result = pal.downloadSource(ctx, sysFile, effectiveLibrary, props, options);
+
+            if (result != null) {
+                String[] lines = result.getSource();
+                LOG.fine("[NdvClient] readSource: got " + (lines != null ? lines.length : 0) + " lines");
+                return joinLines(lines);
+            }
+            return "";
+        } catch (PalResultException e) {
+            throw new NdvException("Quellcode-Download fehlgeschlagen für '" + effectiveName
+                    + "' in '" + library + "' (DATENBANK_NUMMER=" + sysFile.getDatabaseId()
+                    + ", DATEI_NUMMER=" + sysFile.getFileNumber() + "): " + e.getMessage(), e);
+        } finally {
+            try {
+                pal.disposeTransactionContext(ctx);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /**
+     * Resolve the correct IPalTypeSystemFile for a specific object.
+     * <p>
+     * If the object carries valid DATENBANK_NUMMER/DATEI_NUMMER (from the listing), we build a concrete
+     * system file with those exact values. The kind is looked up from the server's
+     * system file list; if not found, FUSER is assumed as default.
+     * <p>
+     * For DDMs (type == 8): DDMs are stored in the FDDM system file, not per-library.
+     * The original Eclipse plugin uses the FDDM system file for DDM operations
+     * and sets the kind to FDDM (6).
+     * <p>
+     * If the object has invalid DATENBANK_NUMMER/DATEI_NUMMER (≤ 0), we fall back to the global
+     * resolveDownloadSystemFile() strategy (FUSER preference).
+     */
+    private IPalTypeSystemFile resolveSystemFileForObject(NdvObjectInfo objInfo)
+            throws IOException, NdvException {
+        int dbid = objInfo.getDatabaseId();
+        int fnr = objInfo.getFileNumber();
+
+        // DDMs: always use FDDM system file
+        if (objInfo.getType() == ObjectType.DDM) {
+            IPalTypeSystemFile fddm = findFddmSystemFile();
+            if (fddm != null) {
+                LOG.fine("[NdvClient] resolveSystemFileForObject: DDM -> using FDDM: "
+                        + fddm.getDatabaseId() + "/" + fddm.getFileNumber());
+                return fddm;
+            }
+            // If no FDDM found but we have DATENBANK_NUMMER/DATEI_NUMMER from listing, use those with FDDM kind
+            if (dbid > 0 && fnr > 0) {
+                LOG.fine("[NdvClient] resolveSystemFileForObject: DDM, no FDDM in sysfiles, "
+                        + "using obj DATENBANK_NUMMER/DATEI_NUMMER with FDDM kind: " + dbid + "/" + fnr);
+                return PalTypeSystemFileFactory.newInstance(dbid, fnr, IPalTypeSystemFile.FDDM);
+            }
+        }
+
+        if (dbid > 0 && fnr > 0) {
+            // Object has concrete DATENBANK_NUMMER/DATEI_NUMMER from the listing – use them
+            int kind = findKindByDbidFnr(dbid, fnr);
+            LOG.fine("[NdvClient] resolveSystemFileForObject: using object's own DATENBANK_NUMMER/DATEI_NUMMER: "
+                    + dbid + "/" + fnr + ", kind=" + sysFileKindName(kind));
+            return PalTypeSystemFileFactory.newInstance(dbid, fnr, kind);
+        }
+
+        // Fallback: object didn't carry valid DATENBANK_NUMMER/DATEI_NUMMER – use global strategy
+        LOG.fine("[NdvClient] resolveSystemFileForObject: obj DATENBANK_NUMMER/DATEI_NUMMER invalid ("
+                + dbid + "/" + fnr + "), falling back to global system file");
+        return resolveDownloadSystemFile();
+    }
+
+    /**
+     * Find the FDDM system file from the server's cached system file list.
+     */
+    private IPalTypeSystemFile findFddmSystemFile() throws IOException, NdvException {
+        IPalTypeSystemFile[] sysFiles = getCachedSystemFiles();
+        if (sysFiles != null) {
+            for (IPalTypeSystemFile sf : sysFiles) {
+                if (sf.getKind() == IPalTypeSystemFile.FDDM) {
+                    return sf;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Look up the kind (FNAT/FUSER/FDIC/...) for a given DATENBANK_NUMMER/DATEI_NUMMER pair
+     * by matching against the server's system files.
+     *
+     * @return the kind, or FUSER as default if no match found
+     */
+    private int findKindByDbidFnr(int dbid, int fnr) throws IOException, NdvException {
+        IPalTypeSystemFile[] sysFiles = getCachedSystemFiles();
+        if (sysFiles != null) {
+            for (IPalTypeSystemFile sf : sysFiles) {
+                if (sf.getDatabaseId() == dbid && sf.getFileNumber() == fnr) {
+                    return sf.getKind();
+                }
+            }
+        }
+        // Not found in server's list – default to FUSER (most common for user sources)
+        return IPalTypeSystemFile.FUSER;
+    }
+
+    // Cached system files (fetched once per connection)
+    private volatile IPalTypeSystemFile[] cachedSystemFiles;
+
+    private IPalTypeSystemFile[] getCachedSystemFiles() throws IOException, NdvException {
+        if (cachedSystemFiles != null) {
+            return cachedSystemFiles;
+        }
+        try {
+            cachedSystemFiles = pal.getSystemFiles();
+        } catch (PalResultException e) {
+            LOG.warning("[NdvClient] getSystemFiles failed: " + e.getMessage());
+            return null;
+        }
+        return cachedSystemFiles;
+    }
+
+    private String joinLines(String[] lines) {
+        if (lines == null || lines.length == 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(lines[i] != null ? lines[i] : "");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Get the current logon library.
+     */
+    public String getCurrentLibrary() {
+        return currentLibrary;
+    }
+
+    public String getHost() { return host; }
+    public int getPort() { return port; }
+    public String getUser() { return user; }
+    public boolean isConnected() { return connected && pal != null && pal.isConnected(); }
+
+    @Override
+    public void close() throws IOException {
+        if (pal != null && connected) {
+            try {
+                pal.disconnect();
+                LOG.fine("[NdvClient] Disconnected from " + host + ":" + port);
+            } catch (Exception e) {
+                LOG.warning("[NdvClient] Error during disconnect: " + e.getMessage());
+            } finally {
+                connected = false;
+            }
+        }
+    }
+
+    private void checkConnected() throws NdvException {
+        if (!connected || pal == null) {
+            throw new NdvException("Not connected to NDV server");
+        }
+    }
+}
+

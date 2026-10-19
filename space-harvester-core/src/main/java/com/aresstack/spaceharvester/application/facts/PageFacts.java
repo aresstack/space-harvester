@@ -167,7 +167,7 @@ public final class PageFacts {
      * Eine Suche nach Fakten.
      *
      * @param type       nur dieser Typ oder {@code null}
-     * @param conditions Argumentbedingungen, alle zugleich
+     * @param conditions Argumentbedingungen, alle zugleich, höchstens {@value FactStore.Query#MAX_CONDITIONS}
      * @param sourceId   nur diese Quelle oder {@code null}
      * @param sourceIds  ohne {@code sourceId}: nur diese Quellen, leer für alle lesbaren
      * @param spaceKeys  nur Seiten dieser Spaces, leer für alle
@@ -177,6 +177,9 @@ public final class PageFacts {
 
         public Search {
             conditions = List.copyOf(conditions);
+            if (conditions.size() > FactStore.Query.MAX_CONDITIONS) {
+                throw new InvalidQueryException("argument höchstens " + FactStore.Query.MAX_CONDITIONS + "-mal");
+            }
             try {
                 if (type != null) {
                     MetadataFact.requireName("type", type);

@@ -14,9 +14,13 @@ final class Patterns {
     static final Pattern MERMAID = Pattern.compile(
             "(?m)^\\s*(graph|flowchart)\\s+(TD|TB|LR|RL|BT)\\b|(?m)^\\s*(sequenceDiagram|classDiagram|stateDiagram)");
 
-    /** Zeilen, die ein Exporter selbst schreibt (Bild- und Exporthinweise); zählen nicht zum Inhalt. */
+    /**
+     * Zeilen, die ein Exporter selbst schreibt (Bild- und Exporthinweise), und der Ladehinweis, den Confluence in
+     * {@code body.view} anstelle eines Jira-Vorgangs schreibt („Getting issue details...“); zählen nicht zum Inhalt.
+     */
     static final Pattern CHROME_LINE = Pattern.compile(
-            "(?m)^.*(\\[Bild:|\\[Export:|Abbildung nicht verfügbar|Abbildung fehlt|Bild nicht verfügbar).*$");
+            "(?m)^.*(\\[Bild:|\\[Export:|Abbildung nicht verfügbar|Abbildung fehlt|Bild nicht verfügbar"
+                    + "|Getting issue details\\.\\.\\.).*$");
 
     private Patterns() {
     }
