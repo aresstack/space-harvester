@@ -303,7 +303,7 @@ Darin: externer Link und `mailto`, Tabelle 3 × 3 mit Kopfzeile, verschachtelte 
 eingebettetes SVG aus der Anhangsliste, interner `ac:link`, Mermaid-Makro, draw.io-Makro mit Anhang, ein fehlendes
 Bild (404), ein nicht ladbares externes Bild und ausgeführte Makros (`include`, `excerpt-include`, `children`); auf
 „Anhänge“ ein Inline-Vorschaubild, ein Emoticon, ein `data:`-Bild, ein `inc-drawio` auf das Diagramm einer anderen
-Seite, ein Jira-Vorgang (`PAR-7`, in `body.view` nur als Ladehinweis, in `export_view` mit Zusammenfassung) sowie ein
+Seite (beide draw.io-Makros mit dem Vorschaubild `ablauf.png` als binärem PNG-Anhang), ein Jira-Vorgang (`PAR-7`, in `body.view` nur als Ladehinweis, in `export_view` mit Zusammenfassung) sowie ein
 PDF und ein DOCX als binäre Anhänge; 13 Merksätze. Jede Seite hat `body.storage` und eine handgeschriebene
 `export_view`. `ParitySpace` ergänzt testseitig Adressformen, Dateien und Suchen. Der Ladehinweis „Getting issue
 details...“ zählt wie die Bildhinweise der Exporter nicht zum Text.
