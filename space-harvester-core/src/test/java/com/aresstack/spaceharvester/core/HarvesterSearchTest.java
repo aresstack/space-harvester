@@ -56,6 +56,9 @@ class HarvesterSearchTest {
         }
     }
 
+    /** Obergrenze für das Laden der Funde; nur gegen Hänger, das Ergebnis hängt nicht an ihr. */
+    private static final Duration LOADED = Duration.ofSeconds(120);
+
     @TempDir
     Path data;
 
@@ -215,6 +218,7 @@ class HarvesterSearchTest {
             KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
                     KeywordSearch.Query.of("Nachtlauf"), null, 50);
 
+            assertThat(results.loading()).as("Funde noch beim Laden").isZero();
             assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactlyInAnyOrder("102", "200");
             assertThat(results.sources()).extracting(KeywordSearch.SourceState::sourceId,
                     KeywordSearch.SourceState::status).containsExactlyInAnyOrder(
@@ -236,8 +240,9 @@ class HarvesterSearchTest {
     }
 
     private Harvester harvester(Harvester.Builder builder) {
-        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt.
-        return builder.searchWait(Duration.ofSeconds(10))
+        // Die Tests prüfen die Treffer nach dem Laden; die App wartet nicht, sondern folgt dem Fortschritt. Die Suche
+        // wartet, bis der Stapel geladen ist; die Grenze gilt nur gegen Hänger, unter CI-Last darf Laden länger dauern.
+        return builder.searchWait(LOADED)
                 .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", SERVER.baseUrl(),
                         SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
                 .dataDirectory(data)
