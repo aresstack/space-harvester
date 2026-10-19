@@ -573,6 +573,12 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/search?s
 }
 ```
 
+Stammt der Auszug eines Treffers aus einem Absatz der Seite, trägt der Treffer dessen stabile `passageId` (ADR 0020,
+Nachtrag „Stabile Passage-IDs“; nur mit `content`-Freigabe, sonst `null`). `GET /api/v1/passages?id=<passageId>`
+(URL-kodiert) liefert genau diesen Absatz mit je einem Nachbarn (`match: found`) oder, wenn sich der Text seitdem
+geändert hat, alle aktuellen Absätze mit `match: older-version`; eine nicht sichtbare Seite antwortet wie eine
+unbekannte mit 404 `cache-miss`.
+
 ## 11. Confluence-kompatible Fassade
 
 Ein vorhandener Confluence-Client kann statt der echten Instanz `http://localhost:8080/api/compat/confluence/demo`

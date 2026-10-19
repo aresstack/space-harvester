@@ -126,6 +126,11 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - Jeder Treffer mit Ähnlichkeit trägt `relevance`: `similarity` (-1 bis 1), `chunk` (`charStart`, `charEnd` in der
   Textprojektion) und `freshness`. `stale` heißt: Das Embedding stammt aus einer älteren Revision als die aktuellen
   Kopfdaten; es wird beim nächsten Abgleich neu berechnet.
+  Dazu `passageId`: die stabile Adresse des Absatzes, der dieses Stück ganz enthält (ADR 0020, Nachtrag „Stabile
+  Passage-IDs“), lesbar über `GET /api/v1/passages?id=<passageId>` (ID URL-kodiert, sie enthält `#`). Ohne
+  `content`-Freigabe gibt es weder `relevance` noch die ID. Sie fehlt (`null`), wenn die Absätze der Seite nicht aus
+  demselben Text stammen wie das Embedding, kein Absatz das Stück ganz enthält oder sich Absätze im gespeicherten
+  Ergebnis überlappen (kaputtes Ergebnis).
 - Ohne eingerichteten Dienst, oder wenn er die Anfrage nicht einbetten kann, antwortet die Suche mit 503
   `semantic-search-unavailable`, auch mit `title`; kein stiller Rückfall auf die Titelsuche. Der Anfragetext steht nie
   im Log.
