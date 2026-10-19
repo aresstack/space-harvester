@@ -8,7 +8,7 @@
 # parity.docx, parity.pdf, parity.md, problems-<format>.txt (nicht eingebettete Bilder), reading/ (Leseansicht),
 # scope-page.md und scope-subtree.md (Einzelseite und Teilbaum ab Seite, #186), navigation.properties (Kinder,
 # Breadcrumbs, Querverweise), management.properties (Quellenverwaltung), addresses.properties (Adressformen),
-# search.properties (Index-Rückfall, Auszüge, Vorladen) und documents/ (Typerkennung und Dokumenttext der Dateien aus
+# search.properties (Index-Rückfall, Auszüge, Vorladen, Anhangstexte) und documents/ (Typerkennung und Dokumenttext der Dateien aus
 # src/test/resources/documents).
 # Braucht JDK 8 oder neuer (übersetzt mit --release 8, läuft headless). PARITY_KEEP=1 behält den Arbeitsordner zur Fehlersuche.
 set -euo pipefail

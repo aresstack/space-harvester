@@ -28,6 +28,7 @@ import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
@@ -156,6 +157,7 @@ class CoreParityTest {
             }
             navigation(harvester, caller);
             addresses(harvester, caller);
+            attachments(harvester);
         }
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
         sourceManagement();
@@ -166,6 +168,34 @@ class CoreParityTest {
         jes();
         sharePoint();
         betaView();
+    }
+
+    /**
+     * Anhangstexte (#183) wie {@code EacParityExport.attachments}: Findet die Volltextsuche den Merksatz jedes
+     * Dokument-Anhangs der Seite „Anhänge“ als Treffer dieser Seite im Anhang, nachdem die Seite heruntergeladen ist
+     * ({@code anhang.<datei>}) und nachdem der Anhangstext einmal gelesen ist ({@code anhang.<datei>.gelesen}, wie
+     * {@code GET …/assets/{id}/text} oder der Vorschau-Reiter)?
+     */
+    private static void attachments(Harvester harvester) {
+        for (String[] document : ParityConfluence.DOCUMENTS) {
+            CORE_SEARCH.put("anhang." + document[0], attachmentFound(harvester, document) ? "ja" : "nein");
+        }
+        PageAttachmentList list = harvester.sources().attachments("wiki", ParityConfluence.ATTACHMENTS_PAGE);
+        for (String[] document : ParityConfluence.DOCUMENTS) {
+            list.attachments().attachments().stream().filter(attachment -> attachment.title().equals(document[0]))
+                    .forEach(attachment -> harvester.assets().text(list, attachment.attachmentId()));
+        }
+        for (String[] document : ParityConfluence.DOCUMENTS) {
+            CORE_SEARCH.put("anhang." + document[0] + ".gelesen", attachmentFound(harvester, document) ? "ja" : "nein");
+        }
+    }
+
+    /** Ob die Schlagwortsuche nach dem zweiten Wort des Merksatzes die Seite „Anhänge“ mit diesem Anhang findet. */
+    private static boolean attachmentFound(Harvester harvester, String[] document) {
+        KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
+                new KeywordSearch.Query(document[2].split(" ")[1], "wiki", Set.of(), Set.of()), null, 10);
+        return results.hits().stream().anyMatch(hit -> hit.pageId().equals(ParityConfluence.ATTACHMENTS_PAGE)
+                && hit.attachment() != null && hit.attachment().title().equals(document[0]));
     }
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
