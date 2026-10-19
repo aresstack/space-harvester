@@ -33,7 +33,7 @@ eine `SourceAdapter`-Bean (`SourceConfiguration`), der Katalog bekommt alle Bean
 | `betaview` | `EacSourceAdapters.betaView()` | `baseUrl` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | ja | ja |
 | `outlook` | `EacSourceAdapters.outlook()` (`ContextualSourceAdapter`) | `mailbox` | `none` | – | Fehler | Fehler |
 | `mediawiki` | `MediaWikiSources.adapter()` | `apiUrl` | `none`, `basic` | nicht erlaubt, dafür `auth` | ja | ja |
-| `git` | `GitSourceAdapter` | `url` | `none`, `basic`, `pat` | eigener Verweis bei `none` | siehe unten | ja |
+| `git` | `GitSourceAdapter` | `url` | `none`, `basic`, `pat` | eigener Verweis bei `none` | ja | ja |
 
 „Anmeldung Pflicht“ heißt `needsCredentials = true`: `auth.type basic` oder ein eigener `options.credentialRef`.
 Ein eigener Verweis (etwa `keepass:jes`) geht unverändert an den `SourceSecrets` des Programms; zusammen mit
@@ -43,10 +43,8 @@ anderen Quelle an diesen Host schickte. Bei `git` ist `pat` ein Token ohne Benut
 Passwort, beides unter `source:<id>` (#393); `pat` gibt es sonst nur bei Confluence, FTPS für ftp, jes und ndv nicht,
 wie im Enterprise AI Client ([ADR 0022](adr/0022-erweiterbarer-builder-und-secretprovider.md)). Die Meldungen nennen
 nur Schlüssel, nie Werte. „Fehler“ heißt: Die Angabe verhindert den Start,
-statt still übergangen zu werden. Bei `git` liest `GitSourceAdapter.open` ein `trust-bundle` für eigene Server-CAs,
-die Prüfung (`check` über einen `KnowledgeSourceProviderAdapter` ohne Netz) lehnt `trust-bundle` aber mit
-„trust-bundle passt nicht zu type git“ ab; auf `main` (ceb6c84) startet eine Git-Quelle mit `trust-bundle` deshalb
-nicht.
+statt still übergangen zu werden. Bei `git` gehen `trust-bundle` (eigene Server-CAs) und `client-certificate` über
+`SourceTls`; Prüfung und Abgleich nehmen beide an (#393).
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
@@ -71,6 +69,7 @@ an; ohne eigene Angabe gelten der Typname, `false`, `null`, keine Felder und `no
 |---|---|---|
 | `partitions()` | `KnowledgeSourcePort.partitions()` | alle sichtbaren Spaces |
 | `pageMetadata(space, cursor, limit)` | `PartitionListingSource` | alle Seiten eines Space ohne Inhalt, mit Cursor (#5) |
+| `outsideScope(pageId)` | `KnowledgeSourcePort.discover(scope)` | Seite außerhalb von `startPoints`/`maxDepth` laut der letzten vollständigen Discovery; der Abgleich entfernt sie wie eine gelöschte (nur Confluence mit eigenen Startpunkten, sonst immer `false`); wie im Client stehen Seiten jenseits von `maxResources` nicht im Katalog, erreicht die Discovery die Grenze, warnt das Log mit Quell-ID und Anzahl |
 | `pageMetadata(pageId)` | `ResourceMetadataSource` | eine Seite ohne Inhalt, unabhängig vom Space (#6) |
 | `storedPage(pageId)` | `StoredContentSource` | native Antwort Byte für Byte mit Kopfdaten aus derselben Antwort (#8) |
 | `attachments(pageId)` | `AttachmentListSource` | alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit allen Listenantworten Byte für Byte; nie Dateibytes (#9) |
@@ -154,11 +153,10 @@ sonst `ACCESS_DENIED`. Gelesen wird die Freigabe bei jedem Zugriff. Ohne Angabe 
 Ein Upstream-`KnowledgeSourceProvider` wird auf zwei Wegen zum Quellentyp:
 
 - **Ohne Netz:** `new KnowledgeSourceProviderAdapter(provider)`, ein fest gebauter Provider. Er kennt nur `auth.type
-  none`; `client-certificate` und `trust-bundle` sind Fehler. So arbeiten `GitSourceAdapter` (je Prüfung bzw. Öffnen
-  neu gebaut) und `ContextualSourceAdapter` (`outlook`: baut den Provider aus dem Kontext des Katalogs, für die Prüfung
-  ohne Kontext).
+  none`; `client-certificate` und `trust-bundle` sind Fehler. So arbeitet `ContextualSourceAdapter` (`outlook`: baut
+  den Provider aus dem Kontext des Katalogs, für die Prüfung ohne Kontext).
 - **Mit Netz:** `KnowledgeSourceProviderAdapter.connected(factory, credentialKey, titleField)`. Die Fabrik
-  (`ConnectedProvider`) bekommt je Quelle eine `Connection(secrets, routes, tls, userAgent)`: den `SecretProvider` des
+  (`ConnectedProvider`, so auch `GitSourceAdapter` seit #393) bekommt je Quelle eine `Connection(secrets, routes, tls, userAgent)`: den `SecretProvider` des
   Katalogs, die Proxy-Route je Ziel, die Socket-Fabrik aus `trust-bundle` und `client-certificate` (`null` =
   JVM-Standard) und den User-Agent. `credentialKey` ist das Upstream-Feld, in das bei `auth.type basic` der Verweis
   `source:<id>` geht (`null`: der Typ kennt keine Anmeldung, dann nur `none`); `titleField` ist das Feld für `title`

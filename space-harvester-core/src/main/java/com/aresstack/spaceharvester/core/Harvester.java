@@ -28,6 +28,7 @@ import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
@@ -96,6 +97,7 @@ import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -134,6 +136,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.GitSourceAdapter;
+import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -266,6 +269,8 @@ public final class Harvester implements AutoCloseable {
     private final Swappable<EmbeddingGeneration> embeddingModel;
     /** Austauschbarer Reranker; {@code null}, wenn er fest eingestellt ist. */
     private final SwappableReranker liveReranker;
+    /** Rechnet nach einem Wechsel der KI-Freigabe neu; {@code null}, wenn die Freigabe fest eingestellt ist. */
+    private final ReleaseRecomputation releaseRecomputation;
     /** Die aus der Konfiguration eingeplanten Abgleiche je Space; eigene über {@link #reconcile} gehören nicht dazu. */
     private final Map<String, ConfiguredSchedule> configuredSchedules = new LinkedHashMap<>();
 
@@ -387,6 +392,17 @@ public final class Harvester implements AutoCloseable {
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
+            // Cache neu; images rechnet nur auf Abruf und prüft die Freigabe dann selbst. Schließt vor dem Hintergrund.
+            if (model != null) {
+                ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                        cache::snapshots, embedding::covers,
+                        List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                opened.add(recomputation);
+                this.releaseRecomputation = recomputation;
+            } else {
+                this.releaseRecomputation = null;
+            }
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
@@ -671,6 +687,8 @@ public final class Harvester implements AutoCloseable {
         }
         EmbeddingGeneration nextModel = model;
         SearchReranker nextReranker = reranker;
+        ConfigurationListener.Preparation releases = releaseRecomputation == null
+                ? ConfigurationListener.Preparation.NOTHING : releaseRecomputation.prepare(change);
         return () -> {
             settings = next;
             if (network != null) {
@@ -693,8 +711,11 @@ public final class Harvester implements AutoCloseable {
             if (planned != null) {
                 scheduleConfigured(planned);
             }
+            // Erst nach dem Tausch: Ab hier fragt jede Berechnung, auch eine schon eingereihte, die neue Freigabe.
+            releases.commit();
         };
     }
+
 
     /** Ein Abgleich, den die Konfiguration einplant ({@code sync.spaces} mit dem Abstand der Quelle). */
     private record ConfiguredSchedule(String sourceId, String spaceKey, Duration interval, SyncMode mode) {
@@ -1462,6 +1483,8 @@ public final class Harvester implements AutoCloseable {
          *     Lauf;</li>
          *     <li>Embedding-Modell und Reranker: neue Suchen nutzen die neuen, laufende behalten ihre; Vektoren des
          *     alten Modells werden ohne neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht;</li>
+         *     <li>Freigabe je Quelle ({@code ai.external-processing-sources}): die Seiten der Quelle im Cache rechnen
+         *     {@code embedding}, {@code passages} und {@code navigation} im Hintergrund neu, mit bzw. ohne Modell;</li>
          *     <li>Zeitplan aus {@code sync.spaces} mit Abstand und Betriebsart je Quelle; eigene Einplanungen über
          *     {@link Harvester#reconcile} bleiben;</li>
          *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach;</li>
@@ -1545,18 +1568,29 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Die Quellentypen: die des Core, ersetzt oder ergänzt um die eigenen. */
+        /**
+         * Die Quellentypen: die des Core, ein ersetzter an seinem Platz, eigene neue dahinter. Mit
+         * {@link #configuration} liest der eingebaute Typ {@code files} die freigegebenen Ordner bei jedem Zugriff aus
+         * der wirksamen Konfiguration, ohne sie keine.
+         */
         private List<SourceAdapter> adapters() {
-            List<SourceAdapter> adapters = new ArrayList<>();
-            List<SourceAdapter> defaults = new ArrayList<>(ConfiguredSourceCatalog.DEFAULT_ADAPTERS);
+            List<SourceAdapter> defaults = new ArrayList<>();
+            for (SourceAdapter adapter : ConfiguredSourceCatalog.DEFAULT_ADAPTERS) {
+                defaults.add(configuration != null && adapter instanceof LocalFilesSourceAdapter
+                        ? LocalFilesSourceAdapter.following(configuration) : adapter);
+            }
             // Git braucht einen Ordner für die Kopien der Repositorys (#187).
             defaults.add(new GitSourceAdapter(dataDirectory.resolve("git")));
+            List<SourceAdapter> adapters = new ArrayList<>();
             for (SourceAdapter adapter : defaults) {
-                if (sourceAdapters.stream().noneMatch(own -> own.type().equals(adapter.type()))) {
-                    adapters.add(adapter);
+                adapters.add(sourceAdapters.stream().filter(own -> own.type().equals(adapter.type())).findFirst()
+                        .orElse(adapter));
+            }
+            for (SourceAdapter own : sourceAdapters) {
+                if (adapters.stream().noneMatch(added -> added.type().equals(own.type()))) {
+                    adapters.add(own);
                 }
             }
-            adapters.addAll(sourceAdapters);
             return adapters;
         }
 
