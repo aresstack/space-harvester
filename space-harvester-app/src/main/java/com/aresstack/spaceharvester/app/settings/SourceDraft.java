@@ -137,7 +137,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 if (text(auth, key) != null) {
                     plaintext.add("auth." + key);
                 }
-                secretVariable = suggestedVariable(id, authType);
+                // Andere Typen dürfen das Passwort weglassen; dann fragt der Core das Programm (ADR 0022).
+                secretVariable = confluence || text(auth, key) != null ? suggestedVariable(id, authType) : null;
             }
         }
         SourceSettingsConfig.CertificateStoreType certificateType = null;
@@ -210,9 +211,19 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return CONFLUENCE.equals(type);
     }
 
-    /** Weder Confluence noch Ordner: nur Adresse, Anzeigename und Kennung, Anmeldung folgt mit #188. */
+    /**
+     * Weder Confluence noch Ordner: die Felder des Typs unter {@code options}, Anmeldung nach den Anmeldearten des Typs
+     * (ohne Passwort fragt der Core das Programm, ADR 0022).
+     */
     public boolean generic() {
         return type != null && !confluence() && !FILES.equals(type);
+    }
+
+    /** Derselbe Eintrag mit einer anderen Variable für Passwort bzw. Token ({@code null}: keine Zeile in der Datei). */
+    public SourceDraft withSecretVariable(String variable) {
+        return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, variable,
+                certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
+                trustBundle, extraOptions);
     }
 
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
@@ -240,10 +251,23 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
             } else if (baseUrl.contains("${")) {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
+        } else if (FILES.equals(type)) {
+            if (directory == null) {
+                problems.add("Der Ordner fehlt.");
+            }
+        } else if (generic()) {
+            // Die Felder des Typs (Adresse, Pflichtangaben) prüft das Formular; ihre Liste kennt der Typ des Core.
+        } else {
+            problems.add("Die Art der Quelle fehlt.");
+        }
+        if (confluence() || generic()) {
             if (authType == SourceSettingsConfig.AuthType.BASIC && username == null) {
                 problems.add("Der Benutzername fehlt.");
             }
-            if (authType != SourceSettingsConfig.AuthType.NONE && !variable(secretVariable)) {
+            // Andere Typen dürfen das Passwort weglassen (ADR 0022); ein angegebener Name muss aber gültig sein.
+            boolean secretNeeded = confluence() || authType == SourceSettingsConfig.AuthType.PAT
+                    || secretVariable != null;
+            if (authType != SourceSettingsConfig.AuthType.NONE && secretNeeded && !variable(secretVariable)) {
                 problems.add("Die Umgebungsvariable für " + secretName() + " fehlt oder ist kein gültiger Name "
                         + "(Buchstaben, Ziffern, Unterstrich).");
             }
@@ -259,14 +283,6 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 // Der Core verlangt den Alias immer; der Fingerabdruck prüft nur zusätzlich.
                 problems.add("Der Alias des Client-Zertifikats fehlt.");
             }
-        } else if (FILES.equals(type)) {
-            if (directory == null) {
-                problems.add("Der Ordner fehlt.");
-            }
-        } else if (generic()) {
-            // Die Adresse steht unter options; welcher Schlüssel, weiß der Typ des Core (das Formular prüft sie).
-        } else {
-            problems.add("Die Art der Quelle fehlt.");
         }
         return problems;
     }
@@ -291,11 +307,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         if (confluence()) {
             yaml.append(in).append("base-url: ").append(scalar(baseUrl)).append('\n');
+        }
+        // Confluence immer mit auth; andere Typen nur, wenn die Datei eine Anmeldung oder ein Zertifikat hatte (ADR 0022).
+        if (confluence() || generic() && (authType != SourceSettingsConfig.AuthType.NONE || certificateType != null
+                || trustBundle != null)) {
             yaml.append(in).append("auth:\n");
             yaml.append(in).append("  type: ").append(authType.name().toLowerCase(Locale.ROOT)).append('\n');
             if (authType == SourceSettingsConfig.AuthType.BASIC) {
                 yaml.append(in).append("  username: ").append(scalar(username)).append('\n');
-                yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                if (secretVariable != null) {
+                    yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                }
             } else if (authType == SourceSettingsConfig.AuthType.PAT) {
                 yaml.append(in).append("  token: ${").append(secretVariable).append("}\n");
             }

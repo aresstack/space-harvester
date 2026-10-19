@@ -9,11 +9,14 @@ import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLSocketFactory;
@@ -67,6 +70,13 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     private final String credentialKey;
     /** Feld, in das {@code title} geht; {@code null} = das des Upstream-Typs. */
     private final String titleField;
+    /** Ob das Protokoll TLS kennt; ohne sind {@code client-certificate} und {@code trust-bundle} Fehler. */
+    private final boolean tls;
+    /** Ob ein eigener Verweis unter {@code options.<credentialKey>} zum Anbieter des Programms durchgeht (#188). */
+    private final boolean credentialRefPassThrough;
+    private final boolean needsCredentials;
+    /** Anzeigename; {@code null} = der des Upstream-Typs. */
+    private final String displayName;
 
     public KnowledgeSourceProviderAdapter(KnowledgeSourceProvider provider) {
         this.fixed = Objects.requireNonNull(provider, "provider");
@@ -74,15 +84,30 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.unconnected = provider;
         this.credentialKey = null;
         this.titleField = null;
+        this.tls = false;
+        this.credentialRefPassThrough = false;
+        this.needsCredentials = false;
+        this.displayName = null;
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, String credentialKey, String titleField) {
+        this(factory, Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
+                HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null);
+    }
+
+    private KnowledgeSourceProviderAdapter(ConnectedProvider factory, KnowledgeSourceProvider unconnected,
+                                           String credentialKey, String titleField, boolean tls,
+                                           boolean credentialRefPassThrough, boolean needsCredentials,
+                                           String displayName) {
         this.fixed = null;
         this.factory = Objects.requireNonNull(factory, "factory");
-        this.unconnected = Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
-                HttpRoutePort.direct(), null, null)), "provider");
+        this.unconnected = unconnected;
         this.credentialKey = credentialKey;
         this.titleField = titleField;
+        this.tls = tls;
+        this.credentialRefPassThrough = credentialRefPassThrough;
+        this.needsCredentials = needsCredentials;
+        this.displayName = displayName;
     }
 
     /**
@@ -97,6 +122,50 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         return new KnowledgeSourceProviderAdapter(factory, credentialKey, titleField);
     }
 
+    /**
+     * Für Protokolle ohne TLS wie FTP oder NDV: {@code client-certificate} und {@code trust-bundle} werden abgelehnt
+     * statt still übergangen.
+     */
+    public KnowledgeSourceProviderAdapter withoutTls() {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, false,
+                credentialRefPassThrough, needsCredentials, displayName);
+    }
+
+    /**
+     * Lässt einen eigenen Verweis unter {@code options.<credentialKey>} zu, etwa {@code keepass:jes}, den der Anbieter
+     * des einbettenden Programms auflöst (#188), wie bisher bei den Kopien aus dem Enterprise AI Client. Zusammen mit
+     * {@code auth.type basic} ist er ein Fehler, weil dann {@code source:<id>} gilt.
+     */
+    public KnowledgeSourceProviderAdapter withCredentialRefPassThrough() {
+        requireConnected();
+        if (credentialKey == null) {
+            throw new IllegalStateException("ohne Anmeldefeld gibt es keinen Verweis");
+        }
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls, true,
+                needsCredentials, displayName);
+    }
+
+    /** Der Typ verlangt Zugangsdaten ({@link SourceAdapter#needsCredentials()}), etwa JES oder NDV. */
+    public KnowledgeSourceProviderAdapter requiringCredentials() {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, true, displayName);
+    }
+
+    /** Eigener Anzeigename für Auswahllisten statt dem des Upstream-Typs. */
+    public KnowledgeSourceProviderAdapter named(String displayName) {
+        requireConnected();
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"));
+    }
+
+    private void requireConnected() {
+        if (factory == null) {
+            throw new IllegalStateException("nur für Typen mit Netz (connected)");
+        }
+    }
+
     @Override
     public String type() {
         return unconnected.type().id();
@@ -105,13 +174,31 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     /** Anzeigename des Upstream-Typs, etwa {@code MediaWiki}. */
     @Override
     public String displayName() {
-        return unconnected.type().displayName();
+        return displayName != null ? displayName : unconnected.type().displayName();
+    }
+
+    @Override
+    public boolean needsCredentials() {
+        return needsCredentials;
     }
 
     /** Das Adressfeld des Upstream-Typs ({@code summaryKey}). */
     @Override
     public String addressOption() {
         return unconnected.type().summaryKey();
+    }
+
+    /** Die Felder des Upstream-Typs ohne das Titelfeld, denn {@code title} steht außerhalb von {@code options}. */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(unconnected.type(), Set.of(titleKey()));
+    }
+
+    /** {@code none}, mit Anmeldefeld auch {@code basic}. */
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return credentialKey == null ? List.of(SourceType.AuthMode.NONE)
+                : List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC);
     }
 
     @Override
@@ -127,7 +214,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             problems.add("base-url passt nicht zu type " + type() + "; die Adresse steht unter options");
         }
         problems.addAll(checkAuth(config.auth(), externalSecrets));
-        if (factory == null) {
+        if (!tls) {
             if (config.clientCertificate().enabled()) {
                 problems.add("client-certificate passt nicht zu type " + type());
             }
@@ -136,9 +223,11 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             }
         } else {
             problems.addAll(SourceTls.problems(config.clientCertificate(), externalSecrets));
+        }
+        if (factory != null) {
             Map<String, String> secrets = new LinkedHashMap<>();
             secrets.put("auth.password", config.auth().password());
-            if (config.clientCertificate().enabled()) {
+            if (tls && config.clientCertificate().enabled()) {
                 secrets.put("client-certificate.password", config.clientCertificate().password());
             }
             problems.addAll(unresolved(secrets));
@@ -147,7 +236,11 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             problems.add("options." + titleKey() + " ist nicht erlaubt; dafür gibt es title");
         }
         if (credentialKey != null && config.options().containsKey(credentialKey)) {
-            problems.add("options." + credentialKey + " ist nicht erlaubt; dafür gibt es auth");
+            if (!credentialRefPassThrough) {
+                problems.add("options." + credentialKey + " ist nicht erlaubt; dafür gibt es auth");
+            } else if (config.auth().type() == SourceSettingsConfig.AuthType.BASIC) {
+                problems.add("options." + credentialKey + " passt nicht zu auth.type basic; es gilt auth");
+            }
         }
         if (!problems.isEmpty()) {
             return problems;
@@ -187,7 +280,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             context.secrets().put(config.id(), auth.username(), auth.password());
         }
         return factory.provider(new Connection(context.secrets(), context.routes(),
-                SourceTls.socketFactory(config, context), context.userAgent()));
+                tls ? SourceTls.socketFactory(config, context) : null, context.userAgent()));
     }
 
     /** Ohne Anmeldefeld nur {@code none}; sonst {@code none} oder {@code basic} (Benutzername und Passwort). */

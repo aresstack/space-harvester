@@ -9,6 +9,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentials;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
@@ -61,6 +63,16 @@ public final class GitSourceAdapter implements SourceAdapter {
     @Override
     public String addressOption() {
         return adapter(null, null, null).addressOption();
+    }
+
+    @Override
+    public List<SourceField> fields() {
+        return adapter(null, null, null).fields();
+    }
+
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return adapter(null, null, null).authModes();
     }
 
     @Override

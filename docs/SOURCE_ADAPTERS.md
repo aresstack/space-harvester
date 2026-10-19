@@ -18,11 +18,15 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188), und `addressOption`, unter welchem
-Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
-(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
-Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
-`SourceAdapter.addressOption()` an.
+`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`, #188),
+und `addressOption`, unter welchem Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl`
+(sharepoint), `baseUrl` (betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei
+Confluence `null`, die Adresse steht dort in `base-url`. Dazu `fields`, die Eingabefelder unter `options` wie im
+Quellen-Editor des Enterprise AI Client (`key`, `label`, `hint`, `kind`
+TEXT|NUMBER|FLAG|DIRECTORY|SECRET_REF|CLIENT_CERTIFICATE, `required`, `advanced`, `defaultValue`; nie ein Wert aus dem
+Tresor, ohne `title`; bei Confluence leer, weil Basis-URL, Anmeldung und Zertifikat außerhalb von `options` stehen), und
+`authModes`, die erlaubten Werte von `auth.type` (`none`, `basic`, bei Confluence auch `pat`). Eigene Adapter geben das
+über `SourceAdapter.displayName()`, `addressOption()`, `fields()` und `authModes()` an.
 
 ## Vertrag
 
@@ -219,7 +223,24 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   eigene Asset-Variante (`preview-<art>-<Anhang>`, Version `source-preview-1:<Version des Anhangs>`,
   `Assets.PREVIEW_RENDITION`), abgelegt nur mit `sync` und nie ohne Version; Medientyp nach den Bytes. REST:
   `GET …/assets/{attachmentId}/preview?kind=…` mit derselben Rechteprüfung wie `…/content`.
-- Offen in #183: Anhangstexte im Volltextindex und in der API.
+- **Anhangstexte im Volltextindex:** wie im Enterprise AI Client (`SourceAttachmentReader` mit
+  `DocumentSourceFileTextExtractor`, Composition Root): Jeder Anhang ist ein eigenes Dokument mit der Seite als Eltern
+  im `LucenePageTextIndex` (Schema `page-text-index/v2`; ein v1-Index wird leer neu angelegt und füllt sich wieder),
+  Dateiname als Titel, Text aus `DocumentText` bzw. bei Bildern eine vorhandene Beschreibung; ohne lesbaren Text steht
+  nur der Dateiname darin (EAC: `# Titel`). Grenzen wie oben und `space-harvester.assets.max-size`. In den Index kommt
+  nur Abgelegtes, also beim Ablegen (`harvest`, auch für schon abgelegte Anhänge) und auf Abruf mit `sync`
+  (`…/text`, `POST …/description`); was die vollständige Anhangsliste nicht mehr nennt, fällt bei der nächsten Ernte
+  heraus, mit der Seite alle ihre Anhänge. Die Schlagwortsuche liefert je Seite ihr bestes Dokument: ein Treffer im
+  Anhang ist die Seite mit `matchedIn: attachment` und `attachment {attachmentId, title}`, Auszug aus dem Anhang. Er
+  wird wie jeder Treffer seitenweise live mit `metadata` und `content` geprüft (ADR 0014, Punkt 4); nicht lesbare
+  Seiten erscheinen auch über ihre Anhänge nirgends. Bildanhänge (Raster und SVG) stehen wie im EAC
+  (`DocumentSourceFileTextExtractor` → `describe`) mit ihrer Beschreibung im Index, aber nur mit der vorhandenen aus der
+  Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
+  auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
+  darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
+- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated`; Rechte wie
+  `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
+  `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
 
 ## Einen Adapter ergänzen
 
@@ -231,16 +252,20 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
    über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
    aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
-   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
-   Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
-   `startPoints`, anonym ohne `credentialRef`) und `jes` (Spool, `credentialRef` Pflicht), `source-ndv` als `ndv`
-   (`host`, `startPoints`, `credentialRef` Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
-   Proxy-Route je Ziel, ohne `credentialRef` mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
-   (Listen und Reports eines Favoriten: `baseUrl`, `credentialRef`, `favoriteId` Pflicht, über die Proxy-Route je
+   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`KnowledgeSourceProviderAdapter.connected`, eine Partition
+   je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
+   `port`, `startPoints`, anonym ohne Anmeldung) und `jes` (Spool, Anmeldung Pflicht), `source-ndv` als `ndv`
+   (`host`, `startPoints`, Anmeldung Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
+   Proxy-Route je Ziel, ohne Anmeldung mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
+   (Listen und Reports eines Favoriten: `baseUrl`, `favoriteId` und Anmeldung Pflicht, über die Proxy-Route je
    Ziel) und `source-outlook` als `outlook` (lokale Postfachdateien .pst/.ost: `mailbox` Pflicht, `startPoints`,
-   `maxDepth`, `maxResources`; ohne Zugangsdaten). `credentialRef` löst der
-   `SecretProvider` des Katalogs auf, also der Anbieter des einbettenden Programms (#188); `auth`, `base-url` und eigene
-   Zertifikate gibt es auf diesem Weg nicht.
+   `maxDepth`, `maxResources`; ohne Zugangsdaten). Anmeldung ([ADR 0022](adr/0022-erweiterbarer-builder-und-secretprovider.md)):
+   `auth.type basic` mit `username` und `password` setzt `credentialRef` auf `source:<id>`; ohne `password` fragt der
+   Katalog den `SourceSecrets` des Programms (`Harvester.builder().secretProvider`) nach `source:<id>`. Ein eigener
+   Verweis `options.credentialRef` (etwa `keepass:jes`) geht bei `auth.type none` unverändert an diesen Anbieter;
+   zusammen mit `basic` ist er ein Fehler. SharePoint und BetaView nehmen `trust-bundle` und `client-certificate`
+   (mTLS); FTP, JES und NDV kennen upstream kein TLS, dort sind beide Angaben ein Fehler. `base-url` gibt es auf
+   diesem Weg nicht.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
    `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
@@ -260,10 +285,18 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Prüfung der Einstellungen.
 - `MediaWikiNetworkTest`: PAC-Route je Ziel (Proxy, DIRECT), fehlendes PAC ohne Direktverbindung, mTLS mit
   `trust-bundle` auch durch den Proxy-Tunnel, unbrauchbare Zertifikate verhindern den Start.
+- `HarvesterEacSourcesTest`: die Kopien öffnen je eine Partition; Anmeldung an einem Fake-FTP-Server mit `auth`
+  aus der Konfiguration, mit Passwort vom Anbieter des Programms (`source:<id>`) und mit eigenem `credentialRef`;
+  `basic` erfüllt die Pflichtangabe von JES und NDV; `credentialRef` neben `basic`, Zertifikate bei FTP/NDV und
+  `base-url` verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
 - `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
   durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
+- `ParityFilesTest`: der Paritätsordner `ParityFiles` (Test-Fixtures des Core, Paket der Ordner-Quelle, Java 8, #193)
+  durch Abgleich, Cache und Suche; `exclude` schließt den Entwurf aus, das Bild ohne Text wird keine Seite.
+- `ParityFtpTest`: der Paritäts-Server `ParityFtp` (Test-Fixtures des Core, Paket der FTP-Quelle, Java 8, #193), ein
+  anonymer FTP-Server im Prozess nur auf 127.0.0.1 mit Unix-Auflistung, durch Abgleich, Cache und Suche; `maxDepth` wirkt.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.

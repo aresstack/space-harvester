@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.application.assets;
 
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
+import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
@@ -14,14 +16,17 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -33,6 +38,13 @@ import java.util.concurrent.TimeoutException;
  * Anwendungsfälle der Asset-Ernte (#19). Arbeitet immer auf einer frisch gelesenen Anhangsliste ({@link
  * com.aresstack.spaceharvester.application.sources.SourceQueries#attachments}), deren Space der Aufrufer vorher gegen
  * die Freigaben geprüft hat. Ein Anhang derselben Version wird nie zweimal übertragen.
+ *
+ * <p>Mit einem {@link PageTextIndex} kommt jeder abgelegte Anhangstext in den Volltextindex (#183), wie im Enterprise
+ * AI Client ({@code SourceAttachmentReader}: jeder gelesene Anhang ein eigenes Dokument mit der Seite als Eltern, in
+ * Roh- und Wissensindex): Dokumente mit ihrem Text aus {@link DocumentText}, Bilder mit einer vorhandenen
+ * Beschreibung, jeweils mit dem Dateinamen als Titel; auch ohne Text steht der Dateiname im Index. Gelesen wird wie
+ * bisher beim Ablegen ({@link #harvest}) und auf Abruf ({@link #text}, {@link #describe}); der Index übernimmt nur, was
+ * abgelegt ist, und prüft nie Rechte: die Suche gibt einen Anhangstreffer nur mit seiner lesbaren Seite aus.
  */
 public class Assets {
 
@@ -44,6 +56,7 @@ public class Assets {
     private final Clock clock;
     private final ImageDescriber describer;
     private final DocumentText documents;
+    private final PageTextIndex texts;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
@@ -66,6 +79,18 @@ public class Assets {
      */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
                   DocumentText documents) {
+        this(catalog, store, maxBytes, clock, describer, documents, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts) {
+        this.texts = texts;
         this.describer = describer;
         this.documents = documents;
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -118,14 +143,17 @@ public class Assets {
         String pageId = list.attachments().pageId();
         List<AssetHarvest.Entry> entries = new ArrayList<>();
         String stop = null;
+        boolean indexed = false;
         for (PageAttachment attachment : list.attachments().attachments()) {
             if (stop != null) {
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
                 continue;
             }
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
             if (stored.isPresent()) {
                 backfillText(stored.get());
+                indexed |= indexStored(list, stored.get());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.REUSED,
                         stored.get(), null));
                 continue;
@@ -133,20 +161,25 @@ public class Assets {
             try {
                 AssetContent content = download(source, pageId, attachment);
                 harvestText(content);
+                indexed |= indexStored(list, content.asset());
                 entries.add(new AssetHarvest.Entry(attachment.attachmentId(), AssetHarvest.Status.STORED,
                         content.asset(), null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
+                indexed |= forgetStale(list, attachment);
             } catch (AssetStoreFullException e) {
                 stop = "asset-store-full";
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
             } catch (SourceAccessException e) {
                 if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
                     stop = code(e.reason());
                 }
                 entries.add(failed(list, attachment, code(e.reason())));
+                indexed |= forgetStale(list, attachment);
             }
         }
+        finishIndexing(list, indexed);
         return new AssetHarvest(list.sourceId(), pageId, list.spaceKey(), list.attachments().complete(), entries,
                 clock.instant());
     }
@@ -407,24 +440,181 @@ public class Assets {
      *                               {@code TIMEOUT}, {@code BUSY} oder {@code FAILED}
      */
     public AssetText text(PageAttachmentList list, String attachmentId) {
+        return text(list, attachmentId, true);
+    }
+
+    /**
+     * Wie {@link #text(PageAttachmentList, String)}; mit {@code mayStore=false} wird weder der Anhang noch sein Text
+     * abgelegt, wie bei {@link #content(PageAttachmentList, String, boolean)}: Ein vorhandener Text kommt aus der
+     * Ablage, sonst wird er nur gelesen und ausgeliefert. In den Volltextindex kommt nur ein abgelegter Text.
+     */
+    public AssetText text(PageAttachmentList list, String attachmentId, boolean mayStore) {
         DocumentText extraction = documents();
-        return text(extraction, content(list, attachmentId));
+        AssetContent content = content(list, attachmentId, mayStore);
+        Optional<AssetText> existing = storedText(extraction, content.asset());
+        AssetText text = existing.orElseGet(() -> extract(extraction, content, mayStore));
+        if ((mayStore || existing.isPresent()) && indexText(list, content.asset(), text.text(),
+                extractionKey(extraction))) {
+            flushIndex();
+        }
+        return text;
     }
 
     private AssetText text(DocumentText extraction, AssetContent content) {
-        Asset asset = content.asset();
+        return storedText(extraction, content.asset()).orElseGet(() -> extract(extraction, content, true));
+    }
+
+    /** Der abgelegte Text eines Dokuments; für alles andere {@code UNSUPPORTED}. */
+    private Optional<AssetText> storedText(DocumentText extraction, Asset asset) {
         if (asset.kind() != AssetKind.OTHER) {
             throw new DocumentTextException(DocumentTextException.Reason.UNSUPPORTED, "Kein Dokument", null);
         }
-        Optional<AssetText> existing = store.text(asset.sha256(), extraction.id(), extraction.version());
-        if (existing.isPresent()) {
-            return existing.get();
-        }
+        return store.text(asset.sha256(), extraction.id(), extraction.version());
+    }
+
+    private AssetText extract(DocumentText extraction, AssetContent content, boolean keep) {
+        Asset asset = content.asset();
         DocumentText.Extracted extracted = extraction.extract(asset.title(), asset.mediaType(), content.content());
         AssetText text = new AssetText(asset.sha256(), extraction.id(), extraction.version(), extracted.text(),
                 extracted.truncated(), clock.instant());
-        store.putText(text);
+        if (keep) {
+            store.putText(text);
+        }
         return text;
+    }
+
+    /**
+     * Übernimmt den abgelegten Text eines Anhangs in den Volltextindex: bei Dokumenten den Text der Extraktion, bei
+     * Bildern eine vorhandene Beschreibung des eingestellten Modells ({@link #storedDescription}); erzeugt nichts und
+     * ruft nie ein Modell auf. Ein Dokument ohne Text (nicht
+     * lesbar, noch nicht gelesen) steht nur mit seinem Dateinamen darin, wie im Enterprise AI Client.
+     *
+     * @return ob der Index geändert wurde
+     */
+    private boolean indexStored(PageAttachmentList list, Asset asset) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            if (asset.kind() == AssetKind.OTHER && documents != null) {
+                String text = store.text(asset.sha256(), documents.id(), documents.version()).map(AssetText::text)
+                        .orElse("");
+                return indexText(list, asset, text, text.isEmpty() ? "" : extractionKey(documents));
+            }
+            if (asset.kind() == AssetKind.IMAGE || asset.kind() == AssetKind.VECTOR) {
+                // Wie im EAC (DocumentSourceFileTextExtractor → describe), aber ohne Modellaufruf: nur die vorhandene
+                // Beschreibung des eingestellten Modells aus der Ablage (ADR 0021); ohne sie nur der Dateiname. Keine
+                // OCR.
+                Optional<ImageDescription> description = storedDescription(asset.sha256());
+                return description.isPresent() ? indexDescription(list, asset, description.get())
+                        : indexText(list, asset, "", "");
+            }
+        } catch (AssetStoreException e) {
+            LOG.log(System.Logger.Level.WARNING, "Anhangstext nicht lesbar: source={0} ({1})", asset.sourceId(),
+                    e.getClass().getName());
+            return false;
+        }
+        // Diagrammdaten (draw.io) und Dokumente ohne Extraktion: nur der Dateiname, wie Bilder ohne Beschreibung.
+        return indexText(list, asset, "", "");
+    }
+
+    /**
+     * Nach einem gescheiterten Ablegen: Liegt die aktuelle Version des Anhangs nicht in der Ablage, stammt ein
+     * vorhandener Indexeintrag von einer älteren Version (oder fehlt); er fällt heraus, damit die Suche keinen Text alter
+     * Bytes liefert. Die nächste erfolgreiche Ernte legt ihn neu an.
+     *
+     * @return ob der Index geändert worden sein kann
+     */
+    private boolean forgetStale(PageAttachmentList list, PageAttachment attachment) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            if (store.find(list.sourceId(), attachment.attachmentId(), attachment.version()).isPresent()) {
+                return false;
+            }
+            PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+            if (texts.attachmentInputSha256(page, attachment.attachmentId()).isEmpty()) {
+                return false;
+            }
+            texts.removeAttachment(page, attachment.attachmentId());
+            return true;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Veralteter Anhangstext in {0} nicht entfernt ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return false;
+        }
+    }
+
+    private boolean indexDescription(PageAttachmentList list, Asset asset, ImageDescription description) {
+        return indexText(list, asset, description.text(),
+                "describer:" + description.describer() + ":" + description.modelVersion());
+    }
+
+    private static String extractionKey(DocumentText extraction) {
+        return "text:" + extraction.id() + ":" + extraction.version();
+    }
+
+    /**
+     * Legt den Text eines Anhangs mit Seite und Space der Anhangsliste im Volltextindex ab, wenn er dort nicht schon in
+     * diesem Stand liegt. Fehler bleiben hier; der Index ist neu aufbaubar.
+     *
+     * @param origin woher der Text stammt (Extraktion oder Modell mit Version), leer ohne Text
+     * @return ob der Index geändert wurde
+     */
+    private boolean indexText(PageAttachmentList list, Asset asset, String text, String origin) {
+        if (texts == null) {
+            return false;
+        }
+        PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+        String title = asset.title() == null ? "" : asset.title();
+        String input = sha256((asset.sha256() + "\n" + origin + "\n" + list.spaceKey() + "\n" + title)
+                .getBytes(StandardCharsets.UTF_8));
+        try {
+            if (texts.attachmentInputSha256(page, asset.attachmentId()).filter(input::equals).isPresent()) {
+                return false;
+            }
+            texts.putAttachment(new PageTextIndex.AttachmentEntry(page, list.spaceKey(), asset.attachmentId(), title,
+                    text, input));
+            return true;
+        } catch (RuntimeException e) {
+            // Ohne Meldung und ohne Seite: sie könnte Text oder IDs enthalten.
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex eines Anhangs in {0} nicht aktualisiert ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return false;
+        }
+    }
+
+    /**
+     * Nach einer Ernte: Anhänge, die die vollständige Liste nicht mehr nennt, fallen aus dem Index; Änderungen werden
+     * dauerhaft.
+     */
+    private void finishIndexing(PageAttachmentList list, boolean indexed) {
+        if (texts == null) {
+            return;
+        }
+        try {
+            if (list.attachments().complete()) {
+                Set<String> current = new HashSet<>();
+                list.attachments().attachments().forEach(a -> current.add(a.attachmentId()));
+                texts.retainAttachments(new PageKey(list.sourceId(), list.attachments().pageId()), current);
+                indexed = true;
+            }
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex der Anhänge in {0} nicht bereinigt ({1})",
+                    list.sourceId(), e.getClass().getName());
+        }
+        if (indexed) {
+            flushIndex();
+        }
+    }
+
+    private void flushIndex() {
+        try {
+            texts.flush();
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Volltextindex nicht gesichert ({0})", e.getClass().getName());
+        }
     }
 
     /**
@@ -710,11 +900,12 @@ public class Assets {
         ImageDescriber model = describer();
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        return store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
+        DescribedImage described = store.find(list.sourceId(), attachment.attachmentId(), attachment.version())
                 .flatMap(asset -> store.description(asset.sha256(), model.id(), model.modelVersion())
                         .map(description -> new DescribedImage(asset, description, false)))
                 .orElseThrow(() -> new ImageDescriptionException(ImageDescriptionException.Reason.NOT_FOUND,
                         "Noch keine Beschreibung", null));
+        return indexed(list, described);
     }
 
     /**
@@ -729,7 +920,7 @@ public class Assets {
         ImageDescriber model = describer(list.sourceId());
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
-        return describe(model, content(list, attachmentId));
+        return indexed(list, describe(model, content(list, attachmentId)));
     }
 
     /**
@@ -798,6 +989,14 @@ public class Assets {
         } finally {
             describing.remove(key, mine);
         }
+    }
+
+    /** Die Beschreibung kommt wie der Text eines Dokuments in den Volltextindex (#183). */
+    private DescribedImage indexed(PageAttachmentList list, DescribedImage described) {
+        if (indexDescription(list, described.asset(), described.description())) {
+            flushIndex();
+        }
+        return described;
     }
 
     private ImageDescription generate(ImageDescriber model, AssetContent content) {

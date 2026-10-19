@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.sync.SyncCommitted;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Hält die Anreicherungen nach jedem bestätigten Abgleich nach: Für jede Seite der Inventur mit Inhalt im Cache werden
@@ -35,6 +36,10 @@ import java.util.Objects;
  * {@code Volltextindex}): neue und geänderte Projektionen hinein; er zählt nicht in
  * {@code discovered}. Gelöschte und gesperrte Seiten (ADR 0014) nimmt schon der Aufruf nach dem Commit aus Volltext und
  * Anreicherungen, bevor er den Auftrag einplant.
+ *
+ * <p>Sind alle Prozessoren durchgelaufen, ruft derselbe Auftrag die Folgeschritte je Quelle auf (Phase
+ * {@code Folgeschritte}), etwa die Akronym-Regel der Begriffsbeziehungen (#120). Nach einem Abbruch entfallen sie bis
+ * zum nächsten Lauf; ein scheiternder Folgeschritt hält die Anreicherung nicht auf.
  */
 public class EnrichmentsAfterSync implements SyncCommitted {
 
@@ -45,6 +50,7 @@ public class EnrichmentsAfterSync implements SyncCommitted {
     private final SnapshotRepository snapshots;
     private final Jobs jobs;
     private final PageTextIndexing texts;
+    private final List<Consumer<String>> followUps;
 
     /** Im aufrufenden Thread, ohne eigenen Auftrag. */
     public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots) {
@@ -62,6 +68,13 @@ public class EnrichmentsAfterSync implements SyncCommitted {
     /** @param texts Volltextindex oder {@code null} */
     public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots, Jobs jobs,
                                 PageTextIndexing texts) {
+        this(enrichments, snapshots, jobs, texts, List.of());
+    }
+
+    /** @param followUps Folgeschritte je Quelle nach vollständiger Anreicherung, mit der Quellkennung */
+    public EnrichmentsAfterSync(Enrichments enrichments, SnapshotRepository snapshots, Jobs jobs,
+                                PageTextIndexing texts, List<Consumer<String>> followUps) {
+        this.followUps = List.copyOf(followUps);
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.snapshots = snapshots;
         this.jobs = jobs;
@@ -171,11 +184,32 @@ public class EnrichmentsAfterSync implements SyncCommitted {
                 // Was fertig ist, bleibt auch nach einem Abbruch.
                 enrichments.flush();
             }
+            followUps(sourceId, context);
         } finally {
             enrichments.flush();
             LOG.log(System.Logger.Level.INFO, "Anreicherungen nach Abgleich {0}/{1}: {2} berechnet, davon {3} "
                             + "fehlgeschlagen, {4} Seiten entfernt, {5} übersprungen", sourceId,
                     run.plan().inventory().spaceKey(), computed, failed, removed, skipped);
+        }
+    }
+
+    private void followUps(String sourceId, JobContext context) {
+        if (followUps.isEmpty()) {
+            return;
+        }
+        if (context != null) {
+            context.phase(COMPONENT, "Folgeschritte");
+        }
+        for (Consumer<String> followUp : followUps) {
+            if (context != null) {
+                context.checkpoint();
+            }
+            try {
+                followUp.accept(sourceId);
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "Folgeschritt der Anreicherung in {0} gescheitert ({1})",
+                        sourceId, e.getClass().getName());
+            }
         }
     }
 

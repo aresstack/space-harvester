@@ -52,6 +52,8 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
@@ -332,6 +334,13 @@ public final class Harvester implements AutoCloseable {
                                 .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
             }
+            // #181: Satzgrenzen für Absätze; mit Modell je semantischem Absatz ein Embedding (withPassages, ADR 0020).
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
+            if (embedding != null) {
+                embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
+                        sentenceRules)));
+            }
             this.embeddingModel = model;
             if (embedding != null) {
                 ExecutorService started = Enrichments.background(1000);
@@ -347,10 +356,7 @@ public final class Harvester implements AutoCloseable {
                 processors.add(embedding);
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
-            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
-            processors.add(new PassageProcessor(
-                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
-                    embedding));
+            processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
             AiServiceSettings startAi = builder.ai;
@@ -495,7 +501,9 @@ public final class Harvester implements AutoCloseable {
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
+                            // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
+                            List.of(acronymRelationRule::refresh))), retentionRule(builder));
             // ADR 0014: Webhooks markieren nur den Katalog; ein- und ausgeschaltet je Quelle über sync.events.
             boolean eventsFixed = builder.changeEvents;
             Map<String, char[]> webhookSecrets = Map.copyOf(builder.webhookSecrets);
@@ -512,9 +520,10 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
-            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
+            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
+            // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared());
+                    TikaDocumentText.shared(), textIndex);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);

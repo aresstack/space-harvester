@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
+import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -35,6 +36,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
@@ -54,7 +56,7 @@ class EnrichmentConfiguration {
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
-                            ObjectProvider<ImageDescriber> describer) {
+                            ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -62,12 +64,21 @@ class EnrichmentConfiguration {
         embedding.ifAvailable(processors::add);
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
-        processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules)), rules,
-                embedding.getIfAvailable()));
+        processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         return new Enrichments(projector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+    }
+
+    /** Satzgrenzen für Absätze und ihre Embeddings: das deutsche OpenNLP-Modell, ohne es die Satzregeln (ADR 0020). */
+    @Bean
+    SentenceSegmenter sentenceSegmenter() {
+        return sentences(KnowledgeTextSegmentation.defaults());
+    }
+
+    static SentenceSegmenter sentences(TextSegmentation rules) {
+        return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
     }
 
     /** Bildanalyse auf Abruf (ADR 0021, #362). */
@@ -93,10 +104,13 @@ class EnrichmentConfiguration {
 
     @Bean
     EnrichmentsAfterSync enrichmentsAfterSync(Enrichments enrichments, ObjectProvider<SnapshotRepository> snapshots,
-                                              ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts) {
+                                              ObjectProvider<Jobs> jobs, ObjectProvider<PageTextIndexing> texts,
+                                              ObjectProvider<AcronymRelationRule> acronymRule) {
         // Eigener Auftrag ENRICHMENT: Abgleich und Export warten nicht auf die Anreicherung; er hält auch den
-        // Volltextindex nach (#180).
+        // Volltextindex nach (#180) und danach die Regelvorschläge der Begriffsbeziehungen (#120).
+        AcronymRelationRule rule = acronymRule.getIfAvailable();
+        List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
-                texts.getIfAvailable());
+                texts.getIfAvailable(), followUps);
     }
 }
