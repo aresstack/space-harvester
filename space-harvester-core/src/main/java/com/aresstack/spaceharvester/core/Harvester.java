@@ -1482,7 +1482,7 @@ public final class Harvester implements AutoCloseable {
         private final Map<String, char[]> webhookSecrets = new HashMap<>();
         private ImageDescriber imageDescriber;
         private AiServiceSettings ai = AiServiceSettings.NONE;
-        private int maxChunkChars = 1500;
+        private int maxChunkChars = 0;
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
         private int chunkOverlapSentences = KnowledgeTextSegmentation.DEFAULT_OVERLAP_SENTENCES;
         private final List<SourceAdapter> sourceAdapters = new ArrayList<>();
@@ -1727,7 +1727,10 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Höchstens so viele Zeichen je eingebettetem Stück; Standard 1500. */
+        /**
+         * Höchstens so viele Zeichen je eingebettetem Stück, mindestens 100; Standard 0: ohne Zeichengrenze, nur das
+         * Token-Budget wie im Enterprise AI Client. Nur für Dienste mit eigener Zeichengrenze.
+         */
         public Builder embeddingChunkChars(int maxChunkChars) {
             this.maxChunkChars = maxChunkChars;
             return this;
