@@ -220,9 +220,8 @@ Ein Periodic Sync ist sinnvoll, aber die konkrete Kadenz ist **konfigurierbar un
 - [ ] **#187 Weitere Quelltypen:** Quellen ohne Partitionen über `discover`/`load` (PR #357), MediaWiki (PR #370),
   registriert git (PR #368), ftp, jes, ndv, sharepoint (PR #372), betaview (PR #378), outlook (PR #380), Typenliste
   mit Anzeigenamen, Adressfeld, Feldern und Anmeldearten (PR #375, #387, #394); Anmeldung und TLS über den
-  `SecretProvider` (#188: git PR #377, ftp/jes/ndv/sharepoint/betaview PR #390). Offen: `auth` und
-  `client-certificate` für git, `trust-bundle` für git (die Prüfung lehnt es ab), Bereiche für Quellen ohne
-  Seitenliste, Freigaben für `files` in der Konfiguration des Dienstes, asynchroner Transport für MediaWiki.
+  `SecretProvider` (#188: git PR #377 und #393, ftp/jes/ndv/sharepoint/betaview PR #390). Offen: Bereiche für
+  Quellen ohne Seitenliste, Freigaben für `files` in der Konfiguration des Dienstes, asynchroner Transport für MediaWiki.
 
 ## 8. Teststrategie / Definition of Done
 
