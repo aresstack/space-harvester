@@ -14,6 +14,10 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -29,7 +33,7 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
- * {@code outline}, {@code entities}, {@code properties}, {@code activities} und {@code relations} und die Ablage
+ * {@code outline}, {@code entities}, {@code properties}, {@code activities}, {@code relations} und {@code passages} (ADR 0020) und die Ablage
  * (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie
  * nachgezogen,
  * als eigener Auftrag {@code ENRICHMENT}.
@@ -44,11 +48,22 @@ class EnrichmentConfiguration {
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor()));
         // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
         embedding.ifAvailable(processors::add);
-        // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
-        PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                new LocalFilesTextProjector()));
-        return new Enrichments(projector, processors,
+        // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
+        processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(), embedding.getIfAvailable()));
+        return new Enrichments(projector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+    }
+
+    /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */
+    @Bean
+    PassageQueries passageQueries(PageQueries pages, Enrichments enrichments) {
+        return new PassageQueries(pages, enrichments, projector());
+    }
+
+    /** Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex. */
+    private static PageTextProjector projector() {
+        return PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
+                new LocalFilesTextProjector()));
     }
 
     @Bean

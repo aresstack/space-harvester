@@ -47,6 +47,9 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
@@ -204,6 +207,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final PassageQueries passages;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
     private final Jobs jobs;
@@ -315,6 +319,8 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
+            // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
+            processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(), embedding));
             // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector()));
@@ -336,6 +342,7 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
+            this.passages = new PassageQueries(pages, enrichments, projector);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
@@ -753,6 +760,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageNavigation navigation() {
         return navigation;
+    }
+
+    /**
+     * Semantische Absätze einer Seite (#181, ADR 0020); in der Leseansicht ohne Aufrufer
+     * {@link com.aresstack.spaceharvester.application.passages.PagePassages#read} mit {@link #enrichments()}.
+     */
+    public PassageQueries passages() {
+        return passages;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
