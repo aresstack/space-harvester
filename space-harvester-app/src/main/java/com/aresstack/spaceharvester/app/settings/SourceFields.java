@@ -12,10 +12,10 @@ import java.util.Set;
 public final class SourceFields {
 
     /**
-     * Typen, die {@code client-certificate} und {@code trust-bundle} annehmen (docs/SOURCE_ADAPTERS.md, ADR 0022); FTP,
+     * Typen, die {@code client-certificate} und {@code trust-bundle} annehmen (docs/SOURCE_ADAPTERS.md, ADR 0022, Git seit #393); FTP,
      * JES und NDV kennen kein TLS und weisen beides ab. Der Core sagt das nicht am Typ.
      */
-    private static final Set<String> WITH_TLS = Set.of("confluence", "sharepoint", "betaview", "mediawiki");
+    private static final Set<String> WITH_TLS = Set.of("confluence", "sharepoint", "betaview", "mediawiki", "git");
 
     private SourceFields() {
     }
