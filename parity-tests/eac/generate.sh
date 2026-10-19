@@ -56,6 +56,7 @@ cp="$(cat "$work/cp.txt")"
 mkdir -p "$work/classes"
 javac --release 8 -nowarn -encoding UTF-8 -cp "$cp" -d "$work/classes" \
   "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/confluence/ParityConfluence.java" \
+  "$repo/space-harvester-core/src/testFixtures/java/com/aresstack/enterpriseai/proasteion/emporion/holkas/git/ParityGit.java" \
   "$repo/parity-tests/src/test/java/com/aresstack/spaceharvester/parity/ParitySpace.java" \
   "$here/EacParityExport.java" "$here/EacDocumentText.java"
 java -Djava.awt.headless=true -cp "$work/classes${cp:+:$cp}" EacParityExport "$target"

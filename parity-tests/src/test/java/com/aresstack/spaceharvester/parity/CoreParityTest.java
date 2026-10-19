@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.parity;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
@@ -17,6 +18,7 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
@@ -87,6 +89,9 @@ class CoreParityTest {
     private static final Map<String, String> CORE_SEARCH = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FACTS = new LinkedHashMap<>();
     private static final Map<String, String> CORE_RUNS = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_GIT = new LinkedHashMap<>();
+    @TempDir
+    static Path gitData;
     @TempDir
     static Path searched;
 
@@ -141,6 +146,7 @@ class CoreParityTest {
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
         sourceManagement();
         search();
+        git();
     }
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
@@ -207,6 +213,61 @@ class CoreParityTest {
             }
             searchRun(harvester);
         }
+    }
+
+    /**
+     * Git-Quelle (#187) wie {@code EacParityExport.git}: das Paritäts-Repository {@link ParityGit} als Typ {@code git},
+     * je Stand ({@code main}, {@code tag} = {@link ParityGit#TAG}) die Pfade der Seiten, ihr Titel und welche Sätze
+     * der abgelegte Inhalt enthält. Dieselben Schlüssel wie {@code eac/git.properties}.
+     */
+    private static void git() throws Exception {
+        Path repository = gitData.resolve("parity.git");
+        ParityGit.create(repository);
+        gitRef(repository, null, "main");
+        gitRef(repository, ParityGit.TAG, "tag");
+    }
+
+    private static void gitRef(Path repository, String ref, String prefix) throws Exception {
+        Map<String, String> options = new LinkedHashMap<>();
+        options.put("url", repository.toString());
+        if (ref != null) {
+            options.put("ref", ref);
+        }
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("parity", "git", "Parität", null, null, options))
+                .dataDirectory(gitData.resolve("data-" + prefix))
+                .build()) {
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            Map<String, ListedPage> byPath = new TreeMap<>();
+            for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                byPath.put(gitPath(page.header().key().pageId()), page);
+            }
+            CORE_GIT.put("git." + prefix + ".documents", String.join(",", byPath.keySet()));
+            byPath.forEach((path, page) -> {
+                String text = new String(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < ParityGit.SENTENCES.length; i++) {
+                    if (text.contains(ParityGit.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                if (text.contains(ParityGit.OLD_SENTENCE)) {
+                    found.add("old");
+                }
+                CORE_GIT.put("git." + prefix + ".title." + path, page.header().metadata().title());
+                CORE_GIT.put("git." + prefix + ".sentences." + path, found.isEmpty() ? "-" : String.join(",", found));
+            });
+        }
+    }
+
+    /** Pfad im Repository aus der Seiten-ID ({@code …/parity[@<ref>]/<pfad>}), wie {@code EacParityExport.gitPath}. */
+    private static String gitPath(String pageId) {
+        String value = new String(Base64.getUrlDecoder().decode(pageId), StandardCharsets.UTF_8);
+        int repository = value.lastIndexOf("/parity/") >= 0 ? value.lastIndexOf("/parity/")
+                : value.lastIndexOf("/parity@");
+        return value.substring(value.indexOf('/', repository + 1) + 1);
     }
 
     /**
@@ -423,8 +484,11 @@ class CoreParityTest {
         report.append('\n').append(ParityReport.section("Fakten", facts, gaps));
         List<Finding> runs = ParityComparison.searchRuns(eacProperties("search-runs.properties"), CORE_RUNS);
         report.append('\n').append(ParityReport.section("Suchlauf", runs, gaps));
+        List<Finding> git = ParityComparison.git(eacProperties("git.properties"), CORE_GIT);
+        report.append('\n').append(ParityReport.section("Git-Quelle", git, gaps));
         List<Finding> factsAndRuns = new ArrayList<>(facts);
         factsAndRuns.addAll(runs);
+        factsAndRuns.addAll(git);
         for (Finding finding : factsAndRuns) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "

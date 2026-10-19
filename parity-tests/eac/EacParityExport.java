@@ -43,6 +43,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -127,6 +129,7 @@ public final class EacParityExport {
         addresses(source, new File(out, "addresses.properties"));
         search(source, new File(out, "search.properties"), new File(out, "search-runs.properties"));
         facts(new File(out, "facts.properties"));
+        git(new File(out, "git.properties"));
     }
 
     /**
@@ -176,6 +179,65 @@ public final class EacParityExport {
         } finally {
             out.close();
         }
+    }
+
+    /**
+     * Git-Quelle (#187, #193) über {@link ParityGit}: je Stand ({@code main} = {@link ParityGit#BRANCH}, {@code tag} =
+     * {@link ParityGit#TAG}) die gelisteten Pfade, je Pfad Titel und welche Sätze aus {@link ParityGit#SENTENCES}
+     * (Index ab 0) oder {@link ParityGit#OLD_SENTENCE} ({@code old}) der geladene Text enthält, {@code -} ohne.
+     */
+    private static void git(File target) throws Exception {
+        Path work = Files.createTempDirectory("parity-git");
+        Path repository = work.resolve("parity.git");
+        ParityGit.create(repository);
+        GitSourceProvider provider = new GitSourceProvider(work.resolve("cache"), DocumentExtraction.detector(),
+                DocumentExtraction.registry());
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            gitRef(provider, repository, null, "main", out);
+            gitRef(provider, repository, ParityGit.TAG, "tag", out);
+        } finally {
+            out.close();
+        }
+    }
+
+    private static void gitRef(GitSourceProvider provider, Path repository, String ref, String prefix,
+                               PrintWriter out) throws Exception {
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("url", repository.toAbsolutePath().toString());
+        values.put("refreshMinutes", "0");
+        if (ref != null) {
+            values.put("ref", ref);
+        }
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("git", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(gitPath(resource.id()), resource);
+        }
+        out.println("git." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityGit.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityGit.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            if (text != null && text.contains(ParityGit.OLD_SENTENCE)) {
+                found.add("old");
+            }
+            out.println("git." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
+            out.println("git." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /** Pfad im Repository aus {@code git:<…>/parity[@<ref>]/<pfad>} (der Locator lässt {@code .git} weg). */
+    private static String gitPath(KnowledgeResourceId id) {
+        String value = id.value();
+        int repository = value.lastIndexOf("/parity/") >= 0 ? value.lastIndexOf("/parity/")
+                : value.lastIndexOf("/parity@");
+        return value.substring(value.indexOf('/', repository + 1) + 1);
     }
 
     /**
