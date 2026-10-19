@@ -17,8 +17,11 @@ import java.util.regex.Pattern;
  * Token, Zertifikatspasswort) stehen hier nie als Wert, sondern nur als Name der Umgebungsvariable; die Datei
  * enthält dafür einen Platzhalter {@code ${NAME}}.
  *
- * @param type                        {@code confluence} oder {@code files}
- * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); nur bei {@code confluence}
+ * @param type                        {@code confluence}, {@code files} oder ein anderer Typ des Core
+ *                                    ({@code Harvester.sourceTypes()}, #375)
+ * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); nur bei {@code confluence},
+ *                                    andere Typen tragen ihre Adresse unter {@code options} ({@code extraOptions},
+ *                                    Schlüssel aus {@code SourceType.addressOption})
  * @param directory                   Ordner; nur bei {@code files}
  * @param include                     Dateimuster, z. B. {@code *.md, *.pdf}, oder leer für den Standard
  * @param secretVariable              Umgebungsvariable mit Passwort bzw. Token; nur bei {@code basic} und {@code pat}
@@ -114,8 +117,10 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 options.put(String.valueOf(key), String.valueOf(value));
             }
         });
-        String directory = confluence ? null : options.remove("directory");
-        String include = confluence ? null : options.remove("include");
+        boolean files = FILES.equals(type);
+        String directory = files ? options.remove("directory") : null;
+        String include = files ? options.remove("include") : null;
+        String address = confluence ? text(raw, "base-url") : null;
 
         List<String> plaintext = new ArrayList<>();
         SourceSettingsConfig.AuthType authType = SourceSettingsConfig.AuthType.NONE;
@@ -132,7 +137,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 if (text(auth, key) != null) {
                     plaintext.add("auth." + key);
                 }
-                secretVariable = suggestedVariable(id, authType);
+                // Andere Typen dürfen das Passwort weglassen; dann fragt der Core das Programm (ADR 0022).
+                secretVariable = confluence || text(auth, key) != null ? suggestedVariable(id, authType) : null;
             }
         }
         SourceSettingsConfig.CertificateStoreType certificateType = null;
@@ -158,7 +164,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 }
             }
         }
-        SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), text(raw, "base-url"), directory, include,
+        SourceDraft draft = new SourceDraft(id, type, text(raw, "title"), address, directory, include,
                 authType, text(auth, "username"), secretVariable, certificateType, text(certificate, "path"),
                 certificatePasswordVariable, text(certificate, "alias"), text(certificate, "thumbprint"),
                 text(raw, "trust-bundle"), options);
@@ -205,6 +211,21 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return CONFLUENCE.equals(type);
     }
 
+    /**
+     * Weder Confluence noch Ordner: die Felder des Typs unter {@code options}, Anmeldung nach den Anmeldearten des Typs
+     * (ohne Passwort fragt der Core das Programm, ADR 0022).
+     */
+    public boolean generic() {
+        return type != null && !confluence() && !FILES.equals(type);
+    }
+
+    /** Derselbe Eintrag mit einer anderen Variable für Passwort bzw. Token ({@code null}: keine Zeile in der Datei). */
+    public SourceDraft withSecretVariable(String variable) {
+        return new SourceDraft(id, type, title, baseUrl, directory, include, authType, username, variable,
+                certificateType, certificatePath, certificatePasswordVariable, certificateAlias, thumbprint,
+                trustBundle, extraOptions);
+    }
+
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
     public static String suggestedVariable(String id, SourceSettingsConfig.AuthType authType) {
         String base = trim(id) == null ? "CONFLUENCE" : id.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", "_");
@@ -230,10 +251,23 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
             } else if (baseUrl.contains("${")) {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
+        } else if (FILES.equals(type)) {
+            if (directory == null) {
+                problems.add("Der Ordner fehlt.");
+            }
+        } else if (generic()) {
+            // Die Felder des Typs (Adresse, Pflichtangaben) prüft das Formular; ihre Liste kennt der Typ des Core.
+        } else {
+            problems.add("Die Art der Quelle fehlt.");
+        }
+        if (confluence() || generic()) {
             if (authType == SourceSettingsConfig.AuthType.BASIC && username == null) {
                 problems.add("Der Benutzername fehlt.");
             }
-            if (authType != SourceSettingsConfig.AuthType.NONE && !variable(secretVariable)) {
+            // Andere Typen dürfen das Passwort weglassen (ADR 0022); ein angegebener Name muss aber gültig sein.
+            boolean secretNeeded = confluence() || authType == SourceSettingsConfig.AuthType.PAT
+                    || secretVariable != null;
+            if (authType != SourceSettingsConfig.AuthType.NONE && secretNeeded && !variable(secretVariable)) {
                 problems.add("Die Umgebungsvariable für " + secretName() + " fehlt oder ist kein gültiger Name "
                         + "(Buchstaben, Ziffern, Unterstrich).");
             }
@@ -249,12 +283,6 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 // Der Core verlangt den Alias immer; der Fingerabdruck prüft nur zusätzlich.
                 problems.add("Der Alias des Client-Zertifikats fehlt.");
             }
-        } else if (FILES.equals(type)) {
-            if (directory == null) {
-                problems.add("Der Ordner fehlt.");
-            }
-        } else {
-            problems.add("Die Art der Quelle fehlt.");
         }
         return problems;
     }
@@ -279,11 +307,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         if (confluence()) {
             yaml.append(in).append("base-url: ").append(scalar(baseUrl)).append('\n');
+        }
+        // Confluence immer mit auth; andere Typen nur, wenn die Datei eine Anmeldung oder ein Zertifikat hatte (ADR 0022).
+        if (confluence() || generic() && (authType != SourceSettingsConfig.AuthType.NONE || certificateType != null
+                || trustBundle != null)) {
             yaml.append(in).append("auth:\n");
             yaml.append(in).append("  type: ").append(authType.name().toLowerCase(Locale.ROOT)).append('\n');
             if (authType == SourceSettingsConfig.AuthType.BASIC) {
                 yaml.append(in).append("  username: ").append(scalar(username)).append('\n');
-                yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                if (secretVariable != null) {
+                    yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                }
             } else if (authType == SourceSettingsConfig.AuthType.PAT) {
                 yaml.append(in).append("  token: ${").append(secretVariable).append("}\n");
             }
@@ -308,9 +342,9 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 yaml.append(in).append("trust-bundle: ").append(scalar(trustBundle)).append('\n');
             }
         }
-        if (!confluence() || !extraOptions.isEmpty()) {
+        if (FILES.equals(type) || !extraOptions.isEmpty()) {
             yaml.append(in).append("options:\n");
-            if (!confluence()) {
+            if (FILES.equals(type)) {
                 yaml.append(in).append("  directory: ").append(scalar(directory)).append('\n');
                 if (include != null) {
                     yaml.append(in).append("  include: ").append(scalar(include)).append('\n');

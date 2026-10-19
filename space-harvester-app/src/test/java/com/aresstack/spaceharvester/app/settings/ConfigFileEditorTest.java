@@ -195,6 +195,87 @@ class ConfigFileEditorTest {
         assertThat(home.resolve("app.yml.bak")).hasContent(THREE);
     }
 
+    /** Andere Typen des Core (#375): die Adresse steht unter options mit dem Schlüssel des Typs (#387). */
+    @Test
+    void otherSourceTypesKeepTheirAddressUnderOptions() throws Exception {
+        Path file = home.resolve("app.yml");
+        SourceDraft jes = new SourceDraft("host-jes", "jes", "Host", null, null, null, null, null, null,
+                null, null, null, null, null, null, Map.of("host", "mvs.example.org", "credentialRef", "keepass:jes"));
+        assertThat(jes.problems()).isEmpty();
+        editor.save(file, editor.draft(file, jes));
+        assertThat(Files.readString(file)).contains("type: jes", "host: \"mvs.example.org\"",
+                "credentialRef: \"keepass:jes\"").doesNotContain("base-url", "directory");
+
+        SourceDraft read = editor.editable(file, "host-jes").draft();
+        assertThat(read.generic()).isTrue();
+        assertThat(read.baseUrl()).isNull();
+        assertThat(read.directory()).isNull();
+        assertThat(read.extraOptions()).containsEntry("host", "mvs.example.org");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org");
+    }
+
+    /** Anmeldung und Vertrauen anderer Typen (ADR 0022) bleiben beim Bearbeiten, auch ohne Passwort in der Datei. */
+    @Test
+    void theLoginOfOtherSourceTypesSurvivesAnEdit() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                space-harvester:
+                  sources:
+                    - id: host-jes
+                      type: jes
+                      title: Host
+                      auth:
+                        type: basic
+                        username: batch
+                      options:
+                        host: mvs.example.org
+                """);
+        SourceDraft read = editor.editable(file, "host-jes").draft();
+        assertThat(read.secretVariable()).as("kein Passwort in der Datei, der Core fragt das Programm").isNull();
+        SourceDraft renamed = new SourceDraft(read.id(), read.type(), "Großrechner", null, null, null,
+                read.authType(), read.username(), read.secretVariable(), null, null, null, null, null, null,
+                read.extraOptions());
+        editor.save(file, editor.replace(file, renamed));
+        assertThat(Files.readString(file)).contains("title: \"Großrechner\"", "type: basic", "username: \"batch\"",
+                "host: \"mvs.example.org\"").doesNotContain("password");
+    }
+
+    /**
+     * Rundreise einer JES-Quelle mit „Benutzer und Passwort“ und den Feldern ihres Typs: das Passwort nur als
+     * Platzhalter, die Felder unter options, ein Schlüssel ohne Feld bleibt; ohne Passwort keine Zeile (ADR 0022).
+     */
+    @Test
+    void aJesSourceWithBasicLoginAndItsFieldsRoundTrips() throws Exception {
+        Path file = home.resolve("app.yml");
+        SourceDraft jes = new SourceDraft("host-jes", "jes", "Host", null, null, null,
+                SourceSettingsConfig.AuthType.BASIC, "batch", "HOST_JES_PASSWORD", null, null, null, null, null, null,
+                Map.of("host", "mvs.example.org", "port", "2121", "status", "ALL", "connectTimeoutMillis", "2000"));
+        assertThat(jes.problems()).isEmpty();
+        editor.save(file, editor.draft(file, jes));
+        assertThat(Files.readString(file)).contains("type: jes", "type: basic", "username: \"batch\"",
+                "password: ${HOST_JES_PASSWORD}", "host: \"mvs.example.org\"", "port: \"2121\"", "status: \"ALL\"")
+                .doesNotContain("client-certificate", "trust-bundle", "base-url");
+
+        SourceDraft.Editable read = editor.editable(file, "host-jes");
+        assertThat(read.plaintextSecrets()).isEmpty();
+        assertThat(read.draft()).isEqualTo(jes);
+        AppSettings settings = loader.load(file);
+        assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org")
+                .containsEntry("port", "2121").containsEntry("connectTimeoutMillis", "2000");
+        assertThat(settings.sources().get(0).config().auth().username()).isEqualTo("batch");
+
+        SourceDraft without = read.draft().withSecretVariable(null);
+        assertThat(without.problems()).as("andere Typen dürfen das Passwort weglassen").isEmpty();
+        editor.save(file, editor.replace(file, without));
+        assertThat(Files.readString(file)).contains("type: basic", "username: \"batch\"").doesNotContain("password");
+        assertThat(editor.editable(file, "host-jes").draft()).isEqualTo(without);
+
+        SourceDraft noUser = new SourceDraft("host-jes", "jes", "Host", null, null, null,
+                SourceSettingsConfig.AuthType.BASIC, null, null, null, null, null, null, null, null, jes.extraOptions());
+        assertThat(noUser.problems()).containsExactly("Der Benutzername fehlt.");
+    }
+
     @Test
     void removesOnlyTheChosenEntry() throws Exception {
         Path file = home.resolve("app.yml");
@@ -490,6 +571,24 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theVisionModelGoesIntoTheAiBlockAndSurvivesOtherModelChanges() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "gpt-x", null, null, null, java.util.List.of(), null,
+                null, null, "gpt-vision");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("vision-model: \"gpt-vision\"");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().visionModel()).isEqualTo("gpt-vision");
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withModels("gpt-y", null, null, null, null, null).visionModel()).isEqualTo("gpt-vision");
+        assertThat(new AiDraft(null, null, null, null, null, null, null, null, null, "gpt-vision").problems())
+                .anyMatch(p -> p.contains("Basisadresse"));
+    }
+
+    @Test
     void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
         ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
                 null, null, null, null, null);
@@ -552,6 +651,64 @@ class ConfigFileEditorTest {
         assertThat(Files.readString(file)).doesNotContain("output-directory").contains("data-directory");
         assertThat(ConfigFileEditor.outputDirectory("space-harvester:\n  sources: []\n", "/x"))
                 .startsWith("space-harvester-app:\n  output-directory: \"/x\"\n\nspace-harvester:");
+    }
+
+    @Test
+    void fileAccessUsesTheCoreKeysAsAListAndLeavesTheRestAlone() throws Exception {
+        Path file = home.resolve("app.yml");
+        String before = """
+                # Kopf bleibt
+                space-harvester-app:
+                  data-directory: /daten   # Kommentar bleibt
+                space-harvester:
+                  local-files:
+                    roots: "/alt/eins;/alt/zwei"   # wird ersetzt
+                  sources: []
+                """;
+        Files.writeString(file, before);
+        assertThat(loader.load(file).localFiles().roots()).containsExactly(Path.of("/alt/eins"), Path.of("/alt/zwei"));
+        String unc = home.resolve("Team \"Wissen\"").toString();
+
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), true,
+                java.util.List.of("/srv/handbuecher", unc)));
+
+        String text = Files.readString(file);
+        assertThat(text).startsWith("# Kopf bleibt").contains("data-directory: /daten   # Kommentar bleibt",
+                "    allow-all: true", "    roots:\n      - \"/srv/handbuecher\"", "  sources: []")
+                .doesNotContain("/alt/eins", "wird ersetzt");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.localFiles().allowAll()).isTrue();
+        assertThat(settings.localFiles().roots()).containsExactly(Path.of("/srv/handbuecher"), Path.of(unc));
+        assertThat(settings.storage().dataDirectory()).isEqualTo(Path.of("/daten"));
+
+        // Erneut setzen ersetzt beide Werte; ohne Ordner bleibt eine leere Liste, kein zweiter Block.
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), false,
+                java.util.List.of()));
+        String cleared = Files.readString(file);
+        assertThat(cleared.split("local-files", -1)).hasSize(2);
+        assertThat(cleared).contains("    allow-all: false", "    roots: []").doesNotContain("handbuecher");
+        assertThat(loader.load(file).localFiles())
+                .isEqualTo(com.aresstack.spaceharvester.application.configuration.LocalFileSettings.DEFAULT);
+        assertThatThrownBy(() -> editor.withFileAccess(file, new ConfigFileEditor.Draft(cleared, null), false,
+                java.util.List.of("relativ/ordner"))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute");
+    }
+
+    @Test
+    void aRelativeRootIsReportedWithoutThePathAndGrantsNothing() {
+        AppSettings settings = loader.read(home.resolve("app.yml"), """
+                space-harvester:
+                  local-files:
+                    allow-all: vielleicht
+                    roots:
+                      - geheim/relativ
+                      - /srv/doku
+                """);
+        assertThat(settings.localFiles().allowAll()).isFalse();
+        assertThat(settings.localFiles().roots()).containsExactly(Path.of("/srv/doku"));
+        assertThat(String.join(" ", settings.problems())).contains("space-harvester.local-files.roots",
+                "space-harvester.local-files.allow-all").doesNotContain("geheim");
     }
 
     @Test

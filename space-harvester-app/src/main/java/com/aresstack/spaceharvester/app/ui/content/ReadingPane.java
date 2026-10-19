@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.Dialogs;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
+import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
 import javax.imageio.ImageIO;
@@ -62,6 +63,9 @@ final class ReadingPane extends JPanel {
     static final int MAX_WIDTH = 720;
     /** Höchstens so viele Bilder je Seite; weitere erscheinen als Platzhalter. */
     static final int MAX_IMAGES = 200;
+    /** Platzhalter eines Bilds, für das die Quelle einen Einmalcode verlangt; Text wie im EAC. */
+    static final String SIGN_IN_PENDING = "Für dieses Bild ist eine zusätzliche Anmeldung (Einmalcode) "
+            + "erforderlich: ";
     /** Adressraum der vorab geladenen Bilder; {@code .invalid} wird nie aufgelöst. */
     private static final String IMAGE_BASE = "http://reading.invalid/image/";
     private static final Set<String> REMOVED = Set.of("script", "style", "link", "meta", "iframe", "frame", "object",
@@ -198,7 +202,15 @@ final class ReadingPane extends JPanel {
                 counts[1]++;
                 continue;
             }
-            BufferedImage decoded = decode(load, image);
+            BufferedImage decoded;
+            try {
+                decoded = decode(load, image);
+            } catch (SignInPendingException e) {
+                // Die Quelle verlangt einen Einmalcode; das Formular oben fragt ihn, danach lädt die Seite neu.
+                missing(img, SIGN_IN_PENDING + label);
+                counts[1]++;
+                continue;
+            }
             if (decoded == null) {
                 missing(img, "Bild fehlt: " + label);
                 counts[1]++;
@@ -291,6 +303,8 @@ final class ReadingPane extends JPanel {
         byte[] content;
         try {
             content = load.apply(image);
+        } catch (SignInPendingException e) {
+            throw e;
         } catch (RuntimeException e) {
             return null;
         }

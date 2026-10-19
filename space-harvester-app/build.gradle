@@ -28,6 +28,8 @@ dependencies {
     // Originaldaten lesbar einrücken und body.storage zeigen; dieselbe Jackson-3-Fassung wie im Core
     implementation libs.jackson.databind
     implementation libs.slf4j.api
+    // Anhang-Viewer (#183): PDF-Seiten zeichnen wie im Enterprise AI Client; dieselbe Fassung wie im Core
+    implementation libs.pdfbox
     // Protokoll auf Konsole und in <Benutzerordner>/.space-harvester/logs; Version aus der Boot-BOM wie beim Dienst
     runtimeOnly platform(libs.spring.boot.dependencies)
     runtimeOnly 'ch.qos.logback:logback-classic'

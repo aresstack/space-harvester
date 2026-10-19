@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.AppContext;
@@ -10,11 +11,20 @@ import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.images.ImagePayload;
+import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageLookup;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -24,13 +34,14 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotWarning;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
+import javax.swing.Icon;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JLayeredPane;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
@@ -44,6 +55,8 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Point;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
@@ -52,6 +65,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * Eine Seite: zuerst ihr lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
@@ -63,6 +78,8 @@ import java.util.Optional;
  */
 public final class PageDetailPanel extends JPanel {
 
+    private static final System.Logger LOG = System.getLogger(PageDetailPanel.class.getName());
+
     private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
@@ -71,12 +88,14 @@ public final class PageDetailPanel extends JPanel {
     private static final String REFERENCES = "Verweise";
     private static final String TERMS = "Begriffe";
     private static final String PASSAGES = "Absätze";
+    private static final String IMAGES = "Bilder";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
+    private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
@@ -88,6 +107,7 @@ public final class PageDetailPanel extends JPanel {
     private final References references = new References();
     private final TermsTab terms = new TermsTab();
     private final PassagesTab passages = new PassagesTab();
+    private final ImagesTab images = new ImagesTab();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -96,6 +116,8 @@ public final class PageDetailPanel extends JPanel {
             return acronymTooltip(event.getPoint());
         }
     };
+    /** Reiter „Text“: der Lesetext mit dem Navigationsbanner der Dokumentnavigation darüber (Kopie aus dem EAC). */
+    private final NavigableDocumentPage readerPage;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
     private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
@@ -120,6 +142,13 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
             "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
+    private final ComposerButton previewAsset = Comic.button("Vorschau",
+            "Zeigt den gewählten Anhang im Anhang-Viewer (auch per Doppelklick)");
+    /** Reiter „Anhänge“: Liste unten, der Anhang-Viewer als Comic-Overlay darüber (wie im Enterprise AI Client). */
+    private final JLayeredPane attachmentLayers = new JLayeredPane();
+    private ComicOverlayPanel attachmentOverlay;
+    private ReaderFileOpener fileOpener = ReaderFileOpener.system();
+    private Executor attachmentRenderer;
     private final ComposerButton recompute = Comic.button("Neu berechnen", "Analysen dieser Seite neu berechnen");
 
     private String sourceId;
@@ -128,6 +157,7 @@ public final class PageDetailPanel extends JPanel {
     private boolean assetsLoaded;
     private boolean readingLoaded;
     private boolean referencesLoaded;
+    private boolean imagesLoaded;
     private final ReadingPane readingPane = new ReadingPane();
     private List<Enrichments.View> views = List.of();
     private ReaderDocument shown;
@@ -143,7 +173,7 @@ public final class PageDetailPanel extends JPanel {
         title.setForeground(Comic.INK);
 
         reader.setEditable(false);
-        reader.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        reader.setBorder(BorderFactory.createEmptyBorder(READER_PADDING_TOP, 12, 10, 12));
         reader.setFont(Comic.regular(13.5f));
         reader.getCaret().setVisible(true);
         ToolTipManager.sharedInstance().registerComponent(reader);
@@ -159,14 +189,36 @@ public final class PageDetailPanel extends JPanel {
         acronymBar.add(acronymHint, BorderLayout.CENTER);
         acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
         readerPanel.add(acronymBar, BorderLayout.NORTH);
-        readerPanel.add(Comic.scroll(reader), BorderLayout.CENTER);
+        // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
+        readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
+        readerPanel.add(readerPage, BorderLayout.CENTER);
+        // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
+        readerPage.onJump(section -> {
+            if (section.passageId() != null) {
+                passages.select(section.passageId());
+            }
+        });
         readerPanel.add(acronymDetail, BorderLayout.SOUTH);
 
-        JPanel attachmentsPanel = new JPanel(new BorderLayout(0, 6));
+        JPanel attachmentList = new JPanel(new BorderLayout(0, 6));
+        attachmentList.setOpaque(false);
+        attachmentList.add(assetsHint, BorderLayout.NORTH);
+        attachmentList.add(Comic.scroll(assets), BorderLayout.CENTER);
+        attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
+        attachmentLayers.setLayout(new FillLayout());
+        attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
+        JPanel attachmentsPanel = new JPanel(new BorderLayout());
         attachmentsPanel.setOpaque(false);
-        attachmentsPanel.add(assetsHint, BorderLayout.NORTH);
-        attachmentsPanel.add(Comic.scroll(assets), BorderLayout.CENTER);
-        attachmentsPanel.add(Comic.row(harvest, saveAsset), BorderLayout.SOUTH);
+        attachmentsPanel.add(attachmentLayers, BorderLayout.CENTER);
+        assets.getSelectionModel().addListSelectionListener(e -> updatePreviewEnabled());
+        assets.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && assets.rowAtPoint(e.getPoint()) >= 0) {
+                    openAttachment();
+                }
+            }
+        });
 
         JPanel analysis = new JPanel(new BorderLayout(0, 6));
         analysis.setOpaque(false);
@@ -197,6 +249,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(REFERENCES, references)
                 .tab(TERMS, terms)
                 .tab(PASSAGES, passages)
+                .tab(IMAGES, images)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
@@ -208,11 +261,15 @@ public final class PageDetailPanel extends JPanel {
             if (REFERENCES.equals(name)) {
                 loadReferences();
             }
+            if (IMAGES.equals(name)) {
+                loadImages();
+            }
         });
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
         passages.onJump(this::jumpTo);
+        images.onDescribe(this::describeImages);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -220,6 +277,7 @@ public final class PageDetailPanel extends JPanel {
         bookmark.addActionListener(e -> copyBookmark());
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
+        previewAsset.addActionListener(e -> openAttachment());
         recompute.addActionListener(e -> recompute());
         recomputeReader.addActionListener(e -> recompute());
 
@@ -265,12 +323,14 @@ public final class PageDetailPanel extends JPanel {
         assetsLoaded = false;
         readingLoaded = false;
         referencesLoaded = false;
+        imagesLoaded = false;
         readingPane.clear(" ");
         breadcrumbs.clear();
         references.message(" ");
         views = List.of();
         showReader(null, false);
         acronymHint.setText(" ");
+        closeAttachmentOverlay();
         assetsModel.set(null);
         enrichmentModel.set(List.of());
         properties.reset();
@@ -290,11 +350,39 @@ public final class PageDetailPanel extends JPanel {
         return pageId == null;
     }
 
+    /** Lädt die gezeigte Seite aus dem Bestand neu; ohne gezeigte Seite nichts. EDT. */
+    void reloadShown() {
+        if (sourceId != null && pageId != null) {
+            load(sourceId, pageId, false);
+        }
+    }
+
     /**
      * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
      * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
      */
     public void load(String sourceId, String pageId, boolean refresh) {
+        load(sourceId, pageId, refresh, null);
+    }
+
+    /**
+     * Öffnet die Seite eines Absatzes über seine stabile Passage-ID (#452, wie ein {@code ReaderLink} mit Passage im
+     * Enterprise AI Client): Seite laden, Reiter „Absätze“ wählen, den Absatz hervorheben und im Lesetext markieren.
+     * Gehört die ID zu einer älteren Fassung oder gibt es den Absatz nicht mehr, öffnet die Seite trotzdem mit einem
+     * Hinweis; eine unbekannte oder nicht sichtbare Seite meldet sich wie jeder andere Ladefehler.
+     */
+    public void openPassage(String passageId) {
+        if (!PassageId.looksLike(passageId)) {
+            cards.show(deck, PAGE);
+            feedback.problem(new InvalidQueryException("Keine Passage-ID"), Problems.Step.PAGE);
+            return;
+        }
+        PassageId id = PassageId.parse(passageId);
+        load(id.sourceId(), id.pageId(), false, passageId);
+    }
+
+    /** Wie {@link #load(String, String, boolean)}; mit {@code passageId} löst der Core zuerst den Absatz auf. */
+    private void load(String sourceId, String pageId, boolean refresh, String passageId) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {
             return;
@@ -304,6 +392,7 @@ public final class PageDetailPanel extends JPanel {
         this.assetsLoaded = false;
         this.readingLoaded = false;
         this.referencesLoaded = false;
+        this.imagesLoaded = false;
         this.page = null;
         readingPane.clear(" ");
         breadcrumbs.clear();
@@ -312,6 +401,7 @@ public final class PageDetailPanel extends JPanel {
         cards.show(deck, PAGE);
         showReader(null, false);
         acronymHint.setText(" ");
+        closeAttachmentOverlay();
         assetsModel.set(null);
         title.setText("Seite " + pageId);
         path.setText(sourceId);
@@ -324,12 +414,17 @@ public final class PageDetailPanel extends JPanel {
         setActionsEnabled(false);
         Font font = reader.getFont();
         Background.run(() -> {
+            // Zuerst die ID: Der Core zieht dabei fehlende Absätze nach, die der Lesetext danach schon kennt.
+            PassageLookup passage = passageId == null ? null : runtime.workspace().passage(passageId);
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-            PageText text = project(delivered.snapshot());
-            return new Loaded(delivered, enrichments, document(sourceId, pageId, enrichments, text, font),
+            PageText text = runtime.workspace().pageText(delivered.snapshot());
+            ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
+            relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
+            navigation(runtime, document, sourceId, pageId);
+            return new Loaded(delivered, enrichments, document,
                     Payloads.display(delivered.snapshot().payload()),
-                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh);
+                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh, passage);
         }, loaded -> {
             if (current != request) {
                 return;
@@ -344,7 +439,13 @@ public final class PageDetailPanel extends JPanel {
             if (REFERENCES.equals(tabs.selected())) {
                 loadReferences();
             }
+            if (IMAGES.equals(tabs.selected())) {
+                loadImages();
+            }
             loadPosition();
+            if (loaded.passage() != null) {
+                showPassage(loaded.passage());
+            }
         }, error -> {
             if (current != request) {
                 return;
@@ -447,9 +548,18 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
+        // Neu berechnet bei gleichem Text: die Navigation gilt weiter; sonst gehörte sie zum vorigen Text.
+        boolean sameText = shown != null && document != null && shown.text() != null && document.text() != null
+                && shown.text().text().equals(document.text().text());
+        if (document != null && document.navigation() != null) {
+            showNavigation(document.navigation());
+        } else if (!sameText) {
+            showNavigation(null);
+        }
         shown = document;
         terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
         passages.show(document == null ? null : document.passages());
+        terms.showRelations(document == null ? null : document.relations());
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");
@@ -458,6 +568,7 @@ public final class PageDetailPanel extends JPanel {
         }
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
+        readerPage.contentChanged();
         acronymHint.setText(document.hint(live));
         recomputeReader.setVisible(recomputeOffered(document, live));
     }
@@ -482,6 +593,41 @@ public final class PageDetailPanel extends JPanel {
         PageKey key = new PageKey(sourceId, pageId);
         return ReaderDocument.build(text, PageAcronyms.read(key, views, text), PageTerms.read(key, views, text), font)
                 .withPassages(PagePassages.read(key, views, text));
+    }
+
+    /** Hängt die Beziehungen der Begriffe dieser Seite an; ohne Begriffe oder Rechte bleibt es bei „nicht abgefragt“. */
+    private static void relations(AppRuntime runtime, ReaderDocument document, String sourceId, String spaceKey) {
+        java.util.Set<String> normalized = document.normalizedTerms();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        try {
+            document.withRelations(runtime.workspace().termRelationsFor(normalized, sourceId, spaceKey).stream()
+                    .map(com.aresstack.spaceharvester.app.ui.Relation::of).toList());
+        } catch (RuntimeException e) {
+            // Beziehungen sind eine Zugabe; ohne sie zeigt der Reiter „Begriffe“ den Rest unverändert.
+            LOG.log(System.Logger.Level.DEBUG, "Beziehungen nicht lesbar: {0}", e.getMessage());
+        }
+    }
+
+    /**
+     * Hängt die Dokumentnavigation des Core an, wenn sie zum gezeigten Text gehört ({@code inputSha256}); sonst bleibt
+     * der Banner aus. Die Positionen des Core beziehen sich auf den Text des Cache, den der Reiter „Text“ zeigt.
+     */
+    private static void navigation(AppRuntime runtime, ReaderDocument document, String sourceId, String pageId) {
+        if (document.text() == null) {
+            return;
+        }
+        try {
+            var view = runtime.workspace().documentNavigation(sourceId, pageId);
+            // Wie die Capture-ID im Client: nur eine Antwort zu genau dem gezeigten Text gilt.
+            if (document.text().inputSha256().equals(view.inputSha256())) {
+                document.withNavigation(Navigation.of(view));
+            }
+        } catch (RuntimeException e) {
+            // Die Navigation ist eine Zugabe; ohne sie zeigt der Reiter „Text“ den Lesetext allein.
+            LOG.log(System.Logger.Level.DEBUG, "Dokumentnavigation nicht lesbar: {0}", e.getClass().getSimpleName());
+        }
     }
 
     private String acronymTooltip(Point point) {
@@ -533,8 +679,46 @@ public final class PageDetailPanel extends JPanel {
         }
         tabs.select(READ);
         reader.requestFocusInWindow();
+        mark(target);
+    }
+
+    /** Markiert die Stelle im Lesetext, auch wenn gerade ein anderer Reiter vorne liegt. */
+    private void mark(TermsTab.Span target) {
         reader.select(target.start(), target.end());
+        reader.getCaret().setSelectionVisible(true);
+        readerPage.revealBelowSky(target.start());
         showAcronymAt(target.start());
+    }
+
+    static final String PASSAGE_OLDER = "Der Absatz gehört zu einer älteren Fassung der Seite";
+    static final String PASSAGE_CHANGED = "Den Absatz gibt es nicht mehr";
+    static final String PASSAGE_MISSING = "Der Absatz steht nicht im Reiter „Absätze“";
+    /** Seit #470 folgt die Passage-ID der ganzen Prozessorversion (Zerlegung, Modell, Format, Dienst). */
+    static final String PASSAGE_RECOMPUTED = "Die Absätze wurden seither neu berechnet. Angezeigt werden alle Absätze.";
+
+    /**
+     * Zeigt den über seine Passage-ID geöffneten Absatz im Reiter „Absätze“ und markiert ihn im Lesetext, wie ein Klick
+     * auf ihn ohne Wechsel zum Text. Die Hinweise folgen den Fällen von {@code KnowledgeResourceReader} im Client.
+     */
+    void showPassage(PassageLookup lookup) {
+        tabs.select(PASSAGES);
+        switch (lookup.match()) {
+            case FOUND -> {
+                PassagesTab.Passage passage = passages.select(lookup.requested().value());
+                if (passage == null) {
+                    // Der Reiter zeigt ein anderes Ergebnis als die Auflösung: lieber sagen als schweigen.
+                    feedback.info(PASSAGE_MISSING, PASSAGE_RECOMPUTED);
+                } else if (shown != null && passage.end() <= reader.getDocument().getLength()) {
+                    mark(new TermsTab.Span(passage.start(), passage.end()));
+                }
+            }
+            case OLDER_VERSION -> feedback.info(PASSAGE_OLDER, "Sein Text ist nicht mehr vorhanden (Seite seither "
+                    + "geändert). Angezeigt werden die aktuellen Absätze.");
+            case CHANGED -> feedback.info(PASSAGE_CHANGED, PASSAGE_RECOMPUTED);
+            case UNAVAILABLE -> {
+                // Der Reiter „Absätze“ nennt selbst, warum gerade keine vorliegen.
+            }
+        }
     }
 
     /** Markiert die nächste bzw. vorige Fundstelle und zeigt ihre Ausschreibung. */
@@ -547,15 +731,8 @@ public final class PageDetailPanel extends JPanel {
         PageAcronyms.Mark mark = forward ? document.next(caret) : document.previous(caret);
         if (mark != null) {
             reader.select(mark.occurrence().start(), mark.occurrence().end());
+            readerPage.revealBelowSky(mark.occurrence().start());
             showAcronymAt(mark.occurrence().start());
-        }
-    }
-
-    private static PageText project(PageSnapshot snapshot) {
-        try {
-            return new ConfluenceStorageTextProjector().project(snapshot).orElse(null);
-        } catch (IllegalArgumentException e) {
-            return null;
         }
     }
 
@@ -685,6 +862,119 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /** Liest die gespeicherten Bildbeschreibungen der Seite (#362) samt Vorschau aus der Ablage; beschreibt nichts. */
+    private void loadImages() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || imagesLoaded) {
+            return;
+        }
+        imagesLoaded = true;
+        images.loading();
+        String source = sourceId;
+        DeliveredPage shown = page;
+        Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
+            if (shown == page) {
+                images.describing(false);
+                images.show(found.state(), found.reason(), found.warnings(), found.images());
+            }
+        }, error -> {
+            if (shown == page) {
+                images.describing(false);
+                imagesLoaded = false;
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /** „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. */
+    private void describeImages() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.describing(true);
+        feedback.working("Bilder werden beschrieben …");
+        Background.run(() -> imageRows(runtime, source, runtime.workspace().describeImages(source, id)), found -> {
+            // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
+            images.describing(false);
+            if (shown != page) {
+                return;
+            }
+            images.show(found.state(), found.reason(), found.warnings(), found.images());
+            feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
+                    : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
+        }, error -> {
+            images.describing(false);
+            if (shown != page) {
+                return;
+            }
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
+    private static ImageRows imageRows(AppRuntime runtime, String sourceId, PageImages found) {
+        List<ImagesTab.Image> rows = new ArrayList<>();
+        java.util.Map<String, String> versions;
+        try {
+            versions = found.result() == null ? java.util.Map.of()
+                    : ImagePayload.attachmentVersions(found.result().payloadJson());
+        } catch (IllegalArgumentException e) {
+            versions = java.util.Map.of();
+        }
+        for (ImagePayload.Entry entry : found.images()) {
+            String version = entry.assetId() == null ? null : versions.get(entry.assetId());
+            Icon preview = preview(() -> runtime.workspace().storedImage(sourceId, entry, version));
+            String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
+                    : entry.filename() : entry.title();
+            rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
+                    entry.reason(), preview));
+        }
+        return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
+                List.copyOf(rows), found.describedCount());
+    }
+
+    /**
+     * Die Vorschau eines Bildes oder {@code null}: Scheitert das Lesen (etwa {@code RATE_LIMITED} am LargeFileGate),
+     * steht nur bei diesem Bild „Keine Vorschau“, die übrigen laden weiter.
+     */
+    static Icon preview(java.util.function.Supplier<java.util.Optional<byte[]>> stored) {
+        try {
+            return stored.get().map(PageDetailPanel::thumbnail).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Ein Vorschaubild höchstens 96 × 72 groß; {@code null}, wenn sich die Bytes nicht lesen lassen oder das Bild über
+     * {@link com.aresstack.spaceharvester.app.ui.content.viewer.ReaderImageStore#MAX_PIXELS} liegt.
+     */
+    static Icon thumbnail(byte[] bytes) {
+        try {
+            if (com.aresstack.spaceharvester.app.ui.content.viewer.ReaderImageStore.tooLarge(bytes)) {
+                return null;
+            }
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+            if (image == null) {
+                return null;
+            }
+            double scale = Math.min(1d, Math.min(96d / image.getWidth(), 72d / image.getHeight()));
+            int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
+            int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
+            return new javax.swing.ImageIcon(image.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH));
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    private record ImageRows(PassagesTab.State state, String reason, List<String> warnings,
+                             List<ImagesTab.Image> images, int described) {
+    }
+
     private void harvestAssets() {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
@@ -730,6 +1020,132 @@ public final class PageDetailPanel extends JPanel {
                     StandardOpenOption.WRITE);
             return content.length;
         }, bytes -> feedback.success("Gespeichert: " + target + " (" + Texts.bytes(bytes) + ")"), feedback::problem);
+    }
+
+    /** „Vorschau“ nur mit geladener Seite und gewähltem Anhang. */
+    private void updatePreviewEnabled() {
+        previewAsset.setEnabled(page != null && assets.getSelectedRow() >= 0);
+    }
+
+    /**
+     * Öffnet den gewählten Anhang im Anhang-Viewer als Overlay über der Liste, wie {@code
+     * KnowledgeReaderPanel.openAttachment} im Enterprise AI Client; geladen wird erst jetzt. Office-Dateien zeigt
+     * der Viewer über die Vorschau der Quelle, die nur Quellen mit {@code ATTACHMENT_PREVIEWS} anbieten.
+     */
+    void openAttachment() {
+        AppRuntime runtime = context.runtime();
+        int row = assets.getSelectedRow();
+        if (runtime == null || page == null || row < 0 || row >= assetsModel.rows.size()) {
+            return;
+        }
+        PageAssets.Entry entry = assetsModel.rows.get(row);
+        com.aresstack.spaceharvester.application.sources.PageAttachment file = entry.attachment();
+        String mediaType = file.mediaType() != null && !file.mediaType().isBlank() ? file.mediaType()
+                : entry.stored() == null ? null : entry.stored().mediaType();
+        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), mediaType,
+                file.fileSize() == null ? -1 : file.fileSize());
+        String source = sourceId;
+        boolean previews = runtime.workspace().attachmentPreviews(source);
+        showAttachmentOverlay(new AttachmentViewerPanel(attachment,
+                attachmentLoader(runtime, source, pageId, previews), fileOpener, attachmentRenderer),
+                attachment.fileName());
+    }
+
+    /** Grund im Anhang-Viewer, solange die Quelle einen Einmalcode verlangt; danach lädt die Seite neu. */
+    static final String SIGN_IN_PENDING = "Für diesen Anhang ist eine zusätzliche Anmeldung (Einmalcode) "
+            + "erforderlich.";
+
+    /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
+    private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
+                                                           boolean previews) {
+        return new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                Background.run(() -> runtime.workspace().assetContent(source, id, attachment.key()).content(), done,
+                        error -> failed.accept(reason(error)));
+            }
+
+            @Override
+            public void preview(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                if (!previews) {
+                    ReaderAttachmentLoader.super.preview(attachment, done, failed);
+                    return;
+                }
+                Background.run(() -> runtime.workspace().assetPreview(source, id, attachment.key()).content(), done,
+                        error -> failed.accept(reason(error)));
+            }
+        };
+    }
+
+    private static String reason(Throwable error) {
+        if (error instanceof com.aresstack.spaceharvester.application.signin.SignInPendingException) {
+            return SIGN_IN_PENDING;
+        }
+        Problems.Problem problem = Problems.describe(error);
+        return problem.message() == null ? problem.title() : problem.title() + ": " + problem.message();
+    }
+
+    private void showAttachmentOverlay(JComponent content, String heading) {
+        closeAttachmentOverlay();
+        attachmentOverlay = new ComicOverlayPanel(heading, content, this::closeAttachmentOverlay, Comic.PALETTE);
+        attachmentOverlay.getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeAttachment");
+        attachmentOverlay.getActionMap().put("closeAttachment", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                closeAttachmentOverlay();
+            }
+        });
+        attachmentLayers.add(attachmentOverlay, JLayeredPane.MODAL_LAYER);
+        attachmentLayers.revalidate();
+        attachmentLayers.repaint();
+    }
+
+    void closeAttachmentOverlay() {
+        if (attachmentOverlay != null) {
+            AttachmentViewerPanel viewer = find(attachmentOverlay);
+            if (viewer != null) {
+                viewer.close(); // erst hier endgültig: Aus- und Einhängen (Baum/Liste) lässt den Viewer leben
+            }
+            attachmentLayers.remove(attachmentOverlay);
+            attachmentOverlay = null;
+            attachmentLayers.revalidate();
+            attachmentLayers.repaint();
+        }
+    }
+
+    /** Für Tests: der offene Anhang-Viewer oder {@code null}. */
+    AttachmentViewerPanel attachmentViewer() {
+        return attachmentOverlay == null ? null : find(attachmentOverlay);
+    }
+
+    private static AttachmentViewerPanel find(java.awt.Component root) {
+        if (root instanceof AttachmentViewerPanel viewer) {
+            return viewer;
+        }
+        if (root instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                AttachmentViewerPanel found = find(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Für Tests: womit „Öffnen“ im Anhang-Viewer die Datei öffnet und auf welchem Thread PDF-Seiten entstehen. */
+    void setAttachmentViewerHooks(ReaderFileOpener opener, Executor renderer) {
+        this.fileOpener = opener == null ? ReaderFileOpener.system() : opener;
+        this.attachmentRenderer = renderer;
+    }
+
+    JTable assets() {
+        return assets;
+    }
+
+    ComposerButton previewAsset() {
+        return previewAsset;
     }
 
     private void saveRaw() {
@@ -787,7 +1203,10 @@ public final class PageDetailPanel extends JPanel {
             Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null);
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
-            return new Recomputed(run, updated, document(source, id, updated, text, font));
+            ReaderDocument document = document(source, id, updated, text, font);
+            relations(runtime, document, source, cached.header().metadata().partitionKey());
+            navigation(runtime, document, source, id);
+            return new Recomputed(run, updated, document);
         }, result -> {
             if (current != request) {
                 return;
@@ -839,6 +1258,7 @@ public final class PageDetailPanel extends JPanel {
         bookmark.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
+        updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
     }
@@ -853,6 +1273,10 @@ public final class PageDetailPanel extends JPanel {
 
     PassagesTab passages() {
         return passages;
+    }
+
+    ImagesTab images() {
+        return images;
     }
 
     TermsTab terms() {
@@ -882,6 +1306,25 @@ public final class PageDetailPanel extends JPanel {
         return reader;
     }
 
+    /**
+     * Zeigt die Dokumentnavigation der angezeigten Seite als Wolkenbanner über dem Reiter „Text“; {@code null} oder
+     * leer blendet ihn aus. Die Positionen beziehen sich auf den angezeigten Lesetext. Beim Laden fragt die App
+     * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ab ({@link Navigation#of}). EDT.
+     */
+    void showNavigation(Navigation navigation) {
+        readerPage.setNavigation(navigation == null || navigation.isEmpty() ? null : navigation);
+    }
+
+    /** Für Tests: der Navigationsbanner über dem Lesetext. */
+    DocumentNavigationSky navigationSky() {
+        return readerPage.sky();
+    }
+
+    /** Für Tests: der Lesetext mit dem Banner darüber. */
+    NavigableDocumentPage readerPage() {
+        return readerPage;
+    }
+
     String acronymHint() {
         return acronymHint.getText();
     }
@@ -904,11 +1347,46 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** @param checked ob der Bediener ausdrücklich „Aktualität prüfen“ gewählt hat */
+    /** {@code passage} nur beim Öffnen über eine Passage-ID ({@link #openPassage}). */
     private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
-                          String display, String storage, boolean checked) {
+                          String display, String storage, boolean checked, PassageLookup passage) {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {
+    }
+
+    /** Jede Ebene (Liste, Overlay) füllt den Reiter „Anhänge“ (wie {@code KnowledgeReaderPanel.FillLayout}). */
+    private static final class FillLayout implements java.awt.LayoutManager {
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component comp) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(java.awt.Container parent) {
+            Dimension size = new Dimension();
+            for (java.awt.Component child : parent.getComponents()) {
+                Dimension preferred = child.getPreferredSize();
+                size.width = Math.max(size.width, preferred.width);
+                size.height = Math.max(size.height, preferred.height);
+            }
+            return size;
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new Dimension();
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            for (java.awt.Component child : parent.getComponents()) {
+                child.setBounds(0, 0, parent.getWidth(), parent.getHeight());
+            }
+        }
     }
 
     private static final class AssetsModel extends AbstractTableModel {

@@ -95,4 +95,20 @@ class TermsTabTest {
                 "0/1");
         assertThat(jumped).containsExactly(List.of(new TermsTab.Span(10, 25), new TermsTab.Span(40, 55)));
     }
+
+    @Test
+    void theRelationsOfThePageAreCountedAndListed() throws Exception {
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsTab tab = new TermsTab();
+            tab.show(new PageAcronyms(PageAcronyms.State.CURRENT, RESULT, List.of(), List.of()));
+            seen.add(tab.counts().get(2));
+            tab.showRelations(List.of(new com.aresstack.spaceharvester.app.ui.Relation("r1", "API",
+                    "ABBREVIATION", "Application Programming Interface", "CONFIRMED", "RULE", 1)));
+            seen.add(tab.counts().get(2));
+            seen.addAll(tab.relationLines());
+        });
+        assertThat(seen).containsExactly(TermsTab.NOT_YET, "1",
+                "API · Abkürzung für · Application Programming Interface (Bestätigt, Regel)");
+    }
 }

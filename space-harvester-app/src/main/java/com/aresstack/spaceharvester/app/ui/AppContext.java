@@ -65,6 +65,14 @@ public final class AppContext {
 
         void openPage(String sourceId, String pageId);
 
+        /**
+         * Öffnet einen Absatz über seine stabile Passage-ID (#452) unter Inhalte im Reiter „Absätze“; ohne eigene
+         * Umsetzung nur seine Seite.
+         */
+        default void openPassage(String sourceId, String passageId) {
+            openPage(sourceId, com.aresstack.spaceharvester.application.passages.PassageId.parse(passageId).pageId());
+        }
+
         void openSpace(String sourceId, String spaceKey);
 
         void showJob(String jobId);

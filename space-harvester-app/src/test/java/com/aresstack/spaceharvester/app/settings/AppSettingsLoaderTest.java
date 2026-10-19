@@ -50,6 +50,8 @@ class AppSettingsLoaderTest {
                       pac-url: http://proxy.example.org/proxy.pac
                   assets:
                     max-size: 5MB
+                    large-file-threshold: 2MB
+                    max-concurrent-large-files: 3
                 """.formatted(home.resolve("daten")), Map.of("WIKI_TOKEN", "tok-123"));
 
         assertThat(settings.problems()).isEmpty();
@@ -63,6 +65,8 @@ class AppSettingsLoaderTest {
         assertThat(settings.proxy().mode()).isEqualTo(ProxySettings.Mode.PAC_URL_MANUAL);
         assertThat(settings.storage().dataDirectory()).isEqualTo(home.resolve("daten"));
         assertThat(settings.storage().maxAssetBytes()).isEqualTo(5L * 1024 * 1024);
+        assertThat(settings.storage().largeAssetBytes()).isEqualTo(2L * 1024 * 1024);
+        assertThat(settings.storage().maxLargeAssets()).isEqualTo(3);
         assertThat(settings.toString()).doesNotContain("tok-123");
     }
 
@@ -119,6 +123,10 @@ class AppSettingsLoaderTest {
 
         assertThat(settings.sources()).isEmpty();
         assertThat(settings.problems()).isEmpty();
+        // Anhänge wie im Core und im Enterprise AI Client (#423): bis 100 MiB, ab 20 MiB höchstens zwei zugleich.
+        assertThat(settings.storage().maxAssetBytes()).isEqualTo(100L * 1024 * 1024);
+        assertThat(settings.storage().largeAssetBytes()).isEqualTo(20L * 1024 * 1024);
+        assertThat(settings.storage().maxLargeAssets()).isEqualTo(2);
     }
 
     @Test
