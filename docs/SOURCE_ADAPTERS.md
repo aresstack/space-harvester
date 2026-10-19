@@ -23,7 +23,7 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 | `pageMetadata(pageId)` | `ResourceMetadataSource` | eine Seite ohne Inhalt, unabhängig vom Space (#6) |
 | `storedPage(pageId)` | `StoredContentSource` | native Antwort Byte für Byte mit Kopfdaten aus derselben Antwort (#8) |
 | `attachments(pageId)` | `AttachmentListSource` | alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit allen Listenantworten Byte für Byte; nie Dateibytes (#9) |
-| `attachmentPreview(attachment, preview, maxBytes)` | `PageViewSource#loadAttachmentPreview` | Vorschau oder PDF-Konvertierung eines Anhangs durch die Quelle, nur mit `previewsAttachments()` (#183) |
+| `attachmentPreview(attachment, preview, maxBytes)` | `PageViewSource#loadAttachmentPreview` | Vorschau oder PDF-Konvertierung eines Anhangs durch die Quelle, Fähigkeit `ATTACHMENT_PREVIEWS` (#183) |
 
 - Fehlt einer Quelle eine Fähigkeit, antwortet die Methode mit `SourceAccessException` `UNSUPPORTED`, nie mit
   einem leeren Ergebnis. `storedPage` und `attachments` sind deshalb Default-Methoden.

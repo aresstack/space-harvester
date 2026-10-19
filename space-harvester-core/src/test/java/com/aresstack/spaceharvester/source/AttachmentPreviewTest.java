@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import java.nio.charset.StandardCharsets;
@@ -58,10 +59,10 @@ class AttachmentPreviewTest {
 
     @Test
     void theConfluenceSourceOffersPreviewsAndAnotherSourceDoesNot() {
-        assertThat(source().previewsAttachments()).isTrue();
+        assertThat(source().capabilities()).contains(SourceCapability.ATTACHMENT_PREVIEWS);
         assertThat(new KnowledgeSourceHarvestSource("wiki", "confluence", "Wiki",
                 new com.aresstack.enterpriseai.source.api.testing.InMemoryKnowledgeSource("x"))
-                .previewsAttachments()).isFalse();
+                .capabilities()).doesNotContain(SourceCapability.ATTACHMENT_PREVIEWS);
     }
 
     @Test

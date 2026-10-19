@@ -125,7 +125,7 @@ public class AssetsController {
                     + "Dokumentkonvertierung, etwa ein Office-Dokument als PDF), als eigene Asset-Variante: aus der "
                     + "Ablage oder über die Quelle geladen; abgelegt nur mit Freigabe sync. Ohne kind die erste "
                     + "verfügbare in der Reihenfolge document, poster, thumbnail. Immer als Download wie content, "
-                    + "ETag = sha256. Freigabe content; nur Quellen mit Vorschauen (Confluence).")
+                    + "ETag = sha256. Freigabe content; nur Quellen mit Fähigkeit attachment-previews.")
     @ApiResponse(responseCode = "200", description = "Vorschau als PDF oder Bild")
     @ApiResponse(responseCode = "304", description = "Inhalt unverändert (If-None-Match)")
     @ApiResponse(responseCode = "400", description = "Unbekannte Vorschauart (invalid-query)")

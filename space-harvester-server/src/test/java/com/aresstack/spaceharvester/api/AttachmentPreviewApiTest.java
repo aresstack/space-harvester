@@ -148,6 +148,11 @@ class AttachmentPreviewApiTest {
     private Environment environment;
 
     @Test
+    void theSourceNamesTheCapability() throws Exception {
+        assertThat(send("/api/v1/sources", TestClient.TOKEN).body()).contains("\"attachment-previews\"");
+    }
+
+    @Test
     void theConvertedDocumentIsADownloadAndStoredOnlyWithSync() throws Exception {
         int before = CONVERSIONS.get();
         HttpResponse<String> read = send("/api/v1/sources/wiki/pages/101/assets/att7/preview", CONTENT_TOKEN);

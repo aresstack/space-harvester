@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.security.MessageDigest;
@@ -562,7 +563,7 @@ public class Assets {
      * @param mayStore wie bei {@link #content(PageAttachmentList, String, boolean)}
      * @throws SourceAccessException  {@code NOT_FOUND}, wenn der Anhang nicht zur Seite gehört oder es keine Vorschau
      *                                gibt, {@code UNAVAILABLE}, solange die Quelle sie noch erzeugt, {@code UNSUPPORTED}
-     *                                für Quellen ohne {@link HarvestSource#previewsAttachments()}, sonst wie die Quelle
+     *                                für Quellen ohne {@link SourceCapability#ATTACHMENT_PREVIEWS}, sonst wie die Quelle
      * @throws AssetTooLargeException wenn die Vorschau die Grenze überschreitet
      */
     public AssetContent preview(PageAttachmentList list, String attachmentId, AttachmentPreview preview,
@@ -578,7 +579,7 @@ public class Assets {
             }
         }
         HarvestSource source = source(sourceId);
-        if (!source.previewsAttachments()) {
+        if (!source.capabilities().contains(SourceCapability.ATTACHMENT_PREVIEWS)) {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }

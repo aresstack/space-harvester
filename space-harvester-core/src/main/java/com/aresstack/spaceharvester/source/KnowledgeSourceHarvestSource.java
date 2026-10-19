@@ -187,6 +187,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof AttachmentListSource) {
             capabilities.add(SourceCapability.PAGE_ATTACHMENTS);
         }
+        if (port instanceof PageViewSource && port instanceof AttachmentListSource) {
+            // Vorschauen gibt es bei Quellen mit Lese-Ansicht und Anhangsliste (Confluence, #183).
+            capabilities.add(SourceCapability.ATTACHMENT_PREVIEWS);
+        }
         if (port instanceof PageNavigationSource && port instanceof ResourceMetadataSource) {
             capabilities.add(SourceCapability.NAVIGATION);
         }
@@ -743,12 +747,6 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return new AttachmentFile(described, file.content(), Instant.now());
     }
 
-    /** Vorschauen gibt es bei Quellen mit Lese-Ansicht und Anhangsliste (Confluence). */
-    @Override
-    public boolean previewsAttachments() {
-        return port instanceof PageViewSource && port instanceof AttachmentListSource;
-    }
-
     /**
      * Vorschau über {@link PageViewSource#loadAttachmentPreview} (#183), bei Confluence die Dokumentkonvertierung
      * ({@code ConfluenceRestClient#conversionPath}); die Angaben des Anhangs liest der Adapter dabei frisch. Die Grenze
@@ -756,7 +754,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
      */
     @Override
     public byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
-        if (!previewsAttachments() || !(port instanceof PageViewSource views)) {
+        if (!(port instanceof PageViewSource views) || !(port instanceof AttachmentListSource)) {
             return HarvestSource.super.attachmentPreview(attachment, preview, maxBytes);
         }
         Objects.requireNonNull(preview, "preview");
