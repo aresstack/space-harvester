@@ -9,6 +9,9 @@ import java.util.List;
  */
 public interface AcronymRules {
 
+    /** Kennung der Satzgrenzen, aus denen die Ausschreibungen stammen, etwa {@code opennlp-de} oder {@code splitter}. */
+    String sentences();
+
     /** Alle Akronyme und Kennungen des Textes, je Suchform ein Fund. */
     List<Finding> analyze(String text);
 

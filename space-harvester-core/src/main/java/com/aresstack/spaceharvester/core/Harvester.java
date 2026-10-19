@@ -387,9 +387,10 @@ public final class Harvester implements AutoCloseable {
             }
             // Akronyme mit denselben Satzgrenzen wie die Absätze (EAC: OpenNLP, sonst Splitter).
             AcronymProcessor acronyms = new AcronymProcessor(sentences);
+            TermProcessor termProcessor = new TermProcessor(acronyms);
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms,
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
-                    new RelationProcessor(), new TermProcessor(acronyms)));
+                    new RelationProcessor(), termProcessor));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -494,18 +495,18 @@ public final class Harvester implements AutoCloseable {
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
-                    new TermProcessor().version());
+                    termProcessor.version());
             this.termRelations = new TermRelations(catalog,
                     new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
                     cache::findHeader, clock);
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
-                    termRelations, new TermProcessor().version(), clock);
+                    termRelations, termProcessor.version(), clock);
             // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
                     key -> cache.find(key).flatMap(projector::project), termRelations,
                     new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent), new FileResolutionCache(builder.dataDirectory.resolve("term-relations")),
-                    jobs, new TermProcessor().version(), clock);
+                    jobs, termProcessor.version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart

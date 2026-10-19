@@ -65,9 +65,15 @@ public class AcronymProcessor implements EnrichmentProcessor {
         return "acronyms";
     }
 
+    /** {@code 4;sentences=…}: Ein anderer Satz-Segmentierer ergibt andere Ausschreibungen und veraltet die Ergebnisse. */
     @Override
     public String version() {
-        return "4";
+        return "4;sentences=" + sentences();
+    }
+
+    /** Kennung der Satzgrenzen wie {@code SentenceSegmenter.id()}. */
+    public String sentences() {
+        return rules.sentences();
     }
 
     /** Akronyme und Kennungen eines Textes nach den Regeln des EAC, mit den Standardschwellen. */

@@ -1,10 +1,12 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -57,10 +59,10 @@ class TermConfiguration {
     @Bean
     AcronymRelationRule acronymRelationRule(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
                                             TermRelations relations, ObjectProvider<SnapshotRepository> repository,
-                                            ObjectProvider<PageCacheReader> reader) {
+                                            ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         return new AcronymRelationRule(catalog, index, access, headers(repository.getIfAvailable(),
-                reader.getIfAvailable()), relations, new TermProcessor().version(), Clock.systemUTC());
+                reader.getIfAvailable()), relations, termsVersion(sentences), Clock.systemUTC());
     }
 
     @Bean
@@ -70,7 +72,7 @@ class TermConfiguration {
                                         Path directory,
                                         ObjectProvider<AcronymExpansionModel> model,
                                         ObjectProvider<SnapshotRepository> repository,
-                                        ObjectProvider<PageCacheReader> reader) {
+                                        ObjectProvider<PageCacheReader> reader, SentenceSegmenter sentences) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -79,7 +81,7 @@ class TermConfiguration {
         return new AcronymResolution(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), relations,
                 model.getIfAvailable(() -> AcronymExpansionModel.NONE), new FileResolutionCache(directory), jobs,
-                new TermProcessor().version(),
+                termsVersion(sentences),
                 Clock.systemUTC());
     }
 
@@ -113,7 +115,8 @@ class TermConfiguration {
 
     @Bean
     TermQueries termQueries(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
-                            ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader) {
+                            ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader,
+                            SentenceSegmenter sentences) {
         TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
         SnapshotRepository snapshots = repository.getIfAvailable();
         PageCacheReader cache = reader.getIfAvailable();
@@ -130,7 +133,11 @@ class TermConfiguration {
             headers = key -> Optional.empty();
             payloads = key -> Optional.empty();
         }
-        return new TermQueries(catalog, index, access, headers, payloads, projector(),
-                new TermProcessor().version());
+        return new TermQueries(catalog, index, access, headers, payloads, projector(), termsVersion(sentences));
+    }
+
+    /** Wie {@code terms} in der Anreicherung (EnrichmentConfiguration): dieselben Satzgrenzen, dieselbe Version. */
+    private static String termsVersion(SentenceSegmenter sentences) {
+        return new TermProcessor(new AcronymProcessor(sentences)).version();
     }
 }

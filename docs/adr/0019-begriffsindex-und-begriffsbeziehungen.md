@@ -135,7 +135,10 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   Ausschreibungen stehen nur in Klammern direkt daneben im selben Satz; ohne Klammer bleibt `RSL` →
   `Rückmeldeschlüssel` eine Beziehung aus #120 oder ein Vorschlag aus #122. Gewollt anders: die Schwellen
   (`AcronymSettings`: zehn Buchstaben, Versalzeile ab 60 % und drei Wörtern) sind fest, im EAC einstellbar; der
-  Begriffsindex und die Leseansicht zeigen die erste Ausschreibung, die Fakten alle.
+  Begriffsindex und die Leseansicht zeigen die erste Ausschreibung, die Fakten alle. Die Versionen nennen die
+  Satzgrenzen (`4;sentences=opennlp-de`, ohne Satzmodell `splitter`; `terms` ebenso), ein Wechsel veraltet die
+  Ergebnisse. Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
+  stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
 - Kein Fachglossar und keine KI in Index und Abfragen.
 
 ## Folgen

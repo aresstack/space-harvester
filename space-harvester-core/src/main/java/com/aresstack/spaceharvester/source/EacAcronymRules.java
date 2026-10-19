@@ -19,9 +19,11 @@ import java.util.Objects;
 public final class EacAcronymRules implements AcronymRules {
 
     private final AcronymExtractor extractor;
+    private final String sentences;
 
     private EacAcronymRules(com.aresstack.enterpriseai.astu.acropolis.passage.SentenceSegmenter sentences) {
         this.extractor = new AcronymExtractor(sentences);
+        this.sentences = sentences.id();
     }
 
     /** Mit dem regelbasierten Satz-Splitter des EAC ({@code SentenceSegmenter.splitter()}), ohne Satzmodell. */
@@ -46,6 +48,11 @@ public final class EacAcronymRules implements AcronymRules {
                 return sentences.id();
             }
         });
+    }
+
+    @Override
+    public String sentences() {
+        return sentences;
     }
 
     @Override

@@ -78,7 +78,7 @@ class ReaderAcronymsTest {
 
         assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
         assertThat(shown.acronyms().result().processorId()).isEqualTo("acronyms");
-        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("4");
+        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("4;sentences=opennlp-de");
         assertThat(shown.acronyms().result().key().sourceId()).isEqualTo("wiki");
         assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 4")
                 .contains("Fundstellen markiert");
