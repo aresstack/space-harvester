@@ -22,6 +22,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUn
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
+import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchSort;
@@ -75,6 +76,8 @@ class RelevanceSearchTest {
     private final InMemoryEnrichmentStore store = new InMemoryEnrichmentStore();
     private final List<String> embeddedQueries = new ArrayList<>();
     private boolean modelDown;
+    /** Stand des Volltextindex je Seite ({@link PageTextIndex#inputSha256}). */
+    private final Map<String, String> indexed = new java.util.HashMap<>();
     private EmbeddingProcessor processor = new EmbeddingProcessor(new EmbeddingProvider() {
         @Override
         public String modelId() {
@@ -205,10 +208,9 @@ class RelevanceSearchTest {
                 .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
     }
 
-    @Test
-    void withCurrentPassagesTheRerankerSeesExactlyTheBestPassageOtherwiseTheWindow() {
-        Map<String, String> documents = new java.util.LinkedHashMap<>();
-        SearchReranker recording = new SearchReranker() {
+    /** Zeichnet auf, was der Reranker je Treffer sieht. */
+    private static SearchReranker recording(Map<String, String> documents) {
+        return new SearchReranker() {
             @Override
             public String id() {
                 return "aufzeichnung@1";
@@ -225,7 +227,10 @@ class RelevanceSearchTest {
                 return request.candidates();
             }
         };
-        // Embeddings je Absatz (ADR 0020): Stücke sind Absätze.
+    }
+
+    /** Embeddings je Absatz (ADR 0020): Stücke sind Absätze; der Volltextindex hat den Text, aus dem sie stammen. */
+    private void passageEmbeddings() {
         processor = processor.withPassages(new PassageChunking() {
             @Override
             public String fingerprint() {
@@ -238,12 +243,68 @@ class RelevanceSearchTest {
             }
         });
         publish();
+        indexed.put("11", PageTextIndexing.entryState(EMBEDDED, page("DEV", "11", "Nachtbetrieb", "5").metadata()));
+        indexed.put("12", PageTextIndexing.entryState(EMBEDDED,
+                page("DEV", "12", "Betrieb Handbuch", "2").metadata()));
+    }
 
-        withTexts(ALLOW_ALL, List.of(), recording).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+    @Test
+    void withCurrentPassagesTheRerankerSeesExactlyTheBestPassageOtherwiseTheWindow() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        passageEmbeddings();
+
+        withTexts(ALLOW_ALL, List.of(), recording(documents)).search(CALLER, query(null), "nächtlicher Betrieb", 10);
 
         // 11 ist aktuell: genau der Absatz [10, 20). 12 ist veraltet (ältere Revision): das Fenster wie bisher.
         assertThat(documents).containsEntry("11", "Nachtbetrieb\nLesetext v")
                 .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
+    }
+
+    @Test
+    void theExactPassageNeedsTheTextItsEmbeddingCameFrom() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        passageEmbeddings();
+        // Der Volltextindex hat schon den neuen Text, das Embedding ist noch nicht nachgerechnet.
+        indexed.put("11", "sha256:" + "2".repeat(64));
+
+        withTexts(ALLOW_ALL, List.of(), recording(documents)).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        assertThat(documents).containsEntry("11", "Nachtbetrieb\n0123456789Lesetext von 11");
+    }
+
+    @Test
+    void aHitTheLiveCheckFindsNewerGetsTheWindowLikeItsStaleRelevance() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        passageEmbeddings();
+        // Die Quelle meldet live Version 6 von 11; der Index kennt 5.
+        HarvestSource live = (HarvestSource) Proxy.newProxyInstance(HarvestSource.class.getClassLoader(),
+                new Class<?>[] {HarvestSource.class}, (proxy, method, args) -> {
+                    if (!method.getName().equals("pageMetadata")) {
+                        return null;
+                    }
+                    String pageId = (String) args[0];
+                    return page(pageId.startsWith("2") ? "OPS" : "DEV", pageId, "Seite " + pageId,
+                            pageId.equals("11") ? "6" : pageId.equals("10") ? "3" : pageId.equals("12") ? "2" : "1")
+                            .metadata();
+                });
+        SourceCatalog catalog = new SourceCatalog() {
+            @Override
+            public List<HarvestSource> all() {
+                return List.of();
+            }
+
+            @Override
+            public Optional<HarvestSource> find(String sourceId) {
+                return "wiki".equals(sourceId) ? Optional.of(live) : Optional.empty();
+            }
+        };
+
+        RelevanceSearch.RelevanceResults results = withTexts(catalog, RelevanceSearch.Renewal.NONE, ALLOW_ALL,
+                List.of(), recording(documents)).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        assertThat(results.hits()).filteredOn(hit -> hit.hit().page().pageId().equals("11")).singleElement()
+                .satisfies(hit -> assertThat(hit.relevance().freshness()).isEqualTo(RelevanceSearch.Freshness.STALE));
+        assertThat(documents).containsEntry("11", "Nachtbetrieb\n0123456789Lesetext von 11");
     }
 
     @Test
@@ -351,6 +412,11 @@ class RelevanceSearchTest {
     }
 
     private RelevanceSearch withTexts(AccessPolicy policy, List<PageTextIndex.Match> matches, SearchReranker reranker) {
+        return withTexts(CATALOG, null, policy, matches, reranker);
+    }
+
+    private RelevanceSearch withTexts(SourceCatalog catalog, RelevanceSearch.Renewal renewal, AccessPolicy policy,
+                                      List<PageTextIndex.Match> matches, SearchReranker reranker) {
         PageTextIndex texts = new PageTextIndex() {
             @Override
             public void put(Entry entry) {
@@ -358,7 +424,7 @@ class RelevanceSearchTest {
 
             @Override
             public Optional<String> inputSha256(PageKey key) {
-                return Optional.empty();
+                return Optional.ofNullable(indexed.get(key.pageId()));
             }
 
             @Override
@@ -386,7 +452,7 @@ class RelevanceSearchTest {
             public void flush() {
             }
         };
-        return new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store, processor, null,
+        return new RelevanceSearch(catalog, index, new AccessGuard(policy), store, store, processor, renewal,
                 reranker, texts);
     }
 
@@ -411,6 +477,9 @@ class RelevanceSearchTest {
         return vector;
     }
 
+    /** Eingabe-Hash der Textprojektion, aus der die Embeddings dieses Tests stammen. */
+    private static final String EMBEDDED = "sha256:" + "1".repeat(64);
+
     private void embed(String pageId, String revision, String... vectors) {
         StringBuilder json = new StringBuilder("{\"model\":\"axes\",\"dimensions\":3,\"chunks\":[");
         for (int i = 0; i < vectors.length; i++) {
@@ -418,7 +487,7 @@ class RelevanceSearchTest {
                     .append(i * 10 + 10).append(",\"section\":null,\"vector\":").append(vectors[i]).append('}');
         }
         store.save(new Enrichment(new PageKey("wiki", pageId), "embedding", processor.version(),
-                "sha256:" + "1".repeat(64), revision, Enrichment.Status.OK, json.append("]}").toString(), List.of(),
+                EMBEDDED, revision, Enrichment.Status.OK, json.append("]}").toString(), List.of(),
                 null, Instant.parse("2026-10-17T07:00:00Z")));
     }
 
