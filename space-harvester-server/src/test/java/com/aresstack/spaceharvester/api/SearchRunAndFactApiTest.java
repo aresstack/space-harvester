@@ -185,6 +185,15 @@ class SearchRunAndFactApiTest {
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&spaceKey=OPS", DEV_TOKEN)).isEmpty();
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION", METADATA_TOKEN)).isEmpty();
         assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION", ADMIN_TOKEN)).isEmpty();
+        // Nur Fakten eines Prozessors; MENTION entsteht aus entities und, eingeschaltet, aus statements.
+        assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&processor=acronyms", DEV_TOKEN))
+                .containsOnly("701").isNotEmpty();
+        assertThat(factPages("/api/v1/facts?type=ACRONYM_DEFINITION&processor=statements", DEV_TOKEN)).isEmpty();
+        assertThat(json.readTree(get("/api/v1/sources/wiki/pages/701/facts?processor=statements", DEV_TOKEN)
+                .body()).get("facts")).isEmpty();
+        HttpResponse<String> invalid = get("/api/v1/facts?type=MENTION&processor=..%2Fx", DEV_TOKEN);
+        assertThat(invalid.statusCode()).isEqualTo(400);
+        assertThat(invalid.body()).contains("processor").doesNotContain("../x");
         HttpResponse<String> walk = get("/api/v1/facts?type=ACRONYM_CANDIDATE&limit=1", DEV_TOKEN);
         JsonNode first = json.readTree(walk.body());
         assertThat(first.get("facts")).hasSize(1);
