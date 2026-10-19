@@ -102,6 +102,13 @@ public final class ChatNavigationLabeler implements NavigationLabelModel {
         return current != null && current.mayProcessExternally(sourceId);
     }
 
+    private void checkPause(String version) {
+        Pause paused = pause;
+        if (paused != null && paused.version().equals(version) && clock.instant().isBefore(paused.until())) {
+            throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell kürzlich nicht erreichbar");
+        }
+    }
+
     @Override
     public Labels labels(String documentTitle, List<String> sectionTexts) {
         AiServiceSettings current = settings.get();
@@ -109,10 +116,7 @@ public final class ChatNavigationLabeler implements NavigationLabelModel {
             throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "Kein Chat-Modell eingestellt");
         }
         String version = version(current);
-        Pause paused = pause;
-        if (paused != null && paused.version().equals(version) && clock.instant().isBefore(paused.until())) {
-            throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell kürzlich nicht erreichbar");
-        }
+        checkPause(version);
         boolean acquired;
         try {
             acquired = slots.tryAcquire(RemoteAi.LABEL_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
@@ -122,6 +126,13 @@ public final class ChatNavigationLabeler implements NavigationLabelModel {
         }
         if (!acquired) {
             throw new AiServiceException(AiServiceException.Reason.TIMEOUT, "Abschnittsbenennung ausgelastet");
+        }
+        try {
+            // Wer auf einen Platz gewartet hat, während die anderen scheiterten, geht nicht mehr ans Netz.
+            checkPause(version);
+        } catch (AiServiceException e) {
+            slots.release();
+            throw e;
         }
         try {
             Labels labels = remote.apply(current).sectionLabels(documentTitle, sectionTexts);
