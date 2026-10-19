@@ -77,6 +77,8 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     private final boolean needsCredentials;
     /** Anzeigename; {@code null} = der des Upstream-Typs. */
     private final String displayName;
+    /** Ob {@code auth.type pat} gilt: das Token ohne Benutzer unter demselben Verweis wie bei {@code basic}. */
+    private final boolean tokenAuth;
 
     public KnowledgeSourceProviderAdapter(KnowledgeSourceProvider provider) {
         this.fixed = Objects.requireNonNull(provider, "provider");
@@ -88,17 +90,18 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.credentialRefPassThrough = false;
         this.needsCredentials = false;
         this.displayName = null;
+        this.tokenAuth = false;
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, String credentialKey, String titleField) {
         this(factory, Objects.requireNonNull(factory.provider(new Connection(KnowledgeSourceProviderAdapter::none,
-                HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null);
+                HttpRoutePort.direct(), null, null)), "provider"), credentialKey, titleField, true, false, false, null, false);
     }
 
     private KnowledgeSourceProviderAdapter(ConnectedProvider factory, KnowledgeSourceProvider unconnected,
                                            String credentialKey, String titleField, boolean tls,
                                            boolean credentialRefPassThrough, boolean needsCredentials,
-                                           String displayName) {
+                                           String displayName, boolean tokenAuth) {
         this.fixed = null;
         this.factory = Objects.requireNonNull(factory, "factory");
         this.unconnected = unconnected;
@@ -108,6 +111,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         this.credentialRefPassThrough = credentialRefPassThrough;
         this.needsCredentials = needsCredentials;
         this.displayName = displayName;
+        this.tokenAuth = tokenAuth;
     }
 
     /**
@@ -129,7 +133,7 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     public KnowledgeSourceProviderAdapter withoutTls() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, false,
-                credentialRefPassThrough, needsCredentials, displayName);
+                credentialRefPassThrough, needsCredentials, displayName, tokenAuth);
     }
 
     /**
@@ -143,21 +147,34 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
             throw new IllegalStateException("ohne Anmeldefeld gibt es keinen Verweis");
         }
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls, true,
-                needsCredentials, displayName);
+                needsCredentials, displayName, tokenAuth);
     }
 
     /** Der Typ verlangt Zugangsdaten ({@link SourceAdapter#needsCredentials()}), etwa JES oder NDV. */
     public KnowledgeSourceProviderAdapter requiringCredentials() {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, true, displayName);
+                credentialRefPassThrough, true, displayName, tokenAuth);
+    }
+
+    /**
+     * Lässt {@code auth.type pat} zu, etwa für Git: das Token geht ohne Benutzer unter {@code source:<id>} an den Typ;
+     * fehlt es, kommt es vom Anbieter des Programms (#188).
+     */
+    public KnowledgeSourceProviderAdapter acceptingToken() {
+        requireConnected();
+        if (credentialKey == null) {
+            throw new IllegalStateException("ohne Anmeldefeld gibt es kein Token");
+        }
+        return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
+                credentialRefPassThrough, needsCredentials, displayName, true);
     }
 
     /** Eigener Anzeigename für Auswahllisten statt dem des Upstream-Typs. */
     public KnowledgeSourceProviderAdapter named(String displayName) {
         requireConnected();
         return new KnowledgeSourceProviderAdapter(factory, unconnected, credentialKey, titleField, tls,
-                credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"));
+                credentialRefPassThrough, needsCredentials, Objects.requireNonNull(displayName, "displayName"), tokenAuth);
     }
 
     private void requireConnected() {
@@ -188,16 +205,23 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         return unconnected.type().summaryKey();
     }
 
-    /** Die Felder des Upstream-Typs ohne das Titelfeld, denn {@code title} steht außerhalb von {@code options}. */
+    /**
+     * Die Felder des Upstream-Typs ohne das Titelfeld, denn {@code title} steht außerhalb von {@code options}, und ohne
+     * das Anmeldefeld, wenn es gesperrt ist ({@code auth} statt eigenem Verweis).
+     */
     @Override
     public List<SourceField> fields() {
-        return SourceFields.of(unconnected.type(), Set.of(titleKey()));
+        return SourceFields.of(unconnected.type(), credentialKey == null || credentialRefPassThrough
+                ? Set.of(titleKey()) : Set.of(titleKey(), credentialKey));
     }
 
-    /** {@code none}, mit Anmeldefeld auch {@code basic}. */
+    /** {@code none}, mit Anmeldefeld auch {@code basic}, mit {@link #acceptingToken} auch {@code pat}. */
     @Override
     public List<SourceType.AuthMode> authModes() {
-        return credentialKey == null ? List.of(SourceType.AuthMode.NONE)
+        if (credentialKey == null) {
+            return List.of(SourceType.AuthMode.NONE);
+        }
+        return tokenAuth ? List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT)
                 : List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC);
     }
 
@@ -238,8 +262,13 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         if (credentialKey != null && config.options().containsKey(credentialKey)) {
             if (!credentialRefPassThrough) {
                 problems.add("options." + credentialKey + " ist nicht erlaubt; dafür gibt es auth");
-            } else if (config.auth().type() == SourceSettingsConfig.AuthType.BASIC) {
-                problems.add("options." + credentialKey + " passt nicht zu auth.type basic; es gilt auth");
+            } else if (usesReference(config.auth())) {
+                problems.add("options." + credentialKey + " passt nicht zu auth.type "
+                        + config.auth().type().name().toLowerCase(java.util.Locale.ROOT) + "; es gilt auth");
+            } else if (config.options().get(credentialKey).strip().startsWith(ConfiguredSecrets.SOURCE_PREFIX)) {
+                // Sonst holte ein Verweis die Zugangsdaten einer anderen Quelle und schickte sie an diesen Host.
+                problems.add("options." + credentialKey + " darf nicht auf " + ConfiguredSecrets.SOURCE_PREFIX
+                        + "… zeigen; dafür gibt es auth");
             }
         }
         if (!problems.isEmpty()) {
@@ -278,16 +307,22 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         // Ohne Passwort in der Konfiguration fragt die Quelle beim Login den Anbieter des Programms (#188).
         if (auth.type() == SourceSettingsConfig.AuthType.BASIC && present(auth.password())) {
             context.secrets().put(config.id(), auth.username(), auth.password());
+        } else if (auth.type() == SourceSettingsConfig.AuthType.PAT && tokenAuth && present(auth.token())) {
+            context.secrets().put(config.id(), null, auth.token());
         }
         return factory.provider(new Connection(context.secrets(), context.routes(),
                 tls ? SourceTls.socketFactory(config, context) : null, context.userAgent()));
     }
 
-    /** Ohne Anmeldefeld nur {@code none}; sonst {@code none} oder {@code basic} (Benutzername und Passwort). */
+    /**
+     * Ohne Anmeldefeld nur {@code none}; sonst {@code none} oder {@code basic} (Benutzername und Passwort), mit
+     * {@link #acceptingToken} auch {@code pat}.
+     */
     private List<String> checkAuth(SourceSettingsConfig.Auth auth, boolean externalSecrets) {
         List<String> problems = new ArrayList<>();
         if (auth.type() == null) {
-            problems.add("auth.type fehlt (none" + (credentialKey == null ? ")" : " oder basic)"));
+            problems.add("auth.type fehlt (none" + (credentialKey == null ? ")" : tokenAuth ? ", basic oder pat)"
+                    : " oder basic)"));
             return problems;
         }
         boolean username = present(auth.username());
@@ -311,8 +346,20 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
                     }
                 }
             }
-            case PAT -> problems.add(credentialKey == null ? "auth wird für type " + type() + " noch nicht unterstützt"
-                    : "auth.type pat passt nicht zu type " + type() + " (none oder basic)");
+            case PAT -> {
+                if (credentialKey == null) {
+                    problems.add("auth wird für type " + type() + " noch nicht unterstützt");
+                } else if (!tokenAuth) {
+                    problems.add("auth.type pat passt nicht zu type " + type() + " (none oder basic)");
+                } else {
+                    if (!externalSecrets && !token) {
+                        problems.add("auth.type pat braucht auth.token");
+                    }
+                    if (username || password) {
+                        problems.add("auth.username und auth.password passen nicht zu auth.type pat");
+                    }
+                }
+            }
         }
         return problems;
     }
@@ -360,10 +407,16 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         if (config.title() != null) {
             values.put(titleKey(), config.title());
         }
-        if (credentialKey != null && config.auth().type() == SourceSettingsConfig.AuthType.BASIC) {
+        if (credentialKey != null && usesReference(config.auth())) {
             values.put(credentialKey, ConfiguredSecrets.refFor(config.id()).id());
         }
         return SourceSettings.of(values);
+    }
+
+    /** Ob die Anmeldung über {@code source:<id>} geht: {@code basic}, bei {@link #acceptingToken} auch {@code pat}. */
+    private boolean usesReference(SourceSettingsConfig.Auth auth) {
+        return auth.type() == SourceSettingsConfig.AuthType.BASIC
+                || tokenAuth && auth.type() == SourceSettingsConfig.AuthType.PAT;
     }
 
     private static boolean present(String value) {
