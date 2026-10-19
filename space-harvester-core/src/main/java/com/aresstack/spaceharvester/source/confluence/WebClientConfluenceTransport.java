@@ -98,6 +98,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     private volatile boolean disposed;
     /** Clients, deren Pool in {@link #retire} auf das verzögerte Schließen wartet; {@link #close()} schließt sie sofort. */
     private final Set<Client> retiring = ConcurrentHashMap.newKeySet();
+    /** Ausgegebene Clients (für Tests: eine Anfrage hält ihren Client und damit dessen Pool). */
+    private final AtomicInteger handedOut = new AtomicInteger();
 
     private WebClientConfluenceTransport(Builder builder) {
         this.routes = builder.routes == null ? HttpRoutePort.direct() : builder.routes;
@@ -330,6 +332,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 // danach schließt; neue Anfragen weist schon der Einstieg ab.
                 Client late = create(key);
                 retire(late);
+                handedOut.incrementAndGet();
                 return late.web();
             }
             client = clients.get(key);
@@ -346,6 +349,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         if (evicted != null) {
             retire(evicted);
         }
+        handedOut.incrementAndGet();
         return client.web();
     }
 
@@ -435,6 +439,11 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         Mono.delay(connectTimeout.plus(readTimeout))
                 .then(Mono.defer(() -> retiring.remove(client) ? client.pool().disposeLater() : Mono.empty()))
                 .subscribe(ignored -> { }, failure -> { });
+    }
+
+    /** Anzahl an Anfragen ausgegebener Clients (für Tests, die auf eine Anfrage im Pool warten). */
+    int clientsHandedOut() {
+        return handedOut.get();
     }
 
     /** Anzahl gerade gehaltener Clients (für Tests der Pool-Trennung). */

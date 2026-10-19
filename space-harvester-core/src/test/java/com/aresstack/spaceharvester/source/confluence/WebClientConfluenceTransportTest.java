@@ -407,7 +407,8 @@ class WebClientConfluenceTransportTest {
         waitFor(() -> requests.get() == 1);
         CompletableFuture<ConfluenceHttpResponse> waiting =
                 transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
-        Thread.sleep(200);
+        // Die Anfrage hält den Client und damit den alten Pool, dessen einzige Verbindung belegt ist.
+        waitFor(() -> transport.clientsHandedOut() == 2);
         assertThat(waiting).isNotDone();
 
         transport.discardClients();
@@ -425,7 +426,7 @@ class WebClientConfluenceTransportTest {
         waitFor(() -> requests.get() == 1);
         CompletableFuture<ConfluenceHttpResponse> waiting =
                 transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
-        Thread.sleep(200);
+        waitFor(() -> transport.clientsHandedOut() == 2);
 
         transport.closeGracefully();
         transport.close();
