@@ -92,8 +92,8 @@ public class TermsController {
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public OccurrenceListResponse occurrences(@Parameter(hidden = true) AccessContext caller,
-                                              @Parameter(description = "Begriff oder Suchwert", required = true)
-                                              @RequestParam(required = false) String term,
+                                              @Parameter(description = "Begriff oder Suchwert")
+                                              @RequestParam String term,
                                               @RequestParam(required = false) String kind,
                                               @RequestParam(required = false) String sourceId,
                                               @RequestParam(required = false) String spaceKey,
@@ -118,12 +118,24 @@ public class TermsController {
     @ApiResponse(responseCode = "404", description = "Kein Kontext verfügbar")
     public ResponseEntity<SnippetResponse> snippet(@Parameter(hidden = true) AccessContext caller,
                                                    @RequestParam String sourceId, @RequestParam String pageId,
-                                                   @RequestParam String inputSha256, @RequestParam int start,
-                                                   @RequestParam int end,
+                                                   @RequestParam String inputSha256,
+                                                   @Parameter(description = "Anfang (UTF-16)") @RequestParam String start,
+                                                   @Parameter(description = "Ende (UTF-16)") @RequestParam String end,
                                                    @RequestParam(defaultValue = "80") int chars) {
-        return terms.snippet(caller, sourceId, pageId, inputSha256, start, end, chars)
+        // Keine Ganzzahl ist wie eine unbekannte Fundstelle 404, damit die Antwort nichts über Freigaben verrät.
+        int from = offset(start);
+        int to = offset(end);
+        return terms.snippet(caller, sourceId, pageId, inputSha256, from, to, chars)
                 .map(found -> ResponseEntity.ok(SnippetResponse.of(found)))
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
+
+    private static int offset(String value) {
+        try {
+            return Integer.parseInt(value.trim());
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private static TermKind kind(String kind) {

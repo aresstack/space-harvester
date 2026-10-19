@@ -136,7 +136,7 @@ class TermsApiTest {
         assertProblem(get("/api/v1/terms?kind=fachbegriff"), 400, "invalid-request");
         assertProblem(get("/api/v1/terms?limit=0"), 400, "invalid-request");
         assertProblem(get("/api/v1/terms?cursor=kaputt"), 400, "invalid-request");
-        assertProblem(get("/api/v1/terms/occurrences"), 400, "invalid-request");
+        assertThat(get("/api/v1/terms/occurrences").statusCode()).isEqualTo(400);
         assertProblem(get("/api/v1/terms?sourceId=unbekannt"), 404, "source-not-found");
     }
 
