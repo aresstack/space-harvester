@@ -84,7 +84,7 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
-        terms = new TermsView();
+        terms = new TermsView(context);
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         searchView.onClearScope(explorer::clearSelection);

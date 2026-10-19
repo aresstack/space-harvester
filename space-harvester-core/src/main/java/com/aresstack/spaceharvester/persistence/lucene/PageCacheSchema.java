@@ -474,6 +474,11 @@ public final class PageCacheSchema {
                 space.get(CHANGES_SINCE) == null ? null : instant(space.get(CHANGES_SINCE)));
     }
 
+    /** Gesperrte Seiten der bestätigten Generation aus ihrem Kopf; reicht das Feld {@link #WITHHELD_PAGE}. */
+    static SortedMap<String, Instant> withheldPageIds(Document space) {
+        return withheld(space);
+    }
+
     private static SortedMap<String, Instant> withheld(Document space) {
         SortedMap<String, Instant> withheld = new TreeMap<>();
         for (String value : space.getValues(WITHHELD_PAGE)) {

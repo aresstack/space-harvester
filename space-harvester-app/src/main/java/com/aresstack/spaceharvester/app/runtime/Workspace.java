@@ -25,6 +25,7 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -107,6 +108,11 @@ public final class Workspace {
     /** Querverweise einer Seite, ausgehend und, wenn die Quelle sie kennt, eingehend ({@code PageNavigation.references}). */
     public PageNavigation.References references(String sourceId, String pageId) {
         return harvester.navigation().references(caller, sourceId, pageId);
+    }
+
+    /** Ein Stapel des Begriffsverzeichnisses über alle sichtbaren Seiten ({@code TermQueries.terms}, #119). */
+    public TermQueries.TermList terms(TermQueries.TermSearch search) {
+        return harvester.terms().terms(caller, search);
     }
 
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
@@ -323,6 +329,14 @@ public final class Workspace {
      */
     public ProgressiveSearch progressiveSearch(KeywordSearch.Query query, ProgressiveSearchListener listener) {
         return harvester.progressiveSearch().searchAsync(caller, query, harvester.searchProfile(), listener);
+    }
+
+    /**
+     * Ob die progressive Suche semantisch ordnet ({@code SearchProfile.Ranking.SEMANTIC}): nur mit einem wirksamen
+     * Embedding-Modell; ohne Modell gibt es keine semantische Suche (ADR 0017).
+     */
+    public boolean semanticRanking() {
+        return harvester.searchProfile().ranking() == SearchProfile.Ranking.SEMANTIC;
     }
 
     /** Ob die Varianten der progressiven Suche vom Chat-Modell kommen; sonst nach Regeln. */
