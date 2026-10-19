@@ -67,6 +67,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String PROPERTIES = "Eigenschaften";
     private static final String ATTACHMENTS = "Anhänge";
     private static final String REFERENCES = "Verweise";
+    private static final String TERMS = "Begriffe";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
@@ -82,6 +83,7 @@ public final class PageDetailPanel extends JPanel {
     private final JLabel path = Comic.muted(" ");
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
+    private final TermsTab terms = new TermsTab();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -189,6 +191,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(PROPERTIES, Comic.scroll(padded(properties)))
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(REFERENCES, references)
+                .tab(TERMS, terms)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
@@ -203,6 +206,7 @@ public final class PageDetailPanel extends JPanel {
         });
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
+        terms.onJump(this::jumpTo);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -438,6 +442,7 @@ public final class PageDetailPanel extends JPanel {
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
         shown = document;
+        terms.show(document == null ? null : document.acronyms());
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");
@@ -481,6 +486,39 @@ public final class PageDetailPanel extends JPanel {
                 jumpToAcronym(forward);
             }
         });
+    }
+
+    /**
+     * Springt aus dem Reiter „Begriffe“ zur nächsten Fundstelle dieses Akronyms im Lesetext, nach der letzten wieder
+     * zur ersten.
+     */
+    void jumpTo(PageAcronyms.Acronym acronym) {
+        ReaderDocument document = shown;
+        if (document == null) {
+            return;
+        }
+        int caret = Math.max(reader.getCaret().getDot(), reader.getCaret().getMark());
+        PageAcronyms.Mark first = null;
+        PageAcronyms.Mark next = null;
+        for (PageAcronyms.Mark mark : document.marks()) {
+            if (!mark.acronym().acronym().equals(acronym.acronym())) {
+                continue;
+            }
+            if (first == null) {
+                first = mark;
+            }
+            if (next == null && mark.occurrence().start() >= caret) {
+                next = mark;
+            }
+        }
+        PageAcronyms.Mark target = next != null ? next : first;
+        if (target == null) {
+            return;
+        }
+        tabs.select(READ);
+        reader.requestFocusInWindow();
+        reader.select(target.occurrence().start(), target.occurrence().end());
+        showAcronymAt(target.occurrence().start());
     }
 
     /** Markiert die nächste bzw. vorige Fundstelle und zeigt ihre Ausschreibung. */
@@ -795,6 +833,10 @@ public final class PageDetailPanel extends JPanel {
 
     References references() {
         return references;
+    }
+
+    TermsTab terms() {
+        return terms;
     }
 
     PillTabs tabs() {

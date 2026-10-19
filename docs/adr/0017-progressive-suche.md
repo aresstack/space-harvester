@@ -1,12 +1,15 @@
 # ADR 0017: Progressive Suche
 
-- Status: **Angenommen, erster Schritt umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10. 18:03
+- Status: **Angenommen, im Core umgesetzt** (Strang Q, 18.10.2026; Entscheidungen von Angelo, 18.10. 18:03
   und 18:07). Ergänzt [ADR 0013](0013-suche-ueber-den-cache.md) und [ADR 0016](0016-auswahl-beschaffung-hintergrund.md).
 - Gilt für die **semantische Suche** (Haken, ADR 0013). Die Schlagwortsuche bleibt Standard und unverändert.
 - Umgesetzt: `SearchOrchestrator` im Core mit regelbasierten Varianten, Wellen, Prioritätsfreigabe, Qualitätsziel
   und Budgets (Paket `application.query.progressive`, `Harvester.progressiveSearch()`).
 - Umgesetzt: Varianten über ein Modell des KI-Dienstes, REST-Schnittstelle (`/api/v1/search/progressive`).
-- Offen: Anbindung an die semantische Suche und die App.
+- Umgesetzt: Anbindung an die semantische Suche im Core (`SearchProfile.Ranking`, `SemanticVariantSearch`,
+  `Harvester.searchProfile()`).
+- Umgesetzt: `ranking` über REST (`keyword`/`semantic`, `semantic-search-unavailable` ohne Embedding-Modell).
+- Offen: in der App eine Anzeige, ob semantisch gesucht wird.
 
 ## Kontext
 
@@ -123,8 +126,56 @@ vom Chat-Modell der wirksamen Konfiguration mit den Regeln als Rückfall, bewert
 - Ungültige Angaben ergeben 400 (`invalid-request`). Eine Quelle ohne Freigabe liefert nichts; scheitert jede
   Suchanfrage, endet die Suche mit `failed`.
 
+## Umsetzung (vierter Schritt: semantische Suche)
+
+ADR 0013 trennt Schlagwortsuche und semantische Suche, ohne Fusion. Der Haken „Semantische Suche“ startete bisher die
+progressive Suche, aber jede Suchanfrage lief über die Schlagwortsuche (BM25), nie über die Vektoren. Jetzt wählt
+`SearchProfile.ranking` die Suche für alle Suchanfragen eines Vorgangs:
+
+- **`KEYWORD`** (Standard von `SearchProfile.defaults()`): unverändert die `KeywordSearch`, bewertet vom `HitScorer`.
+- **`SEMANTIC`**: `SemanticVariantSearch` über `RelevanceSearch`. Eine Variante **findet nur**: Die Vorbereitung
+  (`SemanticPreparation`) sucht mit dem Text der Variante in den Quellen, lädt die Funde mit den Rechten des Aufrufers
+  in den Cache und berechnet fehlende Embeddings. **Treffer kommen allein aus der Vektorsuche mit der ursprünglichen
+  Anfrage** (`RelevanceSearch.search(…, text, discovery, …)`), mit Live-Prüfung und Rechten wie bei `sort=relevance`.
+  So wächst mit jeder Variante der Bestand im Cache, und die Rangfolge bleibt die Nähe zur ganzen Frage.
+- **Bewertung** ist dann die Kosinusähnlichkeit zur ursprünglichen Anfrage (`VariantSearch.Outcome.scores`); der
+  Cross-Encoder bewertet nicht, damit keine Werte verschiedener Skalen gemischt werden. `minScore` gilt für diese
+  Ähnlichkeit, das Qualitätsziel ist also auch ohne Rerank-Modell erreichbar. Innerhalb einer Suchanfrage ordnet ein
+  eingestellter Cross-Encoder wie bisher nur das Fenster der `RelevanceSearch`.
+- Vorläufige Treffer der Quellen (`found`) gibt es semantisch nicht. Ausgeschlossene Spaces (`excludeSpaceKeys`)
+  lädt schon die Vorbereitung nicht, und sie sind keine Kandidaten der Vektorsuche; erst danach wird auf das Limit
+  gekürzt, sodass erlaubte Treffer es füllen. Was der
+  Aufrufer nicht lesen darf, erscheint weder als Treffer noch als Wert. Der Auszug ist das ähnlichste Stück des
+  Lesetexts im Cache.
+- **Kein stiller Rückfall** (ADR 0011): `searchAsync` mit `SEMANTIC` ohne Embedding-Modell wirft
+  `SemanticSearchUnavailableException`, bevor etwas gesucht wird. Vorher prüft `VariantSearch.requireAvailable` die
+  Rechte am genannten Umfang (fail-closed wie `sort=relevance`): Wer eine genannte Quelle nicht sehen darf, bekommt
+  `AccessDeniedException` und erfährt nicht, ob ein Modell eingerichtet ist. Fällt der Dienst unterwegs aus, scheitern die
+  Suchanfragen; scheitern alle, endet die Suche mit `FAILED`.
+- **`Harvester.searchProfile()`** ist das Profil des Hakens: `SEMANTIC`, sobald die wirksame Konfiguration ein
+  Embedding-Modell hat, sonst `KEYWORD`, wie `expansion` ohne Chat-Modell `RULES` meldet. Der Haken der App wird so
+  ohne Änderung an der App semantisch. Weil jede Suchanfrage erst lädt und einbettet, hat sie dann
+  `SemanticVariantSearch.VARIANT_TIMEOUT` (20 s) und die Suche `SemanticVariantSearch.TIME_BUDGET` (60 s); beides setzt `SemanticVariantSearch.profile()`.
+  `search.semantic` prüft der Core weiterhin nicht, wie bei `sort=relevance`.
+
+## Umsetzung (fünfter Schritt: semantisch über REST)
+
+Der Server verdrahtet `SemanticVariantSearch` über seine `RelevanceSearch` im `SearchOrchestrator`, wie der Harvester.
+
+- `POST /api/v1/search/progressive` nimmt `ranking`: `keyword` (Standard, wie bisher) oder `semantic`. Semantisch
+  gilt `SemanticVariantSearch.profile()`, also 20 s je Suchanfrage und 60 s Zeitbudget; `timeBudgetMs` und die
+  übrigen Angaben überschreiben das weiterhin einzeln. Ein anderer Wert ergibt 400 (`invalid-request`).
+- Der Stand nennt `ranking`; semantisch ist `score` die Kosinusähnlichkeit zu `q`.
+- Ohne Embedding-Modell antwortet der Dienst sofort mit 503 `semantic-search-unavailable`, wie `sort=relevance`,
+  und startet keine Suche. Der Hinweis im `detail` nennt die Schlagwortsuche ohne `ranking=semantic` statt der
+  Titelsuche von `sort=relevance`, nie den Suchtext. Es gibt keinen stillen Rückfall.
+- Rechte prüft die `RelevanceSearch` je Suchanfrage wie bei `sort=relevance`; die Route und ihre Rechteprüfung
+  bleiben unverändert.
+
 ## Folgen
 
 - Desktop-App und Agenten nutzen denselben Dienst; die App braucht keine eigene Suchlogik.
-- Über REST wartet ein Agent auf das Ergebnis, eine Oberfläche fragt den Stand ab. Nächster Schritt ist die
-  Anbindung an die semantische Suche.
+- Über REST wartet ein Agent auf das Ergebnis, eine Oberfläche fragt den Stand ab.
+- Mit Haken und Embedding-Modell sucht die progressive Suche semantisch über die Vektoren, ohne Fusion mit der
+  Schlagwortsuche, in der App über den Haken, über REST mit `ranking: semantic`. Nächster Schritt ist die Anzeige in
+  der App.
