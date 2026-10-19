@@ -94,7 +94,7 @@ public final class PassageSnippets implements PageTextIndex {
                     excerpt(content, choice.passage(), choice.first()),
                     capture == null ? null : PassageId.of(key.sourceId(), key.pageId(), capture, choice.position(),
                             PassageId.versionTag(parsed.segmentation()),
-                            PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
+                            PassageId.processorTag(result.processorVersion(), parsed.model()))
                             .value()));
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten. Der Treffer behält seinen Auszug.

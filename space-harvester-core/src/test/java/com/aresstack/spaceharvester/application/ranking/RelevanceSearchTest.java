@@ -147,7 +147,8 @@ class RelevanceSearchTest {
                 10);
 
         assertThat(results.hits().get(1).relevance().passageId()).isEqualTo(PassageId.of("wiki", "11",
-                "1".repeat(64), 1, PassageId.versionTag("passages;eac"), PassageId.versionTag("axes")).value());
+                "1".repeat(64), 1, PassageId.versionTag("passages;eac"), PassageId.processorTag("passages@1", "axes"))
+                .value());
         assertThat(results.hits().get(2).relevance().passageId()).as("Absätze eines anderen Textes").isNull();
         assertThat(results.hits().get(3).relevance().passageId()).as("ohne Absätze").isNull();
     }

@@ -92,11 +92,17 @@ class PassageIdTest {
                 text).passages().stream().map(PagePassages.Passage::id).toList();
 
         // Mit sha256sum nachgerechnet: Eingabe "confluence-storage-text/v1\n\n" + Text (inputSha256, ohne
-        // Abschnitte), "passages;eac;3;0.35;2;8;350" → 1a796cb0, "topics@1" → 2c747974.
+        // Abschnitte), "passages;eac;3;0.35;2;8;350" → 1a796cb0, Prozessorversion "v" mit Modell "topics@1" → 6501fc11.
         assertThat(ids).containsExactly(
                 "confluence:47110815@" + "aa2b0cb3ca6bb8ad0e309c43640cf47aa475e4b4f0f4391fe1023f97cb977436"
-                        + "#p0@1a796cb0-2c747974",
+                        + "#p0@1a796cb0-6501fc11",
                 "confluence:47110815@" + "aa2b0cb3ca6bb8ad0e309c43640cf47aa475e4b4f0f4391fe1023f97cb977436"
-                        + "#p1@1a796cb0-2c747974");
+                        + "#p1@1a796cb0-6501fc11");
+
+        // Gleicher Modellname, andere Berechnung (neues Format oder anderer Dienst in der Version): neue IDs.
+        Enrichment recomputed = new Enrichment(key, PassageProcessor.ID, "w", text.inputSha256(), "1",
+                Enrichment.Status.OK, payload, List.of(), null, Instant.EPOCH);
+        assertThat(PagePassages.read(key, List.of(new Enrichments.View(recomputed, Enrichment.Freshness.CURRENT)),
+                text).passages()).extracting(PagePassages.Passage::id).doesNotContainAnyElementsOf(ids);
     }
 }

@@ -19,9 +19,10 @@ import java.util.regex.Pattern;
  *       ({@code PageText.inputSha256}, ohne Präfix, {@value #CAPTURE_LENGTH} Hex-Zeichen, nie gekürzt); ändert sich
  *       der Text oder die Gliederung, aus der die Grenzen folgen, ändert sich jede ID (im EAC nur der Text);</li>
  *   <li>{@code position} zählt die Absätze dieser Fassung ab 0;</li>
- *   <li>{@code segmentation} und {@code embedding} sind Kurzformen (8 Hex-Zeichen, {@link #versionTag}) der
- *       Fingerabdrücke von Zerlegung ({@link PassageSegmentation#fingerprint()}) und Embedding-Modell; ohne Modell
- *       (Zerlegung nach Struktur) steht für das Modell {@value #NO_MODEL}.</li>
+ *   <li>{@code segmentation} und {@code embedding} sind Kurzformen (8 Hex-Zeichen, {@link #versionTag}) des
+ *       Fingerabdrucks der Zerlegung ({@link PassageSegmentation#fingerprint()}) und der ganzen Prozessorversion des
+ *       Ergebnisses samt Modell ({@link #processorTag}: Format, Zerlegung, Modell oder {@value #NO_MODEL}); so ändert
+ *       jede neue Berechnungsart die ID, nicht nur ein neuer Modellname.</li>
  * </ul>
  * Ändert sich eines davon, ändert sich die ID: Ein Beleg zeigt nie still auf einen anderen Absatz oder neuen Text.
  */
@@ -145,6 +146,17 @@ public final class PassageId {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 fehlt", e);
         }
+    }
+
+    /**
+     * Modellteil der ID aus der Prozessorversion des Ergebnisses ({@code Enrichment.processorVersion}) und dem Modell,
+     * mit dem es geschnitten wurde ({@code null}: nach Struktur), nicht aus dem Modellnamen allein: Ändern sich die
+     * Grenzen bei gleichem Namen (neues Format, anderer Dienst, sobald sein Fingerabdruck in der Version steht), ändert
+     * sich auch die ID; eine Zerlegung nach Struktur trägt nie die ID einer semantischen derselben Version.
+     */
+    public static String processorTag(String processorVersion, String model) {
+        Objects.requireNonNull(processorVersion, "processorVersion");
+        return versionTag(processorVersion + "\n" + (model == null ? NO_MODEL : model));
     }
 
     private static boolean isCapture(String capture) {

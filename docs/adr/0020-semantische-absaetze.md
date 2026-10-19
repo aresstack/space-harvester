@@ -61,12 +61,13 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
 10. **Stabile Passage-IDs** (EAC-Lücke 5, Kopie von `KnowledgePassageId`): Jeder Absatz trägt
    `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`. `capture` ist der volle SHA-256 der angezeigten
    Fassung (Text und Gliederung, siehe Nachtrag), `position` zählt ab 0, `zerlegung` und `modell` sind 8 Hex aus
-   SHA-256 über `PassageSegmentation.fingerprint()` und das Embedding-Modell (ohne Modell `structure`). Ändert sich
-   Text, Gliederung, Zerlegung oder Modell, ändert sich die ID.
+   SHA-256 über `PassageSegmentation.fingerprint()` und die Prozessorversion des Ergebnisses samt Modell (Format, Zerlegung,
+   Modell oder `structure`, siehe Nachtrag). Ändert sich Text, Gliederung, Zerlegung, Format oder Modell, ändert sich
+   die ID.
    Berechnet beim Lesen aus dem gespeicherten Ergebnis, ohne Schemaänderung. `PassageQueries.resolve` und
    `GET /api/v1/passages?id=` lösen sie wie `KnowledgeResourceReader` auf: gefunden mit je einem Nachbarn
    (`found`), sonst alle aktuellen Absätze mit `older-version` (andere Capture) oder `changed` (Zerlegung oder Modell
-   gewechselt); eine unbekannte oder nicht sichtbare Seite antwortet gleich mit 404. Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; der Modellteil ist der Modellname aus dem Ergebnis statt des Fingerabdrucks des Embedding-Raums (zwei Dienste mit gleichem Modellnamen geben dieselbe ID, ein Dienstwechsel rechnet über die Prozessorversion ohnehin neu); eine unbekannte Quelle antwortet wie eine unsichtbare Seite; die Versionsteile
+   gewechselt); eine unbekannte oder nicht sichtbare Seite antwortet gleich mit 404. Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; der Modellteil ist die Prozessorversion des Ergebnisses statt des Fingerabdrucks des Embedding-Raums (siehe Nachtrag); eine unbekannte Quelle antwortet wie eine unsichtbare Seite; die Versionsteile
    stammen aus dem gespeicherten Ergebnis statt aus der aktuellen Einstellung, ein veraltetes Ergebnis desselben
    Textes behält also seine IDs bis zur Neuberechnung; ohne Absätze gibt es zusätzlich `unavailable`; die ID steht im
    Parameter statt im Pfad, weil sie `#` und Seiten-IDs `/` enthalten.
@@ -123,10 +124,11 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
 Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
 
 - **Aufbau:** `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`, z. B.
-  `confluence:47110815@aa2b0cb3…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 der angezeigten
+  `confluence:47110815@aa2b0cb3…(64 Hex)#p0@1a796cb0-6501fc11`. `capture` ist der volle SHA-256 der angezeigten
   Fassung, `inputSha256` der Textprojektion über Schema, Gliederung und Text (anfangs nur der Text, siehe „Gewollt
   anders“), `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
-  über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `versionTag("structure")`). Gelesen wird
+  über `PassageSegmentation.fingerprint()` und die Prozessorversion des gespeicherten Ergebnisses samt Modell
+  (`PassageId.processorTag`; anfangs der Modellname, siehe „Gewollt anders“). Gelesen wird
   von hinten, die Quellen-ID endet am ersten `:`; Seiten-IDs dürfen `@`, `#`, `:` und `/` enthalten.
 - **Nachschlagen:** `GET /api/v1/passages?id=` antwortet wie `KnowledgeResourceReader` mit `match`:
   `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: Text oder Gliederung haben sich
@@ -155,7 +157,10 @@ Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
 - **Gewollt anders als der Client** (siehe auch Punkt 10): Seite als `sourceId:pageId` statt Resource-ID;
   Capture über Text und Gliederung statt nur über den Text, denn die Grenzen hängen an den Abschnitten (eine umgestufte
   Überschrift bei gleichem Text schneidet neu, die alte ID darf dann nicht als `found` auf den neuen Schnitt zeigen);
-  Modellteil aus dem Modellnamen statt aus dem Fingerabdruck des Embedding-Raums; Versionsteile aus dem gespeicherten
+  Modellteil aus der ganzen Prozessorversion statt aus dem Fingerabdruck des Embedding-Raums (anfangs aus dem
+  Modellnamen: dann ließen ein neues Format oder ein anderer Dienst unter demselben Namen andere Grenzen unter alter ID
+  zu, Review 19.10.; die Prozessorversion deckt beides, den Dienst, sobald sein Fingerabdruck in der Version des
+  Embedding-Modells steht); Versionsteile aus dem gespeicherten
   Ergebnis; zusätzlicher Fall `unavailable`; ID im Parameter statt im Pfad; Themenabschnitte behalten `p<start>` als
   `id` und tragen die Passage-ID zusätzlich; unsichtbar und unbekannt antworten gleich.
 

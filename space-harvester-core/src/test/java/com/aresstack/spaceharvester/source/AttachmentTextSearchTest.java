@@ -130,7 +130,7 @@ class AttachmentTextSearchTest {
         assertThat(hit.snippet()).isEqualTo("Die Wartung beginnt am Samstag.");
         assertThat(hit.passageId()).isEqualTo(PassageId.of("wiki", "101",
                 "c".repeat(64), 1, PassageId.versionTag("s"),
-                PassageId.versionTag("structure")).value());
+                PassageId.processorTag("1", null)).value());
         assertThat(new KeywordSearch(catalog(), new AccessGuard(deny("101", AccessKind.CONTENT)), snippets, null)
                 .search(APP, KeywordSearch.Query.of("Wartung"), null, 10).hits()).isEmpty();
     }
