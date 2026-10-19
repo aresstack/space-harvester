@@ -130,6 +130,32 @@ class BackgroundFillTest {
     }
 
     @Test
+    void cataloguedFindingsAreLoadedEvenOutsideConfirmedSpaces() throws Exception {
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        // Der Katalog führt keinen Space mit bestätigter Generation; die Lücken kommen nur vom Katalogisieren.
+        BackgroundFill fill = fill(scheduler(2), queue, catalog(List.of()), true);
+        eventually(() -> fill.status().lastScan() != null);
+
+        fill.offer(List.of(gap("wiki", "found-1", BackgroundFill.Kind.NOT_LOADED),
+                gap("other", "found-2", BackgroundFill.Kind.NOT_LOADED)));
+
+        eventually(() -> loaded.size() == 1 && queue.size() == 0);
+        TimeUnit.MILLISECONDS.sleep(100);
+        // „other“ ist nicht zugelassen: nicht eingereiht, nicht geladen.
+        assertThat(loaded).containsExactly("found-1");
+    }
+
+    @Test
+    void aSwitchedOffFillTakesNoFindings() throws Exception {
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill fill = fill(scheduler(2), queue, catalog(List.of()), false);
+
+        fill.offer(List.of(gap("wiki", "found-1", BackgroundFill.Kind.NOT_LOADED)));
+
+        assertThat(queue.size()).isZero();
+    }
+
+    @Test
     void aSourceWithItsFillSwitchedOffLoadsNothingUntilItIsSwitchedOn() throws Exception {
         eligible.clear();
         BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();

@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
 import com.aresstack.spaceharvester.application.query.PageCacheReader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -41,9 +42,19 @@ public class PageNavigation {
     private final SourceCatalog catalog;
     private final PageCacheReader cache;
     private final AccessGuard access;
+    private final FindingCatalog findings;
 
     /** @param cache nur, um den Space von Verweiszielen zu kennen; {@code null} ohne Cache */
     public PageNavigation(SourceCatalog catalog, PageCacheReader cache, AccessGuard access) {
+        this(catalog, cache, access, FindingCatalog.NONE);
+    }
+
+    /**
+     * @param findings nimmt die Treffer der Titelsuche zum Katalogisieren als Kopfdaten (ADR 0016), ohne die Suche
+     *                 aufzuhalten
+     */
+    public PageNavigation(SourceCatalog catalog, PageCacheReader cache, AccessGuard access, FindingCatalog findings) {
+        this.findings = Objects.requireNonNull(findings, "findings");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.cache = cache;
         this.access = Objects.requireNonNull(access, "access");
@@ -125,6 +136,7 @@ public class PageNavigation {
         int wanted = limit + 1;
         while (true) {
             List<PageNode> found = source.findByTitle(term, spaces, wanted);
+            catalogFindings(caller, sourceId, found);
             List<PageNode> visible = visible(caller, sourceId, found.stream()
                     .map(node -> located.computeIfAbsent(node.pageId(), id -> Optional.ofNullable(
                             located(source, node))))
@@ -171,6 +183,16 @@ public class PageNavigation {
     private PageNode located(HarvestSource source, PageNode node) {
         PageNode known = withSpace(source.id(), node);
         return known.partitionKey() != null ? known : liveSpace(source, known);
+    }
+
+    /** Bietet die Treffer zum Katalogisieren an (ADR 0016); reiht nur ein und lässt die Suche nie scheitern. */
+    private void catalogFindings(AccessContext caller, String sourceId, List<PageNode> found) {
+        try {
+            findings.offer(caller, sourceId, found.stream()
+                    .map(node -> new FindingCatalog.Finding(node.pageId(), null)).toList());
+        } catch (RuntimeException e) {
+            // Nur Zähler und Quellen ins Protokoll; hier genügt, dass die Titelsuche weiterläuft.
+        }
     }
 
     private static PageNode liveSpace(HarvestSource source, PageNode node) {

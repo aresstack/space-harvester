@@ -5,8 +5,10 @@
 - Umgesetzt mit #296: vorläufige Trefferliste, Laden in Rangfolge, Fortschritt und Abbruch je Suche.
 - Umgesetzt im zweiten Schritt (Punkte 4 bis 6): austauschbare `CandidateSelectionStrategy`, `AcquisitionScheduler`
   mit Vorrang für den Vordergrund, dauerhafte Hintergrundfüllung `BackgroundFill`.
-- Offen: Katalogisieren aller Funde als Kopfdaten (braucht den Space-Schlüssel im Fund, Änderung im Enterprise AI
-  Client), Hintergrundfüllung und ihr Stand in der Oberfläche.
+- Umgesetzt: Katalogisieren der Funde als Kopfdaten (`FindingCataloging`, siehe unten), ohne Änderung im Enterprise
+  AI Client: Den Space liefern die live gelesenen Kopfdaten. Upstream offen bleibt nur, den Space im Fund
+  durchzureichen (`SourceSearchHit`), damit gesperrte Spaces keine Anfrage kosten.
+- Offen: Hintergrundfüllung und ihr Stand in der Oberfläche.
 - Bezüge: [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md) (Katalog und Inhaltsindex getrennt),
   [ADR 0017](0017-progressive-suche.md) (Suchanfragen), `KeywordSearch`, `SearchHitPrefetch`, `ExcerptPriority`.
 
@@ -105,6 +107,42 @@ Auszug bewerten, ohne einen Inhalt zu laden.
   Grenze zwischen zwei Seiten; ein laufender Abruf endet immer regulär, `Thread.interrupt` gibt es nicht, auch nicht
   beim Schließen.
 
+## Umsetzung (Katalogisieren der Funde)
+
+- **Was:** Jeder Fund der quelleneigenen Suche, der noch nicht im Katalog steht, kommt als Kopfdaten ohne Inhalt
+  hinein (`NOT_LOADED`); nennt die Suche für einen Eintrag eine andere Version, bekommt er die neuen Kopfdaten und ist
+  damit `OUTDATED`. Erfasst sind die Funde jedes Stapels von `KeywordSearch` (damit auch `SemanticPreparation`, die
+  über sie findet) und die Treffer der Titelsuche `PageNavigation.findByTitle`. Die Schnittstelle ist
+  `FindingCatalog` (`offer(finder, sourceId, findings)`, `NONE`), umgesetzt von `FindingCataloging` im Paket
+  `application.acquisition`; den Katalog im Cache stellt `LuceneFindingStore` über `LucenePageCache.catalogEntry` und
+  `tryCatalog`.
+- **Space-Schlüssel:** Die Funde nennen ihren Space nicht. Im Enterprise AI Client parst `ConfluenceRestClient.search`
+  ihn zwar (`expand=content.space`, `Page.spaceKey`), `ConfluenceKnowledgeSource.search` gibt ihn aber nicht an
+  `SourceSearchHit` weiter, und `SourceSearchHit` hat kein Feld dafür. Ein Katalogeintrag braucht ohnehin vollständige
+  Kopfdaten (Space, Elternseite, Attribute), weil `page-metadata/v1` und `page-attributes/v1` sie hashen; ein Eintrag
+  aus dem Fund allein hätte falsche Hashes und stünde im Baum als Wurzelseite. Deshalb liest das Katalogisieren die
+  Kopfdaten jeder neuen oder geänderten Seite einzeln (`HarvestSource.pageMetadata`), mit den Zugangsdaten der Quelle.
+  Ein Eintrag mit derselben Version, ein Fund ohne Version zu einem bestehenden Eintrag und eine gesperrte Seite kosten
+  keine Anfrage; eine eben geprüfte Seite fragt frühestens nach 10 min wieder. Reicht der Enterprise AI Client den
+  Space im Fund durch, kann die Richtlinie schon vor dieser Anfrage ausschließen.
+- **Rechte:** Nur Funde technischer Aufrufer ohne Benutzeranmeldung zählen. Die Suche eines Endnutzers katalogisiert
+  nichts, damit sich kein Eintrag und keine Zahl (etwa `knownPages` in `GET …/catalog`) mit seiner Suche ändert, an der
+  er Seiten erkennen könnte, die er nicht sehen darf. Katalogisiert wird nur, was die Richtlinie dem suchenden
+  Aufrufer an der gelesenen Seite samt Space für `metadata` freigibt; im Core ist das in der Regel `Harvester.caller()`,
+  im Server der technische Client. Ausgeschlossene Seiten und Einträge bleiben unberührt. Gesperrte Seiten (`WITHHELD`,
+  ob als zurückgehaltener Stand oder in der bestätigten Generation ihres Space) bekommen nie wieder ein
+  Seitendokument. Neuere Kopfdaten (später beobachtet) werden nicht überschrieben, ein gespeicherter Inhalt bleibt.
+  Die Hash-Schemata bleiben unverändert.
+- **Nie zulasten der Suche:** `offer` reiht nur ein. Höchstens zwei Kopfdatenabrufe laufen zugleich auf virtuellen
+  Threads, höchstens 1000 Funde warten, darüber fällt einer weg. Geschrieben wird nur, wenn binnen 500 ms kein anderer
+  Schreiblauf den Cache hält. Ein Abruf, der vorher begann, legt seinen Inhalt trotzdem ab
+  (`LucenePageCache.trySave`): Kopfdaten ohne Inhalt, die dieselben sind wie die des Abrufs oder vor ihm beobachtet
+  wurden, halten ihn nicht auf. Fehler zählen nur (`FindingCataloging.counts()`); im Protokoll stehen Quellen und Gründe,
+  nie Seiten-IDs oder Suchtexte.
+- **Füllung:** Neue Lücken gehen über `BackgroundFill.offer` direkt in die Warteschlange, nur für zugelassene Quellen
+  und solange die Füllung an ist. So lädt die Füllung auch Seiten in Spaces ohne bestätigte Generation, die die Suche
+  im Katalog (`LuceneCatalogGaps`) nicht absucht; in bestätigten Spaces findet die Suche im Katalog sie ohnehin.
+
 ## Folgen
 
 - Die Oberfläche zeigt sofort eine Liste und fragt den Fortschritt ab; sobald `loaded` steigt, sucht sie erneut und
@@ -117,3 +155,6 @@ Auszug bewerten, ohne einen Inhalt zu laden.
 - Die Hintergrundfüllung lädt mit den Standardwerten alle katalogisierten Seiten ohne oder mit veraltetem Inhalt,
   auch bei `sync.mode=catalog-only`. Wer das für eine Quelle nicht will, schaltet
   `sync.sources.<Quelle>.background-fill=false`.
+- Ein katalogisierter Fund in einem Space ohne bestätigte Generation bleibt als Eintrag ohne Inhalt stehen, wenn die
+  Seite in der Quelle verschwindet, bevor die Füllung sie lädt; die Füllung versucht ihn einmal und reiht ihn danach
+  nicht wieder ein, weil die Suche im Katalog nur bestätigte Spaces absucht.

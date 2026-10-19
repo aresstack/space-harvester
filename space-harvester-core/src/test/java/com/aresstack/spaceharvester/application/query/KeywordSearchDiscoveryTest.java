@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
 import com.aresstack.spaceharvester.application.searchrun.InMemorySearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
@@ -397,6 +398,35 @@ class KeywordSearchDiscoveryTest {
         assertThat(results.searchRun()).isNull();
         assertThat(logged).singleElement().asString().contains("Suchlauf nicht protokolliert")
                 .doesNotContain("Geheimprojekt");
+    }
+
+    @Test
+    void theFindingsOfEachBatchGoToTheCatalogWithoutHoldingUpTheSearch() {
+        wiki.results("Hashicorp Vault", "1", "2");
+        List<String> offered = Collections.synchronizedList(new ArrayList<>());
+        FindingCatalog findings = (finder, sourceId, found) -> found.forEach(finding -> offered.add(
+                finder.principal() + ":" + sourceId + ":" + finding.pageId() + ":" + finding.version()));
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.sourceOrder(), SearchRunLog.NONE, findings)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
+
+        assertThat(offered).containsExactly("app:wiki:1:1", "app:wiki:2:1");
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1", "2");
+    }
+
+    @Test
+    void aFailingCatalogNeverFailsTheSearch() {
+        wiki.results("Hashicorp Vault", "1");
+        FindingCatalog failing = (finder, sourceId, found) -> {
+            throw new IllegalStateException("Katalog voll");
+        };
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                CandidateSelectionStrategy.sourceOrder(), SearchRunLog.NONE, failing)
+                .search(APP, KeywordSearch.Query.of("Hashicorp Vault"), null, 50);
+
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
     }
 
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {

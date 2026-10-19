@@ -172,6 +172,8 @@ public final class BackgroundFill implements AutoCloseable {
     private final Map<PageKey, AcquisitionScheduler.Ticket> inFlight = new LinkedHashMap<>();
     private volatile boolean enabled;
     private volatile boolean closed;
+    /** Ob die Anlaufzeit ({@link Timing#initialDelay()}) vorbei ist; vorher weckt {@link #offer} nicht. */
+    private volatile boolean warmedUp;
     private boolean signalled;
     private boolean rescan;
     private long loaded;
@@ -262,6 +264,39 @@ public final class BackgroundFill implements AutoCloseable {
     }
 
     /**
+     * Reiht Lücken ein, die eben katalogisierte Funde der Suche sind ({@link FindingCataloging}), auch in Spaces ohne
+     * bestätigte Generation, die die Suche im Katalog nicht absucht. Nur zugelassene Quellen, nur solange die Füllung an
+     * ist und die Warteschlange weniger als {@link Timing#maxQueued()} hält; was schon wartet, bleibt, wo es ist.
+     */
+    public void offer(List<Gap> gaps) {
+        if (closed || !enabled || gaps == null || gaps.isEmpty()) {
+            return;
+        }
+        List<Gap> wanted = gaps.stream().filter(Objects::nonNull).filter(gap -> allowed(gap.key().sourceId()))
+                .toList();
+        if (wanted.isEmpty()) {
+            return;
+        }
+        try {
+            if (queue.size() >= timing.maxQueued()) {
+                return;
+            }
+            queue.add(wanted);
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Warteschlange der Hintergrundfüllung nicht schreibbar ({0})",
+                    e.getClass().getName());
+            return;
+        }
+        if (!warmedUp) {
+            return;
+        }
+        synchronized (monitor) {
+            signalled = true;
+            monitor.notifyAll();
+        }
+    }
+
+    /**
      * Stand von Füllung und Planer, nur Zähler; je Quelle nur zugelassene Quellen.
      */
     public AcquisitionStatus status() {
@@ -329,6 +364,7 @@ public final class BackgroundFill implements AutoCloseable {
 
     private void loop() {
         await(timing.initialDelay());
+        warmedUp = true;
         while (!closed) {
             try {
                 if (!enabled) {
