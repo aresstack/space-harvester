@@ -30,6 +30,7 @@ Auswahl, ohne neuen Upstream-Commit.
 | `proasteion/emporion/holkas/source-ndv` | vollständig (#187): `NdvSourceProvider`, `NdvKnowledgeSource` (Natural Development Server, NATSPOD/PAL aus MainframeMate), ohne weitere Abhängigkeit; im Core registriert als `ndv` |
 | `proasteion/emporion/holkas/source-sharepoint` | vollständig (#187): `SharePointSourceProvider`, `SharePointKnowledgeSource` (Dokumentbibliotheken über die REST-API, Extraktion über deigma), ohne weitere Abhängigkeit; im Core registriert als `sharepoint` |
 | `proasteion/emporion/holkas/source-betaview` | vollständig (#187): `BetaViewSourceProvider`, `BetaViewKnowledgeSource` (Listen und Reports, HTTP-Ablauf aus MainframeMate), ohne weitere Abhängigkeit; im Core registriert als `betaview` |
+| `proasteion/emporion/holkas/source-outlook` | vollständig (#187): `OutlookSourceProvider`, `OutlookKnowledgeSource` (PST/OST, Auswahl und Text aus MainframeMate), java-libpst 0.9.3 wie im Upstream; im Core registriert als `outlook` |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Die Quellen des Enterprise AI Client ohne eigenen Ordner (#187) sind als Typen {@code ftp}, {@code jes}, {@code ndv}
- * {@code sharepoint} und {@code betaview} registriert: gültige Einstellungen öffnen je eine Partition ohne Verbindung, die Prüfung des
+ * {@code sharepoint}, {@code betaview} und {@code outlook} registriert: gültige Einstellungen öffnen je eine Partition ohne Verbindung, die Prüfung des
  * Upstream-Typs meldet ihre Probleme beim Start.
  */
 class HarvesterEacSourcesTest {
@@ -25,7 +25,7 @@ class HarvesterEacSourcesTest {
 
     @Test
     void theCopiedSourceTypesAreKnownWithoutOwnRegistration() {
-        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview");
+        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook");
     }
 
     @Test
@@ -35,7 +35,8 @@ class HarvesterEacSourcesTest {
                     new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
                     new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
                     new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
-                    new SourceType("betaview", "BetaView", true), new SourceType("mediawiki", "MediaWiki", false),
+                    new SourceType("betaview", "BetaView", true), new SourceType("outlook", "Outlook", false),
+                    new SourceType("mediawiki", "MediaWiki", false),
                     new SourceType("git", "Git-Repository", false));
         }
     }
@@ -54,8 +55,10 @@ class HarvesterEacSourcesTest {
                 .source(new SourceSettingsConfig("reports", "betaview", "Reports", null, null,
                         Map.of("baseUrl", "https://betaview.example.org/betaview/", "credentialRef", "keepass:bv",
                                 "favoriteId", "F1")))
+                .source(new SourceSettingsConfig("mail", "outlook", "Mail", null, null,
+                        Map.of("mailbox", data.toString())))
                 .dataDirectory(data).build()) {
-            for (String id : new String[] {"host-ftp", "host-jes", "natural", "team", "reports"}) {
+            for (String id : new String[] {"host-ftp", "host-jes", "natural", "team", "reports", "mail"}) {
                 assertThat(harvester.sources().partitions(id)).extracting(Partition::key).containsExactly(id);
             }
         }
