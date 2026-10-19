@@ -127,6 +127,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
@@ -261,6 +262,8 @@ public final class Harvester implements AutoCloseable {
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
     private final Reconciliation reconciliation;
+    /** Bestandsinventur nach {@code sync.inventory-interval}, nur aus der Konfiguration (ADR 0014/0015). */
+    private final Reconciliation inventories;
     private final Exports exports;
     private final ExportConversions conversions;
     private final Assets assets;
@@ -285,6 +288,7 @@ public final class Harvester implements AutoCloseable {
     private final ReleaseRecomputation releaseRecomputation;
     /** Die aus der Konfiguration eingeplanten Abgleiche je Space; eigene über {@link #reconcile} gehören nicht dazu. */
     private final Map<String, ConfiguredSchedule> configuredSchedules = new LinkedHashMap<>();
+    private final List<ConfiguredSchedule> configuredInventories = new ArrayList<>();
 
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
@@ -640,6 +644,9 @@ public final class Harvester implements AutoCloseable {
                     exportWriter, clock);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
+            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
+            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, new FileInventoryLog(cacheDirectory));
+            opened.add(inventories);
             if (fillQueue != null) {
                 // ADR 0016, Punkt 5: technisch, mit den Zugangsdaten der Quelle, unabhängig von sync.mode; je Quelle
                 // abschaltbar (sync.sources.<Quelle>.background-fill).
@@ -658,6 +665,7 @@ public final class Harvester implements AutoCloseable {
             }
             if (manager != null) {
                 scheduleConfigured(plannedSchedules(settings, false));
+                scheduleInventories(plannedInventories(settings, false));
                 catchUpOnStart();
                 ConfigurationManager.Registration registration = manager.register(this::prepare);
                 opened.add(registration::close);
@@ -733,6 +741,7 @@ public final class Harvester implements AutoCloseable {
             throw new ConfigurationRejectedException(network.problems());
         }
         List<ConfiguredSchedule> planned = change.syncChanged() ? plannedSchedules(next, true) : null;
+        List<ConfiguredSchedule> plannedInventories = change.syncChanged() ? plannedInventories(next, true) : null;
         EmbeddingGeneration model = null;
         if (embeddingModel != null && change.embeddingChanged()) {
             try {
@@ -778,6 +787,9 @@ public final class Harvester implements AutoCloseable {
             if (planned != null) {
                 scheduleConfigured(planned);
             }
+            if (plannedInventories != null) {
+                scheduleInventories(plannedInventories);
+            }
             // Erst nach dem Tausch: Ab hier fragt jede Berechnung, auch eine schon eingereihte, die neue Freigabe.
             releases.commit();
         };
@@ -799,6 +811,21 @@ public final class Harvester implements AutoCloseable {
      * @throws ConfigurationRejectedException bei unbekannter Quelle oder zu kurzem Abstand, wenn {@code strict}
      */
     private List<ConfiguredSchedule> plannedSchedules(HarvesterConfiguration configuration, boolean strict) {
+        return planned(configuration, strict, SyncSettings::interval, SyncSettings.INTERVAL);
+    }
+
+    /**
+     * Die Bestandsinventuren aus {@code sync.spaces}: je Eintrag mit {@code inventory-interval} und Betriebsart seiner
+     * Quelle; ohne Abstand keine.
+     *
+     * @throws ConfigurationRejectedException wie {@link #plannedSchedules}
+     */
+    private List<ConfiguredSchedule> plannedInventories(HarvesterConfiguration configuration, boolean strict) {
+        return planned(configuration, strict, SyncSettings::inventoryInterval, SyncSettings.INVENTORY_INTERVAL);
+    }
+
+    private List<ConfiguredSchedule> planned(HarvesterConfiguration configuration, boolean strict,
+                                             Function<SyncSettings, Duration> intervalOf, String intervalKey) {
         List<ConfiguredSchedule> planned = new ArrayList<>();
         List<ConfigurationProblem> problems = new ArrayList<>();
         for (String entry : configuration.sync().spaces()) {
@@ -810,20 +837,20 @@ public final class Harvester implements AutoCloseable {
             }
             String sourceId = entry.substring(0, slash);
             SyncSettings rules = configuration.syncFor(sourceId);
-            if (rules.interval() == null) {
+            Duration interval = intervalOf.apply(rules);
+            if (interval == null) {
                 continue;
             }
             if (catalog.find(sourceId).isEmpty()) {
                 problems.add(new ConfigurationProblem(SyncSettings.SPACES, "Unbekannte Quelle „" + sourceId + "“"));
                 continue;
             }
-            if (rules.interval().compareTo(Reconciliation.MIN_INTERVAL) < 0) {
-                problems.add(new ConfigurationProblem(SyncSettings.INTERVAL,
+            if (interval.compareTo(Reconciliation.MIN_INTERVAL) < 0) {
+                problems.add(new ConfigurationProblem(intervalKey,
                         "Der Abstand muss mindestens eine Minute betragen"));
                 continue;
             }
-            planned.add(new ConfiguredSchedule(sourceId, entry.substring(slash + 1), rules.interval(),
-                    rules.mode()));
+            planned.add(new ConfiguredSchedule(sourceId, entry.substring(slash + 1), interval, rules.mode()));
         }
         if (!problems.isEmpty()) {
             if (strict) {
@@ -858,6 +885,20 @@ public final class Harvester implements AutoCloseable {
                 reconciliation.schedule(schedule.sourceId(), schedule.spaceKey(), schedule.interval(),
                         schedule.mode());
                 configuredSchedules.put(schedule.key(), schedule);
+            }
+        }
+    }
+
+    /** Ersetzt die Bestandsinventuren aus der Konfiguration; laufende enden regulär. */
+    private void scheduleInventories(List<ConfiguredSchedule> planned) {
+        synchronized (configuredInventories) {
+            for (ConfiguredSchedule previous : configuredInventories) {
+                inventories.cancel(previous.sourceId(), previous.spaceKey());
+            }
+            configuredInventories.clear();
+            for (ConfiguredSchedule schedule : planned) {
+                inventories.schedule(schedule.sourceId(), schedule.spaceKey(), schedule.interval(), schedule.mode());
+                configuredInventories.add(schedule);
             }
         }
     }
@@ -1314,6 +1355,17 @@ public final class Harvester implements AutoCloseable {
     /** Die eingeplanten regelmäßigen Abgleiche mit letztem und nächstem Start, soweit {@code SYNC} sie freigibt. */
     public List<Reconciliation.Schedule> reconciliations() {
         return reconciliation.schedules().stream()
+                .filter(schedule -> access.permits(caller,
+                        ResourceScope.space(schedule.sourceId(), schedule.spaceKey()), AccessKind.SYNC))
+                .toList();
+    }
+
+    /**
+     * Die eingeplanten Bestandsinventuren aus {@code sync.inventory-interval} mit letztem und nächstem Start, soweit
+     * {@code SYNC} sie freigibt; nur mit Konfiguration.
+     */
+    public List<Reconciliation.Schedule> inventories() {
+        return inventories.schedules().stream()
                 .filter(schedule -> access.permits(caller,
                         ResourceScope.space(schedule.sourceId(), schedule.spaceKey()), AccessKind.SYNC))
                 .toList();
