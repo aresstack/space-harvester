@@ -11,26 +11,63 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import java.nio.file.Path;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
  * Begriffsindex (#119, ADR 0019): Abfragen über die Begriffsdokumente derselben Ablage, in die die Anreicherungen
  * schreiben. Kopfdaten liest er beim Lucene-Cache ohne Payload aus der Snapshot-Ablage, sonst aus dem Seitencache.
+ * Begriffsbeziehungen (#120) liegen als Dateien unter {@code space-harvester.term-relations.directory} (Standard
+ * {@code data/term-relations}), außerhalb des Caches.
  */
 @Configuration(proxyBeanMethods = false)
 class TermConfiguration {
 
     private static final TermIndex EMPTY = (filter, from, inclusive, max) -> List.of();
+
+    @Bean
+    TermRelations termRelations(SourceCatalog catalog, AccessGuard access,
+                                @Value("${space-harvester.term-relations.directory:data/term-relations}")
+                                Path directory,
+                                ObjectProvider<SnapshotRepository> repository, ObjectProvider<PageCacheReader> reader) {
+        return new TermRelations(catalog, new FileTermRelationStore(directory), access,
+                headers(repository.getIfAvailable(), reader.getIfAvailable()), Clock.systemUTC());
+    }
+
+    @Bean
+    AcronymRelationRule acronymRelationRule(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
+                                            TermRelations relations, ObjectProvider<SnapshotRepository> repository,
+                                            ObjectProvider<PageCacheReader> reader) {
+        TermIndex index = enrichments.store() instanceof TermIndex terms ? terms : EMPTY;
+        return new AcronymRelationRule(catalog, index, access, headers(repository.getIfAvailable(),
+                reader.getIfAvailable()), relations, new TermProcessor().version(), Clock.systemUTC());
+    }
+
+    private static Function<PageKey, Optional<PageHeader>> headers(SnapshotRepository snapshots,
+                                                                   PageCacheReader cache) {
+        if (snapshots != null && (cache == null || cache instanceof LucenePageCacheReader)) {
+            return snapshots::findHeader;
+        }
+        if (cache != null) {
+            return key -> cache.page(key).map(CachedPage::header);
+        }
+        return key -> Optional.empty();
+    }
 
     @Bean
     TermQueries termQueries(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,

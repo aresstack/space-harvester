@@ -172,6 +172,30 @@ class RemoteAiTest {
     }
 
     @Test
+    void describesAnImageWithTheVisionModelAndThePromptOfTheEnterpriseAiClient() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of(),
+                null, "qwen-vl");
+
+        String answer = remote(settings).describeImage(new byte[] {1, 2, 3}, "image/png");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"qwen-vl\"")
+                .contains("Beschreibe dieses Bild sachlich auf Deutsch in höchstens fünf Sätzen")
+                .contains("\"type\":\"image_url\"").contains("data:image/png;base64,AQID")
+                .doesNotContain("gpt-x");
+    }
+
+    @Test
+    void withoutVisionModelNoImageIsSent() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of());
+
+        assertThatThrownBy(() -> remote(settings).describeImage(new byte[] {1}, "image/png"))
+                .isInstanceOfSatisfying(AiServiceException.class,
+                        e -> assertThat(e.reason()).isEqualTo(AiServiceException.Reason.NOT_CONFIGURED));
+        assertThat(bodies).isEmpty();
+    }
+
+    @Test
     void withoutChatModelThereAreNoVariantsFromTheService() {
         assertThatThrownBy(() -> remote(settings(null, null)).queryVariants()).isInstanceOfSatisfying(
                 AiServiceException.class,

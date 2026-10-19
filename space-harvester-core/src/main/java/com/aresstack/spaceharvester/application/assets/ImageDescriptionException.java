@@ -7,6 +7,8 @@ public class ImageDescriptionException extends RuntimeException {
     public enum Reason {
         /** Kein Beschreiber konfiguriert. */
         NOT_CONFIGURED,
+        /** Die Quelle ist nicht für den externen KI-Dienst freigegeben ({@code external-processing-sources}). */
+        NOT_RELEASED,
         /** Der Anhang ist kein Bild (draw.io und PDF brauchen keine Bildbeschreibung). */
         NOT_AN_IMAGE,
         /** Noch keine Beschreibung für diesen Stand des Bildes. */
