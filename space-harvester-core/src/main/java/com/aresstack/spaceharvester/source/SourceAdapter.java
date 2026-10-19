@@ -20,6 +20,19 @@ public interface SourceAdapter {
     /** Wert von {@code type} in der Quellenkonfiguration, z. B. {@code confluence}. */
     String type();
 
+    /** Anzeigename des Typs für Auswahllisten, z. B. {@code Git-Repository}; ohne eigenen Namen der Typ. */
+    default String displayName() {
+        return type();
+    }
+
+    /**
+     * Ob der Typ einen Eintrag {@code options.credentialRef} verlangt, den nur der {@code SecretProvider} des
+     * einbettenden Programms auflöst (#188).
+     */
+    default boolean needsCredentials() {
+        return false;
+    }
+
     /**
      * Typeigene Probleme der Einstellungen, ohne etwas zu öffnen; ID und Typ prüft der Katalog.
      *

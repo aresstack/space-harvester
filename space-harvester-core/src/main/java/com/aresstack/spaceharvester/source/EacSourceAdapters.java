@@ -36,22 +36,22 @@ public final class EacSourceAdapters {
     }
 
     public static SourceAdapter ftp() {
-        return new ContextualSourceAdapter(FtpSourceProvider.TYPE_ID,
+        return new ContextualSourceAdapter(FtpSourceProvider.TYPE_ID, "FTP", false,
                 context -> new FtpSourceProvider(secrets(context)));
     }
 
     public static SourceAdapter jes() {
-        return new ContextualSourceAdapter(JesSourceProvider.TYPE_ID,
+        return new ContextualSourceAdapter(JesSourceProvider.TYPE_ID, "JES", true,
                 context -> new JesSourceProvider(secrets(context)));
     }
 
     public static SourceAdapter ndv() {
-        return new ContextualSourceAdapter(NdvSourceProvider.TYPE_ID,
+        return new ContextualSourceAdapter(NdvSourceProvider.TYPE_ID, "NDV", true,
                 context -> new NdvSourceProvider(secrets(context)));
     }
 
     public static SourceAdapter sharePoint() {
-        return new ContextualSourceAdapter(SharePointSourceProvider.TYPE_ID, context -> {
+        return new ContextualSourceAdapter(SharePointSourceProvider.TYPE_ID, "SharePoint", false, context -> {
             SecretProvider secrets = secrets(context);
             return new SharePointSourceProvider(ref -> sharePointCredentials(secrets, ref),
                     context == null ? null : context.routes(), null, context == null ? null : context.userAgent(),

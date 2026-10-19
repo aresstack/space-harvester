@@ -26,6 +26,11 @@ public class SourceQueries {
         return catalog.all();
     }
 
+    /** Die Quellentypen, die der Katalog kennt, in Registrierungsreihenfolge (#187). */
+    public List<SourceType> types() {
+        return catalog.types();
+    }
+
     /**
      * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
      * @throws SourceAccessException  wenn die Quelle nicht antworten kann
