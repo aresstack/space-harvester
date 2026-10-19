@@ -36,10 +36,14 @@ class BackgroundPlateTest {
             assertThat(texts(plate)).contains("noch nicht gestartet");
             plate.render(status(true, Pause.NONE, 2));
             values.addAll(texts(plate));
+            // Eine Suche lädt, der Hintergrund hat nichts übergeben: inFlight bleibt 0, geladen wird trotzdem.
+            plate.render(new Acquisition(true, Pause.FOREGROUND, 0, 0, 0, 2, 0, 0, 0, 0, 2, null, List.of()));
+            values.addAll(texts(plate));
         });
         assertThat(values).contains("lädt im Hintergrund", "12 Seiten · davon 1 für Suche oder Aktion",
                 "1 für Suche oder Aktion · 2 im Hintergrund (höchstens 2)", "40 · 3 vorgezogen, weil eine Suche sie brauchte",
-                "5", "10 wartend · 30 geladen · 5 fehlgeschlagen");
+                "5", "10 wartend · 30 geladen · 5 fehlgeschlagen",
+                "2 für Suche oder Aktion · 0 im Hintergrund (höchstens 2)");
     }
 
     private static Acquisition status(boolean enabled, Pause pause, int background) {

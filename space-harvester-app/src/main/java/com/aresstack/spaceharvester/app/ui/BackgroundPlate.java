@@ -80,7 +80,7 @@ final class BackgroundPlate extends JPanel {
         facts.add("Warteschlange", Texts.count(status.queued(), "Seite", "Seiten")
                 + (status.foregroundQueued() > 0 ? " · davon " + status.foregroundQueued() + " für Suche oder Aktion"
                 : ""));
-        facts.add("Lädt gerade", status.inFlight() == 0 ? "nichts"
+        facts.add("Lädt gerade", status.foregroundRunning() + status.backgroundRunning() == 0 ? "nichts"
                 : status.foregroundRunning() + " für Suche oder Aktion · " + status.backgroundRunning()
                 + " im Hintergrund (höchstens " + status.parallelism() + ")");
         facts.add("Geladen", status.loaded() + (status.promoted() > 0 ? " · " + status.promoted()
