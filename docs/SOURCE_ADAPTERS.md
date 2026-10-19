@@ -9,17 +9,20 @@ Confluence-Client gibt es nicht.
 ## Auswahl
 
 `ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
-(`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider` und `files` über
-`LocalFilesSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
+(`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider`, `files` über
+`LocalFilesSourceProvider` und `mediawiki` über `MediaWikiSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
 `<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis, sowie
 `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
-Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
-`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
-über `SourceAdapter.displayName()` an.
+Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
+(Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
+`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188), und `addressOption`, unter welchem
+Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
+(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
+Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
+`SourceAdapter.addressOption()` an.
 
 ## Vertrag
 
@@ -70,8 +73,10 @@ Indexierung dort (`IndexKnowledgeUseCase.indexSource`: ein `discover` im Umfang 
 - **Umfang:** `SourceAdapter.OpenedSource.discovering(port, scope)`; `KnowledgeSourceProviderAdapter` öffnet einen
   Upstream-`KnowledgeSourceProvider` wie `KnowledgeSourceManagement.open` (`validate`, Adresse aus `locator` und
   `KnowledgeSourceType.addressFor`, `open`, `scope`). Einstellungen stehen unter `options` mit den Schlüsseln des
-  Upstream-Typs; Anmeldung, Zertifikate und `base-url` kennt dieser Weg noch nicht (#188). Hat der Port doch eine
-  `PartitionListingSource`, gilt diese, der Umfang wird nicht benutzt.
+  Upstream-Typs, `base-url` gibt es auf diesem Weg nicht. Ein Typ mit Netz (`KnowledgeSourceProviderAdapter.connected`)
+  baut seinen Provider je Quelle mit Route, TLS und Zugangsdaten des Katalogs (siehe MediaWiki); ohne kennt der Typ
+  weder Anmeldung noch Zertifikate. Hat der Port doch eine `PartitionListingSource`, gilt diese, der Umfang wird nicht
+  benutzt.
 - **Partition:** genau eine je Quelle, Schlüssel = Quellen-ID, Name = Titel der Quelle, ohne Startseite.
   Bereiche des Ports (`partitions()`) gibt es auf diesem Weg nicht.
 - **Seiten-ID:** die Ressourcen-ID als Base64url ohne Auffüllung (`wiki:wiki.intern/w/Start` → `d2lraTp3aWtp…`),
@@ -103,8 +108,74 @@ eingehängt über `Harvester.builder().sourceAdapter`, wie `LocalFileAccessPolic
 Client. Das Verzeichnis der Quelle ist immer freigegeben; ein Link hinaus führt nur in einen freigegebenen Ordner,
 sonst `ACCESS_DENIED`. Gelesen wird die Freigabe bei jedem Zugriff. Ohne Angabe gilt wie bisher nur das Verzeichnis.
 
-Noch offen in #187: die einzelnen Quelltypen (je Typ ein PR), Anmeldung über `SecretProvider` (#188), Bereiche
-(`partitions()`) für Quellen ohne Seitenliste, Freigaben in der Konfiguration des Dienstes.
+### MediaWiki (`type: mediawiki`)
+
+`MediaWikiSourceProvider` aus `source-mediawiki` (unveränderte Kopie, `enterprise-ai-sources`), registriert über
+`MediaWikiSources.adapter()` (`KnowledgeSourceProviderAdapter.connected`) im Core (`ConfiguredSourceCatalog`) und als
+Bean in `SourceConfiguration` des Dienstes; verdrahtet wie `AdapterAssembly.sourceProviders` im Enterprise AI Client.
+Seiten ab den Startpunkten per Breitensuche über die Wiki-Links (`discover`), Inhalt aus `action=parse` als Klartext
+mit Markdown-Überschriften (`load`), Revision aus `touched` und `lastrevid`, Weiterleitungen aufgelöst. Ressourcen-ID
+`wiki:<host[:port]/pfad>/<Titel>`, Quellenadresse `wiki://<host[:port]/pfad>`.
+
+```yaml
+space-harvester:
+  sources:
+    - id: intranet-wiki
+      type: mediawiki
+      title: Intranet-Wiki            # wird displayName
+      auth:                           # weglassen = anonym
+        type: basic                   # Benutzer und Passwort, etwa ein Bot-Passwort
+        username: harvester-bot
+        password: ${WIKI_BOT_PASSWORD}
+      trust-bundle: wiki-ca           # optional, wie bei confluence
+      client-certificate:             # optional (mTLS), wie bei confluence
+        enabled: true
+        type: pkcs12
+        path: /etc/space-harvester/wiki-client.p12
+        alias: harvester
+        password: ${WIKI_CERT_PASSWORD}
+      options:
+        apiUrl: https://wiki.intern.example/w/api.php   # Pflicht; Basis-URL oder api.php
+        startPoints: Hauptseite,Handbuch                # Pflicht; kommagetrennte Seitentitel
+        maxDepth: "2"                                   # Linkebenen ab den Startpunkten, Standard 1
+        maxResources: "500"                             # Höchstzahl Seiten je Lauf, Standard 500
+        linkNamespaces: "0"                             # verfolgte Namensräume, Standard 0
+        requiresLogin: "true"                           # Standard: true mit auth basic
+        connectTimeoutMillis: "15000"
+        readTimeoutMillis: "30000"
+        userAgent: …                                    # Standard: User-Agent des Dienstes
+```
+
+- **Anmeldung** wie im Enterprise AI Client: `auth.type basic` setzt `credentialRef` auf `source:<id>`; der Adapter
+  fordert Benutzer und Passwort erst beim Login über `SecretBackedMediaWikiCredentialsProvider` an (`action=login`,
+  sonst `clientlogin`), löscht sie danach und meldet sich bei abgelaufener Sitzung genau einmal neu an. Fehlt das
+  Passwort, kommt es vom `SourceSecrets` des Programms (#188, `Harvester.builder().secretProvider`). `pat` gibt es für
+  MediaWiki nicht; `options.credentialRef` und `options.displayName` sind gesperrt (dafür `auth` und `title`). Falsche
+  Zugangsdaten lassen den Abgleich mit `ACCESS_DENIED` scheitern.
+- **Netz:** HTTP macht der Upstream-Adapter selbst, synchron über `HttpURLConnection` mit eigenem Cookie-Speicher je
+  Quelle, wie im Enterprise AI Client. Jede Verbindung bekommt die Route des Katalogs (`ProxyRoutes`, PAC je Ziel-URL);
+  eine nicht bestimmbare Route (PAC fehlt oder scheitert) bricht die Anfrage mit `UNAVAILABLE` ab, nie still DIRECT.
+  TLS je Quelle: Server-Vertrauen aus `trust-bundle` (sonst `space-harvester.network.tls`), Client-Zertifikat aus
+  `client-certificate` mit erzwungenem Alias (`ClientCertificates` der Kopie, dieselben Felder und Prüfungen wie bei
+  `confluence`); ein unbrauchbares Zertifikat verhindert den Start. Die Anmeldung am Proxy (#189) gilt wie für alle
+  `HttpURLConnection`-Wege prozessweit (`ProxyAuthenticator`). Anders als bei `confluence` bekommt jeder Host, zu dem
+  das Wiki weiterleitet, dasselbe Zertifikat angeboten; Weiterleitungen von HTTPS auf HTTP und Formulare an einen
+  anderen Origin lehnt der Adapter ab.
+- **Nicht asynchron:** Einen WebClient-Transport wie `WebClientConfluenceTransport` kann der MediaWiki-Adapter nicht
+  aufnehmen, seine Transport-Naht (`MediaWikiTransport`) ist paketintern. Das braucht eine öffentliche Naht im
+  Upstream.
+- **Rechte:** Seiten, die das Konto des Wikis nicht lesen darf (`permissiondenied`, `readapidenied`), liefert `load`
+  als `ACCESS_DENIED`; findet die Discovery sie über einen Link, fehlen sie in Katalog, Suche und Export, der Lauf
+  bestätigt den Stand ohne sie und endet mit `SYNC_PARTIAL`. Die `AccessPolicy` des Aufrufers gilt zusätzlich.
+- **Protokoll:** Der Crawler der Kopie meldet übersprungene Seiten und Linkfehler mit Seitentitel; sein
+  `java.util.logging`-Logger steht deshalb auf `SEVERE`. Der Login meldet nur die Site (`host/pfad`), nie Benutzer,
+  Passwort, Token oder Cookies.
+- **Suche:** `SearchableKnowledgeSource` (Wiki-Suche der Action-API) zusätzlich zum Volltext des Cache.
+- Ohne `base-url` kennt der Katalog kein Ziel der Quelle: die Prüfung auf doppelte Ziele und die Route in der
+  Auftragsdiagnose fehlen für `mediawiki`.
+
+Noch offen in #187: die übrigen Quelltypen (je Typ ein PR), Bereiche (`partitions()`) für Quellen ohne Seitenliste,
+Freigaben in der Konfiguration des Dienstes, ein asynchroner Transport für MediaWiki (Upstream-Naht).
 
 ## Dokumente: Typerkennung und Text (#183)
 
@@ -171,8 +242,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    `SecretProvider` des Katalogs auf, also der Anbieter des einbettenden Programms (#188); `auth`, `base-url` und eigene
    Zertifikate gibt es auf diesem Weg nicht.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
-   `KnowledgeSourceProviderAdapter`. `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen
-   Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
+   `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
+   `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
 
 ## Tests
 
@@ -182,8 +253,17 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `HarvesterDiscoveredSourceTest`: dieselbe Fake-Quelle ohne Partitionen und ohne Suche über
   `KnowledgeSourceProviderAdapter` durch Abgleich, Katalog, Cache, Volltextsuche und Markdown-Export; nicht lesbare
   Seiten fehlen in Liste und Suche.
+- `HarvesterMediaWikiTest`: `type: mediawiki` über echtes HTTP gegen die Fake-Wiki der Kopie (`FakeMediaWikiServer`
+  hinter `WikiFront`, der Anfragen zählt und Leserechte je Seite nachbildet): Abgleich, Katalog, Cache, Volltextsuche,
+  Markdown-Export; Login mit Zugangsdaten aus der Konfiguration und vom Anbieter des Programms, ohne Passwort oder
+  Titel im Protokoll; falsche Zugangsdaten; nicht lesbare Seiten (Wiki und `AccessPolicy`) fehlen in Liste und Suche;
+  Prüfung der Einstellungen.
+- `MediaWikiNetworkTest`: PAC-Route je Ziel (Proxy, DIRECT), fehlendes PAC ohne Direktverbindung, mTLS mit
+  `trust-bundle` auch durch den Proxy-Tunnel, unbrauchbare Zertifikate verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
+- `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
+  durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
@@ -195,4 +275,6 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `AttachmentPreviewTest`: Vorschauen über die Confluence-Kopie mit der Fake-Confluence (Pfad der
   Dokumentkonvertierung, Reihenfolge, Ablage je Version, Anmeldeseite, 202, Grenze); `AttachmentPreviewApiTest`: die
   Route über echtes HTTP, Rechte wie beim Inhalt, nicht lesbare Seiten bleiben unsichtbar.
-- Upstream: `ConfluenceStoredContentTest`, `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
+- Upstream: `ConfluenceStoredContentTest`, die MediaWiki-Tests (`MediaWikiKnowledgeSourceTest`,
+  `MediaWikiHttpIntegrationTest`, Vertragstest …), `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die
+  übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.

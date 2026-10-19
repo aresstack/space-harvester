@@ -113,6 +113,8 @@ class AnalysisConverterTest {
         assertThat(first.path("facts").valueStream().map(f -> f.path("type").asString()).toList())
                 .contains("ACRONYM_DEFINITION");
         assertThat(first.path("facts").get(0).path("processorId").asString()).isEqualTo("acronyms");
+        assertThat(first.path("facts").get(0).path("origin").asString()).isEqualTo("AUTOMATIC");
+        assertThat(first.path("facts").get(0).path("review").asString()).isEqualTo("UNREVIEWED");
 
         JsonNode second = pages.get(1);
         assertThat(second.path("parentPageId").asString()).isEqualTo("100");

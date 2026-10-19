@@ -24,8 +24,13 @@ public final class EnrichmentAnalyses implements PageAnalyses {
     private final FactStore facts;
 
     public EnrichmentAnalyses(Enrichments enrichments) {
+        this(enrichments, enrichments.facts().orElse(null));
+    }
+
+    /** @param facts die Fakten, etwa mit Prüfablage, oder {@code null} für keine */
+    public EnrichmentAnalyses(Enrichments enrichments, FactStore facts) {
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
-        this.facts = enrichments.facts().orElse(null);
+        this.facts = facts;
     }
 
     @Override

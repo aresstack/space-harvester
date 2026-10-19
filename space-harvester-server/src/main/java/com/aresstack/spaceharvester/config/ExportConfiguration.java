@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
+import com.aresstack.spaceharvester.application.facts.FactEditStore;
+import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.export.ExportArtifactWriter;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -66,9 +68,11 @@ class ExportConfiguration {
 
     /** Analyse-Export (#359): liest die Anreicherungen nur; ohne Anreicherungen eine Datei ohne Abschnitte. */
     @Bean
-    AnalysisConverter analysisConverter(ObjectProvider<Enrichments> enrichments) {
+    AnalysisConverter analysisConverter(ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
+                                        FactEditStore edits) {
         Enrichments available = enrichments.getIfAvailable();
-        return new AnalysisConverter(available == null ? PageAnalyses.NONE : new EnrichmentAnalyses(available));
+        return new AnalysisConverter(available == null ? PageAnalyses.NONE
+                : new EnrichmentAnalyses(available, FactEditConfiguration.facts(available, store, edits)));
     }
 
     @Bean
