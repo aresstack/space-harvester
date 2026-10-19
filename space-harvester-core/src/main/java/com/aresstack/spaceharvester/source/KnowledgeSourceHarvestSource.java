@@ -95,6 +95,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /** Schlüssel der Wurzel einer Partition im Enterprise AI Client ({@code space:DEV}). */
     private static final String SPACE_NODE = "space:";
+    /** {@link PageAttachments#nativeFormat()} der Ersatzliste aus dem Lesebereich; sie hat keine Rohantworten. */
+    static final String READER_ATTACHMENTS = "knowledge-reader-attachments";
+    private static final System.Logger LOG = System.getLogger(KnowledgeSourceHarvestSource.class.getName());
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
     /** Präfix des Cursors der Discovery-Listung; versioniert das Format. */
@@ -709,10 +712,35 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             list = listing.storedAttachments(pageId);
         } catch (KnowledgeSourceException e) {
+            if (e.kind() == KnowledgeSourceException.Kind.INVALID_RESPONSE && port instanceof PageViewSource view) {
+                return readerAttachments(pageId, view, e);
+            }
             throw accessFailure(e);
         }
         return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
                 .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    /**
+     * Liefert die Quelle die vollständige Liste nicht (mehr als {@link AttachmentListSource#MAX_ATTACHMENTS} Einträge,
+     * wiederholte Seiten), zeigt der Enterprise AI Client im Lesebereich trotzdem die ersten Anhänge
+     * ({@code ConfluenceKnowledgeSource.readerAttachments}, höchstens 500). Ebenso hier: die Liste des Lesebereichs, ohne
+     * Rohantworten, mit Warnung. Scheitert auch sie, bleibt die Seite ohne Anhänge, wie dort.
+     */
+    private PageAttachments readerAttachments(String pageId, PageViewSource view, KnowledgeSourceException cause) {
+        List<PageAttachment> attachments = List.of();
+        String warning = "Anhangsliste nicht vollständig lieferbar (" + cause.kind() + "); es gelten die Anhänge "
+                + "des Lesebereichs";
+        try {
+            attachments = view.attachmentsOf(resource(pageId).id()).stream()
+                    .map(KnowledgeSourceHarvestSource::attachment).toList();
+        } catch (KnowledgeSourceException | RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Quelle {0}: Anhänge des Lesebereichs nicht lesbar ({1})", id,
+                    e.getClass().getSimpleName());
+            warning = "Anhangsliste nicht lieferbar; die Seite bleibt ohne Anhänge";
+        }
+        return new PageAttachments(pageId, attachments, List.of(), "application/json", READER_ATTACHMENTS,
+                List.of(warning), Instant.now());
     }
 
     @Override
