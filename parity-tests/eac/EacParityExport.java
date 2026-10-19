@@ -47,6 +47,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvid
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -133,6 +135,7 @@ public final class EacParityExport {
         facts(new File(out, "facts.properties"));
         git(new File(out, "git.properties"));
         files(new File(out, "files.properties"));
+        ftp(new File(out, "ftp.properties"));
     }
 
     /**
@@ -275,6 +278,58 @@ public final class EacParityExport {
         } finally {
             out.close();
         }
+    }
+
+    /**
+     * FTP-Quelle (#193) über {@link ParityFtp}: anonym ab {@link ParityFtp#START_POINT}, einmal mit
+     * {@link ParityFtp#DEPTH} ({@code deep}) und einmal eine Ebene flacher ({@code shallow}); je Pfad Titel und welche
+     * Sätze aus {@link ParityFtp#SENTENCES} (Index ab 0) der geladene Text enthält.
+     */
+    private static void ftp(File target) throws Exception {
+        ParityFtp server = ParityFtp.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            ftpDepth(server, ParityFtp.DEPTH, "deep", out);
+            ftpDepth(server, ParityFtp.DEPTH - 1, "shallow", out);
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    private static void ftpDepth(ParityFtp server, int depth, String prefix, PrintWriter out) throws Exception {
+        FtpSourceProvider provider = new FtpSourceProvider(ref -> {
+            throw new IllegalStateException("anonym");
+        });
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("host", server.host());
+        values.put("port", String.valueOf(server.port()));
+        values.put("startPoints", ParityFtp.START_POINT);
+        values.put("maxDepth", String.valueOf(depth));
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("ftp", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(ftpPath(resource.id().value()), resource);
+        }
+        out.println("ftp." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParityFtp.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParityFtp.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            out.println("ftp." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
+            out.println("ftp." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /** Pfad ab {@link ParityFtp#START_POINT}; Host und Port wechseln je Lauf. */
+    static String ftpPath(String id) {
+        int start = id.indexOf(ParityFtp.START_POINT + "/");
+        return start < 0 ? id : id.substring(start);
     }
 
     /** Pfad im Repository aus {@code git:<…>/parity[@<ref>]/<pfad>} (der Locator lässt {@code .git} weg). */
