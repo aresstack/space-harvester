@@ -177,9 +177,11 @@ zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und sch
 `source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
 bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
 
-Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung, noch nicht die Auslieferung: Bei
-REST-Abrufen von Inhalt und Vorschau sowie im Export ist der Platz frei, sobald die Datei gelesen ist, die Bytes liegen
-danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
+Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung. Ein abgelegter Anhang geht über
+`GET …/assets/{id}/content` als Strom aus der Ablage an den Client und hält seinen Platz, bis die Antwort geschrieben
+oder abgebrochen ist; die Antwort hat keine Content-Length, und passt der Inhalt am Ende nicht zu seinem Hash, bricht
+sie ab, statt als vollständig zu gelten. Bei Vorschauen und im Export ist der Platz frei, sobald die Datei gelesen ist,
+die Bytes liegen danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
 dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
 der Schranke erfasst.
 
@@ -198,6 +200,14 @@ dort fest 30 s.
   mehr bei vielen gleichzeitigen Nutzern); Download, Hash, Ablage und Auslieferung arbeiten auf demselben
   `byte[]`, die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
   Wer `max-size` oder `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
+- **Kopien:** Der Confluence-Transport legt einen erfolgreichen Körper gleich in der angekündigten Länge an, das
+  JSON-Paket liest jede Datei erst beim Schreiben, und Export-Bilder übernehmen ihre Bytes ohne Kopie. Eine Kopie
+  bleibt in `ConfluenceHttpResponse` aus dem Enterprise AI Client (Konstruktor und `body()`; Vorschlag als
+  Upstream-Patch 08).
+- **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
+  keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
+  Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
+  Textes bräuchte eine Änderung dort.
 
 ## Reihenfolge der Quellen
 
@@ -360,9 +370,11 @@ veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte we
 Quelle geladen.
 
 **Embedding je Absatz (#181, PR #388):** Mit Embedding-Modell bettet der Prozessor `embedding` je semantischem Absatz
-ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Ein Absatz über
-`ai.embedding-chunk-chars` Zeichen wird wie bisher geteilt; Budget und Überlappung der Zerlegung
-(`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
+ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Wie im Client wird
+ein Absatz nur nach Tokens begrenzt; nur mit gesetztem `ai.embedding-chunk-chars` (Standard 0, ohne Zeichengrenze) wird
+ein Absatz darüber geteilt. Der Umstieg auf diese Standards bettet vorhandene Seiten beim nächsten Start einmal im gedrosselten
+Hintergrund neu ein; bis dahin findet die Relevanzsuche eine solche Seite nur über ihre Schlagworte. Budget und
+Überlappung der Zerlegung (`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
 Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
 Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
 diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embedding-model` und der Freigabe

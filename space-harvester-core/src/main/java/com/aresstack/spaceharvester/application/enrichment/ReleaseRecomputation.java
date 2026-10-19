@@ -51,6 +51,8 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     private static final System.Logger LOG = System.getLogger(ReleaseRecomputation.class.getName());
     private static final Duration CLOSE_WAIT = Duration.ofSeconds(10);
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    /** Kennung des Prozessors {@code EmbeddingProcessor}, dessen veraltete Ergebnisse der Start nachholt. */
+    private static final String EMBEDDING = "embedding";
 
     private final Enrichments enrichments;
     private final CachedPages pages;
@@ -131,7 +133,8 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
      *     <li>nicht freigegeben: Seiten mit einem Ergebnis der Prozessoren, das nicht den Grund {@code notApproved}
      *     trägt (also auch jedem gespeicherten Embedding);</li>
      *     <li>freigegeben: Seiten, denen ein Ergebnis eines Prozessors fehlt, der die Seite bearbeitet, oder deren
-     *     Ergebnis den Grund {@code notApproved} trägt.</li>
+     *     Ergebnis den Grund {@code notApproved} trägt, oder deren Embedding eine ältere Prozessorversion trägt (etwa nach
+     *     einer geänderten Zerlegung).</li>
      * </ul>
      *
      * Ohne Modell beim Lauf tut er nichts. Wechselt die Freigabe währenddessen, endet er für die Quelle, und der Lauf
@@ -222,13 +225,26 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
             // Ein fehlendes Ergebnis zählt nur, wenn der Prozessor die Seite bearbeitet; sonst rechnete jeder Start sie
             // erneut (etwa ohne Chat-Modell oder für einen nicht eingerichteten Prozessor).
             boolean mismatch = release
-                    ? result == null ? enrichments.appliesTo(processorId, key) : notApproved(result, notApproved)
+                    ? result == null ? enrichments.appliesTo(processorId, key)
+                            : notApproved(result, notApproved) || staleEmbedding(result, key)
                     : result != null && !notApproved(result, notApproved);
             if (mismatch) {
                 due.add(processorId);
             }
         }
         return due;
+    }
+
+    /**
+     * Ein Embedding einer älteren Prozessorversion, etwa nach einer geänderten Zerlegung: Der Start bettet es einmal im
+     * gedrosselten Hintergrund neu ein, statt erst beim nächsten Abgleich oder Öffnen der Seite. Andere Prozessoren
+     * rechnen wie bisher nach Bedarf neu.
+     */
+    private boolean staleEmbedding(Enrichment result, PageKey key) {
+        // Nur, wenn embedding die Seite jetzt bearbeitet: Ohne Embedding-Modell (der Start läuft dann etwa für die
+        // Satzanalyse) hieße „veraltet“ sonst Entfernen.
+        return EMBEDDING.equals(result.processorId()) && enrichments.appliesTo(EMBEDDING, key)
+                && !enrichments.version(EMBEDDING).map(result.processorVersion()::equals).orElse(true);
     }
 
     /**

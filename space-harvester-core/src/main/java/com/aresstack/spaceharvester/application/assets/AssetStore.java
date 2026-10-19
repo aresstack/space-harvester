@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.application.assets;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Optional;
 
 /**
@@ -25,6 +28,16 @@ public interface AssetStore {
      * @throws AssetStoreException wenn der Inhalt fehlt, nicht lesbar oder verändert ist
      */
     byte[] read(Asset asset);
+
+    /**
+     * Der abgelegte Anhang als Strom, ohne ihn ganz in den Speicher zu laden. Der Hash wird beim Lesen geprüft; eine
+     * Abweichung meldet der Strom am Ende als {@link IOException}, bevor er das Ende anzeigt.
+     *
+     * @throws AssetStoreException wenn der Inhalt fehlt oder nicht lesbar ist
+     */
+    default InputStream open(Asset asset) {
+        return new ByteArrayInputStream(read(asset));
+    }
 
     /** Die Beschreibung genau dieser Bildbytes durch genau diesen Beschreiber und dieses Modell. */
     Optional<ImageDescription> description(String imageSha256, String describer, String modelVersion);

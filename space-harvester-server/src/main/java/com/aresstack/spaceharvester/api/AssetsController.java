@@ -21,10 +21,17 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -38,6 +45,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 /**
  * Anhänge und Bilder einer Seite getrennt vom Seiten-JSON ernten und ausliefern (#19). Jede Anfrage liest die
@@ -49,6 +58,8 @@ import org.springframework.web.bind.annotation.RestController;
         produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Assets", description = "Anhänge und Bilder einer Seite, getrennt geerntet und versioniert")
 public class AssetsController {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AssetsController.class);
 
     /** Anhang-IDs der Quellen (Confluence {@code att<Ziffern>}); alles andere ist unbekannt, bevor etwas geladen wird. */
     private static final Pattern ATTACHMENT_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
@@ -108,7 +119,7 @@ public class AssetsController {
             + "Antwort nennt signInRequestId für /api/v1/sign-ins")
     @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder der "
             + "Anhang ist größer als space-harvester.assets.max-size (asset-too-large)")
-    public ResponseEntity<byte[]> content(
+    public ResponseEntity<Resource> content(
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
             @PathVariable String sourceId,
@@ -119,7 +130,7 @@ public class AssetsController {
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         // Nur wer sync hat, legt beim Lesen auch ab; alle anderen bekommen die Datei, ohne die Ablage zu füllen.
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return download(assets.content(list, attachmentId, mayStore, ExportsController.owner(caller)), ifNoneMatch);
+        return stream(assets.stream(list, attachmentId, mayStore, ExportsController.owner(caller)), ifNoneMatch);
     }
 
     @GetMapping(path = "/{attachmentId}/preview", produces = MediaType.ALL_VALUE)
@@ -201,25 +212,82 @@ public class AssetsController {
         throw new InvalidQueryException("kind kennt nur document, poster und thumbnail");
     }
 
+    /**
+     * Wie {@link #download}, aber als Strom: Die Datei liegt nicht ganz im Speicher, und eine große Datei hält ihren
+     * Platz an der Schranke, bis die Antwort geschrieben ist (der Konverter schließt den Strom danach, im selben
+     * Request-Thread). Ohne Content-Length, damit ein Hashfehler am Ende die Antwort abbricht, statt als vollständig
+     * zu gelten.
+     */
+    private static ResponseEntity<Resource> stream(Assets.AssetStream content, String ifNoneMatch) {
+        Asset asset = content.asset();
+        HttpHeaders headers = headers(asset);
+        if (headers.getETag().equals(ifNoneMatch)) {
+            closeQuietly(content);
+            return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+        }
+        attachment(headers, asset);
+        // Der Konverter schließt den Strom nach dem Schreiben, auch wenn der Client abbricht; schreibt er gar nicht
+        // (etwa nach einem Fehler davor), gibt das Ende des Requests Strom und Platz frei.
+        RequestContextHolder.currentRequestAttributes().registerDestructionCallback(
+                AssetsController.class.getName() + ".stream", () -> closeQuietly(content),
+                RequestAttributes.SCOPE_REQUEST);
+        InputStream body = new FilterInputStream(content.content()) {
+            @Override
+            public int read(byte[] bytes, int off, int len) throws IOException {
+                try {
+                    return super.read(bytes, off, len);
+                } catch (IOException e) {
+                    // Bricht die Antwort ab (keine abschließende Chunk-Grenze), der Client erkennt den Fehler.
+                    LOG.warn("Quelle {}: Auslieferung abgebrochen ({})", asset.sourceId(), e.getClass().getSimpleName());
+                    throw e;
+                }
+            }
+
+            @Override
+            public void close() throws IOException {
+                content.close();
+            }
+        };
+        return new ResponseEntity<>(new InputStreamResource(body), headers, HttpStatus.OK);
+    }
+
+    private static void closeQuietly(Assets.AssetStream content) {
+        try {
+            content.close();
+        } catch (IOException e) {
+            // nichts gelesen, nichts zu melden
+        }
+    }
+
     /** Ein abgelegter oder geladener Inhalt als Download: nosniff, CSP sandbox, ETag = sha256. */
     private static ResponseEntity<byte[]> download(Assets.AssetContent content, String ifNoneMatch) {
         Asset asset = content.asset();
-        String etag = "\"" + asset.sha256() + "\"";
+        HttpHeaders headers = headers(asset);
+        if (headers.getETag().equals(ifNoneMatch)) {
+            return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+        }
+        attachment(headers, asset);
+        return new ResponseEntity<>(content.content(), headers, HttpStatus.OK);
+    }
+
+    /** Kopfzeilen jeder Antwort mit Inhalt, auch der 304: ETag = sha256, nosniff, CSP sandbox. */
+    private static HttpHeaders headers(Asset asset) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setETag(etag);
+        headers.setETag("\"" + asset.sha256() + "\"");
         headers.setCacheControl("private, no-cache");
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
         headers.set("X-Asset-Version", asset.version() == null || !SAFE_VERSION.matcher(asset.version()).matches()
                 ? "" : asset.version());
-        if (etag.equals(ifNoneMatch)) {
-            return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
-        }
+        return headers;
+    }
+
+    /** Medientyp und Download-Name. */
+    private static void attachment(HttpHeaders headers, Asset asset) {
         headers.setContentType(mediaType(asset.mediaType()));
         headers.setContentDisposition(ContentDisposition.attachment()
                 .filename(filename(asset), StandardCharsets.UTF_8)
                 .build());
-        return new ResponseEntity<>(content.content(), headers, HttpStatus.OK);
     }
 
     @GetMapping("/{attachmentId}/description")

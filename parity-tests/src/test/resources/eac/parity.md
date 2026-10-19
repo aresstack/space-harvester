@@ -38,6 +38,8 @@ System.out.println("Delta");
 
 ![Systembild](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAE0lEQVR4XmP4jwMwoAvAwOCUAAC6Hr9BwiIU8gAAAABJRU5ErkJggg==)
 
+Ansprechpartnerin ist Anna Schmidt.
+
 #### Komponenten
 
 ##### Komponenten
@@ -93,11 +95,13 @@ Satz Foxtrot zum Betrieb.
 
 Satz Golf vor den Makros.
 
-Satz Hotel aus dem Baustein.
+Satz Hotel aus dem Baustein. Von Bernd Wagner.
 
 Satz India aus dem Auszug.
 
 - Juliett
+
+Fragen an Carla Conrad.
 
 #### Juliett
 
@@ -121,3 +125,11 @@ PAR-7 - Getting issue details...
 - vorlage.docx
 
 ![ablauf](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4XmNo+N8AAAQCAgBQjCYAAAAAAElFTkSuQmCC)
+
+### Zählung
+
+#### Zählung
+
+Satz Quebec zur Zählung.
+
+- Architektur

@@ -270,5 +270,58 @@ class AcronymResolutionTest {
         assertThat(done.partitionKey()).isNull();
         assertThat(done.state()).isEqualTo(JobState.COMPLETED);
         assertThat(proposals("rsl")).hasSize(1);
+        // Nur eigene Aufträge zählen, nicht jeder Anreicherungsauftrag ohne Space.
+        assertThat(resolution.started(job.id())).isTrue();
+        assertThat(resolution.started("fremd")).isFalse();
+    }
+
+    @Test
+    void anUnreadableAnswerKeepsTheProposalsAndIsAskedAgain() {
+        answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
+        resolution.run("wiki", null);
+        cached("1", "Geändert: Jede Meldung trägt den RSL.");
+        answers = (instructions, input) -> "Leider abgeschnitten: {\"expansions\":[";
+
+        assertThat(resolution.run("wiki", null).withdrawn()).isZero();
+        assertThat(proposals("rsl")).hasSize(1);
+
+        answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
+        resolution.run("wiki", null);
+        assertThat(inputs).hasSize(3);
+        assertThat(proposals("rsl")).hasSize(1);
+    }
+
+    @Test
+    void anEntryWithoutEvidenceDoesNotBlockTheSameExpansionWithEvidence() {
+        answers = (instructions, input) -> "{\"expansions\":[{\"acronym\":\"RSL\",\"expansion\":"
+                + "\"Rückmeldeschlüssel\",\"snippets\":[99]},{\"acronym\":\"RSL\",\"expansion\":"
+                + "\"Rückmeldeschlüssel\",\"snippets\":[1,2]}]}";
+
+        assertThat(resolution.run("wiki", null).added()).isEqualTo(1);
+    }
+
+    @Test
+    void anAcronymWithoutReadableTextKeepsItsProposals() {
+        answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
+        resolution.run("wiki", null);
+        // Neuer Text im Cache, Begriffe noch nicht neu berechnet: Die Fundstellen passen zu keinem lesbaren Text.
+        for (String pageId : List.of("1", "2")) {
+            PageSnapshot old = cache.values().stream().filter(snapshot -> snapshot.key().pageId().equals(pageId))
+                    .findFirst().orElseThrow();
+            cache.put(old.key(), PageSnapshot.of("wiki", old.metadata(), new NativePayload(
+                    "Ganz anderer Text.".getBytes(StandardCharsets.UTF_8), "text/plain", "test"), T0));
+        }
+
+        assertThat(resolution.run("wiki", null).withdrawn()).isZero();
+        assertThat(proposals("rsl")).hasSize(1);
+        assertThat(inputs).hasSize(1);
+    }
+
+    @Test
+    void theFingerprintDependsOnTheSource() {
+        AcronymResolution.Acronym acronym = new AcronymResolution.Acronym("rsl", "RSL");
+
+        assertThat(AcronymResolution.fingerprint("wiki", "m", acronym))
+                .isNotEqualTo(AcronymResolution.fingerprint("spiegel", "m", acronym));
     }
 }

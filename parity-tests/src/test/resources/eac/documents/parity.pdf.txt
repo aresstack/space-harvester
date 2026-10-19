@@ -11,15 +11,16 @@ Betrieb 11
 Makros 12
 Juliett 13
 Anhänge 14
-1 / 14
+Zählung 15
+1 / 15
 Paritätsprüfung
-2 / 14
+2 / 15
 Handbuch
 Handbuch
 Satz Alpha der Einleitung.
 Zweck
 Satz Bravo zum Zweck.
-3 / 14
+3 / 15
 Architektur
 Architektur
 Satz Charlie zur Architektur. Siehe Dokumentation und Team.
@@ -34,46 +35,48 @@ Schreiber schreibt Bonn
 veraltet fett kursiv
 System.out.println("Delta");
 Systembild
-4 / 14
+Ansprechpartnerin ist Anna Schmidt.
+4 / 15
 Komponenten
 Komponenten
 Satz Echo zu den Komponenten. Weiter bei Betrieb.
-5 / 14
-6 / 14
+5 / 15
+6 / 15
 Ebene 4
 Ebene 4
 Satz Ebene vier.
-7 / 14
+7 / 15
 Ebene 5
 Ebene 5
 Satz Ebene fünf.
-8 / 14
+8 / 15
 Ebene 6
 Ebene 6
 Satz Ebene sechs.
-9 / 14
+9 / 15
 Ebene 7
 Ebene 7
 Satz Ebene sieben.
-10 / 14
+10 / 15
 Betrieb
 Betrieb
 Satz Foxtrot zum Betrieb.
 [Abbildung nicht verfügbar: fehlt.png]
 [Abbildung nicht verfügbar]
 ablauf
-11 / 14
+11 / 15
 Makros
 Makros
 Satz Golf vor den Makros.
-Satz Hotel aus dem Baustein.
+Satz Hotel aus dem Baustein. Von Bernd Wagner.
 Satz India aus dem Auszug.
 • Juliett
-12 / 14
+Fragen an Carla Conrad.
+12 / 15
 Juliett
 Juliett
 Satz Juliett.
-13 / 14
+13 / 15
 Anhänge
 Anhänge
 Satz Kilo zu den Anhängen.
@@ -83,7 +86,12 @@ PAR-7 - Getting issue details...
 • handbuch.pdf
 • vorlage.docx
 ablauf
-14 / 14
+14 / 15
+Zählung
+Zählung
+Satz Quebec zur Zählung.
+• Architektur
+15 / 15
 Paritätsprüfung
 	Handbuch
 	Architektur
@@ -96,3 +104,4 @@ Betrieb
 	Makros
 	Juliett
 Anhänge
+	Zählung

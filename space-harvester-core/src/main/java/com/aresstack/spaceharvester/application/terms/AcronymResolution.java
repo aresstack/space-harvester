@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import tools.jackson.databind.JsonNode;
@@ -70,6 +71,8 @@ public class AcronymResolution {
     static final int MAX_EXPANSIONS = 3;
     static final int MAX_EXPANSION_CHARS = 120;
     static final int MAX_ANSWER_CHARS = 128 * 1024;
+    /** So viele Seitentexte hält das Sammeln der Fundstellen höchstens zugleich. */
+    static final int TEXT_CACHE = 64;
     /** Fassung von Anweisung und Prüfung; eine neue macht den Ergebnis-Cache wirkungslos. */
     static final String PROMPT_VERSION = "acronym-resolution-v1";
 
@@ -101,6 +104,8 @@ public class AcronymResolution {
     private final Function<PageKey, Optional<PageText>> texts;
     private final TermRelations relations;
     private final AcronymExpansionModel model;
+    private final Set<String> started = ConcurrentHashMap.newKeySet();
+    private final Map<String, Object> locks = new ConcurrentHashMap<>();
     private final ResolutionCache cache;
     private final Jobs jobs;
     private final String processorVersion;
@@ -156,8 +161,24 @@ public class AcronymResolution {
         }
         access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
         requireModel(sourceId);
-        return jobs.submit(JobType.ENRICHMENT, sourceId, null, caller.jobOwner(),
-                JobTask.blocking(context -> run(sourceId, context)));
+        JobStatus status = jobs.submit(JobType.ENRICHMENT, sourceId, null, caller.jobOwner(),
+                JobTask.blocking(context -> {
+                    // Je Quelle nacheinander: Ein zweiter Auftrag findet danach alles im Cache und fragt nicht erneut.
+                    synchronized (lock(sourceId)) {
+                        run(sourceId, context);
+                    }
+                }));
+        started.add(status.id());
+        return status;
+    }
+
+    /** Ob der Auftrag von {@link #start} stammt; andere Anreicherungsaufträge gehören nicht hierher. */
+    public boolean started(String jobId) {
+        return jobId != null && started.contains(jobId);
+    }
+
+    private Object lock(String sourceId) {
+        return locks.computeIfAbsent(sourceId, ignored -> new Object());
     }
 
     private void requireModel(String sourceId) {
@@ -177,14 +198,15 @@ public class AcronymResolution {
         String version = model.version();
         Map<String, Acronym> acronyms = collect(sourceId, context);
         List<Acronym> asked = new ArrayList<>(acronyms.values());
+        Set<String> skipped = new HashSet<>();
+        // Ohne aktuelle Fundstelle (Text gerade nicht lesbar): nicht fragen, bisherige Vorschläge behalten.
+        asked.removeIf(acronym -> acronym.snippets.isEmpty() && skipped.add(acronym.normalized));
         asked.sort(Comparator.comparingInt((Acronym acronym) -> -acronym.pages.size())
                 .thenComparing(acronym -> acronym.normalized));
-        Set<String> skipped = new HashSet<>();
         if (asked.size() > MAX_ACRONYMS) {
             asked.subList(MAX_ACRONYMS, asked.size()).forEach(acronym -> skipped.add(acronym.normalized));
             asked = new ArrayList<>(asked.subList(0, MAX_ACRONYMS));
         }
-        asked.removeIf(acronym -> acronym.snippets.isEmpty());
         RelationScope scope = new RelationScope(sourceId, null);
         Map<String, TermRelation> earlier = new HashMap<>();
         relations.automatic(RelationOrigin.AI, scope).forEach(relation -> earlier.put(relation.id(), relation));
@@ -194,7 +216,7 @@ public class AcronymResolution {
         int reused = 0;
         for (var iterator = asked.iterator(); iterator.hasNext(); ) {
             Acronym acronym = iterator.next();
-            acronym.fingerprint = fingerprint(version, acronym);
+            acronym.fingerprint = fingerprint(sourceId, version, acronym);
             Optional<List<String>> known = cache.find(acronym.fingerprint);
             if (known.isPresent()) {
                 for (String id : known.get()) {
@@ -235,6 +257,12 @@ public class AcronymResolution {
             Accepted accepted = accept(answer, batch);
             proposals.addAll(accepted.proposals);
             for (Acronym acronym : batch) {
+                if (!accepted.readable) {
+                    // Eine unlesbare Antwort ist kein „ohne Ausschreibung“: Vorschläge behalten, nächstes Mal erneut
+                    // fragen.
+                    skipped.add(acronym.normalized);
+                    continue;
+                }
                 List<String> ids = new ArrayList<>();
                 for (TermRelations.Proposal proposal : accepted.proposals) {
                     if (TermText.normalize(proposal.fromTerm()).equals(acronym.normalized)) {
@@ -263,7 +291,13 @@ public class AcronymResolution {
         TermRelations.ProposalRun run = relations.propose(ACTOR, RelationOrigin.AI, scope,
                 version + "@" + clock.instant(), proposals);
         // Erst nach dem Abgleich: Ein abgebrochener Lauf hinterlässt keinen Cache ohne Beziehungen.
-        cache.replace(sourceId, answered);
+        try {
+            cache.replace(sourceId, answered);
+        } catch (RuntimeException e) {
+            // Nur ein Cache: Die Beziehungen sind geschrieben, der nächste Lauf fragt dann eben erneut.
+            LOG.log(System.Logger.Level.WARNING, "Ergebnis-Cache der KI-Akronymauflösung in {0} nicht geschrieben ({1})",
+                    sourceId, e.getClass().getName());
+        }
         if (context != null) {
             context.written(run.added() + run.updated());
         }
@@ -278,7 +312,13 @@ public class AcronymResolution {
         TermIndex.Filter filter = new TermIndex.Filter(Set.of(sourceId), TermKind.ACRONYM, null, null,
                 processorVersion);
         Map<String, Acronym> acronyms = new LinkedHashMap<>();
-        Map<PageKey, Optional<PageText>> current = new HashMap<>();
+        // Nur die zuletzt gelesenen Texte: Fundstellen kommen je Akronym über viele Seiten, nicht je Seite gebündelt.
+        Map<PageKey, Optional<PageText>> current = new LinkedHashMap<>(TEXT_CACHE, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<PageKey, Optional<PageText>> eldest) {
+                return size() > TEXT_CACHE;
+            }
+        };
         String from = null;
         while (true) {
             if (context != null) {
@@ -328,10 +368,10 @@ public class AcronymResolution {
         return acronyms;
     }
 
-    /** SHA-256 über Verfahren, Modell, Akronym und die Lage der Fundstellen samt Texthash; nie geloggt. */
-    static String fingerprint(String version, Acronym acronym) {
-        StringBuilder input = new StringBuilder(PROMPT_VERSION).append('\u0000').append(version).append('\u0000')
-                .append(acronym.normalized);
+    /** SHA-256 über Verfahren, Quelle, Modell, Akronym und die Lage der Fundstellen samt Texthash; nie geloggt. */
+    static String fingerprint(String sourceId, String version, Acronym acronym) {
+        StringBuilder input = new StringBuilder(PROMPT_VERSION).append('\u0000').append(sourceId).append('\u0000')
+                .append(version).append('\u0000').append(acronym.normalized);
         for (Found found : acronym.snippets) {
             RelationEvidence evidence = found.evidence();
             input.append('\u0000').append(evidence.pageId()).append(':').append(evidence.start()).append(':')
@@ -375,6 +415,7 @@ public class AcronymResolution {
         Accepted accepted = new Accepted();
         if (answer == null || answer.length() > MAX_ANSWER_CHARS) {
             accepted.rejected++;
+            accepted.readable = false;
             return accepted;
         }
         int start = answer.indexOf('{');
@@ -388,6 +429,7 @@ public class AcronymResolution {
         }
         if (expansions == null || !expansions.isArray()) {
             accepted.rejected++;
+            accepted.readable = false;
             return accepted;
         }
         Map<String, Acronym> byTerm = new HashMap<>();
@@ -402,8 +444,8 @@ public class AcronymResolution {
                     : null;
             String text = expansion != null && expansion.isString()
                     ? WHITESPACE.matcher(expansion.asString().strip()).replaceAll(" ") : "";
-            if (acronym == null || ids == null || !ids.isArray() || !plausible(text, acronym)
-                    || !seen.add(acronym.normalized + '\u0000' + TermText.normalize(text))
+            String pair = acronym == null ? null : acronym.normalized + '\u0000' + TermText.normalize(text);
+            if (acronym == null || ids == null || !ids.isArray() || !plausible(text, acronym) || seen.contains(pair)
                     || perAcronym.getOrDefault(acronym.normalized, 0) >= MAX_EXPANSIONS) {
                 accepted.rejected++;
                 continue;
@@ -426,6 +468,7 @@ public class AcronymResolution {
                 accepted.rejected++;
                 continue;
             }
+            seen.add(pair);
             perAcronym.merge(acronym.normalized, 1, Integer::sum);
             accepted.proposals.add(new TermRelations.Proposal(acronym.term, text, RelationType.ABBREVIATION,
                     evidence));
@@ -473,5 +516,7 @@ public class AcronymResolution {
 
         final List<TermRelations.Proposal> proposals = new ArrayList<>();
         int rejected;
+        /** Ob die Antwort überhaupt lesbar war; sonst zählt sie nicht als Ergebnis. */
+        boolean readable = true;
     }
 }

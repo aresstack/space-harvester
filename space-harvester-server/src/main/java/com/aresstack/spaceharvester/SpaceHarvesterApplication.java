@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester;
 
+import com.aresstack.spaceharvester.source.network.ProxyAuthenticator;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -11,6 +12,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class SpaceHarvesterApplication {
 
     public static void main(String[] args) {
+        // Vor der ersten HttpURLConnection: Das JDK liest die Freigabe von BASIC im HTTPS-Tunnel nur einmal, eine
+        // Proxy-Anmeldung kann aber auch erst zur Laufzeit dazukommen (ADR 0015).
+        ProxyAuthenticator.allowBasicTunneling();
         SpringApplication.run(SpaceHarvesterApplication.class, args);
     }
 }

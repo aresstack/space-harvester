@@ -21,3 +21,5 @@ veraltet fett kursiv
 ```java
 System.out.println("Delta");
 ```
+
+Ansprechpartnerin ist Anna Schmidt.
