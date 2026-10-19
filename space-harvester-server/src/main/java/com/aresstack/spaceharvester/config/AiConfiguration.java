@@ -20,12 +20,14 @@ import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
@@ -194,6 +196,17 @@ class AiConfiguration {
     NavigationLabelModel navigationLabels(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live) {
         return new ChatNavigationLabeler(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /**
+     * Akronymauflösung über das Chat-Modell (#122): folgt {@code ai.chat-model}, {@code base-url} und
+     * {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell antwortet
+     * {@code POST /api/v1/term-relations/refresh} mit {@code ai-unavailable}.
+     */
+    @Bean
+    AcronymExpansionModel acronymExpansions(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                            ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
