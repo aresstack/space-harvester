@@ -38,11 +38,17 @@ final class ImagesTab extends JPanel {
 
     static final String NO_MODEL = "Kein Vision-Modell eingerichtet (Einstellungen › Modelle); ohne Modell werden "
             + "Bilder nicht beschrieben.";
+    static final String NOT_RELEASED = "Diese Quelle ist nicht für den KI-Dienst freigegeben (Quellenformular › "
+            + "„Inhalte dieser Quelle dürfen an den KI-Dienst gehen“); ihre Bilder werden nicht beschrieben.";
+    static final String DESCRIBE = "Bilder beschreiben";
 
     private final JLabel state = new JLabel(" ");
     private final JPanel list = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private final List<String> lines = new ArrayList<>();
+    private final com.aresstack.enterpriseai.ui.comic.control.ComposerButton describe = Comic.button(DESCRIBE,
+            "Lässt die Bilder dieser Seite vom Vision-Modell beschreiben; läuft im Hintergrund");
+    private Runnable onDescribe = () -> { };
 
     ImagesTab() {
         super(new BorderLayout(0, 10));
@@ -56,6 +62,11 @@ final class ImagesTab extends JPanel {
         state.setFont(Comic.semiBold(12f));
         state.setOpaque(true);
         head.add(state, BorderLayout.EAST);
+        JPanel actions = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        actions.setOpaque(false);
+        actions.add(describe);
+        head.add(actions, BorderLayout.SOUTH);
+        describe.addActionListener(e -> onDescribe.run());
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         JPanel body = new JPanel(new BorderLayout(0, 8));
@@ -64,15 +75,28 @@ final class ImagesTab extends JPanel {
         body.add(hint, BorderLayout.CENTER);
         add(head, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
-        show(PassagesTab.State.MISSING, List.of(), true);
+        show(PassagesTab.State.MISSING, null, List.of());
+    }
+
+    /** {@code listener} startet die Beschreibung im Hintergrund; nur auf Abruf, nie beim bloßen Anzeigen. */
+    void onDescribe(Runnable listener) {
+        onDescribe = Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Sperrt „Bilder beschreiben“, solange eine Beschreibung läuft. */
+    void describing(boolean running) {
+        describe.setEnabled(!running);
     }
 
     /**
      * Zeigt die Bilder; außer bei {@link PassagesTab.State#CURRENT} ist {@code images} leer.
      *
-     * @param modelConfigured ob ein Vision-Modell eingerichtet ist
+     * @param reason Grund des Core für den Zustand ({@code vision-model-missing}, {@code source-not-released},
+     *               {@code not-analysed}) oder {@code null}
      */
-    void show(PassagesTab.State current, List<Image> images, boolean modelConfigured) {
+    void show(PassagesTab.State current, String reason, List<Image> images) {
+        boolean blocked = "vision-model-missing".equals(reason) || "source-not-released".equals(reason);
+        describe.setVisible(!blocked);
         state.setText(stateText(current));
         Color tone = switch (current) {
             case CURRENT -> Comic.GREEN;
@@ -94,7 +118,8 @@ final class ImagesTab extends JPanel {
             list.add(entry(shown.get(i)));
             lines.add(shown.get(i).name() + " · " + statusText(shown.get(i)));
         }
-        hint.setText(!modelConfigured ? NO_MODEL : hint(current, shown.size()));
+        hint.setText("vision-model-missing".equals(reason) ? NO_MODEL
+                : "source-not-released".equals(reason) ? NOT_RELEASED : hint(current, shown.size()));
         list.revalidate();
         list.repaint();
     }
@@ -156,12 +181,10 @@ final class ImagesTab extends JPanel {
 
     static String hint(PassagesTab.State state, int count) {
         return switch (state) {
-            case MISSING -> "Noch keine Bildanalyse für diese Seite. Sie entsteht mit der Analyse beim nächsten "
-                    + "Abgleich.";
-            case STALE -> "Die Bildanalyse passt nicht mehr zur angezeigten Fassung; „Analyse neu berechnen“ unter "
-                    + "Text erneuert sie.";
-            case FAILED -> "Die letzte Bildanalyse ist fehlgeschlagen; „Analyse neu berechnen“ unter Text startet sie "
-                    + "neu.";
+            case MISSING -> "Die Bilder dieser Seite sind noch nicht beschrieben; „" + DESCRIBE + "“ startet es.";
+            case STALE -> "Die Beschreibungen passen nicht mehr zur angezeigten Fassung; „" + DESCRIBE
+                    + "“ erneuert sie.";
+            case FAILED -> "Die letzte Bildbeschreibung ist fehlgeschlagen; „" + DESCRIBE + "“ startet sie neu.";
             case CURRENT -> count == 0 ? "Diese Seite enthält keine Bilder." : " ";
         };
     }
@@ -174,6 +197,14 @@ final class ImagesTab extends JPanel {
 
     String stateLabel() {
         return state.getText();
+    }
+
+    boolean describeOffered() {
+        return describe.isVisible() && describe.isEnabled();
+    }
+
+    void clickDescribe() {
+        describe.doClick();
     }
 
     String hint() {
