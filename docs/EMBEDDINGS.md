@@ -58,7 +58,7 @@ wie `KnowledgeChunker.fitHeading` belegt die Kette höchstens das halbe Token-Bu
 zuerst, dann wird die innerste an Wortgrenzen gekürzt (Version `+heading:eac`). `charStart`/`charEnd` bleiben Stellen in der Textprojektion, damit Treffer auf
 ihre Stelle zeigen. Seit dieser Zerlegung trägt die Prozessorversion Format `2`; ältere Vektoren zählen nicht mehr und
 werden beim nächsten Abgleich oder Öffnen der Seite neu berechnet. Ebenso beim Umstieg auf die Zerlegung ohne
-Zeichengrenze und mit gekürzter Überschriftenkette: Vorhandene Embeddings werden einmal im gedrosselten Hintergrund aus
+Zeichengrenze und mit gekürzter Überschriftenkette: Vorhandene Embeddings werden beim nächsten Start einmal im gedrosselten Hintergrund aus
 dem Cache neu eingebettet; bis dahin findet die Relevanzsuche eine noch nicht neu eingebettete Seite nur über ihre
 Schlagworte.
 

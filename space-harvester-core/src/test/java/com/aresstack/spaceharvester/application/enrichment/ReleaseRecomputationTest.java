@@ -57,6 +57,41 @@ class ReleaseRecomputationTest {
         assertThat(embedding.calls).as("kein neues Embedding").isEmpty();
     }
 
+    @Test
+    void atTheStartAnEmbeddingOfAnOlderVersionIsEmbeddedAgainOnlyForApprovedSources() throws Exception {
+        Counting embedding = new Counting("embedding", "{\"vectors\":[[0.1]]}");
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(embedding, navigation), store, CLOCK);
+        PageSnapshot current = text("wiki", "p1", "1", "Eins");
+        PageSnapshot old = text("wiki", "p2", "1", "Zwei");
+        PageSnapshot closed = text("intern", "p3", "1", "Drei");
+        for (PageSnapshot page : List.of(current, old, closed)) {
+            enrichments.recompute(page, null);
+        }
+        // p2 und p3 tragen ein Embedding der Zerlegung von vorher, ebenso eine ältere Navigation.
+        for (PageSnapshot page : List.of(old, closed)) {
+            store.save(new Enrichment(page.key(), "embedding", "0", "x", "1", Enrichment.Status.OK,
+                    "{\"vectors\":[[0.2]]}", List.of(), null, CLOCK.instant()));
+        }
+        store.save(new Enrichment(old.key(), "navigation", "0", "x", "1", Enrichment.Status.OK,
+                "{\"analysis\":\"SEMANTIC\"}", List.of(), null, CLOCK.instant()));
+        embedding.calls.clear();
+        navigation.calls.clear();
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> sourceId.equals("wiki") ? List.of(current, old).iterator() : List.of(closed).iterator(),
+                "wiki"::equals, List.of("embedding", "navigation"))) {
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (embedding.count("p2") == 0 && System.nanoTime() < end) {
+                Thread.onSpinWait();
+            }
+        }
+
+        assertThat(embedding.calls).containsOnlyKeys("p2");
+        assertThat(navigation.calls).as("andere Prozessoren nach Bedarf").isEmpty();
+    }
+
     /** Zählt seine Aufrufe je Seite. */
     private static final class Counting implements EnrichmentProcessor {
 

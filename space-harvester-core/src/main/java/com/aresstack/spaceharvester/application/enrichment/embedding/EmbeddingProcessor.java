@@ -462,17 +462,20 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     /** Überschriftenkette als Vorspann, gekürzt wie {@link #fitHeading}; leer ohne Überschrift. */
     private String prefix(List<String> headings) {
-        List<String> path = fitHeading(headings);
-        if (path.isEmpty()) {
-            return "";
+        List<String> path = new ArrayList<>(fitHeading(headings));
+        if (charLimited()) {
+            // Schutz bei gesetzter Zeichengrenze: nach Zeichen höchstens ein Viertel des Stücks, gekürzt wie
+            // fitHeading: äußere Überschriften zuerst, dann die innerste an einer Wortgrenze.
+            int limit = maxChunkChars / 4;
+            while (path.size() > 1 && String.join(" > ", path).length() > limit) {
+                path.removeFirst();
+            }
+            if (path.size() == 1 && path.getFirst().length() > limit) {
+                int cut = path.getFirst().lastIndexOf(' ', limit);
+                path = cut > 0 ? List.of(path.getFirst().substring(0, cut)) : List.of();
+            }
         }
-        String line = String.join(" > ", path);
-        if (charLimited() && line.length() > maxChunkChars / 4) {
-            // Schutz bei gesetzter Zeichengrenze: nach Zeichen höchstens ein Viertel des Stücks, an einer Wortgrenze.
-            int cut = line.lastIndexOf(' ', maxChunkChars / 4);
-            line = cut > 0 ? line.substring(0, cut) : "";
-        }
-        return line.isEmpty() ? "" : line + "\n\n";
+        return path.isEmpty() ? "" : String.join(" > ", path) + "\n\n";
     }
 
     /**
