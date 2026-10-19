@@ -11,6 +11,7 @@ import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncBaselineStore;
 import com.aresstack.spaceharvester.application.sync.SyncCommitted;
 import java.time.Clock;
@@ -88,6 +89,15 @@ class SyncConfiguration {
             return () -> schedules.replace(planned);
         });
         return reconciliation;
+    }
+
+    /**
+     * Holt vor jeder Suche die Änderungen ihrer Quellen nach, wo {@code space-harvester.sync.before-search} (global oder
+     * je Quelle) es verlangt; die Regel folgt der wirksamen Konfiguration (ADR 0015).
+     */
+    @Bean
+    SyncBeforeSearch syncBeforeSearch(SpaceSyncJobs syncJobs, LiveConfiguration live) {
+        return new SyncBeforeSearch(syncJobs, live::current, null, java.time.Clock.systemUTC());
     }
 
     /**
