@@ -6,7 +6,9 @@
 - Umgesetzt (Teil von #181): Prozessor `passages`, `PassageSegmentation`, `OpenNlpSentenceSegmenter`,
   `PagePassages.read` für die Leseansicht, `PassageQueries` (`harvester.passages()`), REST
   `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`; Suchschnipsel aus Absätzen (`PassageSnippets`).
-- Offen: Reiter „Absätze“ in der App (#354, Strang L); Passage-Embeddings und Re-Ranking (#181, eigene PRs).
+- Embeddings je Absatz: `EmbeddingProcessor.withPassages(PassageChunks)` (Punkt 8).
+- Re-Ranking auf Absatzebene: der Reranker der semantischen Suche bekommt genau den ähnlichsten Absatz (Punkt 9).
+- Offen: Reiter „Absätze“ in der App (#354, Strang L).
 
 ## Kontext
 
@@ -45,6 +47,17 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Fundstelle). Das Ergebnis trägt dafür `textSha256` des Textes, zu dem seine Stellen gehören (Format 2); passt er
    nicht zum abgelegten Text, fehlen Absätze oder enthält keiner ein Suchwort, bleibt das Fenster des Index. Die
    Schlagwortsuche liefert Auszüge weiter nur mit `content`.
+8. **Ein Embedding je Absatz** wie `IndexKnowledgeUseCase.withPassages` im Client: Mit Modell zerlegt der Prozessor
+   `embedding` die Seite mit derselben `PassageSegmentation` statt nach Token-Budget und bettet jeden Absatz ohne
+   Vorspann ein; ein Absatz über `embedding-chunk-chars` wird wie bisher geteilt. Format der Vektoren, semantische
+   Suche und Freigabe bleiben; die Version nennt die Zerlegung (`+passages:<Fingerabdruck>`), vorhandene Embeddings
+   veralten einmal und werden aus dem Cache neu berechnet. Die Satzvektoren der Themengrenzen kosten den Prozessor
+   `embedding` wie `passages` je einen Aufruf je 32 Sätze.
+9. **Re-Ranking auf Absatzebene**: Der Reranker der semantischen Suche (`ModelReranker`, `/rerank`) bekommt je Treffer
+   den Titel und genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (Punkt 8), statt eines auf
+   2 000 Zeichen aufgefüllten Fensters; ohne aktuelle Absätze (veraltete Revision, Zerlegung ohne Absätze) bleibt das
+   Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
+   Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
 
 ## Abweichungen vom Client
 
@@ -52,8 +65,7 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
   kann. Die Blöcke einer Confluence-Projektion sind ihre Zeilen, wie die Strukturblöcke aus dem Dokumentbaum im Client.
 - Die Sätze aller Absätze gehen in Stapeln an das Modell statt je Absatz (gleiche Vektoren), höchstens 2 000 je
   Seite, danach nur Struktur mit Warnung.
-- Kein eigenes Embedding je Passage und kein `TopicClusterer` in diesem Schritt: Passage-Embeddings gehören in den
-  Prozessor `embedding`, sobald er nach Passagen statt nach Token-Budget zerlegt (#181).
+- Kein `TopicClusterer`; die Embeddings je Absatz liegen im Prozessor `embedding` statt in einer eigenen Ablage.
 
 ## Folgen
 

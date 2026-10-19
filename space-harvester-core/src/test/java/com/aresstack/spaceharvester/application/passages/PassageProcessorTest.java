@@ -33,7 +33,7 @@ class PassageProcessorTest {
             embedding);
 
     /** Ein Modell, das Sätze nach Thema einbettet. */
-    static final class TopicModel implements EmbeddingProvider {
+    static class TopicModel implements EmbeddingProvider {
 
         boolean unavailable;
 

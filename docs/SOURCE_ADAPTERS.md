@@ -18,12 +18,15 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`,
-#188), und `addressOption`, unter welchem
-Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
-(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
-Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
-`SourceAdapter.addressOption()` an.
+`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`, #188),
+und `addressOption`, unter welchem Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl`
+(sharepoint), `baseUrl` (betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei
+Confluence `null`, die Adresse steht dort in `base-url`. Dazu `fields`, die Eingabefelder unter `options` wie im
+Quellen-Editor des Enterprise AI Client (`key`, `label`, `hint`, `kind`
+TEXT|NUMBER|FLAG|DIRECTORY|SECRET_REF|CLIENT_CERTIFICATE, `required`, `advanced`, `defaultValue`; nie ein Wert aus dem
+Tresor, ohne `title`; bei Confluence leer, weil Basis-URL, Anmeldung und Zertifikat außerhalb von `options` stehen), und
+`authModes`, die erlaubten Werte von `auth.type` (`none`, `basic`, bei Confluence auch `pat`). Eigene Adapter geben das
+über `SourceAdapter.displayName()`, `addressOption()`, `fields()` und `authModes()` an.
 
 ## Vertrag
 
@@ -292,6 +295,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
 - `ParityFilesTest`: der Paritätsordner `ParityFiles` (Test-Fixtures des Core, Paket der Ordner-Quelle, Java 8, #193)
   durch Abgleich, Cache und Suche; `exclude` schließt den Entwurf aus, das Bild ohne Text wird keine Seite.
+- `ParityFtpTest`: der Paritäts-Server `ParityFtp` (Test-Fixtures des Core, Paket der FTP-Quelle, Java 8, #193), ein
+  anonymer FTP-Server im Prozess nur auf 127.0.0.1 mit Unix-Auflistung, durch Abgleich, Cache und Suche; `maxDepth` wirkt.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
