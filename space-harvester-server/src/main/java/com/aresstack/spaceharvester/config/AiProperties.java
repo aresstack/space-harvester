@@ -17,6 +17,7 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * @param embeddingChunkOverlapSentences so viele Schlusssätze wiederholt das nächste Stück (wie
  *                                       {@code knowledge.chunk.overlapSentences}); 0 ohne Überlappung
  * @param rerankModel         Rerank-Modell des Dienstes ({@code POST /rerank}, #181) oder leer
+ * @param visionModel         Vision-Modell für Bildbeschreibungen (ADR 0021) oder leer
  */
 @ConfigurationProperties("space-harvester.ai")
 public record AiProperties(URI baseUrl, String apiKey, String chatModel, String embeddingModel,
@@ -24,11 +25,11 @@ public record AiProperties(URI baseUrl, String apiKey, String chatModel, String 
                            @DefaultValue Set<String> externalProcessingSources,
                            @DefaultValue("1500") int embeddingChunkChars, String rerankModel,
                            @DefaultValue("350") int embeddingChunkTokens,
-                           @DefaultValue("1") int embeddingChunkOverlapSentences) {
+                           @DefaultValue("1") int embeddingChunkOverlapSentences, String visionModel) {
 
     AiServiceSettings toSettings() {
         return new AiServiceSettings(baseUrl, apiKey, chatModel, embeddingModel, embeddingDimensions, timeout,
-                trustBundle, externalProcessingSources, rerankModel);
+                trustBundle, externalProcessingSources, rerankModel, visionModel);
     }
 
     /** Ohne API-Key. */
