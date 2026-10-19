@@ -70,7 +70,7 @@ und `space-harvester.network.*`.
   Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen; Webhooks (`sync.events`) bei jedem Aufruf; Proxy
   und TLS (`network.*`), solange am Builder weder `proxy` noch `trust` gesetzt ist (die App setzt beide);
   `search.prefetch-hits` für den nächsten Stapel der Schlagwortsuche, solange am Builder `prefetchSearchHits` nicht
-  danach fest gesetzt ist. Noch nicht live: Bestandsinventur-Zeitplan und `before-search`.
+  danach fest gesetzt ist; `before-search` je Quelle bei jeder Suche. Noch nicht live: Bestandsinventur-Zeitplan.
 - Im Server wirkt eine aktivierte Version ebenso sofort (`LiveConfiguration`): Aktualität (`cache.*`,
   `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
   beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
@@ -78,10 +78,10 @@ und `space-harvester.network.*`.
   das Vision-Modell (`ai.vision-model`, ADR 0021) für die nächste Bildbeschreibung, auch erstmals eingeschaltet (ein
   Wechsel macht vorhandene Bildanalysen veraltet), der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
   einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf, `search.prefetch-hits` für den nächsten Stapel der
-  Schlagwortsuche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
+  Schlagwortsuche, `before-search` je Quelle bei jeder Suche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
   schaltet ab und lässt sich auch erstmals einschalten, ohne Neustart: Die Kette (Prozessor, Hintergrund,
-  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Noch nicht live im Server: Bestandsinventur-Zeitplan,
-  `before-search` und `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
+  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Noch nicht live im Server: Bestandsinventur-Zeitplan
+  und `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Suchlauf-Protokoll und Fakten (#182)
 
@@ -253,7 +253,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Aktualisierung je Seite: „Immer Version prüfen“ (Standard), „Zeitbasiert ohne Versionsprüfung“, „Zeitbasiert mit Versionsprüfung“ | `cache.refresh-strategy` (`always-check-version`, `time-based`, `time-based-with-version-check`) mit `cache.max-age`; alternativ `cache.max-age` und `cache.version-check` | ja |
 | Änderungsquelle Webhooks (braucht einen Confluence-Administrator) | `sync.events` (Standard `false`) | ja |
 | Zeitplan des Nachholabgleichs | `sync.interval` (z. B. `P1D`, mindestens `PT1M`, ohne: kein Zeitplan), `sync.spaces` | ja, Scheduler neu gesetzt |
-| Nachholen vor jeder Suche | `sync.before-search` (Standard `false`) | ja |
+| Nachholen vor jeder Suche: startet zu Beginn einer Suche das Nachholen ihrer Quellen in deren Betriebsart, je Quelle höchstens einmal pro Minute; die Suche wartet nicht darauf und antwortet aus dem vorhandenen Stand | `sync.before-search` (Standard `false`) | ja |
 | Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
 | Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
