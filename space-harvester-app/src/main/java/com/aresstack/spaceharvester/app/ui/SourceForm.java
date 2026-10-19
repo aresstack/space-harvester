@@ -98,9 +98,9 @@ final class SourceForm {
     final JTextArea notes = Comic.note("");
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
-    /** Bei Typen ohne eigenes Formular, die Zugangsdaten verlangen: Anmeldung kommt erst mit #188. */
-    static final String CREDENTIALS_LATER = "Diese Art braucht eine Anmeldung; sie folgt mit #188. Bis dahin "
-            + "scheitert der erste Zugriff mit „Zugriff verweigert“.";
+    /** Bei Typen ohne eigenes Formular, die Zugangsdaten verlangen: die Felder dafür folgen mit den Feldern des Typs. */
+    static final String CREDENTIALS_LATER = "Diese Art braucht eine Anmeldung; bis das Formular ihre Felder kennt, "
+            + "steht sie in der Datei unter auth (Einstellungen › Datei öffnen).";
     final JLabel credentialsNote = Comic.muted(CREDENTIALS_LATER);
     /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
     private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
@@ -270,6 +270,14 @@ final class SourceForm {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
         String type = typeId();
         boolean files = SourceDraft.FILES.equals(type);
+        if (!confluence && !files && editing != null && editing.draft().type().equals(type)) {
+            // Anmeldung, Zertifikat und Vertrauen dieser Arten kennt das Formular noch nicht; sie bleiben wie in der Datei.
+            SourceDraft kept = editing.draft();
+            return new SourceDraft(id.getText(), type, title.getText(), null, null, null, kept.authType(),
+                    kept.username(), kept.secretVariable(), kept.certificateType(), kept.certificatePath(),
+                    kept.certificatePasswordVariable(), kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(),
+                    options(false));
+        }
         SourceSettingsConfig.AuthType authType = !confluence ? SourceSettingsConfig.AuthType.NONE
                 : PAT.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.PAT
                 : BASIC.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.BASIC

@@ -137,7 +137,8 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 if (text(auth, key) != null) {
                     plaintext.add("auth." + key);
                 }
-                secretVariable = suggestedVariable(id, authType);
+                // Andere Typen dürfen das Passwort weglassen; dann fragt der Core das Programm (ADR 0022).
+                secretVariable = confluence || text(auth, key) != null ? suggestedVariable(id, authType) : null;
             }
         }
         SourceSettingsConfig.CertificateStoreType certificateType = null;
@@ -291,11 +292,17 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         }
         if (confluence()) {
             yaml.append(in).append("base-url: ").append(scalar(baseUrl)).append('\n');
+        }
+        // Confluence immer mit auth; andere Typen nur, wenn die Datei eine Anmeldung oder ein Zertifikat hatte (ADR 0022).
+        if (confluence() || generic() && (authType != SourceSettingsConfig.AuthType.NONE || certificateType != null
+                || trustBundle != null)) {
             yaml.append(in).append("auth:\n");
             yaml.append(in).append("  type: ").append(authType.name().toLowerCase(Locale.ROOT)).append('\n');
             if (authType == SourceSettingsConfig.AuthType.BASIC) {
                 yaml.append(in).append("  username: ").append(scalar(username)).append('\n');
-                yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                if (secretVariable != null) {
+                    yaml.append(in).append("  password: ${").append(secretVariable).append("}\n");
+                }
             } else if (authType == SourceSettingsConfig.AuthType.PAT) {
                 yaml.append(in).append("  token: ${").append(secretVariable).append("}\n");
             }

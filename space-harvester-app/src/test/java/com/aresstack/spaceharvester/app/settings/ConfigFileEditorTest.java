@@ -215,6 +215,32 @@ class ConfigFileEditorTest {
         assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org");
     }
 
+    /** Anmeldung und Vertrauen anderer Typen (ADR 0022) bleiben beim Bearbeiten, auch ohne Passwort in der Datei. */
+    @Test
+    void theLoginOfOtherSourceTypesSurvivesAnEdit() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, """
+                space-harvester:
+                  sources:
+                    - id: host-jes
+                      type: jes
+                      title: Host
+                      auth:
+                        type: basic
+                        username: batch
+                      options:
+                        host: mvs.example.org
+                """);
+        SourceDraft read = editor.editable(file, "host-jes").draft();
+        assertThat(read.secretVariable()).as("kein Passwort in der Datei, der Core fragt das Programm").isNull();
+        SourceDraft renamed = new SourceDraft(read.id(), read.type(), "Großrechner", null, null, null,
+                read.authType(), read.username(), read.secretVariable(), null, null, null, null, null, null,
+                read.extraOptions());
+        editor.save(file, editor.replace(file, renamed));
+        assertThat(Files.readString(file)).contains("title: \"Großrechner\"", "type: basic", "username: \"batch\"",
+                "host: \"mvs.example.org\"").doesNotContain("password");
+    }
+
     @Test
     void removesOnlyTheChosenEntry() throws Exception {
         Path file = home.resolve("app.yml");
