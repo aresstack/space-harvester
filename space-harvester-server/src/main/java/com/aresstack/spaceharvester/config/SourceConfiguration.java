@@ -47,6 +47,12 @@ class SourceConfiguration {
         return new LocalFilesSourceAdapter();
     }
 
+    /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
+    @Bean
+    KnowledgeSourceProviderAdapter mediaWikiSourceAdapter() {
+        return MediaWikiSources.adapter();
+    }
+
     /** Kopien aus dem Enterprise AI Client ohne eigenen Ordner (#187); Zugangsdaten über den SecretProvider (#188). */
     @Bean
     SourceAdapter ftpSourceAdapter() {
@@ -66,12 +72,6 @@ class SourceConfiguration {
     @Bean
     SourceAdapter sharePointSourceAdapter() {
         return EacSourceAdapters.sharePoint();
-    }
-
-    /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
-    @Bean
-    KnowledgeSourceProviderAdapter mediaWikiSourceAdapter() {
-        return MediaWikiSources.adapter();
     }
 
     /**

@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -163,6 +164,58 @@ class AttachmentTextSearchTest {
         assertThat(index.search("Samstag", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
     }
 
+    @Test
+    void anImageAttachmentIsIndexedWithItsStoredDescriptionAndNeverDescribedByIndexing() {
+        byte[] png = {(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3};
+        files.put("att5", png);
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        ImageDescriber vision = new ImageDescriber() {
+            @Override
+            public String id() {
+                return "vision";
+            }
+
+            @Override
+            public String modelVersion() {
+                return "v1";
+            }
+
+            @Override
+            public String describe(byte[] image, String mediaType) {
+                calls.incrementAndGet();
+                return "Glasfaser zwischen zwei Rechenzentren";
+            }
+        };
+        PageAttachmentList list = list("101", attachment("att5", "Netzplan Foto.png", "image/png"));
+        Assets assets = assets(vision);
+        KeywordSearch search = search(allow());
+
+        // Ernten ruft das Modell nie auf: ohne Beschreibung steht nur der Dateiname im Index. Keine OCR.
+        assets.harvest(list);
+        assertThat(calls).hasValue(0);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Netzplan"), null, 10).hits())
+                .extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
+        assertThat(search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10).hits()).isEmpty();
+
+        // Beschrieben wird nur auf Abruf (#371); die Beschreibung kommt danach in den Index.
+        assets.describe(list, "att5");
+        List<KeywordSearch.Hit> described = search.search(APP, KeywordSearch.Query.of("Glasfaser"), null, 10)
+                .hits();
+        assertThat(calls).hasValue(1);
+        assertThat(described).extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(described.getFirst().attachment()).isEqualTo(new KeywordSearch.AttachmentMatch("att5",
+                "Netzplan Foto.png"));
+        assertThat(described.getFirst().snippet()).contains("Glasfaser");
+
+        // Ein neu aufgebauter Index holt die Beschreibung aus der Ablage von #371, ohne das Modell zu fragen.
+        index.close();
+        index = LucenePageTextIndex.open(directory.resolve("text-neu"));
+        assets(vision).harvest(list);
+        assertThat(calls).hasValue(1);
+        assertThat(index.search("Glasfaser", Set.of("wiki"), SearchSpaces.all(), 10))
+                .extracting(PageTextIndex.Match::attachmentId).containsExactly("att5");
+    }
+
     private KeywordSearch search(AccessGuard guard) {
         return new KeywordSearch(catalog(), guard, index, null);
     }
@@ -181,11 +234,15 @@ class AttachmentTextSearchTest {
     }
 
     private Assets assets() {
+        return assets(null);
+    }
+
+    private Assets assets(ImageDescriber describer) {
         if (index == null) {
             index = LucenePageTextIndex.open(directory.resolve("text"));
         }
         return new Assets(catalog(), new FileSystemAssetStore(directory.resolve("assets")), 1_000_000,
-                Clock.fixed(NOW, ZoneOffset.UTC), null, new TikaDocumentText(), index);
+                Clock.fixed(NOW, ZoneOffset.UTC), describer, new TikaDocumentText(), index);
     }
 
     private SourceCatalog catalog() {

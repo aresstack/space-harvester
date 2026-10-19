@@ -102,6 +102,12 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         return unconnected.type().id();
     }
 
+    /** Anzeigename des Upstream-Typs, etwa {@code MediaWiki}. */
+    @Override
+    public String displayName() {
+        return unconnected.type().displayName();
+    }
+
     @Override
     public List<String> check(SourceSettingsConfig config) {
         return check(config, false);

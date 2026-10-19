@@ -10,9 +10,9 @@ Confluence-Client gibt es nicht.
 
 `ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
 (`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider`, `files` über
-`LocalFilesSourceProvider` und `mediawiki` über `MediaWikiSourceProvider`, dazu `git` über `GitSourceAdapter` mit
-den Kopien der Repositorys unter `<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur
-mit diesem Verzeichnis, sowie `ftp`, `jes`, `ndv` und `sharepoint` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
+`LocalFilesSourceProvider` und `mediawiki` über `MediaWikiSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
+`<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis, sowie
+`ftp`, `jes`, `ndv` und `sharepoint` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
@@ -226,9 +226,11 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   heraus, mit der Seite alle ihre Anhänge. Die Schlagwortsuche liefert je Seite ihr bestes Dokument: ein Treffer im
   Anhang ist die Seite mit `matchedIn: attachment` und `attachment {attachmentId, title}`, Auszug aus dem Anhang. Er
   wird wie jeder Treffer seitenweise live mit `metadata` und `content` geprüft (ADR 0014, Punkt 4); nicht lesbare
-  Seiten erscheinen auch über ihre Anhänge nirgends. Abweichung vom EAC: Bilder werden beim Lesen nicht neu
-  beschrieben, sondern nur mit vorhandener Beschreibung indiziert; der Wissensindex (Passagen, Embeddings) bleibt
-  Seiten vorbehalten.
+  Seiten erscheinen auch über ihre Anhänge nirgends. Bildanhänge (Raster und SVG) stehen wie im EAC
+  (`DocumentSourceFileTextExtractor` → `describe`) mit ihrer Beschreibung im Index, aber nur mit der vorhandenen aus der
+  Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
+  auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
+  darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
 - **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated`; Rechte wie
   `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
   `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
