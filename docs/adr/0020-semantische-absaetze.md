@@ -90,7 +90,10 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
    der erste Satz. Nur in der Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer
    Anfrage; eigene Frist (60 s) und höchstens zwei Benennungen zugleich; nur für Quellen in
    `external-processing-sources`. Antwortet das Modell nicht, bleiben die Bezeichnungen der Analyse mit
-   `reason=model-unavailable`, und der nächste Lauf versucht es wieder. Bezeichnungen und Texte sind Inhalt und werden
+   `reason=model-unavailable`, und der nächste Lauf versucht es wieder. Nach einem Fehler gehen die übrigen Pakete
+   der Seite nicht mehr ans Netz, und fünf Minuten lang benennt keine Seite (gleiches Modell, gleicher Dienst): Die
+   Hintergrund-Warteschlange, die Navigation und Embeddings teilen, wartet so höchstens eine Frist je Pause.
+   Die Verfahrensversion enthält Modell und einen Fingerabdruck der Dienstadresse; ein Wechsel berechnet neu. Bezeichnungen und Texte sind Inhalt und werden
    nie geloggt, auch nicht die Antwort bei einem Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist
    interne Verarbeitung wie progressive Suche (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die
    EAC-Kopie ChatSectionLabeler ist Paritätspflicht.

@@ -37,7 +37,9 @@ public class DocumentNavigationController {
                     + "Enterprise AI Client. origin=heading ist eine Überschrift der Seite, origin=topic ein "
                     + "erkannter Themenabschnitt (Embeddings je Absatz, zusammengefasst nach Thema). analysis=semantic "
                     + "mit erkannten Abschnitten, sonst analysis=headings mit reason (no-model, source-not-approved, "
-                    + "not-embedded, no-topic-change, model-unavailable). Stellen sind UTF-16-Positionen im Text der "
+                    + "not-embedded, no-topic-change, model-unavailable). Bei analysis=semantic sagt "
+                    + "reason=model-unavailable, dass das Chat-Modell die Abschnitte nicht benennen konnte und die "
+                    + "Bezeichnungen aus der Analyse stammen. Stellen sind UTF-16-Positionen im Text der "
                     + "Seite. state wie bei …/passages; ohne Ergebnis zeigt die Antwort sofort die Überschriften. "
                     + "Rechte wie GET …/pages/{pageId}.")
     @ApiResponse(responseCode = "200", description = "NavigationResponse")
@@ -60,7 +62,8 @@ public class DocumentNavigationController {
      *
      * @param state    current, stale, failed oder missing
      * @param analysis semantic oder headings
-     * @param reason   bei headings warum, sonst {@code null}
+     * @param reason   bei headings warum; bei semantic {@code model-unavailable}, wenn das Chat-Modell nicht
+     *                 benennen konnte; sonst {@code null}
      * @param chapters Hauptkapitel in Lesereihenfolge
      */
     public record NavigationResponse(String sourceId, String pageId, String state, String analysis,
