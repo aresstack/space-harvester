@@ -67,6 +67,18 @@ class TermProcessorTest {
     }
 
     @Test
+    void dottedAndPlainSpellingsAreOneAcronymWithTheEacSearchForm() {
+        String text = "Die U.S.A. und die USA sind dasselbe.";
+        List<TermPayload.Entry> terms = terms(text);
+
+        assertThat(terms).filteredOn(entry -> entry.kind() == TermKind.ACRONYM).singleElement()
+                .satisfies(entry -> {
+                    assertThat(entry.normalized()).isEqualTo("usa");
+                    assertThat(entry.occurrences()).hasSize(2);
+                });
+    }
+
+    @Test
     void acronymsInNonGermanSentencesAreStillFound() {
         String text = "The RSL is configured by the operator.";
 

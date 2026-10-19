@@ -54,7 +54,7 @@ public class TermProcessor implements EnrichmentProcessor {
     @Override
     public String version() {
         // Dieselben Akronymregeln samt Satzgrenzen wie acronyms.
-        return "3;sentences=" + acronyms.sentences();
+        return "4;acronyms=" + acronyms.version();
     }
 
     @Override
@@ -64,7 +64,7 @@ public class TermProcessor implements EnrichmentProcessor {
         Set<Integer> acronymStarts = new HashSet<>();
         for (AcronymProcessor.Mention mention : acronyms.mentions(content)) {
             mentions.add(new Mention(mention.acronym() ? TermKind.ACRONYM : TermKind.IDENTIFIER, mention.term(),
-                    mention.expansion(), mention.start(), mention.end()));
+                    mention.normalized(), mention.expansion(), mention.start(), mention.end()));
             acronymStarts.add(mention.start());
         }
         GermanText analysis = GermanText.analyze(text);
@@ -76,7 +76,7 @@ public class TermProcessor implements EnrichmentProcessor {
                     // Dieselbe Stelle hat der Akronymprozessor schon, mit Plural-s und Ausschreibung.
                     continue;
                 }
-                mentions.add(new Mention(kind, group.term(), null, start, group.charEnd(sentence)));
+                mentions.add(new Mention(kind, group.term(), null, null, start, group.charEnd(sentence)));
             }
         }
         mentions.sort(Comparator.comparingInt(Mention::start).thenComparingInt(Mention::end));
@@ -88,7 +88,9 @@ public class TermProcessor implements EnrichmentProcessor {
             if (!TermText.usable(mention.term())) {
                 continue;
             }
-            String normalized = TermText.normalize(mention.term());
+            // Akronyme mit der Suchform des EAC (U.S.A. und USA gleich), alles andere nach TermText.
+            String normalized = TermText.normalize(mention.normalized() != null ? mention.normalized()
+                    : mention.term());
             Found entry = found.computeIfAbsent(normalized + '\u0000' + mention.kind().id(),
                     key -> new Found(mention, normalized));
             entry.count++;
@@ -132,7 +134,7 @@ public class TermProcessor implements EnrichmentProcessor {
         return new EnrichmentOutput(json.append("]}").toString(), warnings);
     }
 
-    private record Mention(TermKind kind, String term, String expansion, int start, int end) {
+    private record Mention(TermKind kind, String term, String normalized, String expansion, int start, int end) {
     }
 
     private static final class Found {

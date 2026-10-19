@@ -171,8 +171,8 @@ public class AcronymProcessor implements EnrichmentProcessor {
         for (Finding finding : analyze(text)) {
             String expansion = finding.longForms().isEmpty() ? null : finding.longForms().get(0);
             for (Occurrence occurrence : finding.occurrences()) {
-                mentions.add(new Mention(occurrence.term(), finding.acronym(), expansion, occurrence.start(),
-                        occurrence.end()));
+                mentions.add(new Mention(occurrence.term(), finding.acronym() ? finding.normalized() : null,
+                        finding.acronym(), expansion, occurrence.start(), occurrence.end()));
             }
         }
         mentions.sort(Comparator.comparingInt(Mention::start).thenComparingInt(Mention::end));
@@ -183,11 +183,13 @@ public class AcronymProcessor implements EnrichmentProcessor {
      * Ein Vorkommen eines Akronyms oder einer Kennung.
      *
      * @param term      Schreibweise an dieser Stelle, bei Akronymen ohne Plural-{@code s}
+     * @param normalized Suchform des Akronyms wie {@code normalized} (groß, ohne Punkte und Plural-{@code s}), bei
+     *                  Kennungen {@code null}
      * @param acronym   {@code true} für ein Akronym, {@code false} für eine technische Kennung
      * @param expansion erste Ausschreibung des Akronyms auf der Seite oder {@code null}
      * @param start     erste Zeichenposition
      * @param end       Position nach dem Wort, einschließlich eines Plural-{@code s}
      */
-    public record Mention(String term, boolean acronym, String expansion, int start, int end) {
+    public record Mention(String term, String normalized, boolean acronym, String expansion, int start, int end) {
     }
 }
