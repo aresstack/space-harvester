@@ -11,16 +11,26 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
+import com.aresstack.spaceharvester.application.terms.RelationEvidence;
+import com.aresstack.spaceharvester.application.terms.RelationScope;
+import com.aresstack.spaceharvester.application.terms.RelationType;
+import com.aresstack.spaceharvester.application.terms.TermRelation;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermOccurrence;
 import com.aresstack.spaceharvester.application.terms.TermPayload;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Comparator;
 import java.util.Map;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -95,6 +105,36 @@ class HarvesterTermsTest {
                 assertThat(text.text().substring(occurrence.start(), occurrence.end())).isEqualTo("Sachbearbeitung");
             }
             assertThat(occurrences.occurrences().getFirst().inputSha256()).isEqualTo(text.inputSha256());
+        }
+    }
+
+    @Test
+    void relationsSurviveACacheRebuild() throws IOException {
+        String id;
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
+            harvester.pages().page(harvester.caller(), "wiki", "102", false);
+            TermQueries.Occurrence rsl = harvester.terms().occurrences(harvester.caller(),
+                    new TermQueries.OccurrenceSearch("RSL", TermKind.ACRONYM, null, null, 1, null, 0))
+                    .occurrences().get(0);
+            TermRelation created = harvester.termRelations().add(harvester.caller(), new TermRelations.NewRelation(
+                    "RSL", "Rückmeldeschlüssel", RelationType.ABBREVIATION, RelationScope.GLOBAL, null,
+                    List.of(new RelationEvidence("wiki", "102", rsl.start(), rsl.end(), rsl.inputSha256()))));
+            id = created.id();
+        }
+        try (Stream<Path> files = Files.walk(data.resolve("cache"))) {
+            files.sorted(Comparator.reverseOrder()).forEach(file -> {
+                try {
+                    Files.delete(file);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
+        try (Harvester harvester = Harvester.builder().source(wiki()).dataDirectory(data).build()) {
+            assertThat(harvester.termRelations().relation(harvester.caller(), id).toTerm())
+                    .isEqualTo("Rückmeldeschlüssel");
+            assertThat(harvester.termRelations().expansions(harvester.caller(), "rsl", "wiki"))
+                    .containsExactly("Rückmeldeschlüssel");
         }
     }
 

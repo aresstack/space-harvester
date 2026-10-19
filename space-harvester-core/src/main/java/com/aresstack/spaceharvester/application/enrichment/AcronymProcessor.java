@@ -2,7 +2,6 @@ package com.aresstack.spaceharvester.application.enrichment;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -11,9 +10,10 @@ import java.util.regex.Pattern;
 /**
  * Findet Akronyme (zwei bis zehn Großbuchstaben oder Ziffern, beginnend mit einem Buchstaben, mindestens zwei
  * Großbuchstaben; ein angehängtes Plural-{@code s} zählt zum selben Akronym) samt Häufigkeit und erster Fundstelle.
- * Eine Ausschreibung wird nur übernommen, wenn sie direkt daneben in Klammern steht und die Anfangsbuchstaben ihrer
- * Wörter das Akronym ergeben, z. B. {@code Application Programming Interface (API)} oder
- * {@code API (Application Programming Interface)}.
+ * Eine Ausschreibung wird nur übernommen, wenn sie direkt daneben in Klammern steht und das Akronym nach der Regel
+ * des EAC in ihr ausgerichtet werden kann ({@link #expansion}), z. B. {@code Application Programming Interface (API)},
+ * {@code API (Application Programming Interface)} oder {@code Zentrale Datenverarbeitung (ZDV)}. Seit Version 3 (wie
+ * EAC) statt nur Wortanfängen.
  *
  * <p>Ergebnis {@code {"acronyms":[{"acronym","count","expansion","section","charStart","occurrences":[{"start",
  * "end"}]}]}}, aufsteigend nach Akronym, höchstens {@value #MAX_ACRONYMS} Einträge. {@code charStart} ist die erste
@@ -30,7 +30,6 @@ public class AcronymProcessor implements EnrichmentProcessor {
 
     private static final Pattern ACRONYM = Pattern.compile(
             "(?<![\\p{L}\\p{N}])(\\p{Lu}[\\p{Lu}\\p{N}]{1,9})(s?)(?![\\p{L}\\p{N}])");
-    private static final Pattern WORD = Pattern.compile("[^\\s-]+");
     private static final Pattern AFTER = Pattern.compile(" *\\(([^()\\n]{3,120})\\)");
 
     @Override
@@ -40,7 +39,7 @@ public class AcronymProcessor implements EnrichmentProcessor {
 
     @Override
     public String version() {
-        return "2";
+        return "3";
     }
 
     @Override
@@ -122,11 +121,23 @@ public class AcronymProcessor implements EnrichmentProcessor {
     public record Mention(String acronym, int start, int end) {
     }
 
-    /** Ausschreibung in Klammern direkt nach oder direkt vor dem Akronym, wenn die Anfangsbuchstaben passen. */
+    /**
+     * Ausschreibung in Klammern direkt nach oder direkt vor dem Akronym, ausgerichtet wie im EAC
+     * ({@code LongFormMatcher}, Schwartz und Hearst 2003): Jeder Buchstabe und jede Ziffer des Akronyms kommt in der
+     * Ausschreibung in derselben Reihenfolge vor, das erste Zeichen an einem Wortanfang; so passen auch Komposita
+     * („Zentrale Datenverarbeitung (ZDV)“) und Füllwörter („Bundesamt für Sicherheit in der Informationstechnik
+     * (BSI)“). In der Klammer zählt nur der Text bis zum ersten Komma oder Semikolon, gesucht wird nur im selben Satz.
+     * Die Ausschreibung ist immer ein wörtliches Stück des Textes, länger als das Akronym, mit Kleinbuchstaben und ohne
+     * das Akronym selbst.
+     */
     public static String expansion(String text, String acronym, int start, int end) {
         Matcher after = AFTER.matcher(text).region(end, text.length());
-        if (after.lookingAt() && matches(acronym, after.group(1))) {
-            return after.group(1).trim();
+        if (after.lookingAt()) {
+            String candidate = firstChunk(after.group(1));
+            if (candidate != null && words(candidate) <= maxWords(characters(acronym))
+                    && longFormStart(acronym, candidate) == 0 && isLongForm(candidate, acronym)) {
+                return collapse(candidate);
+            }
         }
         int open = start - 1;
         while (open >= 0 && text.charAt(open) == ' ') {
@@ -136,38 +147,132 @@ public class AcronymProcessor implements EnrichmentProcessor {
         while (close < text.length() && text.charAt(close) == ' ') {
             close++;
         }
-        if (open >= 0 && text.charAt(open) == '(' && close < text.length() && text.charAt(close) == ')') {
-            String candidate = lastWords(text.substring(Math.max(0, open - 120), open),
-                    acronym.replaceAll("\\P{L}", "").length());
-            if (candidate != null && matches(acronym, candidate)) {
-                return candidate;
-            }
-        }
-        return null;
-    }
-
-    /** Die letzten {@code count} Wörter (durch Leerzeichen oder Bindestrich getrennt) im Originalwortlaut. */
-    private static String lastWords(String phrase, int count) {
-        List<Integer> starts = new ArrayList<>();
-        Matcher word = WORD.matcher(phrase);
-        while (word.find()) {
-            starts.add(word.start());
-        }
-        if (count == 0 || starts.size() < count) {
+        if (open < 0 || text.charAt(open) != '(' || close >= text.length()
+                || "),;".indexOf(text.charAt(close)) < 0) {
             return null;
         }
-        return phrase.substring(starts.get(starts.size() - count)).trim();
+        int candidateEnd = open;
+        while (candidateEnd > 0 && Character.isWhitespace(text.charAt(candidateEnd - 1))) {
+            candidateEnd--;
+        }
+        int sentence = sentenceStart(text, candidateEnd);
+        int candidateStart = wordsBack(text, sentence, candidateEnd, maxWords(characters(acronym)));
+        String candidate = text.substring(candidateStart, candidateEnd);
+        int at = longFormStart(acronym, candidate);
+        if (at < 0) {
+            return null;
+        }
+        String longForm = candidate.substring(at);
+        return isLongForm(longForm, acronym) ? collapse(longForm) : null;
     }
 
-    private static boolean matches(String acronym, String phrase) {
-        String letters = acronym.replaceAll("\\P{L}", "").toLowerCase(Locale.ROOT);
-        StringBuilder initials = new StringBuilder();
-        for (String word : phrase.trim().split("[\\s-]+")) {
-            if (!word.isEmpty() && Character.isLetter(word.charAt(0))) {
-                initials.append(Character.toLowerCase(word.charAt(0)));
+    /** Höchstens so viele Wörter hat eine Ausschreibung: {@code min(n + 5, 2n)} für {@code n} Buchstaben und Ziffern. */
+    static int maxWords(int characters) {
+        return Math.min(characters + 5, characters * 2);
+    }
+
+    /**
+     * Anfang des kürzesten Endstücks von {@code candidate}, das eine Ausschreibung von {@code shortForm} ist, oder
+     * {@code -1}; von hinten gelesen wie im EAC.
+     */
+    static int longFormStart(String shortForm, String candidate) {
+        int s = shortForm.length() - 1;
+        int l = candidate.length() - 1;
+        boolean any = false;
+        for (; s >= 0; s--) {
+            char c = Character.toLowerCase(shortForm.charAt(s));
+            if (!Character.isLetterOrDigit(c)) {
+                continue;
+            }
+            any = true;
+            while (l >= 0 && (Character.toLowerCase(candidate.charAt(l)) != c
+                    || isFirst(shortForm, s) && l > 0 && Character.isLetterOrDigit(candidate.charAt(l - 1)))) {
+                l--;
+            }
+            if (l < 0) {
+                return -1;
+            }
+            l--;
+        }
+        return any ? l + 1 : -1;
+    }
+
+    private static boolean isFirst(String shortForm, int s) {
+        for (int i = 0; i < s; i++) {
+            if (Character.isLetterOrDigit(shortForm.charAt(i))) {
+                return false;
             }
         }
-        return !letters.isEmpty() && initials.toString().equals(letters);
+        return true;
+    }
+
+    private static int characters(String shortForm) {
+        int count = 0;
+        for (int i = 0; i < shortForm.length(); i++) {
+            if (Character.isLetterOrDigit(shortForm.charAt(i))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Der Klammerinhalt bis zum ersten Komma oder Semikolon, getrimmt; {@code null}, wenn leer. */
+    private static String firstChunk(String inner) {
+        int stop = inner.length();
+        for (int i = 0; i < inner.length(); i++) {
+            if (inner.charAt(i) == ',' || inner.charAt(i) == ';') {
+                stop = i;
+                break;
+            }
+        }
+        String chunk = inner.substring(0, stop).trim();
+        return chunk.isEmpty() ? null : chunk;
+    }
+
+    /** Nach dem letzten Satzende ({@code .!?} vor Leerraum) oder Zeilenumbruch vor {@code end}, höchstens 120 zurück. */
+    private static int sentenceStart(String text, int end) {
+        int limit = Math.max(0, end - 120);
+        for (int i = end - 1; i >= limit; i--) {
+            char c = text.charAt(i);
+            if (c == '\n' || (c == '.' || c == '!' || c == '?') && i + 1 < end
+                    && Character.isWhitespace(text.charAt(i + 1))) {
+                return i + 1;
+            }
+        }
+        return limit;
+    }
+
+    /** Anfang der letzten {@code words} Wörter vor {@code end}, nicht vor {@code limit}. */
+    private static int wordsBack(String text, int limit, int end, int words) {
+        int i = end;
+        int count = 0;
+        while (i > limit && count < words) {
+            while (i > limit && Character.isWhitespace(text.charAt(i - 1))) {
+                i--;
+            }
+            while (i > limit && !Character.isWhitespace(text.charAt(i - 1))) {
+                i--;
+            }
+            count++;
+        }
+        return i;
+    }
+
+    private static int words(String value) {
+        return value.trim().split("\\s+").length;
+    }
+
+    /** Länger als das Akronym, mit Kleinbuchstaben, ohne Klammern und ohne das Akronym selbst. */
+    private static boolean isLongForm(String longForm, String shortForm) {
+        String value = longForm.trim();
+        if (value.length() <= shortForm.length() || value.indexOf('(') >= 0 || value.indexOf(')') >= 0) {
+            return false;
+        }
+        return value.chars().anyMatch(Character::isLowerCase) && !value.contains(shortForm);
+    }
+
+    private static String collapse(String value) {
+        return value.replaceAll("[\\s\\u00A0]+", " ").trim();
     }
 
     private static final class Found {
