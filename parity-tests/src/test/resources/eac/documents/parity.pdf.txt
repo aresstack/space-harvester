@@ -34,6 +34,7 @@ Schreiber schreibt Bonn
 veraltet fett kursiv
 System.out.println("Delta");
 Systembild
+Ansprechpartnerin ist Anna Schmidt.
 4 / 14
 Komponenten
 Komponenten
@@ -66,9 +67,10 @@ ablauf
 Makros
 Makros
 Satz Golf vor den Makros.
-Satz Hotel aus dem Baustein.
+Satz Hotel aus dem Baustein. Von Bernd Wagner.
 Satz India aus dem Auszug.
 • Juliett
+Fragen an Carla Conrad.
 12 / 14
 Juliett
 Juliett

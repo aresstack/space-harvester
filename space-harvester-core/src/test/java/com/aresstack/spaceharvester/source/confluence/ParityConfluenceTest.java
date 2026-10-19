@@ -60,6 +60,17 @@ class ParityConfluenceTest {
             }
             assertThat(harvester.readingViews().view(caller, "wiki", "1009", false).text())
                     .contains(ParityConfluence.MACRO_SENTENCES);
+
+            // Mit abgelegten Ansichten: Erwähnungen tragen deren Namen, versteckte und eingebundene zählen für die
+            // Zuordnung nicht.
+            ExportConversions.ConvertedFile withViews = harvester.conversions().convert(export.id(), Harvester.OWNER,
+                    "markdown", Files.createTempDirectory(data, "md"));
+            String viewed = Files.readString(withViews.path());
+            for (String[] mention : ParityConfluence.MENTIONS) {
+                assertThat(viewed).contains(mention[1]).doesNotContain(mention[0]);
+            }
+            assertThat(viewed).contains(ParityConfluence.INCLUDED_MENTION)
+                    .doesNotContain(ParityConfluence.HIDDEN_MENTION);
             ReadingView attachments = harvester.readingViews().view(caller, "wiki",
                     ParityConfluence.ATTACHMENTS_PAGE, false);
             // Die Ansicht kommt aus export_view mit dem gerenderten Vorgang; der Lesetext des Adapters liest body.view
