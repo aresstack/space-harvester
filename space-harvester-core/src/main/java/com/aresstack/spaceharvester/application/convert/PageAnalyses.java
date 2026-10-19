@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Lesender Port der Analysedaten für den Analyse-Export (#359): je Seite die gespeicherten Ergebnisse aller
@@ -30,6 +31,31 @@ public interface PageAnalyses {
 
     /** Analysedaten einer Seite, Aktualität gegenüber genau diesem Snapshot (der exportierten Version). */
     PageAnalysis of(PageSnapshot snapshot);
+
+    /**
+     * Die vorhandene Beschreibung genau dieser Bildbytes (ADR 0021), auch wenn sie ohne Bildanalyse der Seite entstand,
+     * etwa für ein einzeln beschriebenes Bild. Erzeugt nichts und fragt die Quelle nicht.
+     *
+     * @param sha256 {@code sha256:<hex>} der exportierten Bildbytes
+     */
+    default Optional<StoredImageDescription> imageDescription(String sha256) {
+        return Optional.empty();
+    }
+
+    /**
+     * Beschreibung eines Bildes, gültig für genau diese Bytes und dieses Modell.
+     *
+     * @param describer    Kennung des Beschreibers samt Analyseversion
+     * @param modelVersion Modell, das beschrieben hat
+     */
+    record StoredImageDescription(String sha256, String describer, String modelVersion, String text,
+                                  Instant createdAt) {
+
+        public StoredImageDescription {
+            Objects.requireNonNull(sha256, "sha256");
+            Objects.requireNonNull(text, "text");
+        }
+    }
 
     /** Ein Prozessor mit seiner aktuellen Version. */
     record Processor(String id, String version) {

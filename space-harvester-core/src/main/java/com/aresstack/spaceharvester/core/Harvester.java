@@ -623,7 +623,9 @@ public final class Harvester implements AutoCloseable {
             opened.add(changeEvents);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
-                    new AnalysisConverter(new EnrichmentAnalyses(enrichments, editedFacts)),
+                    // Bildbeschreibungen über die exportierten Bytes, auch einzeln beschriebene Bilder.
+                    new AnalysisConverter(new EnrichmentAnalyses(enrichments, editedFacts,
+                            sha256 -> assets().storedDescription(sha256))),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);

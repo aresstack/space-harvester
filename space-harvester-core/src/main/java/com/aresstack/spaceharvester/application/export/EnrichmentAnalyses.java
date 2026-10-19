@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.export;
 
+import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -12,16 +13,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Function;
 
 /**
  * Analysedaten aus der Ablage der Anreicherungen (#359): je Prozessor ein Abschnitt, Zustand gegenüber dem
  * exportierten Snapshot. Neue Prozessoren (etwa Begriffe, Passagen) erscheinen ohne Umbau als weitere Abschnitte.
+ * Bildbeschreibungen kommen aus dem Asset-Speicher, über die exportierten Bildbytes, auch ohne Bildanalyse der Seite.
  * Liest nur; rechnet weder fehlende noch veraltete Ergebnisse nach.
  */
 public final class EnrichmentAnalyses implements PageAnalyses {
 
     private final Enrichments enrichments;
     private final FactStore facts;
+    private final Function<String, Optional<ImageDescription>> descriptions;
 
     public EnrichmentAnalyses(Enrichments enrichments) {
         this(enrichments, enrichments.facts().orElse(null));
@@ -29,8 +34,18 @@ public final class EnrichmentAnalyses implements PageAnalyses {
 
     /** @param facts die Fakten, etwa mit Prüfablage, oder {@code null} für keine */
     public EnrichmentAnalyses(Enrichments enrichments, FactStore facts) {
+        this(enrichments, facts, sha256 -> Optional.empty());
+    }
+
+    /**
+     * @param facts        die Fakten, etwa mit Prüfablage, oder {@code null} für keine
+     * @param descriptions vorhandene Bildbeschreibung je {@code sha256}, etwa {@code Assets::storedDescription}
+     */
+    public EnrichmentAnalyses(Enrichments enrichments, FactStore facts,
+                              Function<String, Optional<ImageDescription>> descriptions) {
         this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
         this.facts = facts;
+        this.descriptions = Objects.requireNonNull(descriptions, "descriptions");
     }
 
     @Override
@@ -58,6 +73,16 @@ public final class EnrichmentAnalyses implements PageAnalyses {
                 .forEach(view -> sections.add(section(view, versions.get(view.enrichment().processorId()))));
         List<MetadataFact> pageFacts = facts == null ? List.of() : facts.factsOf(snapshot.key());
         return new PageAnalysis(inspection.inputSha256(), sections, pageFacts);
+    }
+
+    @Override
+    public Optional<PageAnalyses.StoredImageDescription> imageDescription(String sha256) {
+        if (sha256 == null) {
+            return Optional.empty();
+        }
+        return descriptions.apply(sha256).map(description -> new PageAnalyses.StoredImageDescription(
+                description.imageSha256(), description.describer(), description.modelVersion(), description.text(),
+                description.createdAt()));
     }
 
     private static Section section(Enrichments.View view, String currentVersion) {

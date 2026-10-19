@@ -4,6 +4,11 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.c
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.assets.ImageDescription;
+import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
+import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
@@ -22,7 +27,9 @@ import com.aresstack.spaceharvester.application.jobs.JobLimits;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.query.InMemoryPageCache;
+import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -33,7 +40,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.JsonNode;
@@ -148,6 +157,84 @@ class AnalysisConverterTest {
         assertThat(analysis.path("pages").get(0).path("enrichments").path("acronyms").path("state").asString())
                 .isEqualTo("MISSING");
         assertThat(store.find(only.key())).isEmpty();
+    }
+
+    @Test
+    void listsStoredDescriptionsOfTheExportedImageBytesEvenWithoutPageImageAnalysis() {
+        PageSnapshot only = page("confluence", "DEV", "100", null, ACRONYM);
+        ImageDescription plan = new ImageDescription("sha256:aa", "openai-compatible-vision-v1", "vision-1",
+                "Ein Bauplan", clock.instant());
+        // Einzeln beschrieben: im Asset-Speicher, kein Ergebnis "images" an der Seite.
+        Map<String, ImageDescription> described = Map.of("sha256:aa", plan);
+        AnalysisConverter converter = new AnalysisConverter(new EnrichmentAnalyses(enrichments, null,
+                sha256 -> Optional.ofNullable(described.get(sha256))));
+        ExportAssetManifest manifest = new ExportAssetManifest(true, List.of(
+                new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att1", "plan.png"),
+                        "att1", "2", "plan.png", "image/png", 3, "sha256:aa", ExportAssetManifest.Status.STORED,
+                        null),
+                // Andere Bytes (ersetztes Bild): keine Beschreibung, kein Eintrag.
+                new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att2", "neu.png"),
+                        "att2", "1", "neu.png", "image/png", 3, "sha256:bb", ExportAssetManifest.Status.STORED,
+                        null),
+                new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att3", "weg.png"),
+                        "att3", null, "weg.png", "image/png", 0, null, ExportAssetManifest.Status.MISSING,
+                        "not-found")));
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        converter.convert(new Input(only, manifest), out);
+        JsonNode images = json.readTree(out.toByteArray()).path("pages").get(0).path("images");
+
+        assertThat(images.size()).isEqualTo(1);
+        assertThat(images.get(0).path("attachmentId").asString()).isEqualTo("att1");
+        assertThat(images.get(0).path("sha256").asString()).isEqualTo("sha256:aa");
+        assertThat(images.get(0).path("describer").asString()).isEqualTo("openai-compatible-vision-v1");
+        assertThat(images.get(0).path("modelVersion").asString()).isEqualTo("vision-1");
+        assertThat(images.get(0).path("description").asString()).isEqualTo("Ein Bauplan");
+        assertThat(store.find(only.key())).isEmpty();
+    }
+
+    /** Eine Seite mit Bildern im Datenbestand. */
+    private record Input(PageSnapshot page, ExportAssetManifest manifest) implements ConversionInput {
+
+        @Override
+        public String sourceId() {
+            return "confluence";
+        }
+
+        @Override
+        public String spaceKey() {
+            return "DEV";
+        }
+
+        @Override
+        public PageTree tree() {
+            return new PageTree(List.of(), List.of(), 1, 0);
+        }
+
+        @Override
+        public List<PageHeader> headers() {
+            return List.of(page.header());
+        }
+
+        @Override
+        public void forEachPage(Consumer<ConvertiblePage> action) {
+            action.accept(new ConvertiblePage(page.header(), page, 0));
+        }
+
+        @Override
+        public ExportAssets assets() {
+            return new ExportAssets() {
+                @Override
+                public Optional<ExportAssetManifest> manifest() {
+                    return Optional.of(manifest);
+                }
+
+                @Override
+                public Optional<byte[]> content(ExportAssetManifest.Entry entry) {
+                    return Optional.empty();
+                }
+            };
+        }
     }
 
     /** Scheitert immer. */

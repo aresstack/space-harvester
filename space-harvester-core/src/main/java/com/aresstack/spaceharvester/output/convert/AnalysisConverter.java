@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.output.convert;
 
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
+import com.aresstack.spaceharvester.application.convert.ExportAssetManifest;
 import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses.PageAnalysis;
@@ -26,7 +27,9 @@ import tools.jackson.databind.json.JsonMapper;
  *               "enrichments": { "&lt;Prozessor&gt;": { "state", "processorVersion", "currentProcessorVersion",
  *                                "inputSha256", "revision", "computedAt", "warnings", "errorCode", "payload" } },
  *               "facts": [{ "id", "type", "role", "origin", "review", "processorId", "processorVersion",
- *                           "inputSha256", "revision", "payload", "arguments", "anchor" }] }] }
+ *                           "inputSha256", "revision", "payload", "arguments", "anchor" }],
+ *               "images": [{ "attachmentId", "title", "mediaType", "sha256", "describer", "modelVersion",
+ *                            "createdAt", "description" }] }] }
  * </pre>
  *
  * Seiten linear in Baumreihenfolge wie {@link JsonArrayConverter}; die Hierarchie steht nur in {@code parentPageId}.
@@ -34,12 +37,14 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code inputSha256} ist der Eingabe-Hash dieser Version, gegen den der {@code state} jedes Abschnitts bestimmt ist
  * ({@code CURRENT}, {@code STALE}, {@code FAILED}, {@code MISSING}). Je Prozessor ein Abschnitt; die Payload kommt
  * unverändert aus der Ablage. Nichts wird nachgerechnet. Fakten mit {@code origin} {@code AUTOMATIC} oder
- * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}).
+ * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}). Unter
+ * {@code images} jedes exportierte Bild der Seite ({@code assets.json}), für dessen Bytes eine Beschreibung vorliegt,
+ * auch wenn sie ohne Bildanalyse der Seite entstand; über {@code sha256} gehört sie genau zu den exportierten Bytes.
  */
 public final class AnalysisConverter implements ExportConverter {
 
     public static final String FORMAT = "analysis";
-    public static final String VERSION = "analysis/1";
+    public static final String VERSION = "analysis/2";
     public static final String SCHEMA = "space-harvester/analysis-export/v1";
 
     private final JsonMapper json = JsonMapper.builder().build();
@@ -115,6 +120,15 @@ public final class AnalysisConverter implements ExportConverter {
                     fact(generator, fact);
                 }
                 generator.writeEndArray();
+                generator.writeName("images");
+                generator.writeStartArray();
+                for (ExportAssetManifest.Entry entry : input.assets().forPage(page.pageId())) {
+                    if (entry.stored()) {
+                        analyses.imageDescription(entry.sha256())
+                                .ifPresent(description -> image(generator, entry, description));
+                    }
+                }
+                generator.writeEndArray();
                 generator.writeEndObject();
             });
             generator.writeEndArray();
@@ -183,6 +197,20 @@ public final class AnalysisConverter implements ExportConverter {
             }
             generator.writeEndObject();
         }
+        generator.writeEndObject();
+    }
+
+    private static void image(JsonGenerator generator, ExportAssetManifest.Entry entry,
+                              PageAnalyses.StoredImageDescription description) {
+        generator.writeStartObject();
+        generator.writeStringProperty("attachmentId", entry.attachmentId());
+        generator.writeStringProperty("title", entry.title());
+        generator.writeStringProperty("mediaType", entry.mediaType());
+        generator.writeStringProperty("sha256", entry.sha256());
+        generator.writeStringProperty("describer", description.describer());
+        generator.writeStringProperty("modelVersion", description.modelVersion());
+        generator.writeStringProperty("createdAt", PageJson.text(description.createdAt()));
+        generator.writeStringProperty("description", description.text());
         generator.writeEndObject();
     }
 
