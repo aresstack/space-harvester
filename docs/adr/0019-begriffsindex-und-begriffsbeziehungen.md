@@ -8,7 +8,8 @@
   `GET /api/v1/terms/occurrences`, `GET /api/v1/terms/snippet`.
 - Umgesetzt (#120): `TermRelations` (`harvester.termRelations()`), `FileTermRelationStore` unter
   `<dataDirectory>/term-relations` (Server: `space-harvester.term-relations.directory`), REST
-  `/api/v1/term-relations` (Punkt 5 und 7).
+  `/api/v1/term-relations` (Punkt 5 und 7); Regelvorschläge aus Ausschreibungen `AcronymRelationRule`
+  (`harvester.acronymRelationRule()`, `POST /api/v1/term-relations/rules/acronyms?sourceId=`).
 - Bezüge: #119, #120, #122, #336, #339 (Oberfläche, Strang L); `AcronymProcessor`, `EntityProcessor`, `PageAcronyms`.
 
 ## Kontext
@@ -89,8 +90,15 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 - Je Seite höchstens 50 000 Fundstellen und 10 000 Begriffe; `count` zählt weiter alles, eine Warnung nennt die
   Kürzung.
 - Nominalgruppen nur aus Sätzen, die die Satzanalyse als deutsch erkennt; Akronyme aus jedem Text.
-- Ausschreibungen nur nach der Anfangsbuchstabenregel direkt daneben (`RSL` → `Rückmeldeschlüssel` ist keine
-  Ausschreibung, sondern eine Beziehung aus #120 oder ein Vorschlag aus #122).
+- Ausschreibungen nur in Klammern direkt daneben, ausgerichtet wie im EAC (`LongFormMatcher`, Schwartz und Hearst):
+  Buchstaben und Ziffern des Akronyms in Reihenfolge, das erste an einem Wortanfang, im selben Satz, Klammertext bis
+  zum ersten Komma (seit `acronyms` 3, `terms` 2). So gilt auch `Zentrale Datenverarbeitung (ZDV)` oder
+  `Rückmeldeschlüssel (RSL)`. Ohne Klammer bleibt `RSL` → `Rückmeldeschlüssel` eine Beziehung aus #120 oder ein
+  Vorschlag aus #122.
+- Gegenüber dem EAC noch offen (`AcronymExtractor`, `AcronymForms`, `TermScanner`): gemischte Schreibung (`GmbH`,
+  `IoT`), Punkt-Akronyme (`U.S.A.`), Kennungen mit mehr als zwei Ziffern oder Unterstrich als eigene Art,
+  Ausblenden von Versalzeilen, Code, URLs, Mailadressen und Dateinamen, mehrere Ausschreibungen je Akronym. Jede
+  davon hebt die Version von `acronyms` und `terms`.
 - Kein Fachglossar und keine KI in Index und Abfragen.
 
 ## Folgen
