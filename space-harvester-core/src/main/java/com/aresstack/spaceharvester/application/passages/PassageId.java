@@ -15,8 +15,9 @@ import java.util.regex.Pattern;
  * {@code confluence:47110815@3fa9c2d1…(64 Hex)#p3@9f2c41ab-5e07d1c3}.
  * <ul>
  *   <li>{@code sourceId:pageId}: die Seite, stabil über Inhaltsänderungen (im EAC die Resource-ID);</li>
- *   <li>{@code capture}: der vollständige SHA-256 des angezeigten Textes ({@link PassagePayload#textSha256}, ohne
- *       Präfix, {@value #CAPTURE_LENGTH} Hex-Zeichen, nie gekürzt); ändert sich der Text, ändert sich jede ID;</li>
+ *   <li>{@code capture}: der vollständige SHA-256 der angezeigten Fassung, Text und Gliederung
+ *       ({@code PageText.inputSha256}, ohne Präfix, {@value #CAPTURE_LENGTH} Hex-Zeichen, nie gekürzt); ändert sich
+ *       der Text oder die Gliederung, aus der die Grenzen folgen, ändert sich jede ID (im EAC nur der Text);</li>
  *   <li>{@code position} zählt die Absätze dieser Fassung ab 0;</li>
  *   <li>{@code segmentation} und {@code embedding} sind Kurzformen (8 Hex-Zeichen, {@link #versionTag}) der
  *       Fingerabdrücke von Zerlegung ({@link PassageSegmentation#fingerprint()}) und Embedding-Modell; ohne Modell
@@ -39,7 +40,8 @@ public final class PassageId {
     private static final String SHA256_PREFIX = "sha256:";
     private static final Pattern HEX = Pattern.compile("[0-9a-f]+");
     private static final Pattern TAG = Pattern.compile("[a-z0-9]{1,32}");
-    private static final Pattern DIGITS = Pattern.compile("[0-9]{1,9}");
+    /** Kanonisch wie {@link #of}: ohne führende Nullen, sonst gälte {@code #p007} als {@code #p7}. */
+    private static final Pattern DIGITS = Pattern.compile("0|[1-9][0-9]{0,8}");
 
     private final String sourceId;
     private final String pageId;
@@ -84,17 +86,17 @@ public final class PassageId {
     }
 
     /**
-     * Die Capture eines Textes: sein vollständiger SHA-256 (hex), mit oder ohne Präfix {@code sha256:}.
+     * Die Capture einer Fassung: ihr vollständiger SHA-256 (hex), mit oder ohne Präfix {@code sha256:}.
      *
      * @throws IllegalArgumentException wenn der Hash fehlt oder kein vollständiger SHA-256-Hex ist
      */
-    public static String captureOf(String textSha256) {
-        String capture = textSha256 == null ? "" : textSha256.toLowerCase(Locale.ROOT);
+    public static String captureOf(String sha256) {
+        String capture = sha256 == null ? "" : sha256.toLowerCase(Locale.ROOT);
         if (capture.startsWith(SHA256_PREFIX)) {
             capture = capture.substring(SHA256_PREFIX.length());
         }
         if (!isCapture(capture)) {
-            throw new IllegalArgumentException("textSha256 fehlt oder ist kein SHA-256-Hex");
+            throw new IllegalArgumentException("Hash fehlt oder ist kein SHA-256-Hex");
         }
         return capture;
     }
@@ -161,7 +163,7 @@ public final class PassageId {
         return pageId;
     }
 
-    /** Die Capture, also der Text der Seite, zu dem der Absatz gehört. */
+    /** Die Capture, also die Fassung der Seite (Text und Gliederung), zu der der Absatz gehört. */
     public String capture() {
         return capture;
     }

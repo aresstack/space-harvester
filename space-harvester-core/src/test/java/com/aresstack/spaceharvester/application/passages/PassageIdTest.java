@@ -65,6 +65,15 @@ class PassageIdTest {
                 .isEqualTo(PassageId.versionTag("chunker;x")).isNotEqualTo(PassageId.versionTag("chunker;y"));
     }
 
+    @Test
+    void onlyTheCanonicalPositionIsAPassageId() {
+        String id = PassageId.of("wiki", "1", "a".repeat(64), 7, "aa", "bb").value();
+
+        assertThat(PassageId.parse(id).value()).isEqualTo(id);
+        assertThat(PassageId.looksLike(id.replace("#p7@", "#p007@"))).isFalse();
+        assertThat(PassageId.looksLike(id.replace("#p7@", "#p0@"))).isTrue();
+    }
+
     /** Fester Text und festes Ergebnis, ID Zeichen für Zeichen: Hash, Fingerabdrücke und Form ändern sich nie still. */
     @Test
     void aStoredResultAlwaysGivesTheSameLiteralIds() {
@@ -82,11 +91,12 @@ class PassageIdTest {
         List<String> ids = PagePassages.read(key, List.of(new Enrichments.View(stored, Enrichment.Freshness.CURRENT)),
                 text).passages().stream().map(PagePassages.Passage::id).toList();
 
-        // Mit sha256sum nachgerechnet: Text, "passages;eac;3;0.35;2;8;350" → 1a796cb0, "topics@1" → 2c747974.
+        // Mit sha256sum nachgerechnet: Eingabe "confluence-storage-text/v1\n\n" + Text (inputSha256, ohne
+        // Abschnitte), "passages;eac;3;0.35;2;8;350" → 1a796cb0, "topics@1" → 2c747974.
         assertThat(ids).containsExactly(
-                "confluence:47110815@" + "39950a2cbe067ddcd8d115bbef58cf0de3a515be3fd06a45324ebe0e96997c30"
+                "confluence:47110815@" + "aa2b0cb3ca6bb8ad0e309c43640cf47aa475e4b4f0f4391fe1023f97cb977436"
                         + "#p0@1a796cb0-2c747974",
-                "confluence:47110815@" + "39950a2cbe067ddcd8d115bbef58cf0de3a515be3fd06a45324ebe0e96997c30"
+                "confluence:47110815@" + "aa2b0cb3ca6bb8ad0e309c43640cf47aa475e4b4f0f4391fe1023f97cb977436"
                         + "#p1@1a796cb0-2c747974");
     }
 }
