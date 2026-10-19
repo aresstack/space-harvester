@@ -140,7 +140,7 @@ class PassageProcessorTest {
     }
 
     @Test
-    void everyPassageHasAStableIdThatChangesWithTextOrModel() {
+    void everyPassageHasAStableIdThatChangesWithTextOrProcessorVersion() {
         EnrichmentOutput output = processor.process(KEY, TEXT);
         PagePassages passages = read(output);
 
@@ -151,14 +151,17 @@ class PassageProcessorTest {
         assertThat(first.pageId()).isEqualTo("101");
         assertThat(first.position()).isEqualTo(1);
         assertThat(first.capture()).isEqualTo(PassageId.captureOf(TEXT.inputSha256()));
-        assertThat(first.embedding()).isEqualTo(PassageId.versionTag("topics@1"));
+        assertThat(first.embedding())
+                .isEqualTo(PassageId.processorTag(enrichment(output).processorVersion(), "topics@1"));
         assertThat(read(output).passages()).extracting(PagePassages.Passage::id)
                 .isEqualTo(passages.passages().stream().map(PagePassages.Passage::id).toList());
 
         approved.set(false);
-        PagePassages structure = read(processor.process(KEY, TEXT));
+        EnrichmentOutput structured = processor.process(KEY, TEXT);
+        PagePassages structure = read(structured);
         assertThat(PassageId.parse(structure.passages().get(0).id()).embedding())
-                .isEqualTo(PassageId.versionTag(PassageId.NO_MODEL));
+                .isEqualTo(PassageId.processorTag(enrichment(structured).processorVersion(), null))
+                .isNotEqualTo(first.embedding());
         assertThat(PassageId.parse(structure.passages().get(0).id()).capture()).isEqualTo(first.capture());
     }
 
