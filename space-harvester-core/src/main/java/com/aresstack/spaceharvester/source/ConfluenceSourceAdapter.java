@@ -50,6 +50,11 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public String displayName() {
+        return "Confluence";
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
         return check(config, false);
     }

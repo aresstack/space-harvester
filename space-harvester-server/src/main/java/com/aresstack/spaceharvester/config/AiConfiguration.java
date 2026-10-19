@@ -15,6 +15,8 @@ import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -152,6 +154,17 @@ class AiConfiguration {
     private static String userAgent(ObjectProvider<BuildProperties> build) {
         BuildProperties info = build.getIfAvailable();
         return "space-harvester/" + (info != null ? info.getVersion() : "unknown");
+    }
+
+    /**
+     * Bildbeschreibung über das Vision-Modell (ADR 0021): folgt {@code ai.vision-model}, {@code base-url} und
+     * {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell antworten die Bildrouten mit
+     * {@code image-description-unavailable}.
+     */
+    @Bean
+    ImageDescriber visionImageDescriber(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                  ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new VisionImageDescriber(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */

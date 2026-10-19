@@ -49,6 +49,9 @@ class AssetErrorHandler {
         return switch (e.reason()) {
             case NOT_CONFIGURED -> problem(HttpStatus.SERVICE_UNAVAILABLE, "image-description-unavailable",
                     "Keine Bildbeschreibung verfügbar", "Für diesen Dienst ist kein Bildbeschreiber konfiguriert.");
+            case NOT_RELEASED -> problem(HttpStatus.FORBIDDEN, "image-description-not-released",
+                    "Quelle nicht für den KI-Dienst freigegeben",
+                    "Bilder dieser Quelle gehen nicht an den KI-Dienst (ai.external-processing-sources).");
             case NOT_AN_IMAGE -> problem(HttpStatus.BAD_REQUEST, "asset-not-an-image", "Kein Bild",
                     "Nur Bilder werden beschrieben; Diagrammdaten und Dokumente sind bereits lesbar.");
             case NOT_FOUND -> problem(HttpStatus.NOT_FOUND, "image-description-not-found",
