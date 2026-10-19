@@ -285,6 +285,8 @@ public class ProgressiveSearchController {
      *                  der Quelle
      * @param matchedIn  Trefferart wie in der Schlagwortsuche: {@code page} oder {@code attachment}
      * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
+     * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt (auflösbar über
+     *                   {@code GET /api/v1/passages?id=}), sonst {@code null}
      */
     public record ProgressiveHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                          String title, String snippet, @Schema(nullable = true) URI url,
@@ -294,7 +296,8 @@ public class ProgressiveSearchController {
                                          @Schema(nullable = true) Double score, int foundBy, boolean confirmed,
                                          @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
                                          @Schema(nullable = true)
-                                         SearchController.AttachmentMatchResponse attachment) {
+                                         SearchController.AttachmentMatchResponse attachment,
+                                         @Schema(nullable = true) String passageId) {
 
         static ProgressiveHitResponse of(ProgressiveResult.RankedHit ranked) {
             KeywordSearch.Hit hit = ranked.hit();
@@ -303,7 +306,7 @@ public class ProgressiveSearchController {
                     hit.snippet(), hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(),
                     Double.isNaN(score) || Double.isInfinite(score) ? null : score, ranked.foundBy(),
                     ranked.confirmed(), SearchController.matchKind(hit),
-                    SearchController.AttachmentMatchResponse.of(hit.attachment()));
+                    SearchController.AttachmentMatchResponse.of(hit.attachment()), hit.passageId());
         }
     }
 

@@ -17,9 +17,16 @@ import java.util.Objects;
  * @param anchor   Textanfang an {@code start}, höchstens 60 Zeichen bis zum ersten Zeilenumbruch
  * @param parentId das übergeordnete Kapitel oder {@code null}
  * @param children Unterabschnitte in Lesereihenfolge
+ * @param passageId bei einem Themenabschnitt die Passage-ID ({@link PassageId}) des Absatzes, mit dem er beginnt,
+ *                  wie die ID eines Themenabschnitts im Client; sonst oder ohne passenden Absatz {@code null}
  */
 public record NavigationSection(String id, String label, Origin origin, int level, int start, int end, String anchor,
-                                String parentId, List<NavigationSection> children) {
+                                String parentId, List<NavigationSection> children, String passageId) {
+
+    public NavigationSection(String id, String label, Origin origin, int level, int start, int end, String anchor,
+                             String parentId, List<NavigationSection> children) {
+        this(id, label, origin, level, start, end, anchor, parentId, children, null);
+    }
 
     public NavigationSection {
         Objects.requireNonNull(id, "id");
@@ -46,6 +53,17 @@ public record NavigationSection(String id, String label, Origin origin, int leve
     }
 
     NavigationSection placed(int level, String parentId) {
-        return new NavigationSection(id, label, origin, level, start, end, anchor, parentId, children);
+        return new NavigationSection(id, label, origin, level, start, end, anchor, parentId, children, passageId);
+    }
+
+    /**
+     * Derselbe Baum, Themenabschnitte mit der Passage-ID des Absatzes, der an ihrem {@code start} beginnt.
+     *
+     * @param passageAt Passage-ID je Anfangsstelle eines Absatzes
+     */
+    NavigationSection withPassageIds(java.util.Map<Integer, String> passageAt) {
+        return new NavigationSection(id, label, origin, level, start, end, anchor, parentId,
+                children.stream().map(child -> child.withPassageIds(passageAt)).toList(),
+                origin == Origin.TOPIC ? passageAt.get(start) : passageId);
     }
 }
