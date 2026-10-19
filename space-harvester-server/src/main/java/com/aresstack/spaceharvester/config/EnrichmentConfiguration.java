@@ -56,7 +56,7 @@ class EnrichmentConfiguration {
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
-                            ObjectProvider<ImageDescriber> describer) {
+                            ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -64,12 +64,21 @@ class EnrichmentConfiguration {
         embedding.ifAvailable(processors::add);
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
-        processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules)), rules,
-                embedding.getIfAvailable()));
+        processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         return new Enrichments(projector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+    }
+
+    /** Satzgrenzen für Absätze und ihre Embeddings: das deutsche OpenNLP-Modell, ohne es die Satzregeln (ADR 0020). */
+    @Bean
+    SentenceSegmenter sentenceSegmenter() {
+        return sentences(KnowledgeTextSegmentation.defaults());
+    }
+
+    static SentenceSegmenter sentences(TextSegmentation rules) {
+        return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
     }
 
     /** Bildanalyse auf Abruf (ADR 0021, #362). */
