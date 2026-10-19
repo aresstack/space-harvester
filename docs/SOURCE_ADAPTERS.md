@@ -8,13 +8,40 @@ Confluence-Client gibt es nicht.
 
 ## Auswahl
 
-`ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
-(`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider`, `files` über
-`LocalFilesSourceProvider` und `mediawiki` über `MediaWikiSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
-`<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis, sowie
-`ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
-fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
-gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
+`ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle; `type` wählt den Adapter.
+Unbekannte Typen, fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler
+werden gemeinsam gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
+
+**Registrierung:** `ConfiguredSourceCatalog.DEFAULT_ADAPTERS` enthält die Typen ohne eigenen Ordner:
+`ConfluenceSourceAdapter` (`confluence`), `LocalFilesSourceAdapter` (`files`), aus `EacSourceAdapters` `ftp()`,
+`jes()`, `ndv()`, `sharePoint()`, `betaView()` und `outlook()` sowie `MediaWikiSources.adapter()` (`mediawiki`);
+`ConfiguredSourceCatalog.TYPES` sind deren Typnamen. `git` braucht einen Ordner für die Kopien der Repositorys und
+fehlt deshalb in der Liste: `Harvester.builder()` hängt `new GitSourceAdapter(<dataDirectory>/git)` an, der Dienst
+eine Bean in `CacheConfiguration` (`space-harvester.cache.directory`/git, nur mit diesem Verzeichnis). Weitere Typen
+hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter(adapter)` ein (#188); ein Typ gleichen Namens
+aus dem Core oder `git` wird dadurch ersetzt, derselbe Typ zweimal ist ein Fehler beim Bauen. Im Dienst ist jeder Typ
+eine `SourceAdapter`-Bean (`SourceConfiguration`), der Katalog bekommt alle Beans.
+
+| `type` | Adapter | `addressOption` | `auth.type` | `options.credentialRef` | `trust-bundle` | `client-certificate` |
+|---|---|---|---|---|---|---|
+| `confluence` | `ConfluenceSourceAdapter` | – (`base-url`) | `none`, `basic`, `pat` | nicht erlaubt, dafür `auth` | ja | ja (`pkcs12`, `windows-my`) |
+| `files` | `LocalFilesSourceAdapter` | `directory` | `none` | – | Fehler | Fehler |
+| `ftp` | `EacSourceAdapters.ftp()` | `host` | `none`, `basic` | eigener Verweis bei `none` | Fehler | Fehler |
+| `jes` | `EacSourceAdapters.jes()` | `host` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | Fehler | Fehler |
+| `ndv` | `EacSourceAdapters.ndv()` | `host` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | Fehler | Fehler |
+| `sharepoint` | `EacSourceAdapters.sharePoint()` | `siteUrl` | `none`, `basic` | eigener Verweis bei `none` | ja | ja |
+| `betaview` | `EacSourceAdapters.betaView()` | `baseUrl` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | ja | ja |
+| `outlook` | `EacSourceAdapters.outlook()` (`ContextualSourceAdapter`) | `mailbox` | `none` | – | Fehler | Fehler |
+| `mediawiki` | `MediaWikiSources.adapter()` | `apiUrl` | `none`, `basic` | nicht erlaubt, dafür `auth` | ja | ja |
+| `git` | `GitSourceAdapter` | `url` | `none` | ja, nur HTTPS (#188) | siehe unten | Fehler |
+
+„Anmeldung Pflicht“ heißt `needsCredentials = true`: `auth.type basic` oder ein eigener `options.credentialRef`.
+Ein eigener Verweis (etwa `keepass:jes`) geht unverändert an den `SourceSecrets` des Programms; zusammen mit
+`auth.type basic` ist er ein Fehler, weil dann `source:<id>` gilt. „Fehler“ heißt: Die Angabe verhindert den Start,
+statt still übergangen zu werden. Bei `git` liest `GitSourceAdapter.open` ein `trust-bundle` für eigene Server-CAs,
+die Prüfung (`check` über einen `KnowledgeSourceProviderAdapter` ohne Netz) lehnt `trust-bundle` aber mit
+„trust-bundle passt nicht zu type git“ ab; auf `main` (ceb6c84) startet eine Git-Quelle mit `trust-bundle` deshalb
+nicht. `auth` gibt es für `git` noch nicht.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
@@ -24,9 +51,14 @@ und `addressOption`, unter welchem Schlüssel in `options` der Typ seine Adresse
 Confluence `null`, die Adresse steht dort in `base-url`. Dazu `fields`, die Eingabefelder unter `options` wie im
 Quellen-Editor des Enterprise AI Client (`key`, `label`, `hint`, `kind`
 TEXT|NUMBER|FLAG|DIRECTORY|SECRET_REF|CLIENT_CERTIFICATE, `required`, `advanced`, `defaultValue`; nie ein Wert aus dem
-Tresor, ohne `title`; bei Confluence leer, weil Basis-URL, Anmeldung und Zertifikat außerhalb von `options` stehen), und
-`authModes`, die erlaubten Werte von `auth.type` (`none`, `basic`, bei Confluence auch `pat`). Eigene Adapter geben das
-über `SourceAdapter.displayName()`, `addressOption()`, `fields()` und `authModes()` an.
+Tresor, ohne das Titelfeld des Typs, das `title` füllt, bei MediaWiki `displayName`; bei Confluence leer, weil
+Basis-URL, Titel, Anmeldung und Zertifikat außerhalb von `options` stehen; bei ftp, jes, ndv, sharepoint, betaview, git
+und mediawiki steht das Upstream-Feld `credentialRef` als `SECRET_REF` darin, bei mediawiki obwohl
+`options.credentialRef` dort abgelehnt wird), und `authModes`, die erlaubten Werte von `auth.type` (Tabelle oben:
+`none` und mit Anmeldefeld `basic`, bei Confluence auch `pat`; files, outlook und git nur `none`). Eigene Adapter
+geben das über `SourceAdapter.displayName()`, `needsCredentials()`, `addressOption()`, `fields()` und `authModes()`
+an; ohne eigene Angabe gelten der Typname, `false`, `null`, keine Felder und `none`. Geprüft in
+`HarvesterEacSourcesTest` (`eachTypeDescribesItsFieldsAndAuthModesWithoutValues`, PR #394; Adressfelder PR #387).
 
 ## Vertrag
 
@@ -112,6 +144,43 @@ eingehängt über `Harvester.builder().sourceAdapter`, wie `LocalFileAccessPolic
 Client. Das Verzeichnis der Quelle ist immer freigegeben; ein Link hinaus führt nur in einen freigegebenen Ordner,
 sonst `ACCESS_DENIED`. Gelesen wird die Freigabe bei jedem Zugriff. Ohne Angabe gilt wie bisher nur das Verzeichnis.
 
+### `KnowledgeSourceProviderAdapter`
+
+Ein Upstream-`KnowledgeSourceProvider` wird auf zwei Wegen zum Quellentyp:
+
+- **Ohne Netz:** `new KnowledgeSourceProviderAdapter(provider)`, ein fest gebauter Provider. Er kennt nur `auth.type
+  none`; `client-certificate` und `trust-bundle` sind Fehler. So arbeiten `GitSourceAdapter` (je Prüfung bzw. Öffnen
+  neu gebaut) und `ContextualSourceAdapter` (`outlook`: baut den Provider aus dem Kontext des Katalogs, für die Prüfung
+  ohne Kontext).
+- **Mit Netz:** `KnowledgeSourceProviderAdapter.connected(factory, credentialKey, titleField)`. Die Fabrik
+  (`ConnectedProvider`) bekommt je Quelle eine `Connection(secrets, routes, tls, userAgent)`: den `SecretProvider` des
+  Katalogs, die Proxy-Route je Ziel, die Socket-Fabrik aus `trust-bundle` und `client-certificate` (`null` =
+  JVM-Standard) und den User-Agent. `credentialKey` ist das Upstream-Feld, in das bei `auth.type basic` der Verweis
+  `source:<id>` geht (`null`: der Typ kennt keine Anmeldung, dann nur `none`); `titleField` ist das Feld für `title`
+  (`null` = das des Upstream-Typs). Für Typ, Prüfung, Umfang und Adresse baut der Adapter den Provider einmal ohne
+  Netz und ohne Zugangsdaten.
+
+Ein `connected`-Typ lässt sich weiter einstellen; jede Methode liefert einen neuen Adapter und verlangt `connected`,
+sonst `IllegalStateException`:
+
+| Methode | Wirkung | Benutzt von |
+|---|---|---|
+| `withoutTls()` | `client-certificate` und `trust-bundle` werden abgelehnt statt still übergangen | ftp, jes, ndv |
+| `withCredentialRefPassThrough()` | ein eigener Verweis unter `options.<credentialKey>` geht bei `auth.type none` an den Anbieter des Programms (#188); mit `basic` ein Fehler; ohne `credentialKey` `IllegalStateException` | ftp, jes, ndv, sharepoint, betaview |
+| `requiringCredentials()` | `needsCredentials()` ist `true` | jes, ndv, betaview |
+| `named(displayName)` | eigener Anzeigename statt dem des Upstream-Typs | ftp („FTP“), jes („JES“), ndv („NDV“) |
+
+Ohne `withCredentialRefPassThrough()` ist `options.<credentialKey>` nicht erlaubt (dafür `auth`), so bei `mediawiki`.
+Für beide Wege gilt: `base-url` ist ein Fehler (die Adresse steht unter `options`), `options.<Titelfeld>` ist nicht
+erlaubt (dafür `title`), die Meldungen des Upstream-Typs (`validate`) nennen den Schlüssel unter `options`, und ohne
+Adresse aus den Einstellungen startet die Quelle nicht. Mit Netz verhindert ein Platzhalter `${…}` ohne Wert in
+`auth.password` oder `client-certificate.password` den Start; die Meldung nennt nur den Namen des Platzhalters.
+`addressOption()` ist das Adressfeld des Upstream-Typs (`summaryKey`), `fields()` sind dessen Felder ohne das
+Titelfeld, `authModes()` `none` und mit `credentialKey` `basic`.
+
+Neue Typen dieser Art registriert ein Programm über `Harvester.builder().sourceAdapter(…)`; im Core stehen sie in
+`ConfiguredSourceCatalog.DEFAULT_ADAPTERS` (Abschnitt Auswahl).
+
 ### MediaWiki (`type: mediawiki`)
 
 `MediaWikiSourceProvider` aus `source-mediawiki` (unveränderte Kopie, `enterprise-ai-sources`), registriert über
@@ -178,8 +247,13 @@ space-harvester:
 - Ohne `base-url` kennt der Katalog kein Ziel der Quelle: die Prüfung auf doppelte Ziele und die Route in der
   Auftragsdiagnose fehlen für `mediawiki`.
 
-Noch offen in #187: die übrigen Quelltypen (je Typ ein PR), Bereiche (`partitions()`) für Quellen ohne Seitenliste,
-Freigaben in der Konfiguration des Dienstes, ein asynchroner Transport für MediaWiki (Upstream-Naht).
+Stand #187 auf `main`: Quellen ohne Partitionen (PR #357), MediaWiki (PR #370) und die Typen git (PR #368), ftp, jes,
+ndv, sharepoint (PR #372), betaview (PR #378) und outlook (PR #380) sind registriert, die Typenliste mit
+Anzeigenamen (PR #375), Adressfeld (PR #387), Feldern und Anmeldearten (PR #394); Anmeldung und TLS für ftp, jes,
+ndv, sharepoint und betaview kamen mit PR #390, `credentialRef` für git mit PR #377 (#188). Noch offen: `auth` und
+`client-certificate` für git sowie `trust-bundle` für git durch die Prüfung (siehe Auswahl), Bereiche
+(`partitions()`) für Quellen ohne Seitenliste, Freigaben für `files` in der Konfiguration des Dienstes, ein
+asynchroner Transport für MediaWiki (Upstream-Naht).
 
 ## Dokumente: Typerkennung und Text (#183)
 
@@ -252,8 +326,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
    über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
    aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
-   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`KnowledgeSourceProviderAdapter.connected`, eine Partition
-   je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
+   `trust-bundle` liest `open`, die Prüfung lehnt es aber ab, siehe Auswahl; `auth` noch nicht). Ebenfalls registriert über
+   `EacSourceAdapters` (ftp, jes, ndv, sharepoint und betaview über `KnowledgeSourceProviderAdapter.connected`,
+   outlook über `ContextualSourceAdapter` ohne Netz; eine Partition je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
    `port`, `startPoints`, anonym ohne Anmeldung) und `jes` (Spool, Anmeldung Pflicht), `source-ndv` als `ndv`
    (`host`, `startPoints`, Anmeldung Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
    Proxy-Route je Ziel, ohne Anmeldung mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
@@ -266,8 +341,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    zusammen mit `basic` ist er ein Fehler. SharePoint und BetaView nehmen `trust-bundle` und `client-certificate`
    (mTLS); FTP, JES und NDV kennen upstream kein TLS, dort sind beide Angaben ein Fehler. `base-url` gibt es auf
    diesem Weg nicht.
-3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
-   `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
+3. Den Typ in `ConfiguredSourceCatalog.DEFAULT_ADAPTERS` registrieren (ein Typ mit eigenem Ordner wie `git` in
+   `Harvester.Builder` und als Bean im Dienst), für einen Upstream-Provider ohne Seitenliste über
+   `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources` und `EacSourceAdapters`); im
+   Dienst zusätzlich als `SourceAdapter`-Bean in `SourceConfiguration`.
    `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
 
 ## Tests
@@ -290,7 +367,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `basic` erfüllt die Pflichtangabe von JES und NDV; `credentialRef` neben `basic`, Zertifikate bei FTP/NDV und
   `base-url` verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
-  `credentialRef` wird abgelehnt.
+  `credentialRef` wird angenommen und erst beim Abruf aufgelöst. `GitSourceAdapterTest`: Benutzer und Token je
+  Abruf frisch über den `SecretProvider`, ein Eintrag ohne Benutzer ist erlaubt, einer ohne Token nicht (#377).
+- `HarvesterEacSourcesTest`: Anzeigename, `needsCredentials` und `addressOption` aller Typen in fester Reihenfolge,
+  dazu `fields` und `authModes` ohne Werte (#387, #394).
 - `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
   durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
 - `ParityFilesTest`: der Paritätsordner `ParityFiles` (Test-Fixtures des Core, Paket der Ordner-Quelle, Java 8, #193)

@@ -27,6 +27,11 @@ import java.util.regex.Pattern;
  * Stellen in der Textprojektion. Anders als dort entstehen die Stücke als Ausschnitte des Textes, damit Treffer auf
  * ihre Stelle zeigen.
  *
+ * <p>Länge der Anfrage (#181, wie {@code RetrieveKnowledgeUseCase.MAX_QUERY_TOKENS} im Enterprise AI Client): Eine
+ * Suchanfrage über dem Token-Budget der {@link TextSegmentation} (dieselbe Grenze wie für die eingebetteten Stücke,
+ * {@code embedding-chunk-tokens}) wird vor dem Einbetten an einer Wortgrenze gekürzt, statt den Dienst mit einem Text
+ * über dessen Tokengrenze scheitern zu lassen. Ins Log kommen nur die Tokenzahlen, nie die Anfrage.
+ *
  * <p>Die Version enthält Modell und Dimension: Ein Modellwechsel macht genau diese Ergebnisse veraltet, wie eine neue
  * Prozessorversion. Wie jeder Prozessor sieht er nur die sichere Projektion, nie Makroinhalte oder Anhänge.
  */
@@ -35,6 +40,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     /** Version der Zerlegung und des Ergebnisformats; 2 seit der Zerlegung nach Sätzen und Token-Budget (#181). */
     static final String FORMAT = "2";
     static final int MAX_CHUNKS = 200;
+
+    private static final System.Logger LOG = System.getLogger(EmbeddingProcessor.class.getName());
 
     private static final Pattern MODEL_ID = Pattern.compile("[A-Za-z0-9._@/:-]{1,100}");
 
@@ -111,6 +118,11 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     /** Ob die Stücke semantische Absätze sind ({@link #withPassages}). */
     public boolean passages() {
         return passages != null;
+    }
+
+    /** Ob die Absätze ({@link #passages}) Sätze aus einem Satzmodell bilden statt aus dem Regel-Splitter. */
+    public boolean sentenceModel() {
+        return passages != null && passages.sentenceModel();
     }
 
     private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
@@ -273,7 +285,7 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
          *                                       liefert
          */
         public float[] embedQuery(String text) {
-            return EmbeddingProcessor.embedQuery(provider, text);
+            return EmbeddingProcessor.this.embedQuery(provider, text);
         }
     }
 
@@ -287,9 +299,9 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return embedQuery(provider(), text);
     }
 
-    private static float[] embedQuery(EmbeddingProvider provider, String text) {
+    private float[] embedQuery(EmbeddingProvider provider, String text) {
         Objects.requireNonNull(text, "text");
-        List<float[]> vectors = provider.embedQueries(List.of(text));
+        List<float[]> vectors = provider.embedQueries(List.of(shortened(text)));
         float[] vector = vectors == null || vectors.size() != 1 ? null : vectors.get(0);
         if (vector == null || vector.length != provider.dimensions()) {
             throw new EmbeddingUnavailableException("Modell lieferte keinen Vektor der Dimension "
@@ -301,6 +313,41 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             }
         }
         return vector.clone();
+    }
+
+    /**
+     * Die Anfrage, höchstens {@link TextSegmentation#maxTokens()} Token lang, an einer Wortgrenze gekürzt; wie
+     * {@code RetrieveKnowledgeUseCase.shortened} im Enterprise AI Client.
+     */
+    String shortened(String query) {
+        int limit = segmentation.maxTokens();
+        int tokens = segmentation.tokens(query);
+        if (tokens <= limit) {
+            return query;
+        }
+        StringBuilder kept = new StringBuilder();
+        int keptTokens = 0;
+        for (String word : query.trim().split("\\s+")) {
+            int wordTokens = segmentation.tokens(word);
+            if (keptTokens + wordTokens > limit) {
+                break;
+            }
+            if (kept.length() > 0) {
+                kept.append(' ');
+            }
+            kept.append(word);
+            keptTokens += wordTokens;
+        }
+        if (kept.length() == 0) {
+            // ein einziges überlanges "Wort": höchstens ein Token je Zeichen
+            String head = query.trim().substring(0, Math.min(query.trim().length(), limit));
+            kept.append(head);
+            keptTokens = segmentation.tokens(head);
+        }
+        // Nur Tokenzahlen, nie die Anfrage.
+        LOG.log(System.Logger.Level.INFO, "Anfrage für die semantische Suche von {0} auf {1} Token gekürzt"
+                + " (Tokengrenze des Embedding-Modells)", tokens, keptTokens);
+        return kept.toString();
     }
 
     private static void vector(StringBuilder json, float[] vector, int dimensions) {

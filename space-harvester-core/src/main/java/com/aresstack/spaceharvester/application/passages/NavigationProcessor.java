@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -18,9 +19,12 @@ import java.util.function.Function;
  * die gespeicherten Embeddings je Absatz des Prozessors {@code embedding} ({@link EmbeddingProcessor#withPassages}) für
  * genau diesen Text, wie im Client die indexierten Passagen dieser Fassung; eingebettet wird hier nichts.
  *
- * <p>Ohne Modell, ohne Freigabe der Quelle oder solange die Embeddings je Absatz für diesen Text fehlen, bleiben die
- * Überschriften (FA-01) mit Grund. Die beiden letzten Fälle tragen eine Version, die sofort veraltet: Die nächste
- * Anreicherung oder der nächste Abruf versucht es wieder, ohne dass etwas an den KI-Dienst geht.
+ * <p>Ohne Modell, ohne Satzmodell, ohne Freigabe der Quelle, solange die Embeddings je Absatz für diesen Text fehlen
+ * oder wenn sie gescheitert sind, bleiben die Überschriften (FA-01) mit Grund, wie die Rückfälle von
+ * {@code BuildDocumentNavigationUseCase}. Fehlende und gescheiterte Embeddings tragen eine Version, die sofort
+ * veraltet: Die nächste Anreicherung oder der nächste Abruf versucht es wieder, ohne dass etwas an den KI-Dienst geht.
+ * Die übrigen Rückfälle gelten, bis Text, Modell oder Verfahren wechseln; eine später freigegebene Quelle reiht das
+ * Freigabe-Ereignis der Konfiguration neu ein. Der Titel der Seite geht wie im Client in die Anweisung an das Chat-Modell ein.
  */
 public final class NavigationProcessor implements EnrichmentProcessor {
 
@@ -69,12 +73,21 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     }
 
     /**
-     * Mit Modell im Hintergrund wie {@code embedding} (ohne Modell nur Überschriften, sofort): Die Warteschlange rechnet eine Berechnung nach der anderen, die
+     * Mit Modell im Hintergrund wie {@code embedding}: Die Warteschlange rechnet eine Berechnung nach der anderen, die
      * Navigation einer Seite also nach ihren Embeddings.
      */
     @Override
     public boolean background() {
         return embedding != null && embedding.available() && embedding.background();
+    }
+
+    /**
+     * Nur Seiten, für die es Embeddings je Absatz geben kann, warten im Hintergrund auf sie; alle anderen bekommen ihre
+     * Überschriften sofort und belegen keinen Platz in der Warteschlange.
+     */
+    @Override
+    public boolean background(PageKey key) {
+        return background() && embedding.covers(key.sourceId()) && embedding.passages() && embedding.sentenceModel();
     }
 
     @Override
@@ -83,19 +96,41 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     }
 
     @Override
+    public EnrichmentOutput process(PageSnapshot snapshot, PageText text) {
+        return process(snapshot.key(), snapshot.metadata().title(), text);
+    }
+
+    @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
+        return process(key, null, text);
+    }
+
+    private EnrichmentOutput process(PageKey key, String title, PageText text) {
         String version = version();
         if (embedding == null || !embedding.available()) {
             return headings(text, NavigationPayload.REASON_NO_MODEL, version);
         }
         if (!embedding.covers(key.sourceId())) {
-            return headings(text, NavigationPayload.REASON_NOT_APPROVED, version + "+pending");
+            // Wie bei passages: gilt, bis Text, Modell oder Verfahren wechseln.
+            return headings(text, NavigationPayload.REASON_NOT_APPROVED, version);
         }
-        Enrichment vectors = stored.apply(key).stream()
-                .filter(e -> e.processorId().equals(embedding.id()) && e.status() == Enrichment.Status.OK
+        if (!embedding.passages()) {
+            // Embeddings ohne Absätze: Es kommen keine, auf die sich das Warten lohnte.
+            return headings(text, NavigationPayload.REASON_NOT_EMBEDDED, version);
+        }
+        if (!embedding.sentenceModel()) {
+            // Wie im Client kein Clustern über Absätze aus dem Regel-Splitter; ein Satzmodell ändert die Version.
+            return headings(text, NavigationPayload.REASON_NO_SENTENCE_MODEL, version);
+        }
+        Enrichment current = stored.apply(key).stream()
+                .filter(e -> e.processorId().equals(embedding.id())
                         && e.freshness(text.inputSha256(), embedding.version()) == Enrichment.Freshness.CURRENT)
                 .findFirst().orElse(null);
-        if (vectors == null || !embedding.passages()) {
+        if (current != null && current.status() == Enrichment.Status.FAILED) {
+            return headings(text, NavigationPayload.REASON_INDEXING_FAILED, version + "+pending");
+        }
+        Enrichment vectors = current != null && current.status() == Enrichment.Status.OK ? current : null;
+        if (vectors == null) {
             return headings(text, NavigationPayload.REASON_NOT_EMBEDDED, version + "+pending");
         }
         List<DocumentNavigationBuilder.Passage> passages = new ArrayList<>();
@@ -104,18 +139,18 @@ public final class NavigationProcessor implements EnrichmentProcessor {
         }
         boolean[] incomplete = {false};
         SectionLabeler labeler = labels == null || !labels.available() || !labels.mayLabel(key.sourceId()) ? null
-                : (title, texts) -> {
+                : (named, texts) -> {
                     try {
-                        NavigationLabelModel.Labels named = labels.labels(title, texts);
-                        incomplete[0] = !named.complete();
-                        return named.labels();
+                        NavigationLabelModel.Labels result = labels.labels(named, texts);
+                        incomplete[0] = !result.complete();
+                        return result.labels();
                     } catch (RuntimeException e) {
                         // Nie Text oder Antwort weitergeben: die Bezeichnungen der Analyse bleiben.
                         incomplete[0] = true;
                         throw e;
                     }
                 };
-        DocumentNavigationBuilder.Navigation navigation = builder.build(null, text, passages, labeler);
+        DocumentNavigationBuilder.Navigation navigation = builder.build(title, text, passages, labeler);
         if (incomplete[0]) {
             // Chat-Modell nicht erreichbar: Bezeichnungen der Analyse mit Grund, beim nächsten Lauf erneut.
             return new EnrichmentOutput(NavigationPayload.write(new DocumentNavigationBuilder.Navigation(

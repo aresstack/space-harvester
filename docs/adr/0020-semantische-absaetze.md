@@ -76,24 +76,35 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
 4. **Prozessor `navigation`** nach `passages`, im vorhandenen `LuceneEnrichmentStore`, ohne Schemaänderung. Er bettet
    nichts ein, sondern liest die aktuellen Embeddings je Absatz des Prozessors `embedding` (Punkt 8) für genau diesen
    Text, wie der Client die indexierten Passagen der Fassung. Ohne sie bleiben die Überschriften mit
-   `analysis=headings` und Grund: `no-model`, `source-not-approved`, `not-embedded` (wird wiederholt, sobald die
-   Embeddings da sind), `no-topic-change`, `model-unavailable`. Ein nicht erreichbares Modell ist nie ein Fehler der
-   Anfrage.
+   `analysis=headings` und Grund: `no-model`, `no-sentence-model` (kein OpenNLP-Satzmodell, wie `NO_SENTENCE_MODEL`
+   im Client: kein Clustern über Absätze aus dem Regel-Splitter), `source-not-approved`, `not-embedded` (wird
+   wiederholt, sobald die Embeddings da sind), `indexing-failed` (Embeddings dieses Textes gescheitert, wie
+   `INDEXING_FAILED`; wird ebenso wiederholt), `no-topic-change`, `model-unavailable`. Bei `analysis=semantic` heißt
+   `model-unavailable`, dass das Chat-Modell nicht benennen konnte (Punkt 6). Ein nicht erreichbares Modell ist nie
+   ein Fehler der Anfrage.
 5. **Lesen** über `Harvester.documentNavigation().page(caller, sourceId, pageId)` → `DocumentNavigationView(state,
-   analysis, reason, chapters)` und `GET /api/v1/sources/{sourceId}/pages/{pageId}/navigation`, Rechte wie
+   analysis, reason, chapters, title, inputSha256, textSha256)` mit `flatten()` und `find(sectionId)` wie
+   `DocumentNavigation` im Client; `inputSha256` und `textSha256` nennen den Text, zu dem die Stellen gehören, damit
+   der Reader wie mit der Capture-ID im Client eine verspätete Antwort gegen den gezeigten Text prüft, und `GET /api/v1/sources/{sourceId}/pages/{pageId}/navigation`, Rechte wie
    `…/passages`. Fehlt ein Ergebnis für diesen Text, zeigt die Antwort sofort die Überschriften und stößt die
    Berechnung an.
 
 6. **Benennung über das Chat-Modell** wie im Client: Die unveränderte `ChatSectionLabeler` (Kopie in
-   `enterprise-ai-sources`) bekommt über den vorhandenen Chat-Port je 40 Themenabschnitte eine Anfrage mit
-   höchstens 700 Zeichen je Abschnitt und liefert Bezeichnungen aus zwei bis fünf Wörtern; ohne Chat-Modell bleibt
-   der erste Satz. Nur in der Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer
-   Anfrage; eigene Frist (60 s) und höchstens zwei Benennungen zugleich; nur für Quellen in
-   `external-processing-sources`. Antwortet das Modell nicht, bleiben die Bezeichnungen der Analyse mit
-   `reason=model-unavailable`, und der nächste Lauf versucht es wieder. Bezeichnungen und Texte sind Inhalt und werden
-   nie geloggt, auch nicht die Antwort bei einem Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist
-   interne Verarbeitung wie progressive Suche (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die
-   EAC-Kopie ChatSectionLabeler ist Paritätspflicht.
+   `enterprise-ai-sources`) bekommt über den vorhandenen Chat-Port mit dem Titel der Seite (nur auf diesem Weg, also
+   nur für freigegebene Quellen, nie geloggt) je 40 Themenabschnitte eine Anfrage mit höchstens 700 Zeichen je
+   Abschnitt und liefert Bezeichnungen aus zwei bis fünf Wörtern; ohne Chat-Modell bleibt der erste Satz. Nur in der
+   Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer Anfrage; eigene Frist
+   (60 s) und höchstens zwei Benennungen zugleich; nur für Quellen in `external-processing-sources`. Antwortet das
+   Modell nicht, bleiben die Bezeichnungen der Analyse mit `reason=model-unavailable`, und der nächste Lauf versucht
+   es wieder. Nach einem Fehler gehen die übrigen Pakete der Seite nicht mehr ans Netz, und fünf Minuten lang benennt
+   keine Seite (gleiches Modell, gleicher Dienst): Die Hintergrund-Warteschlange, die Navigation und Embeddings
+   teilen, wartet so höchstens eine Frist je Pause. Die Verfahrensversion enthält Modell und einen Fingerabdruck der
+   Dienstadresse; ein Wechsel berechnet neu. Abweichung: Der Titel gehört nicht zum Eingabe-Hash des Textes (sonst
+   veralteten alle Prozessoren); ändert sich nur der Titel, bleiben die Bezeichnungen bis zur nächsten Text- oder
+   Versionsänderung. Bezeichnungen und Texte sind Inhalt und werden nie geloggt, auch nicht die Antwort bei einem
+   Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist interne Verarbeitung wie progressive Suche
+   (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die EAC-Kopie ChatSectionLabeler ist
+   Paritätspflicht.
 
 ## Abweichungen vom Client
 

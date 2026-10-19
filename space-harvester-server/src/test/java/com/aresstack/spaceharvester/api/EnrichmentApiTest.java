@@ -142,6 +142,10 @@ class EnrichmentApiTest {
         assertThat(navigation.get("chapters")).extracting(chapter -> chapter.get("label").asString())
                 .containsExactly("Installation", "Betrieb");
         assertThat(navigation.get("chapters").get(0).get("origin").asString()).isEqualTo("heading");
+        assertThat(navigation.get("title").asString()).isNotBlank();
+        assertThat(navigation.get("inputSha256").asString()).isNotBlank();
+        assertThat(navigation.get("textSha256").asString()).isNotBlank()
+                .isNotEqualTo(navigation.get("inputSha256").asString());
         assertThat(get("/api/v1/sources/wiki/pages/unbekannt/navigation").statusCode()).isEqualTo(404);
     }
 
