@@ -4,6 +4,7 @@ import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Suchwerte für Begriffe. Ein Suchwert dient dem Finden, nie als Identität: Er faltet nur Unicode-Form,
@@ -15,10 +16,18 @@ public final class TermText {
     private TermText() {
     }
 
-    /** Unicode NFC, Kleinbuchstaben (unabhängig vom Gebietsschema), Leerraum zu einem Leerzeichen. */
+    /** Einzelne Buchstaben oder Ziffern mit Punkt, mindestens ein Buchstabe, wie {@code u.s.a.}; nie {@code 1.2.3}. */
+    private static final Pattern DOTTED = Pattern.compile("(?=.*\\p{L})(?:[\\p{L}\\p{N}]\\.){2,}[\\p{L}\\p{N}]?");
+
+    /**
+     * Unicode NFC, Kleinbuchstaben (unabhängig vom Gebietsschema), Leerraum zu einem Leerzeichen; ein Punkt-Akronym
+     * verliert seine Punkte wie die Suchform des EAC ({@code U.S.A.} wie {@code USA}), damit Abfragen, Beziehungen und
+     * Index denselben Suchwert sehen.
+     */
     public static String normalize(String text) {
-        return Normalizer.normalize(text, Normalizer.Form.NFC).toLowerCase(Locale.ROOT).replaceAll("\\s+", " ")
-                .trim();
+        String normalized = Normalizer.normalize(text, Normalizer.Form.NFC).toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", " ").trim();
+        return DOTTED.matcher(normalized).matches() ? normalized.replace(".", "") : normalized;
     }
 
     /** Die Wörter eines Suchwerts, getrennt an Leerzeichen und Bindestrichen, für die Präfixsuche je Wort. */

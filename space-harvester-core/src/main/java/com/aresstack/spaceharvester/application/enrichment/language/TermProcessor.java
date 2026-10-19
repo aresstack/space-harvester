@@ -54,7 +54,7 @@ public class TermProcessor implements EnrichmentProcessor {
     @Override
     public String version() {
         // Dieselben Akronymregeln samt Satzgrenzen wie acronyms.
-        return "4;acronyms=" + acronyms.version();
+        return "5;acronyms=" + acronyms.version();
     }
 
     @Override

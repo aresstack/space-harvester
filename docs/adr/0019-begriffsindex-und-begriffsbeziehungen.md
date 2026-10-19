@@ -127,7 +127,7 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 - Je Seite höchstens 50 000 Fundstellen und 10 000 Begriffe; `count` zählt weiter alles, eine Warnung nennt die
   Kürzung.
 - Nominalgruppen nur aus Sätzen, die die Satzanalyse als deutsch erkennt; Akronyme aus jedem Text.
-- Akronyme, Kennungen und Ausschreibungen erkennt seit `acronyms` 4 und `terms` 4 der `AcronymExtractor` des EAC,
+- Akronyme, Kennungen und Ausschreibungen erkennt seit `acronyms` 4 und `terms` 4 (Punkt-Akronyme in Abfragen seit `terms` 5) der `AcronymExtractor` des EAC,
   unverändert übernommen (`enterprise-ai-sources`, mit `AcronymForms`, `TermScanner`, `LongFormMatcher`): gemischte
   Schreibung (`GmbH`, `IoT`), Punkt-Akronyme (`U.S.A.`), Kennungen mit mehr als zwei Ziffern oder Unterstrich als
   eigene Art (Fakt `TECHNICAL_IDENTIFIER_CANDIDATE`, im Begriffsindex `identifier`), keine Akronyme in Versalzeilen,
@@ -137,7 +137,7 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
   (`AcronymSettings`: zehn Buchstaben, Versalzeile ab 60 % und drei Wörtern) sind fest, im EAC einstellbar; der
   Begriffsindex und die Leseansicht zeigen die erste Ausschreibung, die Fakten alle. Die Versionen nennen die
   Satzgrenzen (`4;sentences=opennlp-de`, ohne Satzmodell `splitter`; `terms` mit der ganzen Akronymversion,
-  `4;acronyms=4;sentences=…`), ein Wechsel veraltet die Ergebnisse. Der Begriffsindex sucht Akronyme unter der
+  `5;acronyms=4;sentences=…`), ein Wechsel veraltet die Ergebnisse. Der Begriffsindex sucht Akronyme unter der
   Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
   stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
 - Kein Fachglossar und keine KI in Index und Abfragen.
