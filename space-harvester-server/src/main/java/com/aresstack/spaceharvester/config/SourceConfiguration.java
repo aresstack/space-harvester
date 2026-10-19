@@ -1,7 +1,11 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.DelegatedSourceAccessFactory;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -30,7 +34,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Baut die Quellen aus {@code space-harvester.sources} mit der Proxy-Route aus {@code space-harvester.network.proxy}.
  * Eine fehlerhafte Quellen- oder Proxykonfiguration verhindert den Start mit
- * einer Liste aller Probleme; eine nicht erreichbare Quelle nicht (Verbindungen entstehen erst bei Anfragen).
+ * einer Liste aller Probleme; eine nicht erreichbare Quelle nicht (Verbindungen entstehen erst bei Anfragen). Proxy und
+ * TLS ({@code network.*}) folgen der Konfiguration zur Laufzeit ({@link LiveConfiguration}, ADR 0015).
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(SpaceHarvesterProperties.class)
@@ -90,7 +95,8 @@ class SourceConfiguration {
 
     /**
      * Vertrauen der Quellen und des KI-Dienstes: {@code trust-bundle} aus {@code spring.ssl.bundle.*}, ohne Bundle
-     * {@code space-harvester.network.tls} (#189). Eine Bean, damit die Windows-Speicher nur einmal gelesen werden.
+     * {@code space-harvester.network.tls} (#189). Eine Bean, damit die Windows-Speicher nur einmal gelesen werden. Das
+     * Vertrauen ohne Bundle liest die Regel je Handshake; {@link ConfiguredSourceCatalog#reconfigure} stellt sie um.
      */
     @Bean
     TrustBundles sourceTrustBundles(SpaceHarvesterProperties properties, ObjectProvider<SslBundles> sslBundles) {
@@ -100,19 +106,35 @@ class SourceConfiguration {
             throw new IllegalStateException("space-harvester.network." + String.join("; ", problems));
         }
         SslBundles bundles = sslBundles.getIfAvailable();
-        return TrustBundles.withDefault(bundles == null ? TrustBundles.NONE : trustBundles(bundles),
-                TrustPolicy.defaultTrust(tls));
+        return TrustBundles.reconfigurable(bundles == null ? TrustBundles.NONE : trustBundles(bundles), tls);
     }
 
+    /**
+     * Die Quellen; ein Wechsel von {@code network.proxy.*} oder {@code network.tls.*} stellt Route, Proxy-Anmeldung und
+     * Vertrauen ohne Neustart um und öffnet die Quellen neu ({@link ConfiguredSourceCatalog#reconfigure}).
+     */
     @Bean
     ConfiguredSourceCatalog sourceCatalog(SpaceHarvesterProperties properties, ObjectProvider<BuildProperties> build,
-                                TrustBundles trustBundles, ObjectProvider<SourceAdapter> adapters) {
+                                TrustBundles trustBundles, ObjectProvider<SourceAdapter> adapters,
+                                LiveConfiguration live) {
         BuildProperties info = build.getIfAvailable();
         String userAgent = "space-harvester/" + (info != null ? info.getVersion() : "unknown");
-        return ConfiguredSourceCatalog.of(
+        ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(
                 properties.sources().stream().map(SpaceHarvesterProperties.Source::toSettings).toList(), userAgent,
                 trustBundles, properties.network().proxy().toSettings(),
                 properties.network().asyncTransport(), adapters.orderedStream().toList());
+        live.listen(change -> {
+            if (!change.networkChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            NetworkSettings network = change.next().network();
+            List<ConfigurationProblem> problems = network.problems();
+            if (!problems.isEmpty()) {
+                throw new ConfigurationRejectedException(problems);
+            }
+            return () -> catalog.reconfigure(network);
+        });
+        return catalog;
     }
 
     /**

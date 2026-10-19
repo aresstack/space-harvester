@@ -20,6 +20,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -257,6 +258,8 @@ public final class Harvester implements AutoCloseable {
     private final SourceManagement sourceManagement;
     private final TrustBundles trustBundles;
     private final String userAgent;
+    /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
+    private final boolean networkFollows;
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
     /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
@@ -269,8 +272,11 @@ public final class Harvester implements AutoCloseable {
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
         try {
-            TrustBundles trustBundles = TrustBundles.withDefault(builder.trustBundles,
-                    TrustPolicy.defaultTrust(builder.trust));
+            this.networkFollows = builder.configuration != null && !builder.networkFixed;
+            // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
+            TrustBundles trustBundles = networkFollows
+                    ? TrustBundles.reconfigurable(builder.trustBundles, builder.trust)
+                    : TrustBundles.withDefault(builder.trustBundles, TrustPolicy.defaultTrust(builder.trust));
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
                     trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
                     builder.secretProvider);
@@ -634,10 +640,15 @@ public final class Harvester implements AutoCloseable {
     /**
      * Bereitet einen Wechsel der Konfiguration vor (ADR 0015): baut Embedding-Modell, Reranker und Zeitplan neu, wo
      * sich etwas geändert hat, und tauscht erst beim Aktivieren. Regeln je Quelle (Aktualität, Frist, Betriebsart)
-     * liest jeder Abruf und jeder Lauf aus der dann wirksamen Konfiguration; laufende Aufträge enden mit ihren.
+     * liest jeder Abruf und jeder Lauf aus der dann wirksamen Konfiguration; laufende Aufträge enden mit ihren. Proxy
+     * und Vertrauen ohne Bundle ({@code network.*}) prüft sie hier und stellt der Katalog beim Aktivieren um.
      */
     private ConfigurationListener.Preparation prepare(ConfigurationChange change) {
         HarvesterConfiguration next = change.next();
+        NetworkSettings network = networkFollows && change.networkChanged() ? next.network() : null;
+        if (network != null && !network.problems().isEmpty()) {
+            throw new ConfigurationRejectedException(network.problems());
+        }
         List<ConfiguredSchedule> planned = change.syncChanged() ? plannedSchedules(next, true) : null;
         EmbeddingGeneration model = null;
         if (embeddingModel != null && change.embeddingChanged()) {
@@ -662,6 +673,10 @@ public final class Harvester implements AutoCloseable {
         SearchReranker nextReranker = reranker;
         return () -> {
             settings = next;
+            if (network != null) {
+                // Vor dem Austausch der Modelle; die schon gebauten halten Route und Vertrauen über den Katalog.
+                catalog.reconfigure(network);
+            }
             if (backgroundFill != null && fillFollows) {
                 // Regeln je Quelle liest die Füllung beim Einreihen und Laden; wake() sucht danach neu im Katalog.
                 backgroundFill.enabled(next.sync().backgroundFillAnywhere());
@@ -1431,6 +1446,7 @@ public final class Harvester implements AutoCloseable {
         private SearchReranker reranker = SearchReranker.NONE;
         private ConfigurationManager configuration;
         private boolean aiFixed;
+        private boolean networkFixed;
         private boolean freshnessFixed;
         private boolean retentionFixed;
 
@@ -1448,7 +1464,11 @@ public final class Harvester implements AutoCloseable {
          *     alten Modells werden ohne neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht;</li>
          *     <li>Zeitplan aus {@code sync.spaces} mit Abstand und Betriebsart je Quelle; eigene Einplanungen über
          *     {@link Harvester#reconcile} bleiben;</li>
-         *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach.</li>
+         *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach;</li>
+         *     <li>Proxy und Vertrauen ohne Bundle ({@code network.*}): neue Verbindungen nehmen die neue Route und
+         *     prüfen nach dem neuen Vertrauen, der PAC-Cache wird verworfen, alle Quellen öffnen neu (Trust-Bundles und
+         *     Client-Zertifikate neu gelesen). Das gilt nur, solange weder {@link #proxy} noch {@link #trust} gesetzt
+         *     ist, gleich ob vor oder nach diesem Aufruf; dann bleibt das Netzwerk fest.</li>
          * </ul>
          * Was nach diesem Aufruf mit {@link #ai}, {@link #cacheFreshness}, {@link #withheldRetention},
          * {@link #embeddings} oder {@link #reranker} fest eingestellt wird, bleibt fest und folgt der Konfiguration
@@ -1458,6 +1478,10 @@ public final class Harvester implements AutoCloseable {
             this.configuration = Objects.requireNonNull(manager, "manager");
             HarvesterConfiguration current = manager.current().configuration();
             this.ai = current.ai();
+            if (!networkFixed) {
+                this.proxy = current.network().proxy();
+                this.trust = current.network().trust();
+            }
             this.cacheFreshness = current.search().cacheFreshness();
             this.withheldRetention = current.sync().withheldRetention();
             this.prefetchSearchHits = current.search().prefetchHits();
@@ -1659,9 +1683,13 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Proxy und PAC wie {@code space-harvester.network.proxy}; Standard ohne Proxy. */
+        /**
+         * Proxy und PAC wie {@code space-harvester.network.proxy}; Standard ohne Proxy. Gesetzt bleibt das Netzwerk
+         * fest und folgt {@link #configuration} nicht.
+         */
         public Builder proxy(ProxySettings proxy) {
             this.proxy = Objects.requireNonNull(proxy, "proxy");
+            this.networkFixed = true;
             return this;
         }
 
@@ -1674,7 +1702,7 @@ public final class Harvester implements AutoCloseable {
         /**
          * Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle} wie {@code space-harvester.network.tls}
          * (#189); Standard nur der JVM-Truststore. Die Windows-Speicher werden erst bei der ersten TLS-Verbindung
-         * gelesen.
+         * gelesen. Gesetzt bleibt das Netzwerk fest und folgt {@link #configuration} nicht.
          *
          * @throws IllegalArgumentException mit den Problemen, etwa einer unlesbaren CA-Datei
          */
@@ -1685,6 +1713,7 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalArgumentException(String.join("; ", problems));
             }
             this.trust = trust;
+            this.networkFixed = true;
             return this;
         }
 

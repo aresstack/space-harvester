@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.source;
 
+import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceType;
@@ -74,7 +76,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * gelesen ohne Sperre.
      */
     private volatile Map<String, Opened> opened;
-    private final ProxyAuthenticator authenticator;
+    /** Die Proxy-Anmeldung für {@code HttpURLConnection}; {@link #reconfigure} setzt sie neu. */
+    private volatile ProxyAuthenticator authenticator;
 
     /**
      * Eine geöffnete Quelle mit ihren Einstellungen. Eine abgeschaltete ({@code enabled = false}) behält Einstellungen
@@ -175,7 +178,8 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         LOG.info("Proxy-Route der Quellen: {}", routes.describe());
         List<String> problems = new ArrayList<>();
         ConfiguredSecrets secrets = new ConfiguredSecrets(secretProvider);
-        ProxyCredentials proxyCredentials = ProxyCredentials.of(proxy.authentication(), secretProvider);
+        // Eine eigene Instanz auch ohne Anmeldung: reconfigure() stellt sie für alle Halter um.
+        ProxyCredentials proxyCredentials = ProxyCredentials.reconfigurable(proxy.authentication(), secretProvider);
         AsyncSnapshotTransports async = asyncTransport == AsyncTransport.WEB_CLIENT
                 ? new AsyncSnapshotTransports(secrets, routes, userAgent, proxyCredentials) : null;
         LOG.info("Seiten-Snapshots: {}", async == null ? "synchron" : "asynchron über WebClient");
@@ -501,6 +505,50 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         if (!problems.isEmpty()) {
             throw new InvalidSourceConfigurationException(problems);
         }
+    }
+
+    /**
+     * Stellt Proxy, Proxy-Anmeldung und Vertrauen ohne Bundle zur Laufzeit um (ADR 0015) und öffnet danach alle Quellen
+     * über {@link #replace} neu: Trust-Bundles und Client-Zertifikate werden dabei neu gelesen, die bisherigen
+     * Instanzen schließen, sobald die neuen offen sind. Laufende Anfragen enden über ihre bisherigen Verbindungen; die
+     * Pools des WebClient-Transports schließen, wenn ihre letzte Verbindung zurückkommt. Eine Quelle, die sich nicht
+     * neu öffnen lässt (etwa eine inzwischen unlesbare PKCS#12-Datei), behält ihre bisherige Instanz; das Protokoll
+     * nennt nur Quelle und Art des Fehlers.
+     *
+     * <p>Das Vertrauen ohne Bundle stellen nur {@link TrustBundles#reconfigurable} um; mit anderen Bundles bleibt es.
+     *
+     * @throws InvalidNetworkConfigurationException mit den Problemen aus {@link NetworkSettings#problems()}; dann
+     *                                              ändert sich nichts
+     */
+    public synchronized void reconfigure(NetworkSettings network) {
+        List<String> problems = network.problems().stream().map(ConfigurationProblem::message).toList();
+        if (!problems.isEmpty()) {
+            throw new InvalidNetworkConfigurationException(problems);
+        }
+        routes.reconfigure(network.proxy());
+        context.proxyCredentials().reconfigure(network.proxy().authentication());
+        ProxyAuthenticator previous = authenticator;
+        if (previous != null) {
+            previous.uninstall();
+        }
+        authenticator = ProxyAuthenticator.install(context.proxyCredentials());
+        if (!context.trustBundles().reconfigure(network.trust()) && !network.trust().jvmOnly()) {
+            LOG.warn("Vertrauen ohne trust-bundle bleibt unverändert: die Vertrauensquellen dieses Katalogs lassen "
+                    + "sich nicht umstellen");
+        }
+        if (async != null) {
+            // Die Clients tragen die Proxy-Anmeldung ihres Baus; neue Anfragen bauen neue.
+            async.discardClients();
+        }
+        for (Opened source : opened.values()) {
+            try {
+                replace(source.config());
+            } catch (RuntimeException e) {
+                LOG.warn("Quelle {} nach geänderten Netzwerkeinstellungen nicht neu geöffnet, die bisherige bleibt "
+                        + "({})", source.config().id(), e.getClass().getSimpleName());
+            }
+        }
+        LOG.info("Netzwerkeinstellungen der Quellen umgestellt");
     }
 
     /**

@@ -264,4 +264,51 @@ class ProxyRoutesTest {
                 "pac-url-manual https://pac.example/proxy.pac?…, ohne Proxy: [*.corp], Frist 20000 ms")
                 .doesNotContain("geheim");
     }
+
+    @Test
+    void reconfigureDropsCachedPacRoutesAndKeepsFailuresClosed() {
+        ProxyRoutes routes = routes(pac(null, null), url -> ProxyResult.proxy("old-proxy.example", 8080, "resolved"));
+        URI target = URI.create("https://confluence.example.org/");
+        routes.routeFor(target);
+
+        routes.reconfigure(pac(null, null), new ProxyRoutes.Resolver() {
+            @Override
+            public ProxyResult resolve(String url) {
+                resolved.add(url);
+                return ProxyResult.error("pac-download-failed", "HTTP 503");
+            }
+
+            @Override
+            public ProxyDiagnostics diagnose(String url) {
+                throw new UnsupportedOperationException();
+            }
+        });
+        HttpRoute failed = routes.routeFor(target);
+
+        assertThat(resolved).containsExactly("https://confluence.example.org/", "https://confluence.example.org/");
+        assertThat(failed.isUnavailable()).isTrue();
+        assertThat(failed.reason()).isEqualTo("pac-download-failed");
+
+        routes.reconfigure(ProxySettings.disabled());
+
+        assertThat(routes.routeFor(target)).isEqualTo(HttpRoute.direct(ProxyRoutes.REASON_DISABLED));
+        assertThat(routes.describe()).isEqualTo("disabled");
+        assertThat(resolved).hasSize(2);
+    }
+
+    @Test
+    void reconfigureRejectsInvalidSettingsAndKeepsTheCurrentOnes() {
+        ProxyRoutes routes = routes(pac(null, null), url -> ProxyResult.proxy("proxy.example", 8080, "resolved"));
+        URI target = URI.create("https://confluence.example.org/");
+        routes.routeFor(target);
+
+        assertThatThrownBy(() -> routes.reconfigure(new ProxySettings(ProxySettings.Mode.MANUAL_PROXY, null, null,
+                null, null, null, null, null)))
+                .isInstanceOf(InvalidNetworkConfigurationException.class)
+                .hasMessageContaining("mode manual-proxy braucht proxy-host");
+
+        assertThat(routes.routeFor(target)).isEqualTo(HttpRoute.proxy("proxy.example", 8080, "resolved"));
+        assertThat(resolved).hasSize(1);
+        assertThat(ProxyRoutes.problems(ProxySettings.disabled())).isEmpty();
+    }
 }
