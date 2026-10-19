@@ -59,15 +59,43 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
    Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
 
+## Dokumentnavigation
+
+Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigationUseCase`,
+`DocumentNavigationBuilder`, `TopicClusterer`) in `application/passages`:
+
+1. **Überschriften zuerst** (FA-01, FA-02): Die Überschriften der Textprojektion bilden die Kapitelhierarchie und
+   bleiben unverändert; ein einziges oberstes Kapitel, das die Seite umschließt, wird aufgelöst.
+2. **Themenabschnitte nur im Fließtext** (FA-03, FA-04): Hat der eigene Fließtext eines Kapitels (oder die Seite ohne
+   Überschriften) mindestens drei Absätze, gruppiert `TopicClusterer` deren Vektoren (Average Linkage, Distanz
+   1 − Kosinus, Grenze 0,55, zwei Repräsentanten, wie im Client); aufeinanderfolgende Absätze eines Themas bilden
+   einen Abschnitt `origin=topic` unter dem Kapitel, ein einziger Lauf unterteilt nichts. Text vor der ersten
+   Überschrift wird immer anspringbar. Bezeichnung ist der erste Satz des Repräsentanten (höchstens 80 Zeichen).
+3. **Stellen statt Wiederfinden** (FA-05): Jeder Abschnitt trägt `start`, `end` und einen Anker (60 Zeichen bis zum
+   ersten Zeilenumbruch) im angezeigten Text; `TextLocator` entfällt, weil die Absätze schon Stellen sind.
+4. **Prozessor `navigation`** nach `passages`, im vorhandenen `LuceneEnrichmentStore`, ohne Schemaänderung. Er bettet
+   nichts ein, sondern liest die aktuellen Embeddings je Absatz des Prozessors `embedding` (Punkt 8) für genau diesen
+   Text, wie der Client die indexierten Passagen der Fassung. Ohne sie bleiben die Überschriften mit
+   `analysis=headings` und Grund: `no-model`, `source-not-approved`, `not-embedded` (wird wiederholt, sobald die
+   Embeddings da sind), `no-topic-change`, `model-unavailable`. Ein nicht erreichbares Modell ist nie ein Fehler der
+   Anfrage.
+5. **Lesen** über `Harvester.documentNavigation().page(caller, sourceId, pageId)` → `DocumentNavigationView(state,
+   analysis, reason, chapters)` und `GET /api/v1/sources/{sourceId}/pages/{pageId}/navigation`, Rechte wie
+   `…/passages`. Fehlt ein Ergebnis für diesen Text, zeigt die Antwort sofort die Überschriften und stößt die
+   Berechnung an.
+
 ## Abweichungen vom Client
 
 - Passagen sind Ausschnitte des Textes statt neu zusammengefügter Sätze, damit die Leseansicht zu ihnen springen
   kann. Die Blöcke einer Confluence-Projektion sind ihre Zeilen, wie die Strukturblöcke aus dem Dokumentbaum im Client.
 - Die Sätze aller Absätze gehen in Stapeln an das Modell statt je Absatz (gleiche Vektoren), höchstens 2 000 je
   Seite, danach nur Struktur mit Warnung.
-- Kein `TopicClusterer`; die Embeddings je Absatz liegen im Prozessor `embedding` statt in einer eigenen Ablage.
+- Die Embeddings je Absatz liegen im Prozessor `embedding` statt in einer eigenen Ablage; `TopicClusterer` nutzt
+  nur die Dokumentnavigation (unten), die Absatzgrenzen messen weiter die Satzfenster.
 
 ## Folgen
 
+- Die Navigation ist ein gespeichertes Ergebnis der Anreicherung statt einer Berechnung je Aufruf; ändert sich das
+  Verfahren oder das Modell, wird sie neu berechnet.
 - Der Core hängt an `opennlp-tools` und dem Satzmodell (zusammen rund 1,5 MB, Apache-2.0).
 - Mit Modell kostet jede Seite einen Embedding-Aufruf je 32 Sätze zusätzlich zum Prozessor `embedding`.

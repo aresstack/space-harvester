@@ -20,6 +20,9 @@ import com.aresstack.spaceharvester.application.enrichment.language.PropertyProc
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.NavigationQueries;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
@@ -65,10 +68,14 @@ class EnrichmentConfiguration {
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
+        // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften (ADR 0020)
+        EnrichmentStore enrichmentStore = store.getIfAvailable(InMemoryEnrichmentStore::new);
+        processors.add(new NavigationProcessor(new DocumentNavigationBuilder(), embedding.getIfAvailable(),
+                enrichmentStore::find));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         return new Enrichments(projector(), processors,
-                store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+                enrichmentStore, Clock.systemUTC(), background.getIfAvailable());
     }
 
     /** Satzgrenzen für Absätze und ihre Embeddings: das deutsche OpenNLP-Modell, ohne es die Satzregeln (ADR 0020). */
@@ -85,6 +92,12 @@ class EnrichmentConfiguration {
     @Bean
     PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments) {
         return new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
+    }
+
+    /** Dokumentnavigation einer Seite für {@code GET …/navigation} (ADR 0020). */
+    @Bean
+    NavigationQueries navigationQueries(PageQueries pages, Enrichments enrichments) {
+        return new NavigationQueries(pages, enrichments, projector(), new DocumentNavigationBuilder());
     }
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */
