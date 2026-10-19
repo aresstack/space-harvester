@@ -596,7 +596,8 @@ public class KeywordSearch {
                                 .orElse(null);
                     }
                     fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
-                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle()) : null));
+                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle()) : null,
+                            match.passageId()));
                 }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
@@ -721,7 +722,8 @@ public class KeywordSearch {
             boolean snippet = content.computeIfAbsent(sourceId,
                     id -> access.permitsSourceWide(caller, id, AccessKind.CONTENT));
             hits.add(new Hit(sourceId, match.pageId(), null, match.title(), snippet ? match.snippet() : "",
-                    match.url(), match.version(), match.modifiedAt(), null));
+                    match.url(), match.version(), match.modifiedAt(), null, null,
+                    snippet ? candidate.passageId() : null));
         }
         return new Checked(hits, complete);
     }
@@ -785,11 +787,12 @@ public class KeywordSearch {
             }
             // Steht das Wort nur im Titel, hat der Cache kein Textfenster; dann bleibt der Auszug der Quelle.
             // Ein Anhangstreffer behält den Auszug aus dem Anhang, auch einen leeren (Wort nur im Dateinamen).
-            String snippet = candidate.attachment() == null && (candidate.match().snippet() == null
-                    || candidate.match().snippet().isEmpty()) ? known.snippet() : candidate.match().snippet();
+            boolean fromSource = candidate.attachment() == null && (candidate.match().snippet() == null
+                    || candidate.match().snippet().isEmpty());
+            String snippet = fromSource ? known.snippet() : candidate.match().snippet();
             return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
                     known.url(), known.version(), known.modifiedAt(),
-                    known.parentPageId(), candidate.attachment()));
+                    known.parentPageId(), candidate.attachment(), fromSource ? null : candidate.passageId()));
         }
         PageMetadata metadata;
         HarvestSource source = catalog.find(candidate.sourceId()).orElse(null);
@@ -822,12 +825,13 @@ public class KeywordSearch {
         SourceSearchMatch match = candidate.match();
         // Auch der Auszug der Quelle stammt aus dem Inhalt: ohne Freigabe für den Inhalt kein Auszug.
         String snippet = candidate.indexed() || access.permits(caller, page, AccessKind.CONTENT) ? match.snippet() : "";
+        // Die Passage-ID nennt den Texthash: nur mit dem Auszug des Index, also nur mit content.
         return Optional.of(new Hit(candidate.sourceId(), metadata.pageId(), metadata.partitionKey(),
                 metadata.title().isEmpty() ? match.title() : metadata.title(), snippet,
                 metadata.url() != null ? metadata.url() : match.url(),
                 metadata.version() != null ? metadata.version() : match.version(),
                 metadata.modifiedAt() != null ? metadata.modifiedAt() : match.modifiedAt(),
-                metadata.parentPageId(), candidate.attachment()));
+                metadata.parentPageId(), candidate.attachment(), candidate.indexed() ? candidate.passageId() : null));
     }
 
     /**
@@ -939,9 +943,14 @@ public class KeywordSearch {
     /**
      * @param known      eben live geprüfter Treffer derselben Seite oder {@code null}
      * @param attachment der Anhang der Seite, in dem der Volltextindex fand, oder {@code null}
+     * @param passageId  Passage-ID des Absatzes, aus dem der Auszug des Index stammt, oder {@code null}
      */
     private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known,
-                             AttachmentMatch attachment) {
+                             AttachmentMatch attachment, String passageId) {
+
+        Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known, AttachmentMatch attachment) {
+            this(sourceId, match, indexed, known, attachment, null);
+        }
     }
 
     /**
@@ -1151,13 +1160,22 @@ public class KeywordSearch {
      * @param snippet    Textauszug als Klartext, leer, wenn es keinen gibt; bei einem Anhangstreffer aus dem Anhang
      * @param attachment der Anhang der Seite, in dessen Text der Volltextindex fand (#183), oder {@code null}, wenn die
      *                   Seite selbst passt
+     * @param passageId  die Passage-ID ({@code PassageId}) des Absatzes, aus dem der Auszug stammt, wie
+     *                   {@code passage:} an den Treffern im Enterprise AI Client; {@code null} ohne Auszug aus Absätzen
      */
     public record Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
-                      String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment) {
+                      String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment,
+                      String passageId) {
 
         public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
                    String version, Instant modifiedAt, String parentPageId) {
             this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, null);
+        }
+
+        public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
+                   String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment) {
+            this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, attachment,
+                    null);
         }
 
         /** Wo der Treffer liegt: in der Seite oder in einem ihrer Anhänge. */

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.passages;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
@@ -38,6 +39,18 @@ class PassageSnippetsTest {
                     "Der Server startet um acht. Der Server läuft stabil. Der Server stoppt nachts.");
             assertThat(match.title()).isEqualTo("Seite");
         });
+    }
+
+    @Test
+    void theSnippetNamesThePassageIdOfItsPassageLikeTheReadingView() {
+        stored.add(semantic(PassageProcessorTest.TEXT));
+        List<PagePassages.Passage> passages = PagePassages.read(KEY, List.of(new Enrichments.View(stored.getFirst(),
+                Enrichment.Freshness.CURRENT)), PassageProcessorTest.TEXT).passages();
+
+        assertThat(snippets.search("server nachts", Set.of("wiki"), null, 10)).singleElement()
+                .satisfies(match -> assertThat(match.passageId()).isEqualTo(passages.get(1).id()));
+        assertThat(snippets.search("titel", Set.of("wiki"), null, 10).getFirst().passageId())
+                .as("das Fenster des Index stammt aus keinem Absatz").isNull();
     }
 
     @Test

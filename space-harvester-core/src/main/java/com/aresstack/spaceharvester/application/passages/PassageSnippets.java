@@ -59,15 +59,18 @@ public final class PassageSnippets implements PageTextIndex {
         List<Match> refined = new ArrayList<>(matches.size());
         for (Match match : matches) {
             // Ein Anhangstreffer (#183) behält seinen Auszug aus dem Anhang; Absätze gibt es nur für Seiten.
-            String snippet = match.inAttachment() || match.snippet() == null || match.snippet().isEmpty() ? null
-                    : passageSnippet(new PageKey(match.sourceId(), match.pageId()), terms).orElse(null);
-            refined.add(snippet == null ? match : match.withSnippet(snippet));
+            Excerpt excerpt = match.inAttachment() || match.snippet() == null || match.snippet().isEmpty() ? null
+                    : passageExcerpt(new PageKey(match.sourceId(), match.pageId()), terms).orElse(null);
+            refined.add(excerpt == null ? match : match.withSnippet(excerpt.snippet(), excerpt.passageId()));
         }
         return refined;
     }
 
-    /** Der Auszug aus dem passendsten Absatz der Seite, wenn es einen gibt. */
-    Optional<String> passageSnippet(PageKey key, Set<String> terms) {
+    /**
+     * Auszug und Passage-ID ({@link PassageId}) des passendsten Absatzes, beide aus dem schon geladenen Ergebnis und
+     * Text; die ID kostet keinen weiteren Abruf.
+     */
+    Optional<Excerpt> passageExcerpt(PageKey key, Set<String> terms) {
         try {
             Enrichment result = stored.apply(key).stream()
                     .filter(e -> PassageProcessor.ID.equals(e.processorId()) && e.status() == Enrichment.Status.OK)
@@ -83,7 +86,13 @@ public final class PassageSnippets implements PageTextIndex {
             if (text.isEmpty() || !parsed.textSha256().equals(PassagePayload.textSha256(text.get()))) {
                 return Optional.empty();
             }
-            return best(text.get(), parsed.passages(), terms);
+            String content = text.get();
+            return choose(content, parsed.passages(), terms).map(choice -> new Excerpt(
+                    excerpt(content, choice.passage(), choice.first()),
+                    PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(parsed.textSha256()),
+                            choice.position(), PassageId.versionTag(parsed.segmentation()),
+                            PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
+                            .value()));
         } catch (RuntimeException e) {
             // Ohne Meldung: sie könnte Text der Seite enthalten. Der Treffer behält seinen Auszug.
             LOG.log(System.Logger.Level.DEBUG, "Absätze einer Seite in {0} nicht lesbar ({1})", key.sourceId(),
@@ -93,13 +102,22 @@ public final class PassageSnippets implements PageTextIndex {
     }
 
     static Optional<String> best(String text, List<PassageSegmentation.Passage> passages, Set<String> terms) {
-        PassageSegmentation.Passage best = null;
+        return choose(text, passages, terms).map(choice -> excerpt(text, choice.passage(), choice.first()));
+    }
+
+    /**
+     * Der Absatz mit den meisten Suchwörtern; {@code position} zählt wie {@link PagePassages#read} nur Absätze, die
+     * im Text liegen.
+     */
+    static Optional<Choice> choose(String text, List<PassageSegmentation.Passage> passages, Set<String> terms) {
+        Choice best = null;
         int bestScore = 0;
-        int bestFirst = -1;
+        int position = -1;
         for (PassageSegmentation.Passage passage : passages) {
             if (passage.end() > text.length()) {
                 continue;
             }
+            position++;
             Set<String> found = new LinkedHashSet<>();
             int first = -1;
             Matcher word = WORD.matcher(text).region(passage.start(), passage.end());
@@ -112,12 +130,19 @@ public final class PassageSnippets implements PageTextIndex {
                 }
             }
             if (found.size() > bestScore) {
-                best = passage;
+                best = new Choice(passage, position, first);
                 bestScore = found.size();
-                bestFirst = first;
             }
         }
-        return best == null ? Optional.empty() : Optional.of(excerpt(text, best, bestFirst));
+        return Optional.ofNullable(best);
+    }
+
+    /** Der gewählte Absatz, seine Nummer in der Seite und die erste Fundstelle. */
+    record Choice(PassageSegmentation.Passage passage, int position, int first) {
+    }
+
+    /** Ein Auszug und die Passage-ID des Absatzes, aus dem er stammt. */
+    record Excerpt(String snippet, String passageId) {
     }
 
     /** Der Absatz, oder ein Ausschnitt um die erste Fundstelle an Wortgrenzen, Leerraum zusammengezogen. */
