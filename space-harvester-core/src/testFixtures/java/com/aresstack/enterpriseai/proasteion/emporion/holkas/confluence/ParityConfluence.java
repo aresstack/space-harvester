@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -33,7 +34,7 @@ import java.util.zip.ZipOutputStream;
  *   <li>Bilder: als Anhang (SVG), extern (nicht ladbar), inline im Fließtext (Vorschaubild eines Anhangs), fehlend
  *       (404), dazu ein Emoticon und ein {@code data:}-Bild, die keine Inhaltsbilder sind.</li>
  *   <li>draw.io mit Revision ({@code drawio}) und dasselbe Diagramm von einer anderen Seite ({@code inc-drawio}),
- *       Mermaid.</li>
+ *       jeweils mit Vorschaubild {@code ablauf.png} und Quelldaten {@code ablauf}; Mermaid.</li>
  *   <li>Ausgeführte Makros: {@code include} und {@code excerpt-include} einer Seite aus einem anderen Space,
  *       {@code children}, Jira-Vorgang.</li>
  *   <li>Anhänge PDF und DOCX mit je einem Merksatz.</li>
@@ -44,7 +45,7 @@ public final class ParityConfluence {
     public static final String SPACE = "PARITY";
     public static final String SPACE_NAME = "Paritätsprüfung";
     public static final String HOME = "1001";
-    /** Wurzel der Exportumfänge (#186): „Architektur“ mit der Kette „Komponenten“ → „Ebene 4“ … „Ebene 7“ darunter. */
+    /** Wurzel der Exportumfänge (#186): „Architektur“ mit „Komponenten“ → „Ebene 4“ … „Ebene 7“ darunter. */
     public static final String SCOPE_ROOT = "1002";
     /** Seite mit Anhängen, Inline-Bild, {@code inc-drawio} und Jira. */
     public static final String ATTACHMENTS_PAGE = "1011";
@@ -111,6 +112,10 @@ public final class ParityConfluence {
 
     public static final String MERMAID = "graph TD\n  A[Quelle] --> B[Export]";
 
+    /** Vorschaubild des draw.io-Plugins ({@code ablauf.png}): ein PNG mit 1 × 1 Pixel. */
+    public static final byte[] PREVIEW_PNG = Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+
     private static final String MODIFIED = "2026-10-18T00:00:00.000Z";
 
     private ParityConfluence() {
@@ -134,7 +139,8 @@ public final class ParityConfluence {
                         + "<p><s>veraltet</s> <strong>fett</strong> <em>kursiv</em></p>"
                         + macro("code", "<ac:parameter ac:name=\"language\">java</ac:parameter>"
                         + "<ac:plain-text-body><![CDATA[System.out.println(\"Delta\");]]></ac:plain-text-body>")
-                        + "<p><ac:image ac:alt=\"Systembild\"><ri:attachment ri:filename=\"system.svg\"/></ac:image></p>",
+                        + "<p><ac:image ac:alt=\"Systembild\"><ri:attachment ri:filename=\"system.svg\"/>"
+                        + "</ac:image></p>",
                 "<p>Satz Charlie zur Architektur. Siehe <a href=\"https://example.org/doku\" class=\"external-link\">"
                         + "Dokumentation</a> und <a href=\"mailto:team@example.org\" class=\"external-link\">Team</a>."
                         + "</p>"
@@ -151,7 +157,8 @@ public final class ParityConfluence {
         page(confluence, "1003", "Komponenten",
                 "<p>Satz Echo zu den Komponenten. Weiter bei <ac:link><ri:page ri:content-title=\"Betrieb\"/>"
                         + "<ac:plain-text-link-body><![CDATA[Betrieb]]></ac:plain-text-link-body></ac:link>.</p>"
-                        + macro("mermaid-macro", "<ac:plain-text-body><![CDATA[" + MERMAID + "]]></ac:plain-text-body>"),
+                        + macro("mermaid-macro", "<ac:plain-text-body><![CDATA[" + MERMAID
+                        + "]]></ac:plain-text-body>"),
                 "<p>Satz Echo zu den Komponenten. Weiter bei <a href=\"/wiki/display/PARITY/Betrieb\""
                         + " data-linked-resource-id=\"1004\" data-linked-resource-type=\"page\">Betrieb</a>.</p>"
                         + "<div class=\"code panel pdl\"><div class=\"codeContent panelContent pdl\">"
@@ -182,6 +189,7 @@ public final class ParityConfluence {
                         + drawio("1004"));
         confluence.child(HOME, "1004");
         confluence.attachment("att2002", "1004", "ablauf", "application/vnd.jgraph.mxfile", DRAWIO);
+        binary(confluence, "att2006", "1004", "ablauf.png", "image/png", PREVIEW_PNG);
 
         page(confluence, "1009", "Makros",
                 "<p>Satz Golf vor den Makros.</p>"
@@ -334,10 +342,15 @@ public final class ParityConfluence {
                 + content + "</div>";
     }
 
-    /** Platzhalter des draw.io-Plugins für das Diagramm „ablauf“ der Seite {@code owner}, Revision 1. */
+    /**
+     * Platzhalter des draw.io-Plugins für das Diagramm „ablauf“ der Seite {@code owner}, Revision 1, wie
+     * {@code export_view} ihn liefert: mit dem Vorschaubild, das das Plugin als Anhang {@code ablauf.png} ablegt. Der
+     * Adapter erkennt es über die Makroparameter in {@code body.storage} als Diagramm.
+     */
     private static String drawio(String owner) {
         return "<div class=\"drawio-macro\" data-diagramname=\"ablauf\" data-pageid=\"" + owner + "\""
-                + " data-revision=\"1\"></div>";
+                + " data-revision=\"1\"><img class=\"drawio-diagram-image\" alt=\"ablauf\""
+                + " src=\"/wiki/download/attachments/" + owner + "/ablauf.png?version=1&amp;api=v2\"></div>";
     }
 
     private static String table() {
@@ -355,8 +368,7 @@ public final class ParityConfluence {
 
     private static String image(String pageId, String file, String attachmentId, String type, String alt,
                                 boolean thumbnail) {
-        String kind = thumbnail ? "thumbnails" : "attachments";
-        String src = "/wiki/download/" + kind + "/" + pageId + "/" + file + "?version=1&amp;api=v2";
+        String src = "/wiki/download/attachments/" + pageId + "/" + file + "?version=1&amp;api=v2";
         return "<span class=\"confluence-embedded-file-wrapper\"><img class=\"confluence-embedded-image"
                 + (thumbnail ? " confluence-thumbnail\" height=\"16\"" : "\"")
                 + " alt=\"" + alt + "\" src=\"" + src + "\" data-image-src=\"" + src + "\""

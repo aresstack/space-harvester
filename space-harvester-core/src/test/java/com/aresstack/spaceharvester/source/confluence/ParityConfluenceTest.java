@@ -67,6 +67,13 @@ class ParityConfluenceTest {
             assertThat(attachments.html()).contains(ParityConfluence.JIRA_SENTENCE);
             assertThat(attachments.text()).contains(ParityConfluence.JIRA_KEY, ParityConfluence.SENTENCES[11]);
 
+            // draw.io (auch über inc-drawio) und das Inline-Bild sind Bilder der Ansicht, die der Adapter laden kann.
+            for (String page : List.of("1004", ParityConfluence.ATTACHMENTS_PAGE)) {
+                assertThat(harvester.readingViews().view(caller, "wiki", page, false).images()).as(page)
+                        .anyMatch(image -> image.src().contains("drawio=ablauf"));
+            }
+            assertThat(attachments.images()).anyMatch(image -> image.src().contains("/1011/symbol.svg"));
+
             HttpClient http = HttpClient.newHttpClient();
             for (String[] document : ParityConfluence.DOCUMENTS) {
                 URI download = URI.create(server.baseUrl() + "/download/attachments/"
@@ -76,6 +83,11 @@ class ParityConfluenceTest {
                 assertThat(TikaDocumentText.shared().detect(content)).as(document[0]).contains(document[1]);
                 assertThat(TikaDocumentText.shared().extract(document[0], document[1], content).text())
                         .as(document[0]).contains(document[2]);
+            }
+            for (String path : List.of("/download/attachments/1011/symbol.svg",
+                    "/download/attachments/1004/ablauf.png")) {
+                assertThat(http.send(HttpRequest.newBuilder(URI.create(server.baseUrl() + path)).build(),
+                        HttpResponse.BodyHandlers.discarding()).statusCode()).as(path).isEqualTo(200);
             }
         }
     }
