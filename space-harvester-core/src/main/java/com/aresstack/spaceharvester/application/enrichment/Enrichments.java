@@ -278,7 +278,7 @@ public class Enrichments {
                 current++;
                 continue;
             }
-            if (!force && background != null && processor.background()) {
+            if (!force && background != null && processor.background(snapshot.key())) {
                 schedule(processor, snapshot, text, input);
                 continue;
             }

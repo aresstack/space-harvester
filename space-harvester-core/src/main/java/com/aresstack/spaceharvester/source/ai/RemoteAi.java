@@ -3,12 +3,17 @@ package com.aresstack.spaceharvester.source.ai;
 import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysis;
 import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysisCache;
 import com.aresstack.enterpriseai.astu.acropolis.image.SourceImageAnalysisUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.navigation.ChatSectionLabeler;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
+import com.aresstack.enterpriseai.astu.chat.ChatResponse;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelCategory;
 import com.aresstack.enterpriseai.astu.modelcatalog.ModelDescriptor;
 import com.aresstack.enterpriseai.chat.api.ChatCompletionException;
+import com.aresstack.enterpriseai.chat.api.ChatCompletionPort;
+import com.aresstack.enterpriseai.chat.api.ChatStreamListener;
+import com.aresstack.enterpriseai.chat.api.ChatTask;
 import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatAdapter;
 import com.aresstack.enterpriseai.chat.openai.OpenAiCompatibleChatConfig;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
@@ -26,17 +31,20 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import java.net.SocketTimeoutException;
 import java.security.GeneralSecurityException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -166,6 +174,51 @@ public final class RemoteAi {
         };
     }
 
+    /** Eigene Frist je Anfrage der Abschnittsbenennung, unabhängig von {@code ai.timeout} (#181). */
+    public static final Duration LABEL_TIMEOUT = Duration.ofSeconds(60);
+
+    /**
+     * Benennt Themenabschnitte der Dokumentnavigation mit dem Chat-Modell ({@code POST /chat/completions}, #181,
+     * ADR 0020) über die unveränderte {@code ChatSectionLabeler} des Enterprise AI Client: dieselbe Anweisung, je 40
+     * Abschnitte eine Anfrage, höchstens 700 Zeichen je Abschnitt. Scheitert eine Anfrage, gehen die folgenden Pakete nicht
+     * mehr ans Netz; sie und das gescheiterte behalten die Bezeichnungen der Analyse, und das Ergebnis ist
+     * unvollständig. Weder Text noch Antwort werden geloggt oder in
+     * eine Meldung übernommen.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public NavigationLabelModel.Labels sectionLabels(String documentTitle, List<String> sectionTexts) {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
+                (int) LABEL_TIMEOUT.toMillis()));
+        AtomicBoolean failed = new AtomicBoolean();
+        ChatCompletionPort port = new ChatCompletionPort() {
+            @Override
+            public ChatResponse complete(ChatRequest request) {
+                if (failed.get()) {
+                    // Nach dem ersten Fehler kein weiteres Paket ans Netz: jedes wartete sonst bis zur Frist.
+                    throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell nicht erreichbar");
+                }
+                try {
+                    return adapter.complete(request);
+                } catch (RuntimeException e) {
+                    failed.set(true);
+                    throw e;
+                }
+            }
+
+            @Override
+            public ChatTask stream(ChatRequest request, ChatStreamListener listener) {
+                throw new UnsupportedOperationException("Abschnittsbenennung streamt nicht");
+            }
+        };
+        String model = settings.chatModel();
+        List<String> labels = new ChatSectionLabeler(port, () -> model).labels(documentTitle, sectionTexts);
+        return new NavigationLabelModel.Labels(labels, !failed.get());
+    }
+
     /**
      * Beschreibt ein Bild mit dem Vision-Modell ({@code POST /chat/completions} mit Bild, ADR 0021) über die
      * unveränderte {@code SourceImageAnalysisUseCase} des Enterprise AI Client: derselbe Prompt, dieselbe Anfrage (nur
@@ -270,12 +323,16 @@ public final class RemoteAi {
     }
 
     private OpenAiCompatibleChatConfig chatConfig(String model) {
+        return chatConfig(model, timeoutMillis());
+    }
+
+    private OpenAiCompatibleChatConfig chatConfig(String model, int timeoutMillis) {
         OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
                 .builder(settings.baseUrl(), model)
                 .routes(routes)
                 .userAgent(userAgent)
-                .connectTimeoutMillis(timeoutMillis())
-                .readTimeoutMillis(timeoutMillis());
+                .connectTimeoutMillis(timeoutMillis)
+                .readTimeoutMillis(timeoutMillis);
         if (settings.apiKey() != null) {
             config.bearerToken(OpenAiCompatibleChatConfig.TokenSource.fixed(settings.apiKey()));
         }
