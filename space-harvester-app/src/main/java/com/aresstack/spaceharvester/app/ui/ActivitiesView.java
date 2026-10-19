@@ -823,10 +823,10 @@ public final class ActivitiesView implements View {
     record Format(String id, String title) {
 
         private static final List<String> ORDER = List.of("pdf", "docx", "markdown", "markdown-package", "json-package",
-                "json");
+                "json", "analysis");
         private static final Map<String, String> TITLES = Map.of("pdf", "PDF-Dokument", "docx", "Word-Dokument",
                 "markdown", "Markdown", "markdown-package", "Markdown mit Medien", "json-package", "JSON mit Medien",
-                "json", "JSON");
+                "json", "JSON", "analysis", "Analyse");
 
         static String title(String format) {
             return TITLES.getOrDefault(format, format.toUpperCase(Locale.ROOT));
@@ -852,16 +852,18 @@ public final class ActivitiesView implements View {
     }
 
     /** Formate der Symbole in der Liste, in der Reihenfolge aus Angelos Skizze. */
-    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json-package");
+    static final List<String> FORMATS = List.of("pdf", "docx", "markdown", "json-package", "analysis");
     private static final Map<String, String> EXPORT_TIPS = Map.of("pdf", "Als PDF exportieren", "docx",
             "Als Word-Dokument exportieren", "markdown", "Als Markdown exportieren", "json-package",
-            "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)");
+            "Als JSON exportieren (ZIP mit Seiten, Bildern und Diagrammen)", "analysis",
+            "Analyse als JSON exportieren (Analysedaten je Seite, Originaldaten unverändert)");
     private static final Map<String, javax.swing.Icon> FORMAT_ICONS = Map.of("pdf", FormatIcon.of("pdf"), "docx",
-            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"));
+            FormatIcon.of("docx"), "markdown", FormatIcon.of("markdown"), "json-package", FormatIcon.of("json"),
+            "analysis", FormatIcon.of("analysis"));
     private static final javax.swing.Icon DIAGNOSIS = com.aresstack.enterpriseai.ui.comic.paint.SidebarIcons.compass();
     private static final javax.swing.Icon CONTENT = ComposerIcons.openBook();
 
-    /** Die sieben Aktionen einer Zeile: vier Formate, Diagnose, Inhalte, Löschen. */
+    /** Die acht Aktionen einer Zeile: fünf Formate samt Analyse, Diagnose, Inhalte, Löschen. */
     private List<RowActions.Action> rowActions(int index) {
         if (index < 0 || index >= model.rows.size()) {
             return List.of();
