@@ -41,8 +41,11 @@ final class ConfiguredSecrets implements SecretProvider {
         return fallback != null;
     }
 
+    /** Präfix der Verweise auf Zugangsdaten aus der Konfiguration; nie in {@code options} einer Quelle. */
+    static final String SOURCE_PREFIX = "source:";
+
     static SecretRef refFor(String sourceId) {
-        return SecretRef.of("source:" + sourceId);
+        return SecretRef.of(SOURCE_PREFIX + sourceId);
     }
 
     /** Passwort der PKCS#12-Datei mit dem Client-Zertifikat einer Quelle; getrennt von der Anmeldung. */
