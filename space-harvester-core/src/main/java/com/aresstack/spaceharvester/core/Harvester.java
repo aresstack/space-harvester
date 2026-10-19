@@ -59,6 +59,7 @@ import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmente
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -392,6 +393,10 @@ public final class Harvester implements AutoCloseable {
                         cache::snapshots, embedding::covers,
                         List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
                 opened.add(recomputation);
+                // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
+                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten.
+                recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                        embedding::available, PassagePayload.REASON_NOT_APPROVED);
                 this.releaseRecomputation = recomputation;
             } else {
                 this.releaseRecomputation = null;

@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -22,6 +23,7 @@ import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
@@ -224,5 +226,20 @@ class AiConfiguration {
                 embedding::covers, List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
         live.listen(recomputation);
         return recomputation;
+    }
+
+    /**
+     * Gleicht beim Start einmal ab, was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach:
+     * Seiten, deren gespeicherte Ergebnisse nicht zur Freigabe passen, rechnen im Hintergrund der Neuberechnung neu,
+     * ohne den Start aufzuhalten.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
+    org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
+            releaseReconciliationOnStart(ReleaseRecomputation recomputation, EmbeddingProcessor embedding,
+                                         ConfiguredSourceCatalog catalog) {
+        return event -> recomputation.reconcileOnStart(
+                catalog.configs().stream().map(SourceSettingsConfig::id).toList(), embedding::available,
+                PassagePayload.REASON_NOT_APPROVED);
     }
 }
