@@ -21,9 +21,9 @@ class ReferenceReadersTest {
 
         assertThat(docx.tableOfContents()).isTrue();
         assertThat(docx.updateFieldsOnOpen()).isTrue();
-        // Systembild und gerendertes Mermaid; fehlt.png, das externe Bild und symbol.svg der Seite Anhänge nicht
-        assertThat(docx.images()).isEqualTo(2);
-        assertThat(docx.imageNotes()).isEqualTo(3);
+        // Systembild, gerendertes Mermaid und Bilder der Seite Anhänge; fehlt.png und das externe Bild nicht
+        assertThat(docx.images()).isEqualTo(5);
+        assertThat(docx.imageNotes()).isEqualTo(2);
         assertThat(docx.tables()).containsExactly(new Table(3, 3, true));
         assertThat(docx.headings()).extracting(DocumentOutline.Heading::text)
                 .contains("Paritätsprüfung", "Handbuch", "Zweck", "Architektur", "Komponenten", "Ebene 7", "Betrieb");
@@ -38,7 +38,7 @@ class ReferenceReadersTest {
         assertThat(pdf.tableOfContents()).isTrue();
         assertThat(pdf.pageNumbers()).isTrue();
         assertThat(pdf.outlineEntries()).isGreaterThanOrEqualTo(9);
-        assertThat(pdf.images()).isEqualTo(2);
+        assertThat(pdf.images()).isEqualTo(4);
         assertThat(pdf.internalLinks()).isGreaterThanOrEqualTo(9);
         assertThat(pdf.tables()).isNull();
         assertThat(pdf.text().replaceAll("\\s+", " ")).contains(ParityConfluence.SENTENCES);
@@ -48,8 +48,8 @@ class ReferenceReadersTest {
     void markdownFromTheEnterpriseClientEmbedsImagesAndKeepsMermaid() throws IOException {
         DocumentOutline md = MarkdownReader.read(reference("parity.md"));
 
-        assertThat(md.images()).isEqualTo(2);
-        assertThat(md.imageNotes()).isEqualTo(3);
+        assertThat(md.images()).isEqualTo(5);
+        assertThat(md.imageNotes()).isEqualTo(2);
         assertThat(md.mermaidSources()).isEqualTo(1);
         assertThat(md.tables()).containsExactly(new Table(3, 3, true));
         // Kapitel unterhalb von Ebene 6 schreibt der Enterprise AI Client fett
