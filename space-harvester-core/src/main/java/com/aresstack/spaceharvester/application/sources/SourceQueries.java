@@ -151,6 +151,15 @@ public class SourceQueries {
     }
 
     /**
+     * Ob eine Seite außerhalb des Umfangs der Quelle liegt ({@link HarvestSource#outsideScope}).
+     *
+     * @throws UnknownSourceException wenn keine Quelle mit dieser ID konfiguriert ist
+     */
+    public boolean outsideScope(String sourceId, String pageId) {
+        return source(sourceId).outsideScope(pageId);
+    }
+
+    /**
      * Die vollständige Anhangsliste einer Seite, live aus der Quelle (#9), mit dem aktuellen Space der Seite für die
      * Rechteprüfung. Lädt keine Dateien.
      *
