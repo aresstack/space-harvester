@@ -115,7 +115,8 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      Lauf trotzdem. Eine unlesbare Antwort wird nicht gemerkt: Die Akronyme ihres Batches behalten ihre Vorschläge und werden beim
      nächsten Lauf erneut gefragt. Seit der Quelle im Fingerabdruck wird jedes Akronym einmal neu gefragt.
    - Läufe derselben Quelle gehen nacheinander; ein Akronym ohne lesbare Fundstelle wird nicht gefragt und behält seine
-     Vorschläge. `…/refresh-jobs/{jobId}` kennt nur Aufträge der Akronymauflösung.
+     Vorschläge. `…/refresh-jobs/{jobId}` kennt nur Aufträge der Akronymauflösung, und zwar
+     seit dem letzten Start; ältere, abgeschlossene Läufe sind dort danach unbekannt (404).
    - Eine kaputte, unlesbare oder fremde Cache-Datei (anderes Schema, unerwartete Werte) wird verworfen: Der Start
      scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
      kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
