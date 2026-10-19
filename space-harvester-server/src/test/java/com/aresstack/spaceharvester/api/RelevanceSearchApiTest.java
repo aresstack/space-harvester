@@ -5,6 +5,8 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.p
 import static com.aresstack.spaceharvester.application.query.InMemorySearchIndex.entry;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.TestClient;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
@@ -24,6 +26,7 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +34,7 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -46,11 +50,36 @@ class RelevanceSearchApiTest {
 
     private static final String METADATA_ONLY_TOKEN = "metadata-only-token-81d0";
 
+    /**
+     * Mit Modell prüft die Relevanzsuche jeden Treffer live (ADR 0011, Punkt 7): eine erreichbare Quelle, deren Seiten
+     * dieselbe Version tragen wie der Index.
+     */
+    private static final FakeConfluence CONFLUENCE = new FakeConfluence();
+    private static final FakeConfluenceServer SERVER;
+
+    static {
+        CONFLUENCE.space("DEV", "Entwicklung");
+        CONFLUENCE.space("OPS", "Betrieb");
+        CONFLUENCE.page("101", "Seite 101", "DEV", "<p>Architektur</p>").version(3, "2026-10-15T10:30:00.000Z");
+        CONFLUENCE.page("102", "Seite 102", "DEV", "<p>Betrieb</p>").version(3, "2026-10-15T10:30:00.000Z");
+        CONFLUENCE.page("900", "Seite 900", "OPS", "<p>Betrieb</p>").version(3, "2026-10-15T10:30:00.000Z");
+        try {
+            SERVER = new FakeConfluenceServer(CONFLUENCE);
+        } catch (Exception e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    @AfterAll
+    static void stopServer() {
+        SERVER.close();
+    }
+
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
         registry.add("space-harvester.sources[0].id", () -> "wiki");
         registry.add("space-harvester.sources[0].type", () -> "confluence");
-        registry.add("space-harvester.sources[0].base-url", () -> "http://127.0.0.1:9");
+        registry.add("space-harvester.sources[0].base-url", () -> SERVER.baseUrl().toString());
         TestClient.register(registry, "wiki");
         registry.add("space-harvester.security.clients[1].id", () -> "metadata-only");
         registry.add("space-harvester.security.clients[1].token-sha256",
@@ -76,8 +105,10 @@ class RelevanceSearchApiTest {
             return new InMemoryEnrichmentStore();
         }
 
+        /** Geht dem Prozessor des Dienstes vor, der ohne {@code ai.embedding-model} nichts einbettet. */
         @Bean
-        EmbeddingProcessor embeddingProcessor() {
+        @Primary
+        EmbeddingProcessor axesEmbedding() {
             return new EmbeddingProcessor(new EmbeddingProvider() {
                 @Override
                 public String modelId() {

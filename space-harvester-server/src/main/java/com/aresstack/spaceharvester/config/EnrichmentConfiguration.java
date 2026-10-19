@@ -68,7 +68,7 @@ class EnrichmentConfiguration {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
-        // Embeddings nur mit eingerichtetem KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund
+        // Embeddings über den KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund; ohne Modell bettet er nichts ein
         embedding.ifAvailable(processors::add);
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();

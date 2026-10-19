@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.TestClient;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -75,6 +76,9 @@ class ConfigurationApiTest {
     @Autowired
     private ConfigurationManager manager;
 
+    @Autowired
+    private EmbeddingProcessor embedding;
+
     @Test
     void readsTheEffectiveConfigurationWithoutSecrets() throws Exception {
         HttpResponse<String> response = send(ADMIN_TOKEN, "GET", "", null);
@@ -104,14 +108,18 @@ class ConfigurationApiTest {
     @Test
     @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
     void overlaysKeysAndActivatesVersionTwoKeepingTheApiKey() throws Exception {
+        // Ohne Embedding-Modell beim Start steht die Kette trotzdem; erstmals eingeschaltet bettet sie ohne Neustart ein.
+        // Das Modell entsteht schon beim Aktivieren, also mit einer Adresse ohne Abfrageteil.
+        assertThat(embedding.available()).isFalse();
         HttpResponse<String> response = send(ADMIN_TOKEN, "POST", "", Map.of("ai.embedding-model", "x",
-                "ai.embedding-dimensions", "768", "sync.interval", "P1D"));
+                "ai.embedding-dimensions", "768", "ai.base-url", "https://ki.example.org/v1", "sync.interval", "P1D"));
 
         assertThat(response.statusCode()).isEqualTo(200);
         JsonNode body = json.readTree(response.body());
         assertThat(body.get("outcome").asString()).isEqualTo("ACTIVATED");
         assertThat(body.get("version").asLong()).isEqualTo(2);
         assertThat(body.get("restartRequired").asBoolean()).isFalse();
+        assertThat(embedding.available()).isTrue();
 
         JsonNode current = json.readTree(send(ADMIN_TOKEN, "GET", "", null).body());
         assertThat(current.get("version").asLong()).isEqualTo(2);
