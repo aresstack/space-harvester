@@ -37,12 +37,13 @@ import org.slf4j.LoggerFactory;
  */
 public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
-    /** Quellentypen ohne eigene Registrierung: Confluence und lokale Dateien. */
+    /** Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und MediaWiki (#187). */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
-            new LocalFilesSourceAdapter());
+            new LocalFilesSourceAdapter(), MediaWikiSources.adapter());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
-    public static final Set<String> TYPES = Set.of(ConfluenceSourceAdapter.TYPE, LocalFilesSourceAdapter.TYPE);
+    public static final Set<String> TYPES = Set.of(ConfluenceSourceAdapter.TYPE, LocalFilesSourceAdapter.TYPE,
+            MediaWikiSources.TYPE);
 
     private static final Logger LOG = LoggerFactory.getLogger(ConfiguredSourceCatalog.class);
 

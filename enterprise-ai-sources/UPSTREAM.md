@@ -1,13 +1,14 @@
 # enterprise-ai-sources
 
-Unveränderte Kopie der Confluence-Quelle, der Dokument-Extraktion und des Embedding-Adapters aus
+Unveränderte Kopie der Confluence-Quelle, der MediaWiki-Quelle, der Dokument-Extraktion und des Embedding-Adapters aus
 [aresstack/enterprise-ai-client](https://github.com/aresstack/enterprise-ai-client). Der Space Harvester baut
 damit keinen eigenen Confluence-Client, sondern nutzt denselben Code wie der Enterprise AI Client.
 
 Der genaue Upstream-Commit steht in der ersten Zeile von [`UPSTREAM.sha256`](UPSTREAM.sha256); derzeit
 `9fb91c3200266169da0bc433894a331d575c2e5a`, der Merge von enterprise-ai-client#192 (Änderungssuche und Papierkorb je
 Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main`. Derselbe Stand enthält schon
-`document-tika`; für #183 kamen nur weitere Module und Klassen in die Auswahl, ohne neuen Upstream-Commit.
+`document-tika`; für #183 und für MediaWiki (#187) kamen nur weitere Module und Klassen in die Auswahl, ohne neuen
+Upstream-Commit.
 
 ## Inhalt
 
@@ -21,8 +22,9 @@ Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main
 | `proasteion/emporion/deigma` | vollständig: Port für Dateityp-Erkennung und Text-Extraktion (nur JDK) |
 | `proasteion/emporion/deigma/document-tika` | vollständig (#183): `TikaContentDetector`, `TikaResourceExtractor`, `DocumentExtraction`, `MarkdownTextExtractor`, `PlainTextExtractor`, `SimpleContentDetector`; Apache Tika 3.3.2 statt 2.9.1 (PDFBox 3 und POI 5.5 des Space Harvester), flexmark ausgeschlossen wie im Upstream |
 | `astu/acropolis` | nur `SourceFileTextExtractor` und für dessen Umsetzung `ImageAnalysis`, `ImageAnalysisCache`, `SourceImageAnalysisUseCase` (#183) |
-| `proasteion/application` | nur `DocumentSourceFileTextExtractor`: Text aus Dateien einer Quelle wie im Enterprise AI Client (#183) |
+| `proasteion/application` | nur `DocumentSourceFileTextExtractor`: Text aus Dateien einer Quelle wie im Enterprise AI Client (#183); `SecretBackedMediaWikiCredentialsProvider`: Anmeldung am Wiki über den `SecretProvider` wie in `AdapterAssembly` (#187) |
 | `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
+| `proasteion/emporion/holkas/source-mediawiki` | vollständig (#187): `MediaWikiSourceProvider`, `MediaWikiKnowledgeSource`, `MediaWikiSiteConfig`, `MediaWikiCredentials(Provider)`, paketintern Action-API-Client, Crawler, HTML-Text, `UrlConnectionMediaWikiTransport`; Fixtures `FakeMediaWikiTransport`, `FakeMediaWikiServer`. Braucht nur Gson und jsoup, die schon da sind |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |

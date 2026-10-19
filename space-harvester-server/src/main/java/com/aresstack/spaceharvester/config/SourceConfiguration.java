@@ -6,7 +6,9 @@ import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
+import com.aresstack.spaceharvester.source.KnowledgeSourceProviderAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
+import com.aresstack.spaceharvester.source.MediaWikiSources;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.TrustBundles;
@@ -42,6 +44,12 @@ class SourceConfiguration {
     @Bean
     LocalFilesSourceAdapter localFilesSourceAdapter() {
         return new LocalFilesSourceAdapter();
+    }
+
+    /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
+    @Bean
+    KnowledgeSourceProviderAdapter mediaWikiSourceAdapter() {
+        return MediaWikiSources.adapter();
     }
 
     /**
