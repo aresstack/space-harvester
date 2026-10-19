@@ -32,7 +32,7 @@ public final class ConfigurationOverlay {
             "ai." + AiServiceSettings.CHAT_MODEL, "ai." + AiServiceSettings.EMBEDDING_MODEL,
             "ai." + AiServiceSettings.EMBEDDING_DIMENSIONS, "ai." + AiServiceSettings.TIMEOUT,
             "ai." + AiServiceSettings.TRUST_BUNDLE, "ai." + AiServiceSettings.EXTERNAL_PROCESSING_SOURCES,
-            "ai." + AiServiceSettings.RERANK_MODEL,
+            "ai." + AiServiceSettings.RERANK_MODEL, "ai." + AiServiceSettings.VISION_MODEL,
             SearchSettings.SEMANTIC, SearchSettings.RERANK, SearchSettings.PREFETCH_HITS,
             SearchSettings.CACHE_MAX_AGE, SearchSettings.CACHE_VERSION_CHECK, SearchSettings.CACHE_REFRESH_STRATEGY,
             SyncSettings.EVENTS, SyncSettings.INTERVAL, SyncSettings.SPACES, SyncSettings.BEFORE_SEARCH,
@@ -73,6 +73,7 @@ public final class ConfigurationOverlay {
                     String.join(",", new TreeSet<>(ai.externalProcessingSources())));
         }
         put(properties, "ai." + AiServiceSettings.RERANK_MODEL, ai.rerankModel());
+        put(properties, "ai." + AiServiceSettings.VISION_MODEL, ai.visionModel());
         SearchSettings search = configuration.search();
         put(properties, SearchSettings.SEMANTIC, search.semantic());
         put(properties, SearchSettings.RERANK, search.rerank());
