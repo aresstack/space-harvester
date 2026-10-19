@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 
 import javax.swing.text.BadLocationException;
@@ -34,6 +35,7 @@ final class ReaderDocument {
     private final PageAcronyms acronyms;
     private final List<PageAcronyms.Mark> marks;
     private final PageTerms terms;
+    private PagePassages passages;
 
     private ReaderDocument(StyledDocument document, PageText text, PageAcronyms acronyms, PageTerms terms) {
         this.document = document;
@@ -104,6 +106,16 @@ final class ReaderDocument {
 
     PageTerms terms() {
         return terms;
+    }
+
+    /** Die Absätze für genau diesen Text ({@link PagePassages#read}) oder {@code null}. */
+    PagePassages passages() {
+        return passages;
+    }
+
+    ReaderDocument withPassages(PagePassages passages) {
+        this.passages = passages;
+        return this;
     }
 
     /** Die markierten Fundstellen in Textreihenfolge. */
