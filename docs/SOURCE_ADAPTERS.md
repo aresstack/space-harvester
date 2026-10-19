@@ -18,12 +18,15 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`,
-#188), und `addressOption`, unter welchem
-Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
-(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
-Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
-`SourceAdapter.addressOption()` an.
+`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`, #188),
+und `addressOption`, unter welchem Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl`
+(sharepoint), `baseUrl` (betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei
+Confluence `null`, die Adresse steht dort in `base-url`. Dazu `fields`, die Eingabefelder unter `options` wie im
+Quellen-Editor des Enterprise AI Client (`key`, `label`, `hint`, `kind`
+TEXT|NUMBER|FLAG|DIRECTORY|SECRET_REF|CLIENT_CERTIFICATE, `required`, `advanced`, `defaultValue`; nie ein Wert aus dem
+Tresor, ohne `title`; bei Confluence leer, weil Basis-URL, Anmeldung und Zertifikat außerhalb von `options` stehen), und
+`authModes`, die erlaubten Werte von `auth.type` (`none`, `basic`, bei Confluence auch `pat`). Eigene Adapter geben das
+über `SourceAdapter.displayName()`, `addressOption()`, `fields()` und `authModes()` an.
 
 ## Vertrag
 

@@ -6,11 +6,13 @@ import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
@@ -71,6 +73,12 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     @Override
     public String addressOption() {
         return "directory";
+    }
+
+    /** Die Felder des Upstream-Typs ohne {@code title}, der außerhalb von {@code options} steht. */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(provider.type(), Set.of("title"));
     }
 
     @Override
