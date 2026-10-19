@@ -7,15 +7,19 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationRejec
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
@@ -23,6 +27,7 @@ import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -201,5 +206,23 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ExecutorService enrichmentBackground() {
         return Enrichments.background(1000);
+    }
+
+    /**
+     * Wechselt die Freigabe {@code ai.external-processing-sources} einer Quelle, rechnet der Dienst {@code embedding},
+     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, ohne neuen Abruf und
+     * ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
+     * Embedding-Modells, weil {@code covers} die Freigabe so fragt, wie das Modell sie sieht.
+     */
+    @Bean(destroyMethod = "close")
+    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
+    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, EmbeddingProcessor embedding,
+                                              ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
+        LucenePageCache pages = cache.getIfAvailable();
+        ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
+                embedding::covers, List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+        live.listen(recomputation);
+        return recomputation;
     }
 }

@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -45,6 +46,15 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     /** Nur das Verzeichnis der Quelle ist freigegeben. */
     public LocalFilesSourceAdapter() {
         this(LocalFileGrants::none);
+    }
+
+    /**
+     * Mit den freigegebenen Ordnern der wirksamen Konfiguration ({@code local-files.*}, ADR 0015), bei jedem Zugriff
+     * gelesen: Ein Wechsel wirkt ohne Neustart.
+     */
+    public static LocalFilesSourceAdapter following(ConfigurationManager manager) {
+        Objects.requireNonNull(manager, "manager");
+        return new LocalFilesSourceAdapter(() -> manager.current().configuration().localFiles().grants());
     }
 
     /**
