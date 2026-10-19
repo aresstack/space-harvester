@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataListing;
 import com.aresstack.spaceharvester.application.sources.Partition;
 import com.aresstack.spaceharvester.application.sources.SinglePageMetadata;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import io.swagger.v3.oas.annotations.Operation;
@@ -227,12 +228,27 @@ public class SourcesController {
         }
     }
 
-    /** Ein Quellentyp für Auswahllisten. */
-    public record SourceTypeResponse(String id, String displayName, boolean needsCredentials, String addressOption) {
+    /**
+     * Ein Quellentyp für Auswahllisten und Formulare: Felder unter {@code options} und erlaubte Werte von
+     * {@code auth.type} ({@code none}, {@code basic}, {@code pat}).
+     */
+    public record SourceTypeResponse(String id, String displayName, boolean needsCredentials, String addressOption,
+                                     List<SourceFieldResponse> fields, List<String> authModes) {
 
         static SourceTypeResponse of(SourceType type) {
             return new SourceTypeResponse(type.id(), type.displayName(), type.needsCredentials(),
-                    type.addressOption());
+                    type.addressOption(), type.fields().stream().map(SourceFieldResponse::of).toList(),
+                    type.authModes().stream().map(mode -> mode.name().toLowerCase(java.util.Locale.ROOT)).toList());
+        }
+    }
+
+    /** Ein Eingabefeld unter {@code options}, ohne Wert; {@code kind} wie im Enterprise AI Client. */
+    public record SourceFieldResponse(String key, String label, String hint, String kind, boolean required,
+                                      boolean advanced, String defaultValue) {
+
+        static SourceFieldResponse of(SourceField field) {
+            return new SourceFieldResponse(field.key(), field.label(), field.hint(), field.kind().name(),
+                    field.required(), field.advanced(), field.defaultValue());
         }
     }
 
