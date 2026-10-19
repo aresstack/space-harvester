@@ -77,9 +77,9 @@ class ReaderAcronymsTest {
 
         assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
         assertThat(shown.acronyms().result().processorId()).isEqualTo("acronyms");
-        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("2");
+        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("3");
         assertThat(shown.acronyms().result().key().sourceId()).isEqualTo("wiki");
-        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 2")
+        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 3")
                 .contains("Fundstellen markiert");
         String text = onEdt(() -> panel.reader().getDocument().getText(0, panel.reader().getDocument().getLength()));
         assertThat(text).isEqualTo(shown.text().text());

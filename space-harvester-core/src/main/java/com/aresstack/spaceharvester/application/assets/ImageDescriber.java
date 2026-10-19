@@ -15,4 +15,20 @@ public interface ImageDescriber {
 
     /** @return die Beschreibung als Klartext */
     String describe(byte[] image, String mediaType);
+
+    /**
+     * Ob gerade ein Modell eingestellt ist (ADR 0021): Ein Beschreiber, der der Konfiguration zur Laufzeit folgt, gibt
+     * es auch ohne Modell; dann beschreibt er nichts, und {@link #modelVersion()} hat keine Bedeutung.
+     */
+    default boolean available() {
+        return true;
+    }
+
+    /**
+     * Ob Bilder dieser Quelle an das Modell gehen dürfen: Ein Beschreiber über einen externen Dienst beschreibt nur
+     * Bilder aus Quellen in {@code external-processing-sources} (ADR 0011); das Leserecht genügt dafür nicht.
+     */
+    default boolean mayDescribe(String sourceId) {
+        return true;
+    }
 }
