@@ -101,7 +101,10 @@ public final class RemoteAi {
         }
         OpenAiCompatibleEmbeddingAdapter adapter = adapter(settings.embeddingModel(),
                 settings.embeddingDimensions());
-        String modelId = settings.embeddingModel();
+        // Modell@Fingerabdruck des Endpunkts wie bei Navigation und Satzanalyse (#403): Ein anderer Dienst mit demselben
+        // Modellnamen kann andere Vektoren liefern; der Wechsel macht die Embeddings veraltet. Nie der Schlüssel.
+        String modelId = settings.embeddingModel() + "@"
+                + ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
         int dimensions = settings.embeddingDimensions();
         return new EmbeddingProvider() {
             @Override

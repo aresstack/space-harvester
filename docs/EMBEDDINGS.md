@@ -75,7 +75,11 @@ L2-normierte Vektoren, also Kosinus) im Index `enrichments/`, Schema `enrichment
   hat keine, eine entfernte Seite verliert sie mit ihren Anreicherungen. Der Seitenindex bleibt unberührt.
 - Gesucht wird nur unter Vektoren derselben Quelle und genau derselben Prozessorversion. Die Version enthält
   Format, Modellkennung samt Revision, Dimension und Stückgröße; nach einem Modell- oder Chunker-Wechsel zählen alte
-  Vektoren also nicht mit, bis die Seite neu berechnet ist. Jeder Treffer trägt den `inputSha256` seiner Eingabe, damit
+  Vektoren also nicht mit, bis die Seite neu berechnet ist. Die Modellkennung des KI-Dienstes ist
+  `<ai.embedding-model>@<Hash der ai.base-url>` (erste 6 Byte SHA-256, nie der Schlüssel), wie bei Navigation und
+  Satzanalyse: Ein anderer Dienst mit demselben Modellnamen gilt als anderes Modell. Gewollt anders als der Client, der
+  den Endpunkt nicht zur Identität zählt; ein bloßer Adresswechsel desselben Dienstes bettet deshalb einmal neu ein,
+  gedrosselt beim Start bzw. bei Bedarf durch die Suche. Jeder Treffer trägt den `inputSha256` seiner Eingabe, damit
   die Suche veraltete Treffer erkennt.
 - Ein Index im Schema `enrichment-store/v1` wird beim Öffnen hochgestuft. Weil v1 keine Vektoren kannte, werden nur
   seine `embedding`-Ergebnisse gelöscht und beim nächsten Abgleich neu berechnet; alle übrigen Ergebnisse bleiben.
