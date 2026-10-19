@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -25,6 +26,17 @@ class HarvesterEacSourcesTest {
     @Test
     void theCopiedSourceTypesAreKnownWithoutOwnRegistration() {
         assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint");
+    }
+
+    @Test
+    void theHarvesterListsItsSourceTypesWithDisplayNames() {
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            assertThat(harvester.sourceTypes()).containsExactly(
+                    new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
+                    new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
+                    new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
+                    new SourceType("git", "Git-Repository", false));
+        }
     }
 
     @Test

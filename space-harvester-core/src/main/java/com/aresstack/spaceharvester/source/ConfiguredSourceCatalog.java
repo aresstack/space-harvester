@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
@@ -263,6 +264,13 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return active(sourceId).map(Opened::source);
+    }
+
+    @Override
+    public List<SourceType> types() {
+        return adapters.values().stream()
+                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials()))
+                .toList();
     }
 
     private Optional<Opened> active(String sourceId) {

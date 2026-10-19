@@ -124,6 +124,10 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             problems.add(new ConfigurationProblem("ai." + AiServiceSettings.BASE_URL,
                     "Das Rerank-Modell braucht die Adresse des KI-Dienstes"));
         }
+        if (ai.visionModel() != null && !ai.configured()) {
+            problems.add(new ConfigurationProblem("ai." + AiServiceSettings.BASE_URL,
+                    "Das Vision-Modell braucht die Adresse des KI-Dienstes"));
+        }
         if (ai.chatModel() != null && !ai.configured()) {
             problems.add(new ConfigurationProblem("ai." + AiServiceSettings.BASE_URL,
                     "Das Chat-Modell braucht die Adresse des KI-Dienstes"));

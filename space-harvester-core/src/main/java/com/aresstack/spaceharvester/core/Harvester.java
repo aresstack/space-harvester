@@ -89,6 +89,7 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
@@ -129,6 +130,9 @@ import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
+import com.aresstack.spaceharvester.application.images.ImageProcessor;
+import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
@@ -229,6 +233,7 @@ public final class Harvester implements AutoCloseable {
     private final Exports exports;
     private final ExportConversions conversions;
     private final Assets assets;
+    private final PageImageAnalysis imageAnalysis;
     private final SignInRequests signIns;
     private final Enrichments enrichments;
     private final ConfiguredSourceCatalog catalog;
@@ -336,6 +341,13 @@ public final class Harvester implements AutoCloseable {
             processors.add(new PassageProcessor(
                     OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
                     embedding));
+            // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
+            // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
+            AiServiceSettings startAi = builder.ai;
+            ImageDescriber describer = builder.imageDescriber != null ? builder.imageDescriber
+                    : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                            builder.userAgent);
+            processors.add(new ImageProcessor(() -> describer));
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
@@ -480,8 +492,9 @@ public final class Harvester implements AutoCloseable {
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
-            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, builder.imageDescriber,
+            this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
                     TikaDocumentText.shared());
+            this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
             // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche.
@@ -749,6 +762,15 @@ public final class Harvester implements AutoCloseable {
         return sources;
     }
 
+    /**
+     * Die Quellentypen, die dieser Harvester kennt (#187): die eingebauten und die über
+     * {@link Builder#sourceAdapter} eingehängten, in Registrierungsreihenfolge, mit Anzeigename und ob der Typ einen
+     * Eintrag {@code options.credentialRef} verlangt.
+     */
+    public List<SourceType> sourceTypes() {
+        return sources.types();
+    }
+
     /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */
     public SourceSnapshots snapshots() {
         return snapshots;
@@ -900,6 +922,15 @@ public final class Harvester implements AutoCloseable {
 
     public Assets assets() {
         return assets;
+    }
+
+    /**
+     * Bildanalyse (ADR 0021, #362): Bilder der Lese-Ansicht einer Seite mit dem Vision-Modell aus
+     * {@code ai.vision-model} beschreiben ({@link PageImageAnalysis#describe}, nur auf Abruf, nie auf dem EDT) und die
+     * gespeicherten Beschreibungen lesen ({@link PageImageAnalysis#read}).
+     */
+    public PageImageAnalysis imageAnalysis() {
+        return imageAnalysis;
     }
 
     /**
@@ -1484,7 +1515,10 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Optionale Bildbeschreibung durch ein Modell; ohne bleibt es bei Referenzen. */
+        /**
+         * Eigene Bildbeschreibung statt des Vision-Modells aus {@code ai.vision-model} (ADR 0021), etwa für Tests; ohne
+         * gilt das Vision-Modell der Konfiguration.
+         */
         public Builder imageDescriber(ImageDescriber imageDescriber) {
             this.imageDescriber = imageDescriber;
             return this;
