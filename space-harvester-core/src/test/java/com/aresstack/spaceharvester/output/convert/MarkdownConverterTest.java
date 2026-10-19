@@ -229,6 +229,21 @@ class MarkdownConverterTest {
                 .contains("[extern](<https://example.org/x y>)");
     }
 
+    /** Verbundene Zellen wie im Enterprise AI Client: der Inhalt steht an jeder überdeckten Stelle (#193-Lücke). */
+    @Test
+    void spannedCellsRepeatTheirTextInEveryCoveredPosition() throws Exception {
+        String markdown = convert(storagePage("100", null, 0, "<table><tbody>"
+                + "<tr><th>Bereich</th><th colspan=\"2\">Werte</th><th>Notiz</th></tr>"
+                + "<tr><td rowspan=\"2\">Nacht</td><td>1</td><td>2</td><td>a</td></tr>"
+                + "<tr><td>3</td><td>4</td><td>b</td></tr>"
+                + "<tr><td>Tag</td><td colspan=\"x\">5</td><td>6</td></tr>"
+                + "</tbody></table>"));
+
+        assertThat(markdown)
+                .contains("| Bereich | Werte | Werte | Notiz |\n| --- | --- | --- | --- |\n"
+                        + "| Nacht | 1 | 2 | a |\n| Nacht | 3 | 4 | b |\n| Tag | 5 | 6 |");
+    }
+
     @Test
     void keepsReferencesAndPrefersTextualDiagramSources() throws Exception {
         String markdown = convert(
