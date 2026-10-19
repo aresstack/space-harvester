@@ -1,0 +1,4 @@
+Hinweise zur Anmeldung
+Das Kennwort läuft nach neunzig Tagen ab.
+	Zweiter Faktor über die Authentisierungs-App
+	Sperre nach fünf Fehlversuchen

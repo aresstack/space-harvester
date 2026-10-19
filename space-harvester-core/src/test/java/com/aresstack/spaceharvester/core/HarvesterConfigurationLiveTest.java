@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.tuple;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
@@ -90,6 +91,40 @@ class HarvesterConfigurationLiveTest {
             harvester.pages().page(harvester.caller(), "wiki", "100", false);
             harvester.pages().page(harvester.caller(), "wiki", "100", false);
             assertThat(CONFLUENCE.requestHeaders().size()).isEqualTo(before);
+        }
+    }
+
+    @Test
+    void theBackgroundFillFollowsTheConfigurationGloballyAndPerSource() {
+        HarvesterConfiguration off = HarvesterConfiguration.DEFAULT.withSync(
+                HarvesterConfiguration.DEFAULT.sync().withBackground(false, 3));
+        ConfigurationManager manager = new ConfigurationManager(off);
+        try (Harvester harvester = harvester(manager)) {
+            // Die Warteschlange gibt es auch abgeschaltet, damit die Füllung ohne Neustart angeht.
+            assertThat(harvester.backgroundFill()).isPresent();
+            assertThat(harvester.acquisitionStatus().enabled()).isFalse();
+            assertThat(harvester.acquisitionStatus().pause()).isEqualTo(AcquisitionStatus.Pause.DISABLED);
+            assertThat(harvester.acquisition().limits().background()).isEqualTo(3);
+
+            // Nur für „wiki“ eingeschaltet: ein eigener Wert je Quelle geht dem globalen vor.
+            HarvesterConfiguration wikiOnly = off.withSync(off.sync().withSource("wiki", new SourceSyncOverride(
+                    null, null, null, null, null, null, null, null, null, true)));
+            assertThat(manager.apply(wikiOnly).activated()).isTrue();
+            assertThat(harvester.acquisitionStatus().enabled()).isTrue();
+
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
+            assertThat(harvester.acquisitionStatus().enabled()).isTrue();
+            assertThat(harvester.acquisition().limits().background())
+                    .isEqualTo(SyncSettings.DEFAULT_BACKGROUND_PARALLELISM);
+        }
+
+        // Nach configuration() fest eingestellt: folgt der Konfiguration nicht.
+        try (Harvester fixed = Harvester.builder().source(wiki()).dataDirectory(data.resolve("fest"))
+                .configuration(new ConfigurationManager(HarvesterConfiguration.DEFAULT)).backgroundFill(false)
+                .build()) {
+            assertThat(fixed.backgroundFill()).isEmpty();
+            assertThat(fixed.acquisitionStatus().enabled()).isFalse();
+            assertThat(fixed.acquisition().limits().background()).isZero();
         }
     }
 

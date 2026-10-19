@@ -283,6 +283,22 @@ public class PageQueries {
         }
     }
 
+    /**
+     * Der Beschaffungsweg des {@code AcquisitionScheduler} (ADR 0016): wie {@link #page} ohne {@code refresh}. Braucht
+     * der Hintergrund die Seite, gilt sie nur als geladen, wenn sie jetzt bei der Quelle geprüft wurde und der Cache
+     * diesen Stand hält: kein Rückfall auf den alten Stand, wenn die Quelle nicht antwortet oder drosselt, und keine
+     * nur live ausgelieferte Fassung, die sich nicht ablegen ließ.
+     *
+     * @throws SourceAccessException wenn die Quelle nicht antwortet (im Hintergrund immer)
+     * @throws IllegalStateException wenn im Hintergrund nichts Aktuelles abgelegt ist
+     */
+    public void acquire(AccessContext caller, PageKey key, boolean background) {
+        DeliveredPage delivered = page(caller, key.sourceId(), key.pageId(), background);
+        if (background && (delivered.refresh() == null || delivered.live())) {
+            throw new IllegalStateException("Seite nicht aktuell abgelegt");
+        }
+    }
+
     /** Prüft bzw. lädt die Seite bei der Quelle, legt einen neuen Inhalt ab und liefert ihn aus. */
     private DeliveredPage fromSource(AccessContext caller, String sourceId, String pageId,
                                      Optional<CachedPage> cached) {

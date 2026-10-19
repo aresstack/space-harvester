@@ -1,7 +1,11 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.api.ProgressiveSearches;
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
@@ -9,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
@@ -64,6 +69,13 @@ import org.springframework.context.annotation.Configuration;
 class QueryConfiguration {
 
     /**
+     * Der technische Aufrufer der Hintergrundfüllung (ADR 0016): eine Aktion des Servers, nie im Auftrag eines Clients
+     * oder Benutzers. Erkannt wird er nur an genau dieser Instanz, nie an seinem Namen; der Name ist keine gültige
+     * Client-ID.
+     */
+    static final AccessContext BACKGROUND = AccessContext.technicalClient("space-harvester background (intern)");
+
+    /**
      * Seitenabruf mit Cache (ADR 0010). {@code space-harvester.cache.max-age} (Standard {@code 0s}) ist das Zeitfenster,
      * in dem eine Seite ohne Rückfrage bei der Quelle gilt; {@code space-harvester.cache.version-check} (Standard
      * {@code true}) prüft danach die Version, {@code false} ruft die Seite neu ab (ADR 0013). Beides gilt je Quelle
@@ -113,16 +125,20 @@ class QueryConfiguration {
      * zu laden (nur Quellen in {@code external-processing-sources}). {@code space-harvester.search.loads} (Standard
      * {@value KeywordSearch#DEFAULT_LOADS}, alle) begrenzt, wie viele Funde je Stapel in den Cache laden, die besten
      * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
+     * {@code space-harvester.search.candidate-selection} ({@code order}, {@code top-n}, {@code adaptive}; ADR 0016)
+     * wählt, welche Funde jetzt laden; ohne Angabe {@code adaptive}, mit gesetztem {@code search.loads} aber
+     * {@code top-n} wie bisher.
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
                                 SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
-                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads,
+                                @Value("${space-harvester.search.loads:}") String loadsValue,
+                                @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
                                 SearchRunLog runs) {
         return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
-                excerpts(reranker.getIfUnique(), excerptRanking), loads, runs);
+                excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs);
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -167,23 +183,70 @@ class QueryConfiguration {
     }
 
     /**
-     * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013): vier Abrufe zugleich, höchstens 200 wartende;
-     * ohne Cache nichts. Technische Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
-     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
-     * verdrängt.
+     * Die Auswahl der Beschaffung aus {@code search.candidate-selection} und {@code search.loads}.
+     *
+     * @throws IllegalArgumentException bei unbekannter Strategie oder Obergrenze außerhalb 1 bis 100
+     */
+    static CandidateSelectionStrategy selection(String selectionValue, String loadsValue) {
+        boolean loadsSet = loadsValue != null && !loadsValue.isBlank();
+        int loads;
+        try {
+            loads = loadsSet ? Integer.parseInt(loadsValue.strip()) : KeywordSearch.DEFAULT_LOADS;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("space-harvester.search.loads muss eine Zahl sein");
+        }
+        if (loads < 1 || loads > KeywordSearch.MAX_LIMIT) {
+            throw new IllegalArgumentException("space-harvester.search.loads muss zwischen 1 und "
+                    + KeywordSearch.MAX_LIMIT + " liegen");
+        }
+        if (selectionValue == null || selectionValue.isBlank()) {
+            return loadsSet ? CandidateSelectionStrategy.topN(loads)
+                    : CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.ADAPTIVE, loads);
+        }
+        return CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.of(selectionValue), loads);
+    }
+
+    /**
+     * Der Beschaffungsplaner (ADR 0016): eine Warteschlange für die Funde der Suche (vier zugleich, reserviert) und die
+     * Hintergrundfüllung ({@code space-harvester.sync.background-parallelism}, Standard
+     * {@value SyncSettings#DEFAULT_BACKGROUND_PARALLELISM}, zur Laufzeit änderbar; siehe
+     * {@link AcquisitionConfiguration}), je Quelle höchstens vier, über denselben Beschaffungsweg {@link PageQueries#page}. Der Hintergrund lädt als Aktion
+     * des Servers ({@link #BACKGROUND}) über einen eigenen {@link PageQueries} mit demselben Cache, derselben Ablage und
+     * denselben Anreicherungen, dessen Rechte nur diesen Aufrufer kennen; kein Client erreicht ihn.
+     */
+    @Bean(destroyMethod = "close")
+    AcquisitionScheduler acquisitionScheduler(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache,
+                                              PageQueries pages, PageFreshness freshness,
+                                              ObjectProvider<PageCacheFill> fill, LiveConfiguration live,
+                                              @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
+        PageQueries technical = new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable),
+                new AccessGuard((context, scope, kind) -> context == BACKGROUND ? AccessDecision.ALLOW
+                        : AccessDecision.DENY), freshness, fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes,
+                live::freshnessFor, Clock.systemUTC());
+        AcquisitionScheduler.Limits defaults = AcquisitionScheduler.Limits.DEFAULT;
+        return new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
+                .acquire(caller, key, background),
+                new AcquisitionScheduler.Limits(defaults.foreground(), live.current().sync().backgroundParallelism(),
+                        defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+    }
+
+    /**
+     * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013), als Vordergrund des
+     * {@link AcquisitionScheduler}: vier Abrufe zugleich, höchstens 200 wartende; ohne Cache nichts. Technische
+     * Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
+     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert.
      */
     @Bean(destroyMethod = "close")
     SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache,
-                                        ObjectProvider<PageTextIndexing> texts, PageQueries pages) {
+                                        ObjectProvider<PageTextIndexing> texts, AcquisitionScheduler scheduler) {
         LucenePageCache available = cache.getIfAvailable();
         PageTextIndexing indexing = texts.getIfAvailable();
         if (available == null || indexing == null) {
             return SearchHitPrefetch.disabled();
         }
         return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
-                key -> available.findHeader(key).map(PageHeader::metadata),
-                (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                SearchHitPrefetch.background(4, 200), SearchHitPrefetch.DEFAULT_WAIT, Duration.ZERO);
+                key -> available.findHeader(key).map(PageHeader::metadata), scheduler, SearchHitPrefetch.DEFAULT_WAIT,
+                Duration.ZERO);
     }
 
     /**

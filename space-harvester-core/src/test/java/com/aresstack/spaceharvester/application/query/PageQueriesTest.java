@@ -17,6 +17,7 @@ import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -557,6 +558,43 @@ class PageQueriesTest {
         assertThatThrownBy(() -> filling(ALLOW_ALL).page(CALLER, "wiki", "p93", true))
                 .isInstanceOf(SourceAccessException.class);
         assertThat(fetched).isEmpty();
+    }
+
+    @Test
+    void theBackgroundNeverCountsTheOldCacheStateOrAnUnstoredPageAsLoaded() {
+        PageSnapshot cached = page("wiki", "DEV", "p94", null);
+        cache.publish("wiki", "DEV", confirmed("g1"), List.of(cached));
+        when(live.pageMetadata("p94")).thenThrow(
+                new SourceAccessException("wiki", SourceAccessException.Reason.RATE_LIMITED, "später", null));
+        PageKey key = new PageKey("wiki", "p94");
+
+        // Die Suche bekommt den alten Stand, der Hintergrund nicht: seine Lücke bleibt eine Lücke.
+        filling(ALLOW_ALL).acquire(CALLER, key, false);
+        assertThatThrownBy(() -> filling(ALLOW_ALL).acquire(CALLER, key, true))
+                .isInstanceOf(SourceAccessException.class);
+
+        // Live geholt, aber nicht abgelegt: ebenso nicht geladen.
+        PageSnapshot fresh = page("wiki", "DEV", "p78", null);
+        when(live.pageMetadata("p78")).thenReturn(fresh.metadata());
+        fetchAnswer = fresh;
+        PageQueries failingStore = refreshing(ALLOW_ALL, PageCacheFill.of(k -> null, (snapshot, expected) -> {
+            throw new IllegalStateException("Cache geschlossen");
+        }));
+        assertThatThrownBy(() -> failingStore.acquire(CALLER, new PageKey("wiki", "p78"), true))
+                .isInstanceOf(IllegalStateException.class);
+
+        // Geprüft und abgelegt: geladen.
+        PageSnapshot old = page("wiki", "DEV", "p95", null);
+        cache.publish("wiki", "DEV", confirmed("g2"), List.of(old));
+        when(live.pageMetadata("p95")).thenReturn(version(old, "DEV", "9"));
+        fetchAnswer = page("wiki", "DEV", "p95", null, "{\"v\":9}".getBytes(StandardCharsets.UTF_8));
+        PageQueries storing = refreshing(ALLOW_ALL, PageCacheFill.of(k -> cache.page(k)
+                .map(p -> p.snapshot().payload().rawSha256()).orElse(null), (snapshot, expected) -> {
+                    cache.publish("wiki", "DEV", confirmed("g3"), List.of(snapshot));
+                    return stored.add(snapshot);
+                }));
+        storing.acquire(CALLER, new PageKey("wiki", "p95"), true);
+        assertThat(stored).containsExactly(fetchAnswer);
     }
 
     @Test
