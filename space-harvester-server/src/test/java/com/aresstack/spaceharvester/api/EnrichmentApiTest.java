@@ -96,12 +96,12 @@ class EnrichmentApiTest {
         assertThat(recomputed.statusCode()).isEqualTo(200);
         JsonNode run = json.readTree(recomputed.body());
         assertThat(run.get("supported").asBoolean()).isTrue();
-        assertThat(run.get("computed").asInt()).isEqualTo(8);
+        assertThat(run.get("computed").asInt()).isEqualTo(9);
         assertThat(run.get("failed").asInt()).isZero();
         JsonNode enrichments = json.readTree(get("/api/v1/sources/wiki/pages/501?view=extended").body())
                 .get("enrichments");
         assertThat(enrichments).extracting(entry -> entry.get("processor").asString())
-                .containsExactly("acronyms", "activities", "entities", "outline", "passages", "properties",
+                .containsExactly("acronyms", "activities", "entities", "navigation", "outline", "passages", "properties",
                         "relations", "terms");
         JsonNode acronyms = enrichments.get(0);
         assertThat(acronyms.get("processor").asString()).isEqualTo("acronyms");
@@ -119,13 +119,30 @@ class EnrichmentApiTest {
         assertThat(api.get("occurrences").get(0).get("end").asInt() - api.get("charStart").asInt()).isEqualTo(3);
         assertThat(enrichments.get(2).get("result").get("entities").get(0).get("term").asString())
                 .isEqualTo("API");
-        assertThat(enrichments.get(3).get("result").get("sections").get(0).get("heading").asString())
+        assertThat(enrichments.get(4).get("result").get("sections").get(0).get("heading").asString())
                 .isEqualTo("Ziele");
 
         HttpResponse<byte[]> nativeView = http.send(TestClient.authenticated(
                 HttpRequest.newBuilder(uri("/api/v1/sources/wiki/pages/501"))).build(),
                 HttpResponse.BodyHandlers.ofByteArray());
         assertThat(nativeView.body()).isEqualTo(stored.payload().bytes());
+    }
+
+    @Test
+    void theDocumentNavigationShowsTheHeadingsWithoutAModel() throws Exception {
+        publish("509", "<h1>Handbuch</h1><h2>Installation</h2><p>Schritte.</p><h2>Betrieb</h2><p>Täglich.</p>");
+
+        HttpResponse<String> response = get("/api/v1/sources/wiki/pages/509/navigation");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode navigation = json.readTree(response.body());
+        assertThat(navigation.get("state").asString()).isEqualTo("current");
+        assertThat(navigation.get("analysis").asString()).isEqualTo("headings");
+        assertThat(navigation.get("reason").asString()).isEqualTo("no-model");
+        assertThat(navigation.get("chapters")).extracting(chapter -> chapter.get("label").asString())
+                .containsExactly("Installation", "Betrieb");
+        assertThat(navigation.get("chapters").get(0).get("origin").asString()).isEqualTo("heading");
+        assertThat(get("/api/v1/sources/wiki/pages/unbekannt/navigation").statusCode()).isEqualTo(404);
     }
 
     @Test
@@ -152,7 +169,7 @@ class EnrichmentApiTest {
         JsonNode enrichments = json.readTree(get("/api/v1/sources/wiki/pages/503?view=extended").body())
                 .get("enrichments");
         assertThat(enrichments).extracting(entry -> entry.get("freshness").asString())
-                .containsExactly("stale", "stale", "stale", "stale", "stale", "stale", "stale", "stale");
+                .containsExactly("stale", "stale", "stale", "stale", "stale", "stale", "stale", "stale", "stale");
     }
 
     @Test
