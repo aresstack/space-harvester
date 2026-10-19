@@ -211,6 +211,40 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Typerkennung und Dokumenttext (#183): je Datei der Typ nach dem Inhalt allein ({@code <datei>.content-type}) und
+     * der gelesene Text (wie {@code text}, mit dem Typ nach Name und Inhalt extrahiert). Erkennt der Core einen anderen
+     * Typ oder fehlen ihm Wörter des Maßstabs, ist das eine Lücke; fehlt eine Datei im Core ganz, ebenfalls.
+     *
+     * @param eacTypes  {@code <datei>.content-type} beim Enterprise AI Client
+     * @param coreTypes dasselbe im Core ({@code -}: kein Typ erkannt)
+     * @param eacTexts  Text je Datei beim Enterprise AI Client
+     * @param coreTexts Text je Datei im Core; fehlt eine Datei, hat der Core keinen Text geliefert
+     */
+    public static List<Finding> documents(Map<String, String> eacTypes, Map<String, String> coreTypes,
+                                          Map<String, String> eacTexts, Map<String, String> coreTexts) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eacTexts.entrySet()) {
+            String file = entry.getKey();
+            String format = "dokument-" + file;
+            String expected = eacTypes.getOrDefault(file + ".content-type", "-");
+            String actual = coreTypes.getOrDefault(file + ".content-type", "fehlt");
+            findings.add(new Finding(format, "typ", "Typ von " + file + " nach dem Inhalt", expected, actual,
+                    expected.equals(actual) ? Verdict.GLEICH : Verdict.CORE_WENIGER,
+                    expected.equals(actual) ? "" : "anderer oder kein Typ im Core"));
+            if (!coreTexts.containsKey(file)) {
+                findings.add(new Finding(format, "text", "Text von " + file, "vorhanden", "fehlt",
+                        Verdict.CORE_WENIGER, "kein Text im Core"));
+                continue;
+            }
+            Finding text = text(format, readingOutline(List.of(entry.getValue())),
+                    readingOutline(List.of(coreTexts.get(file))));
+            findings.add(new Finding(text.format(), text.check(), "Text von " + file, text.eac(), text.core(),
+                    text.verdict(), text.detail()));
+        }
+        return findings;
+    }
+
     private static boolean yesNo(String value) {
         return value.equals("ja") || value.equals("nein");
     }

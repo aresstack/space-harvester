@@ -55,8 +55,8 @@ import java.util.regex.Pattern;
  *   <li><b>Laden:</b> Sichtbare Kandidaten, deren Version nicht im Cache liegt, lädt {@link Prefetch} seitenweise mit
  *       den Rechten des Aufrufers über den Beschaffungs-Use-Case; gleiche Versionen werden nicht erneut geladen. Ein
  *       vollständiger Abgleich ist nie Voraussetzung. Was zuerst lädt, bestimmt mit Reranker {@link ExcerptPriority}
- *       nach Titel und Auszug; das ändert nur die Ladereihenfolge. Was beim Antworten noch lädt, zählt
- *       {@link Results#loading()}.</li>
+ *       nach Titel und Auszug; das ändert nur die Ladereihenfolge. Wie viele jetzt laden, wählt die
+ *       {@link CandidateSelectionStrategy}. Was beim Antworten noch lädt, zählt {@link Results#loading()}.</li>
  *   <li><b>Suchen:</b> Der {@link PageTextIndex} (BM25 über Titel und Text) sucht im Cache, über die Seiten aller
  *       erreichbaren Quellen des Umfangs, auch solcher ohne eigene Suche (lokale Dateien, #180). Nur von hier kommen
  *       Treffer; Ergebnislisten werden nicht zusammengeführt. Jeder Treffer braucht {@link AccessKind#METADATA} und
@@ -91,8 +91,8 @@ public class KeywordSearch {
     public static final int MAX_QUERIES = 8;
 
     /**
-     * Standard: alle Funde eines Stapels laden in den Cache, in der Rangfolge nach Titel und Auszug; die Rangfolge
-     * bestimmt den Vorrang, keine Obergrenze.
+     * Standard der Obergrenze, wie viele Funde eines Stapels in den Cache laden: keine ({@value #MAX_LIMIT}). Was davon
+     * jetzt lädt, entscheidet die {@link CandidateSelectionStrategy}.
      */
     public static final int DEFAULT_LOADS = MAX_LIMIT;
 
@@ -117,7 +117,7 @@ public class KeywordSearch {
     private final Prefetch prefetch;
     private final int maxQueries;
     private final ExcerptPriority excerpts;
-    private final int loads;
+    private final CandidateSelectionStrategy selection;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -145,15 +145,22 @@ public class KeywordSearch {
 
     /**
      * @param loads so viele Funde eines Stapels lädt die Suche höchstens in den Cache (1 bis {@value #MAX_LIMIT}), die
-     *              besten nach {@code excerpts}, ohne Bewertung die ersten in der Reihenfolge der Quellen; die übrigen
-     *              stehen nur als vorläufige Treffer in {@link Results#found()} und laden erst, wenn jemand sie öffnet
+     *              besten nach {@code excerpts}, ohne Bewertung die ersten in der Reihenfolge der Quellen
+     *              ({@link CandidateSelectionStrategy#topN}); die übrigen stehen nur als vorläufige Treffer in
+     *              {@link Results#found()} und laden erst, wenn jemand sie öffnet
      */
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, int loads) {
-        if (loads < 1 || loads > MAX_LIMIT) {
-            throw new IllegalArgumentException("loads muss zwischen 1 und " + MAX_LIMIT + " liegen");
-        }
-        this.loads = loads;
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, checkedLoads(loads));
+    }
+
+    /**
+     * @param selection welche Funde eines Stapels jetzt in den Cache laden (ADR 0016, Punkt 4); die übrigen stehen nur
+     *                  als vorläufige Treffer in {@link Results#found()}
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection) {
+        this.selection = Objects.requireNonNull(selection, "selection");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
         this.texts = texts;
@@ -163,6 +170,13 @@ public class KeywordSearch {
         }
         this.maxQueries = maxQueries;
         this.excerpts = Objects.requireNonNull(excerpts, "excerpts");
+    }
+
+    private static CandidateSelectionStrategy checkedLoads(int loads) {
+        if (loads < 1 || loads > MAX_LIMIT) {
+            throw new IllegalArgumentException("loads muss zwischen 1 und " + MAX_LIMIT + " liegen");
+        }
+        return CandidateSelectionStrategy.topN(loads);
     }
 
     /**
@@ -399,17 +413,18 @@ public class KeywordSearch {
         }
 
         // ADR 0013 (Fortschreibung 18.10.): Die Funde der Quellen sind sofort vorläufige Treffer mit Titel und Auszug,
-        // ohne Inhaltsabruf. Bewertet nach Titel und Auszug (#154) laden nur die besten in den Cache; der Volltextindex
-        // findet sie dort, und seine Treffer ersetzen die vorläufigen. Was ein früherer Stapel noch lud, fragt dieser
-        // Stapel wieder ab, damit es nicht verloren geht.
+        // ohne Inhaltsabruf. Bewertet nach Titel und Auszug (#154) wählt die Strategie (ADR 0016, Punkt 4), welche
+        // jetzt in den Cache laden; der Volltextindex findet sie dort, und seine Treffer ersetzen die vorläufigen. Was
+        // ein früherer Stapel noch lud, fragt dieser Stapel wieder ab, damit es nicht verloren geht.
         // ADR 0014, Fortschreibung Punkt 4: Ein Endnutzer mit delegierter Anmeldung bekommt nur die endgültige Liste aus
         // dem Cache, seitenweise mit seinem Token geprüft. Die Funde der Quelle bleiben ungeprüft und nur zum Laden.
         boolean finalListOnly = caller != null && caller.kind() == AccessContext.PrincipalKind.END_USER;
         Checked discovered = finalListOnly ? unchecked(candidates) : provisional(caller, query, candidates);
         complete &= discovered.complete();
         List<Hit> found = discovered.hits();
-        List<Hit> ranked = excerpts.prioritize(query.text(), found).apply(found);
-        List<Hit> toLoad = new ArrayList<>(ranked.subList(0, Math.min(loads, ranked.size())));
+        ExcerptPriority.Priority priority = excerpts.prioritize(query.text(), found);
+        List<Hit> ranked = priority.apply(found);
+        List<Hit> toLoad = new ArrayList<>(prefetch == null ? List.of() : select(found, ranked, priority.ranked()));
         if (position != null) {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
@@ -500,6 +515,34 @@ public class KeywordSearch {
                 .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
         return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading,
                 provisional, progress);
+    }
+
+    /** Was jetzt lädt, nach der Strategie; scheitert sie, lädt nichts, die Funde bleiben vorläufig. */
+    private List<Hit> select(List<Hit> found, List<Hit> ranked, boolean byExcerpt) {
+        CandidateSelectionStrategy.Capacity capacity;
+        try {
+            capacity = prefetch.capacity();
+        } catch (RuntimeException e) {
+            capacity = CandidateSelectionStrategy.Capacity.DEFAULT;
+        }
+        List<Hit> selected;
+        try {
+            selected = selection.select(new CandidateSelectionStrategy.Candidates(found, ranked, byExcerpt,
+                    prefetch::current, capacity));
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.INFO, "Auswahl der Beschaffung nicht möglich ({0})", e.getClass().getName());
+            return List.of();
+        }
+        // Nur Funde dieses Stapels, jeder einmal; eine fremde Strategie kann nichts hinzufügen.
+        Set<PageKey> visible = new HashSet<>();
+        found.forEach(hit -> visible.add(new PageKey(hit.sourceId(), hit.pageId())));
+        List<Hit> checked = new ArrayList<>();
+        for (Hit hit : selected == null ? List.<Hit>of() : selected) {
+            if (hit != null && visible.remove(new PageKey(hit.sourceId(), hit.pageId()))) {
+                checked.add(hit);
+            }
+        }
+        return checked;
     }
 
     /** Kurzes Zeichen einer ausgelieferten Seite für den Cursor; verrät weder Quelle noch Seite. */
@@ -789,14 +832,27 @@ public class KeywordSearch {
             return Optional.empty();
         }
 
-        /** Bricht das Laden eines Stapels ab; {@code false}, wenn unbekannt. */
         /** Kopfdaten einer Seite im Cache, ohne Rückfrage bei der Quelle; leer, wenn unbekannt. */
         default Optional<PageMetadata> cachedMetadata(PageKey key) {
             return Optional.empty();
         }
 
+        /** Bricht das Laden eines Stapels ab; {@code false}, wenn unbekannt. */
         default boolean cancel(String id) {
             return false;
+        }
+
+        /**
+         * Ob die Version dieses Fundes schon im Cache liegt, er also nicht laden muss; für die
+         * {@link CandidateSelectionStrategy}. Standard: unbekannt, also nein.
+         */
+        default boolean current(Hit hit) {
+            return false;
+        }
+
+        /** Lage des Vordergrunds für die {@link CandidateSelectionStrategy}. */
+        default CandidateSelectionStrategy.Capacity capacity() {
+            return CandidateSelectionStrategy.Capacity.DEFAULT;
         }
 
         /**
@@ -923,8 +979,8 @@ public class KeywordSearch {
      * {@link #progress(String)} ab, zeigt „{@code loaded} von {@code total}“ und sucht erneut, sobald {@code loaded}
      * gestiegen ist; dann stehen die neuen Seiten in {@link Results#hits()}.
      *
-     * <p>Geladen wird in der Rangfolge nach Titel und Auszug, die besten zuerst, alle Funde des Stapels; die Liste
-     * wird dabei nur neu geordnet ({@link Results#ranked()}). Ist {@link #done()} wahr, ist die Suche abgeschlossen;
+     * <p>Geladen wird in der Rangfolge nach Titel und Auszug, die besten zuerst, so viele Funde des Stapels, wie die
+     * {@link CandidateSelectionStrategy} auswählt; die Liste wird dabei nur neu geordnet ({@link Results#ranked()}). Ist {@link #done()} wahr, ist die Suche abgeschlossen;
      * {@link #cancel(String)} bricht sie vorher ab.
      *
      * @param id        Kennung für {@link #progress(String)} und {@link #cancel(String)}

@@ -59,8 +59,12 @@ class SecurityConfiguration {
      */
     private static final String[] WEBHOOK_PATHS = {"/webhooks/v1/sources/*/events"};
 
-    /** Laufzeitkonfiguration (ADR 0015), nur für Clients mit {@code manage-configuration}. */
-    private static final String[] CONFIGURATION_PATHS = {"/api/v1/configuration", "/api/v1/configuration/**"};
+    /**
+     * Laufzeitkonfiguration (ADR 0015) und Stand der Beschaffung (ADR 0016), nur für Clients mit
+     * {@code manage-configuration}.
+     */
+    private static final String[] CONFIGURATION_PATHS = {"/api/v1/configuration", "/api/v1/configuration/**",
+            "/api/v1/acquisition"};
 
     private static final Logger LOG = LoggerFactory.getLogger(SecurityConfiguration.class);
 

@@ -176,6 +176,35 @@ nimmt Aufrufe einer eigenen Empfangsstelle an.
 
 Dauern als ISO-8601 (`PT6H`, `P1D`) oder in Spring-Kurzform (`30s`, `10m`, `6h`, `1d`).
 
+### Beschaffung und Hintergrundfüllung (ADR 0016)
+
+Welche Funde einer Suche sofort laden, liest der Server beim Start; diese beiden Schlüssel wechseln nicht über
+`POST /api/v1/configuration`. Im Core heißen sie `Harvester.Builder.candidateSelection` und `searchLoads`.
+
+| Schlüssel (`space-harvester.`…) | Standard | Bedeutung |
+| --- | --- | --- |
+| `search.candidate-selection` | `adaptive` | welche Funde einer Suche jetzt laden: `order` (alle, Reihenfolge der Quellen), `top-n` (die besten `search.loads` nach Titel und Auszug), `adaptive` (so viele, wie der Vordergrund bald schafft; Regel in ADR 0016) |
+| `search.loads` | ohne Grenze (100) | Obergrenze je Stapel, 1 bis 100; allein gesetzt heißt es `top-n` wie bisher |
+
+Die Hintergrundfüllung (`sync.background-fill`, `sync.background-parallelism`, `sync.sources.<Quelle>.background-fill`,
+Tabellen oben) folgt dagegen der Laufzeitkonfiguration; im Core gilt das mit `Harvester.Builder.configuration`, sonst
+`backgroundFill` und `backgroundParallelism`. Ihre Warteschlange liegt unter `<cache.directory>/fill-queue` und
+überdauert einen Neustart; ohne Cache-Verzeichnis gibt es keine Füllung. Sie lädt als technische Aktion des Servers mit
+den Zugangsdaten der Quelle, nie mit der Anmeldung eines Benutzers, und über dieselbe Warteschlange wie die Suche:
+
+- Die Suche hat vier eigene Plätze; je Quelle bleibt ihr mindestens einer frei.
+- Solange eine Suche wartet oder lädt, eine Aktion des Benutzers den Hintergrund anhält und noch 5 s nach der letzten
+  Seite der Suche beginnt der Hintergrund keine neue Seite. Eine laufende Seite endet immer regulär; unterbrochen
+  wird nie.
+- Wartet eine Seite schon im Hintergrund, stuft die Suche sie hoch, statt sie ein zweites Mal zu laden; lädt sie
+  schon, wartet die Suche auf denselben Abruf.
+- Abschalten zieht übergebene Anfragen zurück; die Warteschlange bleibt und geht beim Einschalten weiter.
+
+`GET /api/v1/acquisition` (nur Clients mit `manage-configuration`, im Core `Harvester.acquisitionStatus()`) zeigt den
+Stand: `enabled`, `pause` (`NONE`, `FOREGROUND`, `USER_ACTION`, `COOLDOWN`, `DISABLED`, `IDLE`, `CLOSED`),
+Warteschlangen von Suche und Hintergrund, geladene und gescheiterte Seiten seit dem Start, `promoted`, `parallelism`,
+`lastScan` und dieselben Zähler je Quelle, nur Zähler, nie Seiten-IDs oder Suchtexte.
+
 Ein Wechsel des Embedding-Modells oder seiner Dimension versioniert den Vektorindex: Vorhandene Vektoren gelten als
 veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte werden dafür nicht erneut von der
 Quelle geladen.

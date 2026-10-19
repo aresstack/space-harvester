@@ -1,0 +1,4 @@
+Liesmich zur Schnittstelle
+
+Die Übergabedatei kommt täglich um sechs Uhr.
+Fehlerhafte Sätze landen im Klärungsordner.
