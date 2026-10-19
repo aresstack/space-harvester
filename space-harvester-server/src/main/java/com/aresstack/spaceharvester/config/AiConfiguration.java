@@ -8,6 +8,10 @@ import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
@@ -50,7 +54,8 @@ class AiConfiguration {
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
-                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          ObjectProvider<SentenceSegmenter> sentences) {
         if (!settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
@@ -75,10 +80,14 @@ class AiConfiguration {
         });
         // Freigabe aus denselben Einstellungen wie das Modell: Eine geänderte Freigabe baut ohnehin eine neue
         // Generation, und neu freigegebene Inhalte gehen nie an den Endpunkt einer früheren.
+        // #181: je semantischem Absatz ein Embedding, wie im Client mit withPassages (ADR 0020).
+        TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         return new EmbeddingProcessor(() -> model.get().provider().orElse(null), properties.embeddingChunkChars(),
                 KnowledgeTextSegmentation.of(properties.embeddingChunkTokens(),
                         properties.embeddingChunkOverlapSentences()),
-                sourceId -> model.get().ai().mayProcessExternally(sourceId));
+                sourceId -> model.get().ai().mayProcessExternally(sourceId))
+                .withPassages(new PassageChunks(new PassageSegmentation(sentences.getIfAvailable(
+                        () -> EnrichmentConfiguration.sentences(rules)), rules)));
     }
 
     /** Ein Embedding-Modell (oder keines) mit den Einstellungen, aus denen es entstand, samt Freigabe je Quelle. */

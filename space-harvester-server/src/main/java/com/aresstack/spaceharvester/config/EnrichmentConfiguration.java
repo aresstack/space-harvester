@@ -49,7 +49,8 @@ class EnrichmentConfiguration {
 
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
-                            @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background) {
+                            @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
+                            SentenceSegmenter sentences) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -57,10 +58,19 @@ class EnrichmentConfiguration {
         embedding.ifAvailable(processors::add);
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
-        processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules)), rules,
-                embedding.getIfAvailable()));
+        processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
         return new Enrichments(projector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
+    }
+
+    /** Satzgrenzen für Absätze und ihre Embeddings: das deutsche OpenNLP-Modell, ohne es die Satzregeln (ADR 0020). */
+    @Bean
+    SentenceSegmenter sentenceSegmenter() {
+        return sentences(KnowledgeTextSegmentation.defaults());
+    }
+
+    static SentenceSegmenter sentences(TextSegmentation rules) {
+        return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
     }
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */

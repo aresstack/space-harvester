@@ -51,6 +51,8 @@ import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
@@ -315,6 +317,13 @@ public final class Harvester implements AutoCloseable {
                                 .embeddings(), builder.maxChunkChars, KnowledgeTextSegmentation.of(builder.chunkTokens, builder.chunkOverlapSentences),
                                 ai::mayProcessExternally);
             }
+            // #181: Satzgrenzen für Absätze; mit Modell je semantischem Absatz ein Embedding (withPassages, ADR 0020).
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            SentenceSegmenter sentences = OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules));
+            if (embedding != null) {
+                embedding = embedding.withPassages(new PassageChunks(new PassageSegmentation(sentences,
+                        sentenceRules)));
+            }
             this.embeddingModel = model;
             if (embedding != null) {
                 ExecutorService started = Enrichments.background(1000);
@@ -330,10 +339,7 @@ public final class Harvester implements AutoCloseable {
                 processors.add(embedding);
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
-            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
-            processors.add(new PassageProcessor(
-                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
-                    embedding));
+            processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
