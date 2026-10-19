@@ -150,7 +150,8 @@ class QueryConfiguration {
      * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
      * {@code space-harvester.search.candidate-selection} ({@code order}, {@code top-n}, {@code adaptive}; ADR 0016)
      * wählt, welche Funde jetzt laden; ohne Angabe {@code adaptive}, mit gesetztem {@code search.loads} aber
-     * {@code top-n} wie bisher.
+     * {@code top-n} wie bisher. {@code space-harvester.search.prefetch-hits} (Standard {@code true}) gilt je Stapel aus
+     * der wirksamen Konfiguration (ADR 0015); aus findet die Suche nur, was schon im Cache liegt.
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
@@ -159,7 +160,8 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:}") String loadsValue,
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
-                                SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store) {
+                                SearchRunLog runs, FindingCatalog findings, ObjectProvider<EnrichmentStore> store,
+                                LiveConfiguration live) {
         // Auszüge aus semantischen Absätzen, wo welche zum abgelegten Text gespeichert sind (#181, ADR 0020).
         PageTextIndex index = texts.getIfAvailable();
         EnrichmentStore enrichments = store.getIfAvailable();
@@ -167,7 +169,7 @@ class QueryConfiguration {
                 : new PassageSnippets(index, enrichments::find);
         return new KeywordSearch(catalog, access, snippets, prefetch, maxQueries,
                 excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
-                findings);
+                findings, () -> live.current().search().prefetchHits());
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
