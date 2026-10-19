@@ -114,6 +114,7 @@ public final class Texts {
             case NAVIGATION -> "Seitenbaum und Querverweise";
             case ADDRESSES -> "Adressen und Titel auflösen";
             case CHANGES -> "Änderungen und Papierkorb abfragen";
+            case ATTACHMENT_PREVIEWS -> "Vorschau von Anhängen";
         };
     }
 
