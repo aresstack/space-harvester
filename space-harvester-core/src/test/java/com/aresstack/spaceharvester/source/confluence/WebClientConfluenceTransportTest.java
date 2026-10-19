@@ -419,6 +419,22 @@ class WebClientConfluenceTransportTest {
     }
 
     @Test
+    void closingHardAfterAGracefulCloseEndsWaitingRequestsAtOnce() throws Exception {
+        WebClientConfluenceTransport transport = transport(WebClientConfluenceTransport.builder().maxConnections(1));
+        transport.getAsync(base.resolve("/slow"), HEADERS, 1024);
+        waitFor(() -> requests.get() == 1);
+        CompletableFuture<ConfluenceHttpResponse> waiting =
+                transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
+        Thread.sleep(200);
+
+        transport.closeGracefully();
+        transport.close();
+
+        // Ohne hartes Schließen wartete die Anfrage bis pendingAcquireTimeout (connect + read).
+        assertThatThrownBy(() -> waiting.get(2, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class);
+    }
+
+    @Test
     void invalidLimitsAreRejected() {
         assertThatThrownBy(() -> WebClientConfluenceTransport.builder().maxConnections(0))
                 .isInstanceOf(IllegalArgumentException.class);

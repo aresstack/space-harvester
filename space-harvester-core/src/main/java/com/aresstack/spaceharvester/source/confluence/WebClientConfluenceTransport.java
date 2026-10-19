@@ -30,7 +30,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -94,6 +96,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     private final AtomicBoolean closed = new AtomicBoolean();
     /** Hart geschlossen ({@link #close()}): auch schon begonnene Anfragen bekommen keinen Client mehr. */
     private volatile boolean disposed;
+    /** Clients, deren Pool in {@link #retire} auf das verzögerte Schließen wartet; {@link #close()} schließt sie sofort. */
+    private final Set<Client> retiring = ConcurrentHashMap.newKeySet();
 
     private WebClientConfluenceTransport(Builder builder) {
         this.routes = builder.routes == null ? HttpRoutePort.direct() : builder.routes;
@@ -422,8 +426,14 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
      * Fehler, laufende Verbindungen dagegen schließen erst nach ihrer Antwort.
      */
     private void retire(Client client) {
+        retiring.add(client);
+        if (disposed) {
+            retiring.remove(client);
+            client.pool().dispose();
+            return;
+        }
         Mono.delay(connectTimeout.plus(readTimeout))
-                .then(Mono.defer(() -> client.pool().disposeLater()))
+                .then(Mono.defer(() -> retiring.remove(client) ? client.pool().disposeLater() : Mono.empty()))
                 .subscribe(ignored -> { }, failure -> { });
     }
 
@@ -436,17 +446,21 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
 
     @Override
     public void close() {
-        disposed = true;
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
         List<Client> all;
         synchronized (clients) {
+            disposed = true;
+            closed.set(true);
             all = new ArrayList<>(clients.values());
             clients.clear();
         }
         for (Client client : all) {
             client.pool().dispose();
+        }
+        // Auch nach closeGracefully(): wartende Pools schließen jetzt hart statt nach pendingAcquireTimeout.
+        for (Client client : List.copyOf(retiring)) {
+            if (retiring.remove(client)) {
+                client.pool().dispose();
+            }
         }
         routeScheduler.dispose();
     }
