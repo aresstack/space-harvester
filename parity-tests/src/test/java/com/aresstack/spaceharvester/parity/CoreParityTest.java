@@ -121,10 +121,10 @@ class CoreParityTest {
             // Wie in der App: herunterladen (JSON-Datenbestand), Bilder beschaffen lassen, dann aus dem Datenbestand
             // konvertieren; die Konverter fragen die Quelle nicht an
             JobStatus export = harvester.await(harvester.export("wiki", ParityConfluence.SPACE, List.of("json")).id(),
-                    Duration.ofSeconds(60));
+                    WAIT);
             assertThat(export.state()).isEqualTo(JobState.COMPLETED);
             JobStatus assets = harvester.await(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS).get(0).id(),
-                    Duration.ofSeconds(60));
+                    WAIT);
             assertThat(assets.state()).isEqualTo(JobState.COMPLETED);
             // Neben dem Bericht ablegen, damit man die Core-Exporte öffnen und mit den Referenzen vergleichen kann
             Path exports = reportFile().getParent().resolve("core");
@@ -200,10 +200,10 @@ class CoreParityTest {
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
     private static void scope(Harvester harvester, String name, ExportRequest request, Path exports) throws Exception {
-        JobStatus export = harvester.await(harvester.exports().start(request).id(), Duration.ofSeconds(60));
+        JobStatus export = harvester.await(harvester.exports().start(request).id(), WAIT);
         assertThat(export.state()).as(name).isEqualTo(JobState.COMPLETED);
         for (JobStatus assets : harvester.jobs().list(Harvester.OWNER, JobType.ASSETS)) {
-            harvester.await(assets.id(), Duration.ofSeconds(60));
+            harvester.await(assets.id(), WAIT);
         }
         Path target = exports.resolve("scope-" + name + ".md");
         ExportConversions.ConvertedFile converted = harvester.conversions().convert(export.id(), Harvester.OWNER,
@@ -229,7 +229,7 @@ class CoreParityTest {
                 .source(config("wiki", "Wiki", server.baseUrl()))
                 .dataDirectory(searched.resolve("data"))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("docs", "docs").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("docs", "docs").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             awaitEnrichments(harvester);
             facts(harvester);
@@ -281,7 +281,7 @@ class CoreParityTest {
                 .source(new SourceSettingsConfig("parity", "git", "Parität", null, null, options))
                 .dataDirectory(gitData.resolve("data-" + prefix))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byPath = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -319,7 +319,7 @@ class CoreParityTest {
                         Map.of("directory", directory.toString(), "exclude", ParityFiles.EXCLUDE)))
                 .dataDirectory(gitData.resolve("data-files"))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byPath = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -365,7 +365,7 @@ class CoreParityTest {
                                 "startPoints", ParityFtp.START_POINT, "maxDepth", String.valueOf(depth))))
                 .dataDirectory(gitData.resolve("data-ftp-" + prefix))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byPath = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -409,7 +409,7 @@ class CoreParityTest {
                         Map.of("siteUrl", site.siteUrl(), "maxDepth", String.valueOf(depth))))
                 .dataDirectory(gitData.resolve("data-sharepoint-" + prefix))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byPath = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -454,7 +454,7 @@ class CoreParityTest {
                                      "favoriteId", ParityBetaView.FAVORITE_ID)))
                      .dataDirectory(gitData.resolve("data-betaview"))
                      .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byId = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -511,7 +511,7 @@ class CoreParityTest {
                 .source(new SourceSettingsConfig("parity", "jes", "Parität", null, null, options))
                 .dataDirectory(gitData.resolve("data-jes-" + prefix))
                 .build()) {
-            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), WAIT);
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             Map<String, ListedPage> byJob = new TreeMap<>();
             for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
@@ -721,7 +721,7 @@ class CoreParityTest {
     }
 
     private static void synced(Harvester harvester) throws Exception {
-        JobStatus sync = harvester.await(harvester.sync("wiki", ParityConfluence.SPACE).id(), Duration.ofSeconds(60));
+        JobStatus sync = harvester.await(harvester.sync("wiki", ParityConfluence.SPACE).id(), WAIT);
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         assertThat(cached(harvester)).as("Seiten nach dem Abgleich im Cache").isTrue();
     }
