@@ -5,7 +5,9 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,6 +18,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -40,6 +43,9 @@ public class Enrichments {
      */
     public static final String READING_VIEW = "reading-view";
 
+    /** So viele erzwungene Neuberechnungen warten höchstens zugleich im Hintergrund; der übrige Platz bleibt frei. */
+    public static final int FORCED_IN_BACKGROUND = 50;
+
     private static final System.Logger LOG = System.getLogger(Enrichments.class.getName());
     private static final Pattern ID = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
@@ -49,6 +55,8 @@ public class Enrichments {
     private final Clock clock;
     private final ExecutorService background;
     private final Set<String> queued = ConcurrentHashMap.newKeySet();
+    /** Plätze für erzwungene Neuberechnungen im Hintergrund ({@link #recomputeInBackground}). */
+    private final Semaphore forcedSlots = new Semaphore(FORCED_IN_BACKGROUND);
 
     /** Die Fakten aus den Ergebnissen dieser Ablage (#182), wenn sie welche führt. */
     public java.util.Optional<com.aresstack.spaceharvester.application.facts.FactStore> facts() {
@@ -155,6 +163,54 @@ public class Enrichments {
             throw new IllegalArgumentException("Unbekannter Prozessor: " + processorId);
         }
         return run(snapshot, processorId, true);
+    }
+
+    /**
+     * Berechnet die genannten Prozessoren einer Seite neu, auch wenn ihre Ergebnisse aktuell sind, etwa weil sich die
+     * Freigabe der Quelle für den KI-Dienst geändert hat (ADR 0015): Die Version bleibt dieselbe, das Ergebnis nicht.
+     * Anders als {@link #recompute} rechnen Prozessoren, die für die Seite das Netz brauchen, im Hintergrund; höchstens
+     * {@link #FORCED_IN_BACKGROUND} solcher Berechnungen warten zugleich, darüber wartet der Aufrufer (gedrosselt). Ist
+     * der Hintergrund voll, rechnet der Aufrufer selbst. Bearbeitet ein Prozessor die Seite nicht mehr
+     * ({@link EnrichmentProcessor#appliesTo}), entfällt sein gespeichertes Ergebnis.
+     *
+     * @param processorIds die Prozessoren; unbekannte werden übergangen, gerechnet wird in Ausführungsreihenfolge
+     * @return wie viele Ergebnisse eingereiht, berechnet oder entfernt wurden; 0 für eine nicht projizierbare Payload
+     * @throws InterruptedException wenn der Aufrufer beim Warten auf einen Platz unterbrochen wird
+     */
+    public int recomputeInBackground(PageSnapshot snapshot, Collection<String> processorIds)
+            throws InterruptedException {
+        Optional<PageText> projected = projection(snapshot);
+        if (projected.isEmpty()) {
+            return 0;
+        }
+        PageText text = projected.get();
+        String input = text.inputSha256();
+        PageKey key = snapshot.key();
+        Set<String> stored = new HashSet<>();
+        store.find(key).forEach(enrichment -> stored.add(enrichment.processorId()));
+        int count = 0;
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (!processorIds.contains(processor.id())) {
+                continue;
+            }
+            if (!processor.appliesTo(key)) {
+                if (stored.contains(processor.id())) {
+                    store.remove(key, processor.id());
+                    count++;
+                }
+                continue;
+            }
+            if (background != null && processor.background(key)) {
+                forcedSlots.acquire();
+                if (schedule(processor, snapshot, text, input, true)) {
+                    count++;
+                    continue;
+                }
+            }
+            store.save(compute(processor, snapshot, text, input));
+            count++;
+        }
+        return count;
     }
 
     /**
@@ -293,33 +349,68 @@ public class Enrichments {
     }
 
     private void schedule(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
-        String id = processor.id() + "\n" + snapshot.key().sourceId() + "\n" + snapshot.key().pageId();
+        schedule(processor, snapshot, text, input, false);
+    }
+
+    /**
+     * Reiht eine Berechnung im Hintergrund ein. Ob der Prozessor die Seite noch bearbeitet, prüft erst die Ausführung:
+     * Wird eine Freigabe entzogen, während die Berechnung wartet, geht nichts mehr an den Dienst (ADR 0015).
+     *
+     * @param force auch ein aktuelles Ergebnis neu berechnen; belegt dann einen Platz aus {@link #forcedSlots}, den
+     *              der Aufrufer schon genommen hat
+     * @return ob die Berechnung eingereiht ist oder schon wartet; {@code false}, wenn der Hintergrund voll oder beendet
+     *         ist (ein Platz aus {@link #forcedSlots} ist dann wieder frei)
+     */
+    private boolean schedule(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input,
+                             boolean force) {
+        String id = (force ? "!" : "") + processor.id() + "\n" + snapshot.key().sourceId() + "\n"
+                + snapshot.key().pageId();
         if (!queued.add(id)) {
-            return;
+            if (force) {
+                forcedSlots.release();
+            }
+            return true;
         }
         try {
             background.execute(() -> {
                 try {
+                    if (!processor.appliesTo(snapshot.key())) {
+                        return;
+                    }
                     Enrichment previous = store.find(snapshot.key()).stream()
                             .filter(enrichment -> enrichment.processorId().equals(processor.id())).findFirst()
                             .orElse(null);
-                    if (previous != null
+                    if (!force && previous != null
                             && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
                         return;
                     }
-                    store.save(compute(processor, snapshot, text, input));
+                    Enrichment result = compute(processor, snapshot, text, input);
+                    if (!processor.appliesTo(snapshot.key())) {
+                        // Während der Berechnung entzogen: nichts aus der alten Freigabe aufbewahren.
+                        return;
+                    }
+                    store.save(result);
                     store.flush();
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
                             processor.id(), e.getClass().getName());
                 } finally {
                     queued.remove(id);
+                    if (force) {
+                        forcedSlots.release();
+                    }
                 }
             });
+            return true;
         } catch (RejectedExecutionException e) {
             queued.remove(id);
+            if (force) {
+                forcedSlots.release();
+                return false;
+            }
             LOG.log(System.Logger.Level.INFO, "Hintergrund der Anreicherungen voll oder beendet; {0} wird später "
                     + "nachgeholt", processor.id());
+            return false;
         }
     }
 

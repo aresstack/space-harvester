@@ -18,6 +18,12 @@ public interface EnrichmentStore {
     /** Entfernt alle Ergebnisse einer Seite, z. B. wenn die Seite aus dem Cache entfernt wurde. */
     void removeAll(PageKey key);
 
+    /**
+     * Entfernt das Ergebnis eines Prozessors für eine Seite samt Vektoren, Begriffen und Fakten, etwa wenn der Prozessor
+     * die Seite nicht mehr bearbeitet (Freigabe entzogen, ADR 0015); ohne Ergebnis nichts.
+     */
+    void remove(PageKey key, String processorId);
+
     /** Macht die bisherigen Änderungen dauerhaft, wenn die Ablage sie bündelt. */
     default void flush() {
     }
