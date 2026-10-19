@@ -741,7 +741,7 @@ abgerufen. Jede Anfrage liest die Anhangsliste live und prüft den aktuellen Spa
 Seite gehört, ist `source-object-not-found` (404). Die Dateien liegen unter `space-harvester.assets.directory`
 (Standard `data/assets`, nicht im Lucene-Index), je Inhalt einmal unter seinem SHA-256 und je Anhang und Version mit
 Metadaten; ohne Versionsangabe der Quelle wird jedes Mal neu geladen. Dateien über `space-harvester.assets.max-size`
-(Standard 50 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
+(Standard 100 MB) werden weder geladen noch gekürzt (`asset-too-large`, 502); der Download bricht schon im Transport an
 dieser Grenze ab. Alle Inhalte zusammen belegen höchstens `space-harvester.assets.max-total-bytes` (Standard 20 GiB),
 darüber `asset-store-full` (507), ohne etwas zu verdrängen. Leitet die Quelle einen Download auf einen anderen Host um,
 wird dem nie gefolgt, der Anhang gilt dann als fehlgeschlagen; `options.foreignFileRedirects: true` ist ein

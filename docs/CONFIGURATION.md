@@ -141,6 +141,39 @@ veraltete `revision` gibt 409 (`fact-conflict`):
 - `DELETE …/pages/{pageId}/facts/{factId}?revision=`: manueller Fakt oder geprüfte Kopie; automatische nur verwerfen.
 - `GET …/pages/{pageId}/facts/{factId}/history`: Protokoll mit Bearbeiter (`jobOwner`), Zeitpunkt, Status, Revision.
 
+## Anhänge und große Dateien (#19)
+
+Anhänge, Vorschauen und Bilder der Lese-Ansicht liegen beim Laden, Ablegen, Lesen aus der Ablage, bei der
+Textextraktion (Tika), der Bildbeschreibung und im Export vollständig im Speicher, wie im Enterprise AI Client
+(`READER_MAX_BYTES` = 100 MiB in `ConfluenceKnowledgeSource`). Damit wenige große Dateien den Heap nicht füllen, gilt
+für alle diese Wege eine gemeinsame Schranke (`LargeFileGate` im Core): Dateien über der Schwelle laufen nur in
+begrenzter Zahl gleichzeitig. Groß ist eine Datei nach ihrer angegebenen Größe; nennt die Quelle für einen Anhang keine,
+zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und scheitert dann vorübergehend mit
+`source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
+bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
+
+Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung, noch nicht die Auslieferung: Bei
+REST-Abrufen von Inhalt und Vorschau sowie im Export ist der Platz frei, sobald die Datei gelesen ist, die Bytes liegen
+danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
+dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
+der Schranke erfasst.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `space-harvester.assets.max-size` | `100MB` | Größte einzelne Datei; größere werden weder geladen noch gekürzt abgelegt (`asset-too-large`) |
+| `space-harvester.assets.large-file-threshold` | `20MB` | Dateien darüber fallen unter die Schranke |
+| `space-harvester.assets.max-concurrent-large-files` | `2` | So viele große Dateien höchstens gleichzeitig |
+| `space-harvester.assets.large-file-wait` | `30s` | Wartezeit auf einen freien Platz, danach `source-rate-limited` |
+
+Alle vier wirken nur beim Start. In der Bibliothek entsprechen ihnen `Harvester.builder().maxAssetBytes(…)`
+(Standard 100 MiB), `.largeAssetThresholdBytes(…)` (20 MiB) und `.maxConcurrentLargeAssets(…)` (2); die Wartezeit ist
+dort fest 30 s.
+
+- **Heap:** Mit 2 gleichzeitigen großen Dateien bis 100 MiB mindestens 512 MiB Heap einplanen (`-Xmx512m`, besser
+  mehr bei vielen gleichzeitigen Nutzern); Download, Hash, Ablage und Auslieferung arbeiten auf demselben
+  `byte[]`, die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
+  Wer `max-size` oder `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
+
 ## Reihenfolge der Quellen
 
 Höhere zuerst, geprüft in `ConfigServerImportTest` und `AzureKeyVaultSecretsTest`:
