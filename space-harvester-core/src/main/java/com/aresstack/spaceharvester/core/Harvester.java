@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
@@ -49,6 +50,10 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
@@ -210,6 +215,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final PassageQueries passages;
     private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
@@ -322,6 +328,11 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
+            // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            processors.add(new PassageProcessor(
+                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
+                    embedding));
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
@@ -344,6 +355,7 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
+            this.passages = new PassageQueries(pages, enrichments, projector);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
             // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
@@ -776,6 +788,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageNavigation navigation() {
         return navigation;
+    }
+
+    /**
+     * Semantische Absätze einer Seite (#181, ADR 0020); in der Leseansicht ohne Aufrufer
+     * {@link com.aresstack.spaceharvester.application.passages.PagePassages#read} mit {@link #enrichments()}.
+     */
+    public PassageQueries passages() {
+        return passages;
     }
 
     /**
