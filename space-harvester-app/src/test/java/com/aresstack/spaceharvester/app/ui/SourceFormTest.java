@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
@@ -213,21 +214,12 @@ class SourceFormTest {
                     "apiUrl: \"https://wiki.example.org/w/api.php\"");
             assertThat(f.fields.input("requiresLogin")).isInstanceOf(JCheckBox.class);
             assertThat(f.draft().yaml("    ")).as("ein nicht gesetzter Schalter bleibt weg").doesNotContain("requiresLogin");
+            // Die Anmeldearten kommen vom Typ des Core (#394): Git nimmt heute nur „Ohne Anmeldung“ mit Verweis.
             f.kind.setSelectedItem("Git-Repository");
-            assertThat(items(f.auth)).containsExactly("Personal Access Token", "Benutzer und Passwort",
-                    "Ohne Anmeldung");
+            SourceType git = context.runtime().workspace().sourceTypes().stream()
+                    .filter(type -> "git".equals(type.id())).findFirst().orElseThrow();
+            assertThat(items(f.auth)).hasSize(git.authModes().size());
             assertThat(f.certificate.isVisible()).isFalse();
-            f.auth.setSelectedItem("Personal Access Token");
-            assertThat(f.username.isVisible()).as("ein Token braucht keinen Benutzer").isFalse();
-            assertThat(f.sessionValue.isVisible()).isTrue();
-            ((JTextField) f.fields.input("url")).setText("https://git.example.org/team/handbuch.git");
-            assertThat(f.validateInput()).as("das Token fehlt").isFalse();
-            assertThat(f.error(f.sessionValue)).isEqualTo("Bitte das Token eingeben.");
-            f.sessionValue.setText("geheim");
-            assertThat(f.validateInput()).isTrue();
-            assertThat(f.draft().yaml("    ")).contains("type: git", "type: pat", "token: ${")
-                    .doesNotContain("username", "geheim");
-            f.clearSecret();
         });
     }
 

@@ -5,7 +5,7 @@ import java.util.Objects;
 /**
  * Ein Eingabefeld eines Quellentyps, wie es das Quellenformular zeigt: Schlüssel unter {@code options}, Beschriftung,
  * Hinweis, Art, Pflicht, „Erweitert“ und Vorgabe für neue Quellen. Wie {@code SourceSettingField} im Enterprise AI
- * Client; der Core liefert die Felder künftig je Typ ({@code SourceType.fields()}), bis dahin {@link SourceFields}.
+ * Client; der Core liefert die Felder je Typ ({@code SourceType.fields()}), abgebildet in {@link SourceFields}.
  * Keine Geheimnisse: Zugangsdaten sind höchstens ein Verweis ({@link Kind#SECRET_REF}).
  *
  * @param key          Schlüssel unter {@code options}, z. B. {@code host}

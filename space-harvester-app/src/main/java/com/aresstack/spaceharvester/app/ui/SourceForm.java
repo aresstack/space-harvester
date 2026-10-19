@@ -427,8 +427,9 @@ final class SourceForm {
                 // Ohne Liste bleiben die beiden Arten mit eigenem Formular.
             }
         }
-        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null),
-                new SourceType(SourceDraft.FILES, "Ordner", false, "directory"));
+        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null, List.of(),
+                        List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT)),
+                new SourceType(SourceDraft.FILES, "Ordner", false, "directory", List.of(), List.of()));
     }
 
     /** Confluence und Ordner mit den bisherigen Worten, sonst der Anzeigename des Core. */
@@ -624,7 +625,7 @@ final class SourceForm {
                 .map(Map.Entry::getKey).findFirst().orElse(null);
         if (label == null) {
             // Ein Typ, den diese Laufzeit nicht anbietet, bleibt beim Bearbeiten stehen.
-            SourceType unknown = new SourceType(source.type(), source.type(), false, null);
+            SourceType unknown = new SourceType(source.type(), source.type(), false, null, List.of(), List.of());
             label = label(unknown);
             types.put(label, unknown);
             kind.addItem(label);

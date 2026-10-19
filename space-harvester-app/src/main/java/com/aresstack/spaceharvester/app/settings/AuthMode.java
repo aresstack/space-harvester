@@ -3,7 +3,7 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 
 /**
- * Eine Anmeldeart, die ein Quellentyp anbietet ({@code SourceType.authModes()} des Core, bis dahin
+ * Eine Anmeldeart, die ein Quellentyp anbietet ({@code SourceType.authModes()} des Core, abgebildet in
  * {@link SourceFields}).
  */
 public enum AuthMode {
