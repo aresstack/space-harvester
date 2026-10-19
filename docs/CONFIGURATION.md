@@ -211,6 +211,10 @@ Konfiguration, lässt sie von den betroffenen Komponenten vorbereiten und aktivi
 Aufträge benutzen danach die neue Konfiguration, laufende enden mit der bisherigen. Ist etwas ungültig oder lehnt eine
 Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bisherige Version wirksam.
 
+Das gilt auch für Proxy, PAC und TLS: Eine Umstellung bricht keinen laufenden Auftrag ab. Seitenabrufe, die gerade
+laufen oder auf eine freie Verbindung warten, enden noch über den bisherigen Weg. Erst die folgenden Abrufe nehmen die
+neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konfiguration-zur-laufzeit.md)).
+
 **Eine geänderte YAML-Datei allein löst nichts aus.** Weder Spring Boot noch der Core beobachten die Datei. Im Server
 übernimmt nur ein ausdrücklicher Weg die neue Konfiguration; die App übergibt sie beim Speichern der Einstellungen.
 
