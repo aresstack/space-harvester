@@ -13,6 +13,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
+import com.aresstack.spaceharvester.source.GitSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
@@ -46,6 +47,17 @@ class CacheConfiguration {
     static final String ENRICHMENTS = "enrichments";
     /** Unterverzeichnis des Volltextindex (#180). */
     static final String TEXT = "text";
+    /** Unterverzeichnis der Kopien der Git-Repositorys (#187). */
+    static final String GIT = "git";
+
+    /**
+     * Quellentyp {@code git} (#187); er braucht einen Ordner für die Kopien der Repositorys und gibt es deshalb nur mit
+     * {@code space-harvester.cache.directory}.
+     */
+    @Bean
+    GitSourceAdapter gitSourceAdapter(CacheProperties properties) {
+        return new GitSourceAdapter(properties.directory().resolve(GIT));
+    }
 
     @Bean(destroyMethod = "close")
     LucenePageCache pageCache(CacheProperties properties) {
