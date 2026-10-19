@@ -64,7 +64,8 @@ public class FactController {
                     + "ACRONYM_DEFINITION, je Begriff MENTION, je Eigenschaft PROPERTY, jeweils mit suchbaren "
                     + "Argumenten, Herkunft (Prozessor, Version, Eingabe-Hash) und Fundstelle. freshness=stale heißt, "
                     + "die Payload hat sich seit der Ableitung geändert; die Fundstelle gilt dann nicht mehr. Abruf, "
-                    + "Rechte und Fehler wie GET /api/v1/sources/{sourceId}/pages/{pageId}.")
+                    + "Rechte und Fehler wie GET /api/v1/sources/{sourceId}/pages/{pageId}. Je Prozessor und Seite "
+                    + "gibt es höchstens 2000 Fakten; truncated nennt die Prozessoren, deren Fakten dort enden.")
     @ApiResponse(responseCode = "200", description = "Die Fakten")
     @ApiResponse(responseCode = "400", description = "Ungültiger Typ (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -88,7 +89,7 @@ public class FactController {
         return new SheetResponse(sheet.sourceId(), sheet.pageId(), sheet.spaceKey(), sheet.facts().stream()
                 .map(entry -> FactResponse.of(entry.fact(), entry.freshness().name().toLowerCase(Locale.ROOT),
                         entry.revision(), json))
-                .toList());
+                .toList(), sheet.truncated());
     }
 
     @GetMapping("/facts")
@@ -244,8 +245,13 @@ public class FactController {
         return upper;
     }
 
-    /** Das Faktenblatt einer Seite. */
-    public record SheetResponse(String sourceId, String pageId, String spaceKey, List<FactResponse> facts) {
+    /**
+     * Das Faktenblatt einer Seite.
+     *
+     * @param truncated Prozessoren, deren Fakten an der Grenze je Prozessor enden, sonst leer
+     */
+    public record SheetResponse(String sourceId, String pageId, String spaceKey, List<FactResponse> facts,
+                                List<String> truncated) {
     }
 
     /** Ein Stapel der Suche. */

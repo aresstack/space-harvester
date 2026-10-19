@@ -172,8 +172,12 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     /** Reihenfolge innerhalb einer Seite: Prozessor und Position im Ergebnis. */
     private static final String FACT_ORDER = "factOrder";
     private static final String FACT = "fact";
-    /** Mehr Fakten je Seite liefert {@link #factsOf} nicht. */
-    private static final int MAX_FACTS_PER_PAGE = 3 * EnrichmentFacts.MAX_PER_RESULT;
+    /**
+     * Mehr Fakten je Seite liefert {@link #factsOf} nicht: so viele, wie alle faktentragenden Prozessoren zusammen
+     * ablegen. Die Grenze gilt beim Schreiben je Prozessor ({@link EnrichmentFacts#MAX_PER_RESULT}), damit ein
+     * großer Prozessor die übrigen nicht verdrängt.
+     */
+    private static final int MAX_FACTS_PER_PAGE = EnrichmentFacts.PROCESSORS.size() * EnrichmentFacts.MAX_PER_RESULT;
     private static final JsonMapper JSON = JsonMapper.builder().build();
     /** Trennzeichen in zusammengesetzten Schlüsseln; kommt in Quellen-, Seiten- und Prozessorkennungen nicht vor. */
     private static final char SEPARATOR = '\u0000';
