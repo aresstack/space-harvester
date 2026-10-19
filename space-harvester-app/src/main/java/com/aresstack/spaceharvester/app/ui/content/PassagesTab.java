@@ -40,6 +40,7 @@ final class PassagesTab extends JPanel {
     private final JLabel state = new JLabel(" ");
     private final JPanel list = new JPanel();
     private final JLabel hint = Comic.muted(" ");
+    private final JLabel mode = Comic.muted(" ");
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private final List<String> titles = new ArrayList<>();
 
@@ -55,6 +56,7 @@ final class PassagesTab extends JPanel {
         state.setFont(Comic.semiBold(12f));
         state.setOpaque(true);
         head.add(state, BorderLayout.EAST);
+        head.add(mode, BorderLayout.SOUTH);
         list.setOpaque(false);
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         JPanel body = new JPanel(new BorderLayout(0, 8));
@@ -63,15 +65,23 @@ final class PassagesTab extends JPanel {
         body.add(hint, BorderLayout.CENTER);
         add(head, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
-        show(State.MISSING, List.of());
+        show(State.MISSING, List.of(), false);
     }
 
     void onJump(Consumer<List<TermsTab.Span>> listener) {
         onJump = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Zeigt die Absätze; außer bei {@link State#CURRENT} ist {@code passages} leer. */
-    void show(State current, List<Passage> passages) {
+    static final String STRUCTURAL = "Nach Absätzen und Überschriften gebildet: ohne Embedding-Modell oder ohne "
+            + "Freigabe der Quelle für den KI-Dienst erkennt der Core keine Themenwechsel";
+
+    /**
+     * Zeigt die Absätze; außer bei {@link State#CURRENT} ist {@code passages} leer.
+     *
+     * @param structural ob der Core auf die Struktur der Seite zurückgefallen ist (Modus {@code structure})
+     */
+    void show(State current, List<Passage> passages, boolean structural) {
+        mode.setText(current == State.CURRENT && structural ? STRUCTURAL : " ");
         state.setText(TermsTab.stateText(switch (current) {
             case CURRENT -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.CURRENT;
             case STALE -> com.aresstack.spaceharvester.application.enrichment.PageAcronyms.State.STALE;
@@ -153,6 +163,10 @@ final class PassagesTab extends JPanel {
 
     String stateLabel() {
         return state.getText();
+    }
+
+    String mode() {
+        return mode.getText();
     }
 
     String hint() {
