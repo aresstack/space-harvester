@@ -132,7 +132,9 @@ Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
   `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: Text oder Gliederung haben sich
   geändert, es folgen alle aktuellen Absätze), `changed` (gleiche Fassung, aber Zerlegung oder Modell gewechselt oder
   die Position gibt es nicht, alle aktuellen Absätze) und
-  zusätzlich `unavailable` (die Seite hat gerade keine Absätze; `state` sagt warum). Eine unbekannte Seite, eine
+  zusätzlich `unavailable` (die Seite hat gerade keine Absätze; `state` sagt warum). Zwischen einer Änderung von
+  Text oder Gliederung und der Neuberechnung der Absätze antwortet auch eine eben vergebene Treffer-ID mit
+  `unavailable` (`state: stale`), danach mit `older-version`; nie mit einem falschen `found`. Eine unbekannte Seite, eine
   unbekannte Quelle und eine Seite ohne `metadata`- oder `content`-Freigabe antworten gleich mit 404 `cache-miss`, nie
   403: Eine ID verrät nicht, ob es die Seite gibt. Keine Passage-ID (falsche Form) ist 400 `invalid-request`; die
   Meldung nennt die ID nicht.
