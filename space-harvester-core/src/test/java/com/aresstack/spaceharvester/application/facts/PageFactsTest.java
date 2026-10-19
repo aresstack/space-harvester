@@ -123,6 +123,22 @@ class PageFactsTest {
     }
 
     @Test
+    void tooManyConditionsAreAnInvalidQueryBeforeTheStoreIsAsked() {
+        List<ArgumentCondition> many = new ArrayList<>();
+        for (int i = 0; i <= FactStore.Query.MAX_CONDITIONS; i++) {
+            many.add(new ArgumentCondition(FactTypes.SHORT_FORM, "a" + i));
+        }
+
+        assertThatThrownBy(() -> new PageFacts.Search(null, many, null, Set.of(), Set.of()))
+                .isInstanceOf(InvalidQueryException.class);
+        assertThatThrownBy(() -> new FactStore.Query(null, many, Set.of("wiki")))
+                .isInstanceOf(IllegalArgumentException.class);
+        List<ArgumentCondition> allowed = many.subList(0, FactStore.Query.MAX_CONDITIONS);
+        assertThat(facts().search(CALLER, new PageFacts.Search(null, allowed, null, Set.of(), Set.of()), null, 10)
+                .facts()).isEmpty();
+    }
+
+    @Test
     void theSheetOfAPageFollowsTheRightsOfReadingIt() {
         PageFacts.Sheet sheet = facts().factsOf(CALLER, "wiki", "p1", FactTypes.ACRONYM_DEFINITION);
 

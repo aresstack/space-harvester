@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.parity;
 
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.spaceharvester.parity.DocumentOutline.Table;
 import org.junit.jupiter.api.Test;
 
@@ -20,14 +21,14 @@ class ReferenceReadersTest {
 
         assertThat(docx.tableOfContents()).isTrue();
         assertThat(docx.updateFieldsOnOpen()).isTrue();
-        // Systembild und gerendertes Mermaid; fehlt.png und das externe Bild nicht
-        assertThat(docx.images()).isEqualTo(2);
+        // Systembild, gerendertes Mermaid und Bilder der Seite Anhänge; fehlt.png und das externe Bild nicht
+        assertThat(docx.images()).isEqualTo(5);
         assertThat(docx.imageNotes()).isEqualTo(2);
         assertThat(docx.tables()).containsExactly(new Table(3, 3, true));
         assertThat(docx.headings()).extracting(DocumentOutline.Heading::text)
                 .contains("Paritätsprüfung", "Handbuch", "Zweck", "Architektur", "Komponenten", "Ebene 7", "Betrieb");
         assertThat(docx.headings()).extracting(DocumentOutline.Heading::level).contains(9);
-        assertThat(docx.text()).contains(ParitySpace.SENTENCES).doesNotContain("F9");
+        assertThat(docx.text()).contains(ParityConfluence.SENTENCES).doesNotContain("F9");
     }
 
     @Test
@@ -37,24 +38,24 @@ class ReferenceReadersTest {
         assertThat(pdf.tableOfContents()).isTrue();
         assertThat(pdf.pageNumbers()).isTrue();
         assertThat(pdf.outlineEntries()).isGreaterThanOrEqualTo(9);
-        assertThat(pdf.images()).isEqualTo(2);
+        assertThat(pdf.images()).isEqualTo(4);
         assertThat(pdf.internalLinks()).isGreaterThanOrEqualTo(9);
         assertThat(pdf.tables()).isNull();
-        assertThat(pdf.text().replaceAll("\\s+", " ")).contains(ParitySpace.SENTENCES);
+        assertThat(pdf.text().replaceAll("\\s+", " ")).contains(ParityConfluence.SENTENCES);
     }
 
     @Test
     void markdownFromTheEnterpriseClientEmbedsImagesAndKeepsMermaid() throws IOException {
         DocumentOutline md = MarkdownReader.read(reference("parity.md"));
 
-        assertThat(md.images()).isEqualTo(2);
+        assertThat(md.images()).isEqualTo(5);
         assertThat(md.imageNotes()).isEqualTo(2);
         assertThat(md.mermaidSources()).isEqualTo(1);
         assertThat(md.tables()).containsExactly(new Table(3, 3, true));
         // Kapitel unterhalb von Ebene 6 schreibt der Enterprise AI Client fett
         assertThat(md.headings()).extracting(DocumentOutline.Heading::level).contains(7);
         assertThat(md.tableOfContents()).isFalse();
-        assertThat(md.text()).contains(ParitySpace.SENTENCES);
+        assertThat(md.text()).contains(ParityConfluence.SENTENCES);
     }
 
     @Test

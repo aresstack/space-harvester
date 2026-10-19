@@ -34,6 +34,8 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.SegmentInfos;
 import org.apache.lucene.index.StoredFields;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
@@ -56,7 +58,8 @@ import tools.jackson.databind.node.ObjectNode;
  * Dauerhaftes Suchlauf-Protokoll ({@link SearchRunLog}, #182) in einem eigenen kleinen Lucene-Index neben der
  * Diagnoseablage (ADR 0003: nur Lucene; der Enterprise AI Client nutzt dafür H2); Schema {@value #VERSION} in den
  * Commit-Daten. Ein Dokument je Lauf, jedes {@link #record} ein eigener Commit. Läufe, die älter als die Frist sind,
- * und alles über {@link SearchRunLog#MAX_RUNS} fallen beim Öffnen und laufend beim Schreiben weg.
+ * und alles über {@link SearchRunLog#MAX_RUNS} fallen beim Öffnen und bei jedem Schreiben weg; Lesen liefert
+ * abgelaufene Läufe nie, auch wenn seitdem nichts geschrieben wurde.
  *
  * <p>Geschrieben wird wie in {@link LuceneJobEventStore} auf einem eigenen Thread, damit eine Unterbrechung des
  * Aufrufers nie mitten in einer Dateioperation den Kanal der Indexsperre schließt.
@@ -65,9 +68,6 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
 
     /** Schemaversion in den Commit-Daten. */
     public static final String VERSION = "search-runs/v1";
-
-    /** Alle so viele Läufe räumt das Schreiben Frist und Obergrenze auf. */
-    static final int PURGE_EVERY = 100;
 
     private static final String ID = "id";
     private static final String PART_OF = "partOf";
@@ -83,13 +83,14 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
     private final SearcherManager searchers;
     private final Duration maxAge;
     private final Clock clock;
+    private final int capacity;
     private final ExecutorService writes = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon()
             .name("search-runs-writer").factory());
-    private int recorded;
     private volatile boolean closed;
 
-    private LuceneSearchRunLog(Path path, Directory directory, IndexWriter writer, Duration maxAge, Clock clock)
-            throws IOException {
+    private LuceneSearchRunLog(Path path, Directory directory, IndexWriter writer, Duration maxAge, Clock clock,
+                               int capacity) throws IOException {
+        this.capacity = capacity;
         this.path = path;
         this.directory = directory;
         this.writer = writer;
@@ -110,6 +111,14 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
      * @throws PageCacheException wenn der Index gesperrt, beschädigt oder in einem anderen Schema ist
      */
     public static LuceneSearchRunLog open(Path path, Duration maxAge, Clock clock) {
+        return open(path, maxAge, clock, MAX_RUNS);
+    }
+
+    /** Mit kleinerer Obergrenze für Tests. */
+    static LuceneSearchRunLog open(Path path, Duration maxAge, Clock clock, int capacity) {
+        if (capacity < 1) {
+            throw new IllegalArgumentException("capacity muss positiv sein");
+        }
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(clock, "clock");
         if (maxAge != null && (maxAge.isNegative() || maxAge.isZero())) {
@@ -139,7 +148,7 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
             if (!exists) {
                 writer.commit();
             }
-            LuceneSearchRunLog log = new LuceneSearchRunLog(root, directory, writer, maxAge, clock);
+            LuceneSearchRunLog log = new LuceneSearchRunLog(root, directory, writer, maxAge, clock, capacity);
             log.purge();
             return log;
         } catch (LockObtainFailedException e) {
@@ -170,9 +179,8 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
                     throw new IllegalStateException("Suchlauf existiert schon");
                 }
                 writer.addDocument(document(run));
-                if (++recorded % PURGE_EVERY == 0) {
-                    purgeNow();
-                }
+                // Frist und Obergrenze gelten nach jedem Lauf, nicht erst irgendwann.
+                purgeNow();
                 writer.commit();
                 searchers.maybeRefreshBlocking();
             } catch (IOException e) {
@@ -185,14 +193,14 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
     @Override
     public Optional<SearchRun> find(SearchRunId id) {
         Objects.requireNonNull(id, "id");
-        List<SearchRun> found = search(new TermQuery(new Term(ID, id.value())), 1, null);
+        List<SearchRun> found = search(current(new TermQuery(new Term(ID, id.value()))), 1, null);
         return found.stream().findFirst();
     }
 
     @Override
     public List<SearchRun> parts(SearchRunId id) {
         Objects.requireNonNull(id, "id");
-        return search(new TermQuery(new Term(PART_OF, id.value())), MAX_PARTS,
+        return search(current(new TermQuery(new Term(PART_OF, id.value()))), MAX_PARTS,
                 new Sort(new SortField(STARTED_SORT, SortField.Type.LONG)));
     }
 
@@ -202,7 +210,7 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
             throw new IllegalArgumentException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
         Query query = owner == null ? new MatchAllDocsQuery() : new TermQuery(new Term(OWNER, owner));
-        return search(query, limit, new Sort(new SortField(STARTED_SORT, SortField.Type.LONG, true)));
+        return search(current(query), limit, new Sort(new SortField(STARTED_SORT, SortField.Type.LONG, true)));
     }
 
     @Override
@@ -225,6 +233,16 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
         });
     }
 
+    /** Nur Läufe innerhalb der Frist, gemessen jetzt: Abgelaufene bleiben unlesbar, bis sie gelöscht sind. */
+    private Query current(Query query) {
+        if (maxAge == null) {
+            return query;
+        }
+        return new BooleanQuery.Builder().add(query, BooleanClause.Occur.MUST)
+                .add(LongPoint.newRangeQuery(STARTED, clock.instant().minus(maxAge).toEpochMilli(), Long.MAX_VALUE),
+                        BooleanClause.Occur.FILTER).build();
+    }
+
     /** Frist und Obergrenze beim Öffnen. */
     private void purge() throws IOException {
         purgeNow();
@@ -232,7 +250,7 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
         searchers.maybeRefreshBlocking();
     }
 
-    /** Entfernt zu alte Läufe und die ältesten über {@link SearchRunLog#MAX_RUNS}; ohne Commit. */
+    /** Entfernt zu alte Läufe und die ältesten über der Obergrenze ({@link SearchRunLog#MAX_RUNS}); ohne Commit. */
     private void purgeNow() throws IOException {
         if (maxAge != null) {
             writer.deleteDocuments(LongPoint.newRangeQuery(STARTED, Long.MIN_VALUE,
@@ -242,11 +260,11 @@ public final class LuceneSearchRunLog implements SearchRunLog, AutoCloseable {
         IndexSearcher searcher = searchers.acquire();
         try {
             int total = searcher.count(new MatchAllDocsQuery());
-            if (total <= MAX_RUNS) {
+            if (total <= capacity) {
                 return;
             }
-            // Die ältesten zuerst; die Grenze ist der Beginn des jüngsten zu entfernenden Laufs.
-            TopDocs oldest = searcher.search(new MatchAllDocsQuery(), total - MAX_RUNS,
+            // Die ältesten zuerst.
+            TopDocs oldest = searcher.search(new MatchAllDocsQuery(), total - capacity,
                     new Sort(new SortField(STARTED_SORT, SortField.Type.LONG)));
             StoredFields stored = searcher.storedFields();
             for (ScoreDoc hit : oldest.scoreDocs) {

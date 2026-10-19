@@ -99,7 +99,7 @@ public class FactController {
                     FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION, FactTypes.MENTION,
                     FactTypes.PROPERTY}))
             @RequestParam(required = false) String type,
-            @Parameter(description = "Bedingung ROLLE:Wert, wiederholbar; Rollen SHORT_FORM, LONG_FORM, TERM, KIND, "
+            @Parameter(description = "Bedingung ROLLE:Wert, höchstens 16-mal; Rollen SHORT_FORM, LONG_FORM, TERM, KIND, "
                     + "SUBJECT, VALUE, STATUS", example = "SHORT_FORM:API")
             @RequestParam(required = false) List<String> argument,
             @Parameter(description = "Nur diese Quelle") @RequestParam(required = false) String sourceId,
