@@ -79,12 +79,26 @@ class RemoteAiTest {
     }
 
     @Test
+    void anotherEndpointWithTheSameModelIsAnotherEmbeddingModel() {
+        AiServiceSettings other = new AiServiceSettings(URI.create("https://anderer-dienst.example/v1"), KEY, null,
+                "text-embedding-3-small", 3, null, null, Set.of("wiki"));
+
+        String here = remote(settings("text-embedding-3-small", 3)).embeddings().modelId();
+        String there = remote(other).embeddings().modelId();
+
+        // Vektoren eines anderen Dienstes gelten nicht als vergleichbar; der Schlüssel geht nie in die Kennung ein.
+        assertThat(there).isNotEqualTo(here).startsWith("text-embedding-3-small@").doesNotContain(KEY);
+        assertThat(here).doesNotContain(KEY);
+    }
+
+    @Test
     void embedsOverTheServiceWithBearerAndModel() {
         EmbeddingProvider provider = remote(settings("text-embedding-3-small", 3)).embeddings();
 
         List<float[]> vectors = provider.embed(List.of("Betrieb der Plattform"));
 
-        assertThat(provider.modelId()).isEqualTo("text-embedding-3-small");
+        assertThat(provider.modelId())
+                .isEqualTo("text-embedding-3-small@" + ChatNavigationLabeler.fingerprint(base().toString()));
         assertThat(provider.dimensions()).isEqualTo(3);
         assertThat(vectors).singleElement().satisfies(vector -> assertThat(vector).hasSize(3));
         assertThat(authorizations).containsOnly("Bearer " + KEY);
