@@ -142,7 +142,8 @@ public final class AppRuntime implements AutoCloseable {
                                                          SessionSecrets sessionSecrets, String version, Path scratch) {
         SourceSettingsConfig source = config(settings, sourceId, sessionSecrets);
         AppSettings.Storage storage = new AppSettings.Storage(scratch.resolve("data"), scratch.resolve("exports"),
-                scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().searchTimeout(),
+                scratch.resolve("assets"), settings.storage().maxAssetBytes(), settings.storage().largeAssetBytes(),
+                settings.storage().maxLargeAssets(), settings.storage().searchTimeout(),
                 settings.storage().maxTreeNodes(), null);
         AccessPolicy policy = new LocalOperatorPolicy(AccessContext.technicalClient(Harvester.OWNER), Set.of(sourceId));
         try (Harvester harvester = builder(settings, storage, List.of(), policy, version, sessionSecrets, false)
@@ -200,6 +201,8 @@ public final class AppRuntime implements AutoCloseable {
                 .exportDirectory(storage.exportDirectory())
                 .assetDirectory(storage.assetDirectory())
                 .maxAssetBytes(storage.maxAssetBytes())
+                .largeAssetThresholdBytes(storage.largeAssetBytes())
+                .maxConcurrentLargeAssets(storage.maxLargeAssets())
                 .userAgent("space-harvester-app/" + version)
                 .proxy(proxy(settings.proxy(), secrets))
                 // Vertrauen ohne Bundle regelt der Core (network.tls, #189); das frühere Bundle „windows“ meint dasselbe.
@@ -224,7 +227,7 @@ public final class AppRuntime implements AutoCloseable {
 
     /**
      * Die Laufzeitkonfiguration aus der Datei der App (ADR 0015): KI-Dienst mit dem Key der Sitzung, Aktualität,
-     * Synchronisierung samt Regeln je Quelle und Freigaben an den KI-Dienst. Proxy und TLS übergibt die App typisiert
+     * Synchronisierung samt Regeln je Quelle, Freigaben an den KI-Dienst und freigegebene Ordner. Proxy und TLS übergibt die App typisiert
      * beim Bauen; ein anderer Datenordner wirkt erst nach einem Neustart.
      */
     static HarvesterConfiguration configuration(AppSettings settings, SessionSecrets secrets, String version) {
@@ -235,13 +238,15 @@ public final class AppRuntime implements AutoCloseable {
         SearchSettings search = SearchSettings.DEFAULT.withCacheFreshness(
                 new CacheFreshness(settings.cache().maxAge(), settings.cache().versionCheck()));
         return new HarvesterConfiguration(aiService(settings.ai(), secrets.aiKey(), version), search, withRules,
-                NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()));
+                NetworkSettings.DEFAULT, new StorageSettings(settings.storage().dataDirectory()))
+                .withLocalFiles(settings.localFiles());
     }
 
     /**
      * Ob {@code next} sich von {@code current} nur in Werten unterscheidet, die der Harvester zur Laufzeit übernimmt:
-     * KI-Dienst und Modelle, Freigaben, Aktualität, Frist, Synchronisierung und Regeln je Quelle. Quellen, Proxy, TLS,
-     * Ablage und die Zerlegung für Embeddings verlangen einen Neustart.
+     * KI-Dienst und Modelle (auch Embeddings erstmals einschalten), Freigaben, Aktualität, Frist, Synchronisierung samt
+     * Bestandsinventur, Abgleich vor der Suche und Regeln je Quelle, Dateizugriff. Einen Neustart verlangen nur, was
+     * die App beim Bauen fest übergibt: Quellen, Proxy, TLS, Ablage und die Zerlegung für Embeddings.
      */
     public static boolean liveChange(AppSettings current, AppSettings next) {
         AppSettings.AiSettings a = current.ai();
@@ -331,6 +336,10 @@ public final class AppRuntime implements AutoCloseable {
         if (ai.rerankModel() != null) {
             // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
             service = service.withRerankModel(ai.rerankModel());
+        }
+        if (ai.visionModel() != null) {
+            // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
+            service = service.withVisionModel(ai.visionModel());
         }
         if (service.embeddingModel() != null && service.embeddingDimensions() == null) {
             // Die Dimension steht in keinem Modellkatalog; der Reiter „KI“ misst sie mit Harvester#aiEmbeddingDimension.

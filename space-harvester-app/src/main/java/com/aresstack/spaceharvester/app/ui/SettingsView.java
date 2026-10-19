@@ -19,8 +19,8 @@ import java.util.Locale;
 
 /**
  * Einstellungen und Diagnose in Reitern wie im Enterprise AI Client: „Allgemein“ (welche Datei gilt, was daran nicht
- * stimmt, wo die Daten liegen, Versionen), „KI-Dienst“ und „Modelle“ ({@link AiSettingsPanel}, zentral für alle
- * Quellen), „Netzwerk“ (Proxy und Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für
+ * stimmt, wo die Daten liegen, welche Ordner gelesen werden dürfen, Versionen), „KI-Dienst“ und „Modelle“
+ * ({@link AiSettingsPanel}, zentral für alle Quellen), „Netzwerk“ (Proxy und Serverzertifikate), „Cache“ (Aktualisierung gespeicherter Seiten, Frist für
  * gesperrte Seiten) und „Sicherheit“ (Tresor). Geheimnisse erscheinen nur als „gespeichert“ oder „fehlt“. Jede
  * Änderung schreibt die Datei und startet die Laufzeit mit ihr neu; von Hand geänderte Dateien übernimmt „Neu laden“.
  */
@@ -47,6 +47,8 @@ public final class SettingsView implements View {
             "Aktualisierung gespeicherter Seiten und Frist für gesperrte Seiten einstellen");
     private final PillTabs tabs = new PillTabs();
     private final AiSettingsPanel ai;
+    /** Platte „Dateizugriff“ unter Allgemein: freigegebene Ordner für Ordner-Quellen. */
+    final FileAccessEditor fileAccess;
     private final Facts runtime = new Facts();
     private final Feedback feedback = new Feedback();
     private final ComposerButton reload = Comic.primary("Neu laden", "Konfiguration neu lesen und Laufzeit neu starten");
@@ -69,6 +71,7 @@ public final class SettingsView implements View {
     public SettingsView(AppContext context) {
         this.context = context;
         this.ai = new AiSettingsPanel(context);
+        this.fileAccess = new FileAccessEditor(context);
         root.setBackground(Comic.SURFACE);
         problems.setForeground(Comic.RED);
         reload.addActionListener(e -> reload());
@@ -124,6 +127,7 @@ public final class SettingsView implements View {
                 Comic.plate("Konfiguration", Comic.BLUE, config),
                 Comic.plate("Ausgabeordner", Comic.GREEN, outputPanel),
                 Comic.plate("Ablage", Comic.PETROL, data),
+                Comic.plate(FileAccessEditor.HEADING, Comic.ORANGE, fileAccess.component()),
                 Comic.plate("Diagnose", Comic.DARK, diagnosis)));
         tabs.tab(AI, Comic.column(Comic.plate("KI-Dienst", Comic.YELLOW, ai.serviceComponent())));
         tabs.tab(MODELS, Comic.column(Comic.plate("Modelle für alle Quellen", Comic.YELLOW, ai.modelsComponent())));
@@ -143,6 +147,7 @@ public final class SettingsView implements View {
         root.add(tabs, BorderLayout.CENTER);
         context.onChange(ignored -> {
             render();
+            fileAccess.render();
             // Eingaben in den offenen Reitern „KI-Dienst“ und „Modelle“ bleiben stehen; beim nächsten Öffnen gilt der
             // neue Stand.
             if (!AI.equals(tabs.selected()) && !MODELS.equals(tabs.selected())) {

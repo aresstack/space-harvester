@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.jobs.JobLimits;
@@ -37,13 +38,16 @@ import java.util.Set;
  * @param syncRules       Regeln je Quelle ({@code space-harvester.sync.sources.<Quelle>.*}); leer gilt global
  * @param sync            globale Synchronisierungswerte ({@code space-harvester.sync.*}) ohne die Regeln je Quelle
  * @param aiAccess        woher die App den API-Key des KI-Dienstes nimmt (KeePass oder Tresor); nur die App
+ * @param localFiles      freigegebene Ordner für lokale Dateien ({@code space-harvester.local-files.allow-all},
+ *                        {@code .roots}); ohne Angabe nur das Verzeichnis der Ordner-Quelle selbst
  */
 public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
                           ConfiguredSourceCatalog.AsyncTransport asyncTransport,
                           Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
                           AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
                           TrustSettings tls, Cache cache, boolean setupCompleted,
-                          Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess) {
+                          Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess,
+                          LocalFileSettings localFiles) {
 
     public AppSettings {
         sources = List.copyOf(sources);
@@ -61,6 +65,18 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
         syncRules = syncRules == null ? Map.of() : Map.copyOf(syncRules);
         sync = sync == null ? SyncSettings.DEFAULT : sync;
         aiAccess = aiAccess == null ? AiAccess.NONE : aiAccess;
+        localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
+    }
+
+    /** Ohne freigegebene Ordner, für Aufrufer, die sie nicht brauchen. */
+    public AppSettings(Path file, List<SourceEntry> sources, ProxySettings proxy,
+                       ConfiguredSourceCatalog.AsyncTransport asyncTransport,
+                       Map<String, TrustStoreSettings> trustStores, Storage storage, JobLimits jobLimits,
+                       AiSettings ai, Path outputDirectory, List<String> problems, Set<String> disabledSources,
+                       TrustSettings tls, Cache cache, boolean setupCompleted,
+                       Map<String, SourceSyncOverride> syncRules, SyncSettings sync, AiAccess aiAccess) {
+        this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, LocalFileSettings.DEFAULT);
     }
 
     /** Ohne Bezugsart des KI-Keys, für Aufrufer, die sie nicht brauchen. */
@@ -71,29 +87,29 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
                        TrustSettings tls, Cache cache, boolean setupCompleted,
                        Map<String, SourceSyncOverride> syncRules, SyncSettings sync) {
         this(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, outputDirectory, problems,
-                disabledSources, tls, cache, setupCompleted, syncRules, sync, AiAccess.NONE);
+                disabledSources, tls, cache, setupCompleted, syncRules, sync, AiAccess.NONE, LocalFileSettings.DEFAULT);
     }
 
     /** Dieselbe Konfiguration mit anderem Ausgabeordner; die Laufzeit braucht ihn nicht. */
     public AppSettings withOutputDirectory(Path directory) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai, directory,
-                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess);
+                problems, disabledSources, tls, cache, setupCompleted, syncRules, sync, aiAccess, localFiles);
     }
 
     /**
      * Diese Konfiguration mit den Laufzeitwerten von {@code other}: KI-Dienst, Aktualität und Frist, Synchronisierung
-     * und Regeln je Quelle, Bezug des API-Keys. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
+     * und Regeln je Quelle, Bezug des API-Keys, freigegebene Ordner. Gleicht das Ergebnis {@code other}, unterscheiden sich beide nur darin.
      */
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
                 outputDirectory, other.problems, disabledSources, tls, other.cache, setupCompleted, other.syncRules,
-                other.sync, other.aiAccess);
+                other.sync, other.aiAccess, other.localFiles);
     }
 
     /** Dieselbe Konfiguration mit gesetztem Merker des Einrichtungsassistenten; die Laufzeit braucht ihn nicht. */
     public AppSettings withSetupCompleted() {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, ai,
-                outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess);
+                outputDirectory, problems, disabledSources, tls, cache, true, syncRules, sync, aiAccess, localFiles);
     }
 
     /** Die Regeln dieser Quelle; ohne Eintrag {@link SourceSyncOverride#NONE}, also alles wie global. */
@@ -142,12 +158,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param exportDirectory Exportartefakte
      * @param assetDirectory  abgelegte Anhänge
      * @param maxAssetBytes   größter Anhang, der geladen wird
+     * @param largeAssetBytes ab dieser Größe gilt ein Anhang als groß ({@code assets.large-file-threshold})
+     * @param maxLargeAssets  so viele große Anhänge höchstens gleichzeitig ({@code assets.max-concurrent-large-files})
      * @param searchTimeout   Zeitgrenze einer Suche
      * @param maxTreeNodes    größter Seitenbaum
      * @param pdfFont         TrueType-Schrift für PDF-Exporte oder {@code null}
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
-                          Duration searchTimeout, int maxTreeNodes, Path pdfFont) {
+                          long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                          Path pdfFont) {
 
         public Storage {
             Objects.requireNonNull(dataDirectory, "dataDirectory");
@@ -183,12 +202,20 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                             Integer chunkTokens, Integer chunkOverlapSentences) {
+                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+        }
+
+        /** Ohne Vision-Modell: keine Bildbeschreibung (#362). */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, null);
         }
 
         /** Ohne Rerank-Modell und mit der Zerlegung des Core. */

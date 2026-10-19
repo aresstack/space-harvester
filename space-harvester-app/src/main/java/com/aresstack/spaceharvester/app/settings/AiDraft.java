@@ -20,10 +20,12 @@ import java.util.List;
  * @param rerankModel               Cross-Encoder des Dienstes ({@code /rerank}) oder leer: Reihenfolge bleibt
  * @param chunkTokens               Obergrenze je Abschnitt für Embeddings als Text oder leer (Core: 350)
  * @param chunkOverlapSentences     überlappende Sätze zwischen Abschnitten als Text oder leer (Core: 1)
+ * @param visionModel               Modell, das Bilder beschreibt ({@code vision-model}, #362), oder leer: keine
+ *                                  Bildbeschreibung
  */
 public record AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
                       Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                      String chunkTokens, String chunkOverlapSentences) {
+                      String chunkTokens, String chunkOverlapSentences, String visionModel) {
 
     /** Kleinste Obergrenze je Abschnitt, wie im Core ({@code KnowledgeChunkingPolicy}). */
     public static final int MIN_CHUNK_TOKENS = 8;
@@ -37,8 +39,17 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         rerankModel = trim(rerankModel);
         chunkTokens = trim(chunkTokens);
         chunkOverlapSentences = trim(chunkOverlapSentences);
+        visionModel = trim(visionModel);
         externalProcessingSources = externalProcessingSources == null ? List.of() : externalProcessingSources
                 .stream().map(AiDraft::trim).filter(id -> id != null).distinct().toList();
+    }
+
+    /** Ohne Vision-Modell. */
+    public AiDraft(String baseUrl, String chatModel, String embeddingModel, String embeddingDimensions,
+                   Duration timeout, List<String> externalProcessingSources, String rerankModel, String chunkTokens,
+                   String chunkOverlapSentences) {
+        this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources, rerankModel,
+                chunkTokens, chunkOverlapSentences, null);
     }
 
     /** Ohne Rerank-Modell und mit der Zerlegung des Core. */
@@ -53,27 +64,36 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
                 settings.embeddingDimensions() == null ? null : String.valueOf(settings.embeddingDimensions()),
                 settings.timeout(), settings.externalProcessingSources(), settings.rerankModel(),
                 settings.chunkTokens() == null ? null : String.valueOf(settings.chunkTokens()),
-                settings.chunkOverlapSentences() == null ? null : String.valueOf(settings.chunkOverlapSentences()));
+                settings.chunkOverlapSentences() == null ? null : String.valueOf(settings.chunkOverlapSentences()),
+                settings.visionModel());
     }
 
-    /** Dieselben Eingaben mit anderen Modellen (Reiter „Modelle“); Adresse und Freigaben bleiben. */
+    /**
+     * Dieselben Eingaben mit anderen Modellen (Reiter „Modelle“); Adresse, Freigaben und Vision-Modell bleiben.
+     */
     public AiDraft withModels(String chatModel, String embeddingModel, String embeddingDimensions,
                               String rerankModel, String chunkTokens, String chunkOverlapSentences) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
-                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences);
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
+    }
+
+    /** Dieselben Eingaben mit anderem Vision-Modell. */
+    public AiDraft withVisionModel(String visionModel) {
+        return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
     }
 
     /** Dieselben Modelle mit anderem Dienst und anderen Freigaben (Reiter „KI-Dienst“). */
     public AiDraft withService(String baseUrl, List<String> externalProcessingSources) {
         return new AiDraft(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout,
-                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences);
+                externalProcessingSources, rerankModel, chunkTokens, chunkOverlapSentences, visionModel);
     }
 
     /** Ob nichts eingetragen ist; dann wird der Block entfernt. */
     public boolean empty() {
         return baseUrl == null && chatModel == null && embeddingModel == null && embeddingDimensions == null
                 && timeout == null && externalProcessingSources.isEmpty() && rerankModel == null
-                && chunkTokens == null && chunkOverlapSentences == null;
+                && chunkTokens == null && chunkOverlapSentences == null && visionModel == null;
     }
 
     /** Was nicht passt; leer, wenn die Eingaben so in die Datei können. */
@@ -82,7 +102,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
         if (baseUrl == null) {
             // Freigaben je Quelle dürfen ohne Dienst stehen: Sie wirken, sobald einer eingetragen ist.
             if (chatModel != null || embeddingModel != null || embeddingDimensions != null || rerankModel != null
-                    || chunkTokens != null || chunkOverlapSentences != null) {
+                    || visionModel != null || chunkTokens != null || chunkOverlapSentences != null) {
                 problems.add("Die Basisadresse des KI-Dienstes fehlt.");
             }
         } else if (looksLikeKey(baseUrl)) {
@@ -151,6 +171,7 @@ public record AiDraft(String baseUrl, String chatModel, String embeddingModel, S
             yaml.append(inner).append("embedding-dimensions: ").append(dimensions()).append('\n');
         }
         append(yaml, inner, "rerank-model", rerankModel);
+        append(yaml, inner, "vision-model", visionModel);
         if (tokens() != null) {
             yaml.append(inner).append("embedding-chunk-tokens: ").append(tokens()).append('\n');
         }

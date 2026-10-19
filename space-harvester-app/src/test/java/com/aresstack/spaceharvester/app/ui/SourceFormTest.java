@@ -15,9 +15,14 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -113,6 +118,165 @@ class SourceFormTest {
                 .containsExactly("handbuch", "notizen");
         assertThat(context.runtime().workspace().sources()).extracting(HarvestSource::id)
                 .containsExactly("handbuch", "notizen");
+    }
+
+    /**
+     * Die Art kommt aus der Typenliste des Core (#375); andere Typen zeigen die Felder ihres Typs wie der Enterprise AI
+     * Client (Pflichtangaben oben, der Rest unter „Erweitert“), nur ihre Anmeldearten und Zertifikate nur mit TLS.
+     */
+    @Test
+    void theKindsComeFromTheCoreAndOtherTypesShowTheFieldsOfTheirType() throws Exception {
+        Path handbuch = Files.createDirectories(home.resolve("handbuch"));
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: handbuch
+                      type: files
+                      options:
+                        directory: %s
+                """.formatted(home.resolve("data"), handbuch));
+        start(config, null);
+
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context);
+            assertThat(items(f.kind)).hasSize(context.runtime().workspace().sourceTypes().size())
+                    .startsWith("Confluence (Data Center/Server)", "Lokale Dateien (Ordner)")
+                    .contains("JES", "SharePoint");
+            assertThat(f.fields.active()).as("Confluence behält sein Formular").isFalse();
+            f.kind.setSelectedItem("JES");
+            assertThat(f.typeId()).isEqualTo("jes");
+            assertThat(f.include.isVisible()).isFalse();
+            assertThat(f.baseUrl.isVisible()).as("die Adresse ist ein Feld des Typs").isFalse();
+            JTextField host = (JTextField) f.fields.input("host");
+            JTextField port = (JTextField) f.fields.input("port");
+            assertThat(host.isVisible()).isTrue();
+            assertThat(port.isVisible()).as("unter Erweitert").isFalse();
+            assertThat(port.getText()).as("Vorgabe des Typs").isEqualTo("21");
+            assertThat(f.fields.advancedToggle().getText()).isEqualTo("▸ Erweitert");
+            assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
+            assertThat(f.auth.getSelectedItem()).as("JES verlangt Zugangsdaten").isEqualTo("Benutzer und Passwort");
+            assertThat(f.username.isVisible()).isTrue();
+            assertThat(f.certificate.isVisible()).as("JES kennt kein TLS").isFalse();
+            assertThat(f.trust.isVisible()).isFalse();
+            assertThat(f.validateInput()).isFalse();
+            assertThat(f.error(host)).isEqualTo("Bitte „Host“ eintragen.");
+            assertThat(f.error(f.username)).isEqualTo("Bitte den Benutzernamen eintragen.");
+            host.setText("mvs.example.org");
+            assertThat(f.id.getText()).isEqualTo("mvs-example-org");
+            assertThat(f.title.getText()).isEqualTo("mvs.example.org");
+            f.username.setText("batch");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("type: jes", "options:\n", "host: \"mvs.example.org\"",
+                            "port: \"21\"", "status: \"OUTPUT\"", "auth:\n", "type: basic", "username: \"batch\"")
+                    .as("ohne eingegebenes Passwort keine Zeile, der Core fragt das Programm (ADR 0022)")
+                    .doesNotContain("password", "base-url", "directory", "client-certificate", "trust-bundle");
+
+            port.setText("einundzwanzig");
+            assertThat(f.validateInput()).isFalse();
+            assertThat(port.isVisible()).as("ein Hinweis klappt Erweitert auf").isTrue();
+            assertThat(f.error(port)).isEqualTo("„Port“ muss eine ganze Zahl sein.");
+            port.setText("2121");
+            JTextField reference = (JTextField) f.fields.input("credentialRef");
+            reference.setText("keepass:jes");
+            assertThat(f.validateInput()).as("credentialRef neben basic weist der Core ab").isFalse();
+            assertThat(f.error(reference)).startsWith("Nur ohne Anmeldung");
+            f.auth.setSelectedItem("Ohne Anmeldung");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("credentialRef: \"keepass:jes\"", "port: \"2121\"")
+                    .doesNotContain("auth:");
+            reference.setText("");
+            f.auth.setSelectedItem("Benutzer und Passwort");
+            f.sessionValue.setText("geheim");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("password: ${MVS_EXAMPLE_ORG_PASSWORD}")
+                    .doesNotContain("geheim");
+            f.clearSecret();
+
+            f.kind.setSelectedItem("SharePoint");
+            assertThat(f.fields.input("host")).as("neue Felder für den neuen Typ").isNull();
+            JTextField site = (JTextField) f.fields.input("siteUrl");
+            assertThat(site.isVisible()).isTrue();
+            assertThat(f.certificate.isVisible()).as("SharePoint nimmt mTLS").isTrue();
+            assertThat(f.trust.isVisible()).isTrue();
+            assertThat(items(f.auth)).containsExactly("Benutzer und Passwort", "Ohne Anmeldung");
+            site.setText("https://share.example.org/sites/team");
+            assertThat(f.draft().yaml("    ")).contains("type: sharepoint",
+                    "siteUrl: \"https://share.example.org/sites/team\"", "startPoints: \".\"");
+            // Ein Typ ohne Sonderbehandlung (MediaWiki, #370): Adresse unter dem Schlüssel des Core (apiUrl, #387).
+            f.kind.setSelectedItem("MediaWiki");
+            assertThat(f.typeId()).isEqualTo("mediawiki");
+            ((JTextField) f.fields.input("apiUrl")).setText("https://wiki.example.org/w/api.php");
+            assertThat(f.draft().yaml("    ")).contains("type: mediawiki",
+                    "apiUrl: \"https://wiki.example.org/w/api.php\"");
+            assertThat(f.fields.input("requiresLogin")).isInstanceOf(JCheckBox.class);
+            assertThat(f.draft().yaml("    ")).as("ein nicht gesetzter Schalter bleibt weg").doesNotContain("requiresLogin");
+            // Die Anmeldearten kommen vom Typ des Core (#394, Git seit #393 mit Token und mTLS).
+            f.kind.setSelectedItem("Git-Repository");
+            assertThat(items(f.auth)).containsExactly("Personal Access Token", "Benutzer und Passwort",
+                    "Ohne Anmeldung");
+            assertThat(f.certificate.isVisible()).isTrue();
+            f.auth.setSelectedItem("Personal Access Token");
+            assertThat(f.username.isVisible()).as("ein Token braucht keinen Benutzer").isFalse();
+            assertThat(f.sessionValue.isVisible()).isTrue();
+            ((JTextField) f.fields.input("url")).setText("https://git.example.org/team/handbuch.git");
+            assertThat(f.validateInput()).as("das Token fehlt").isFalse();
+            assertThat(f.error(f.sessionValue)).isEqualTo("Bitte das Token eingeben.");
+            f.sessionValue.setText("geheim");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("type: git", "type: pat", "token: ${")
+                    .doesNotContain("username", "geheim");
+            f.clearSecret();
+        });
+    }
+
+    /** Beim Bearbeiten stehen die Werte der Datei in den Feldern; Schlüssel ohne Feld bleiben unverändert. */
+    @Test
+    void editingAnotherTypeFillsItsFieldsAndKeepsUnknownOptions() throws Exception {
+        Path config = home.resolve("app.yml");
+        Files.writeString(config, """
+                space-harvester-app:
+                  data-directory: %s
+                space-harvester:
+                  sources:
+                    - id: host-jes
+                      type: jes
+                      title: Host
+                      auth:
+                        type: basic
+                        username: batch
+                      options:
+                        host: mvs.example.org
+                        status: ALL
+                        connectTimeoutMillis: 2000
+                """.formatted(home.resolve("data")));
+        start(config, null);
+
+        SourceDraft.Editable editable = new ConfigFileEditor(context.loader()).editable(config, "host-jes");
+        SwingUtilities.invokeAndWait(() -> {
+            SourceForm f = new SourceForm(context, editable);
+            assertThat(f.kind.isEnabled()).isFalse();
+            assertThat(((JTextField) f.fields.input("host")).getText()).isEqualTo("mvs.example.org");
+            assertThat(((JTextField) f.fields.input("status")).getText()).isEqualTo("ALL");
+            assertThat(((JTextField) f.fields.input("port")).getText()).as("keine Vorgabe beim Bearbeiten").isEmpty();
+            assertThat(f.auth.getSelectedItem()).isEqualTo("Benutzer und Passwort");
+            assertThat(f.username.getText()).isEqualTo("batch");
+            ((JTextField) f.fields.input("host")).setText("mvs2.example.org");
+            assertThat(f.id.getText()).isEqualTo("host-jes");
+            assertThat(f.validateInput()).isTrue();
+            assertThat(f.draft().yaml("    ")).contains("host: \"mvs2.example.org\"", "status: \"ALL\"",
+                    "connectTimeoutMillis: \"2000\"", "username: \"batch\"").doesNotContain("port", "password");
+        });
+    }
+
+    private static List<String> items(JComboBox<String> combo) {
+        List<String> items = new ArrayList<>();
+        for (int i = 0; i < combo.getItemCount(); i++) {
+            items.add(combo.getItemAt(i));
+        }
+        return items;
     }
 
     @Test

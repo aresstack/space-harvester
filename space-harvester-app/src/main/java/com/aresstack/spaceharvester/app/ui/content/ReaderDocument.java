@@ -36,6 +36,8 @@ final class ReaderDocument {
     private final List<PageAcronyms.Mark> marks;
     private final PageTerms terms;
     private PagePassages passages;
+    private List<com.aresstack.spaceharvester.app.ui.Relation> relations;
+    private Navigation navigation;
 
     private ReaderDocument(StyledDocument document, PageText text, PageAcronyms acronyms, PageTerms terms) {
         this.document = document;
@@ -116,6 +118,39 @@ final class ReaderDocument {
     ReaderDocument withPassages(PagePassages passages) {
         this.passages = passages;
         return this;
+    }
+
+    /** Die Dokumentnavigation für diesen Text oder {@code null}, wenn nicht abgefragt. */
+    Navigation navigation() {
+        return navigation;
+    }
+
+    ReaderDocument withNavigation(Navigation navigation) {
+        this.navigation = navigation;
+        return this;
+    }
+
+    /** Die Beziehungen zwischen den Begriffen dieser Seite (#120) oder {@code null}, wenn nicht abgefragt. */
+    List<com.aresstack.spaceharvester.app.ui.Relation> relations() {
+        return relations;
+    }
+
+    ReaderDocument withRelations(List<com.aresstack.spaceharvester.app.ui.Relation> relations) {
+        this.relations = relations == null ? null : List.copyOf(relations);
+        return this;
+    }
+
+    /** Die normalisierten Begriffe dieser Seite, Akronyme und Bezeichner, für die Beziehungen des Core. */
+    java.util.Set<String> normalizedTerms() {
+        java.util.Set<String> all = new java.util.LinkedHashSet<>();
+        if (acronyms.state() == PageAcronyms.State.CURRENT) {
+            acronyms.acronyms().forEach(acronym -> all.add(
+                    com.aresstack.spaceharvester.application.terms.TermText.normalize(acronym.acronym())));
+        }
+        if (terms.state() == PageTerms.State.CURRENT) {
+            terms.terms().forEach(term -> all.add(term.normalized()));
+        }
+        return all;
     }
 
     /** Die markierten Fundstellen in Textreihenfolge. */

@@ -59,6 +59,27 @@ class SearchViewTest {
         servers.forEach(server -> server.stop(0));
     }
 
+    /** Ein Anhangstreffer (#183, #385) nennt seinen Anhang in der Zeile, ohne eigenes Bedienelement. */
+    @Test
+    void anAttachmentHitNamesTheAttachmentInItsExcerpt() {
+        com.aresstack.spaceharvester.application.query.KeywordSearch.Hit core =
+                new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki", "7", "DEV", "Betrieb",
+                        "Die  Wartung\n startet um 6 Uhr", null, "3", null, null,
+                        new com.aresstack.spaceharvester.application.query.KeywordSearch.AttachmentMatch("att1",
+                                "handbuch.pdf"));
+        SearchView.Hit hit = SearchView.Hit.of(core);
+        assertThat(hit.excerpt()).isEqualTo("Treffer im Anhang „handbuch.pdf“ · Die Wartung startet um 6 Uhr");
+        SearchView.HitsModel model = new SearchView.HitsModel();
+        model.set(java.util.List.of(hit));
+        assertThat(model.getValueAt(0, 3)).isEqualTo(hit.excerpt());
+        assertThat(SearchView.Hit.of(new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki",
+                "8", "DEV", "Seite", "Text", null, "1", null, null)).excerpt()).isEqualTo("Text");
+        assertThat(hit.passageId()).isNull();
+        assertThat(SearchView.Hit.of(new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki",
+                "8", "DEV", "Seite", "Text", null, "1", null, null, null, "passage:abc")).passageId())
+                .isEqualTo("passage:abc");
+    }
+
     @Test
     void allSourcesIsOneGlobalKeywordSearchWithExcerptsAndLoadMore() throws Exception {
         start(false);

@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.control.ResearchPillButton;
 import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
+import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
@@ -48,6 +49,8 @@ final class TermsTab extends JPanel {
     private final JPanel chips = new JPanel(new WrapFlow());
     private final JLabel identifierTitle = Comic.text("Bezeichner");
     private final JPanel identifierChips = new JPanel(new WrapFlow());
+    private final JLabel relationTitle = Comic.text("Beziehungen");
+    private final JPanel relationLines = new JPanel();
     private final JLabel hint = Comic.muted(" ");
     private Consumer<List<Span>> onJump = spans -> { };
     private PageAcronyms shown;
@@ -103,10 +106,18 @@ final class TermsTab extends JPanel {
         identifiers.setOpaque(false);
         identifiers.add(identifierTitle, BorderLayout.NORTH);
         identifiers.add(identifierChips, BorderLayout.CENTER);
+        relationTitle.setFont(Comic.semiBold(13f));
+        relationLines.setOpaque(false);
+        relationLines.setLayout(new BoxLayout(relationLines, BoxLayout.Y_AXIS));
+        JPanel relations = new JPanel(new BorderLayout(0, 4));
+        relations.setOpaque(false);
+        relations.add(relationTitle, BorderLayout.NORTH);
+        relations.add(relationLines, BorderLayout.CENTER);
         JPanel lists = new JPanel(new BorderLayout(0, 10));
         lists.setOpaque(false);
         lists.add(chips, BorderLayout.NORTH);
         lists.add(identifiers, BorderLayout.CENTER);
+        lists.add(relations, BorderLayout.SOUTH);
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
         body.add(lists, BorderLayout.NORTH);
@@ -161,8 +172,7 @@ final class TermsTab extends JPanel {
         identifierCount.setText(identifiers ? String.valueOf(terms.identifierCount()) : NOT_YET);
         identifierCount.setToolTipText(identifiers ? "Nomen, Nominalgruppen und Kennungen"
                 : "Für diesen Text liegt noch keine aktuelle Begriffsanalyse vor");
-        relationCount.setText(NOT_YET);
-        relationCount.setToolTipText("Beziehungen folgen mit dem Begriffsindex (#120)");
+        showRelations(null);
         analysis.setText(acronyms == null || acronyms.result() == null ? "Analyse vom letzten Seitenabgleich"
                 : "Analyse vom letzten Seitenabgleich · " + Texts.time(acronyms.result().computedAt()));
         String complete = any ? completeness(acronyms) : null;
@@ -170,6 +180,25 @@ final class TermsTab extends JPanel {
         completeness.setText(complete == null ? " " : complete);
         tone(completeness, acronyms != null && acronyms.warnings().isEmpty() ? Comic.GREEN : Comic.ORANGE);
         fill();
+    }
+
+    /**
+     * Zeigt die Beziehungen zwischen den Begriffen dieser Seite; {@code null} heißt: nicht abgefragt oder ohne
+     * Begriffsbeziehungen im Core.
+     */
+    void showRelations(List<Relation> relations) {
+        relationCount.setText(relations == null ? NOT_YET : String.valueOf(relations.size()));
+        relationCount.setToolTipText(relations == null ? "Beziehungen liegen für diese Seite nicht vor"
+                : "Bestätigte und vorgeschlagene Beziehungen zwischen den Begriffen dieser Seite");
+        relationLines.removeAll();
+        for (Relation relation : relations == null ? List.<Relation>of() : relations) {
+            JLabel line = Comic.text(relation.line());
+            line.setAlignmentX(LEFT_ALIGNMENT);
+            relationLines.add(line);
+        }
+        relationTitle.setVisible(relations != null && !relations.isEmpty());
+        relationLines.revalidate();
+        relationLines.repaint();
     }
 
     private void fill() {
@@ -333,6 +362,14 @@ final class TermsTab extends JPanel {
             list.add((ResearchPillButton) component);
         }
         return list;
+    }
+
+    List<String> relationLines() {
+        List<String> lines = new ArrayList<>();
+        for (java.awt.Component component : relationLines.getComponents()) {
+            lines.add(((JLabel) component).getText());
+        }
+        return lines;
     }
 
     PlaceholderField filter() {

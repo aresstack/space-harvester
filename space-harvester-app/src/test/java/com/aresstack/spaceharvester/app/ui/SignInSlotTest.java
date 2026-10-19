@@ -24,7 +24,11 @@ class SignInSlotTest {
         CompletableFuture<SignInRequests.Outcome> waiting = CompletableFuture.supplyAsync(() -> requests.await("wiki",
                 "job-1", challenge(""), Instant.now(), null));
         SignInSlot[] slot = new SignInSlot[1];
-        SwingUtilities.invokeAndWait(() -> slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki")));
+        java.util.concurrent.atomic.AtomicInteger accepted = new java.util.concurrent.atomic.AtomicInteger();
+        SwingUtilities.invokeAndWait(() -> {
+            slot[0] = new SignInSlot(() -> requests, r -> r.pendingFor("wiki"));
+            slot[0].onAccepted(accepted::incrementAndGet);
+        });
 
         await(() -> slot[0].isVisible());
         assertThat(slot[0].resendButton().isVisible()).isTrue();
@@ -39,6 +43,7 @@ class SignInSlotTest {
         // nimmt die Abfrage den nächsten Code an.
         await(() -> slot[0].errorText().contains("Code ungültig") && slot[0].submitButton().isEnabled());
         assertThat(waiting).isNotDone();
+        assertThat(accepted).as("ein falscher Code lädt nichts neu").hasValue(0);
 
         SwingUtilities.invokeAndWait(() -> {
             slot[0].codeField().setText("123456");
@@ -46,6 +51,8 @@ class SignInSlotTest {
         });
         assertThat(waiting.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(SignInRequests.Outcome.UNLOCKED);
         await(() -> !slot[0].isVisible());
+        // Angenommen: die Ansicht lädt die gezeigte Seite neu (Bilder und Anhänge ohne Sperre).
+        await(() -> accepted.get() == 1);
     }
 
     /** Eine Abfrage der Quelle: „123456“ gilt, alles andere bringt „Code ungültig“. */

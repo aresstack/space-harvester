@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.images.ImagePayload;
+import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -19,13 +21,24 @@ import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageLookup;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelation;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -77,6 +90,11 @@ public final class Workspace {
 
     // ------------------------------------------------------------------ Wissensquellen
 
+    /** Die Quellentypen des Core ({@code GET /api/v1/sources/types}, #375) für das Quellenformular. */
+    public List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes() {
+        return harvester.sourceTypes();
+    }
+
     /** Sichtbare Quellen ({@code GET /api/v1/sources}). */
     public List<HarvestSource> sources() {
         return access.filter(caller, harvester.sources().sources(), AccessKind.METADATA,
@@ -113,6 +131,73 @@ public final class Workspace {
     /** Ein Stapel des Begriffsverzeichnisses über alle sichtbaren Seiten ({@code TermQueries.terms}, #119). */
     public TermQueries.TermList terms(TermQueries.TermSearch search) {
         return harvester.terms().terms(caller, search);
+    }
+
+    /**
+     * Beziehungen zwischen Begriffen ({@code GET /api/v1/term-relations}, #120); {@code status} {@code null} heißt
+     * vorgeschlagene und bestätigte, wie im Dienst.
+     */
+    public TermRelations.RelationList termRelations(String term, ReviewStatus status, int limit) {
+        return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, null, status, null,
+                null, limit, null));
+    }
+
+    /**
+     * Die Dokumentnavigation einer Seite ({@code GET …/pages/{pageId}/navigation}): Überschriften und erkannte
+     * Themenabschnitte zum Text des Cache, sonst sofort die Überschriften.
+     */
+    public com.aresstack.spaceharvester.application.passages.DocumentNavigationView documentNavigation(
+            String sourceId, String pageId) {
+        return harvester.documentNavigation().page(caller, sourceId, pageId);
+    }
+
+    /**
+     * Löst eine stabile Passage-ID auf ({@code GET /api/v1/passages?id=}, #452): der Absatz mit je einem Nachbarn oder,
+     * wenn es ihn nicht mehr gibt, alle aktuellen Absätze und der Grund ({@link PassageLookup#match()}). Wie im Dienst
+     * antworten eine nicht sichtbare Seite und eine unbekannte Quelle gleich ({@link CacheMissException}), damit eine ID
+     * nicht verrät, ob es die Seite gibt.
+     *
+     * @throws InvalidQueryException wenn {@code passageId} keine Passage-ID ist
+     */
+    public PassageLookup passage(String passageId) {
+        if (!PassageId.looksLike(passageId)) {
+            throw new InvalidQueryException("Keine Passage-ID");
+        }
+        PassageId requested = PassageId.parse(passageId);
+        try {
+            return harvester.passages().resolve(caller, passageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            throw new CacheMissException(requested.sourceId(), "Seite nicht vorhanden oder nicht sichtbar");
+        }
+    }
+
+    /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
+    public List<TermRelation> termRelationsFor(java.util.Collection<String> normalized, String sourceId,
+                                               String spaceKey) {
+        return harvester.termRelations().forTerms(caller, normalized, sourceId, spaceKey);
+    }
+
+    /**
+     * Vorschläge aus den Ausschreibungen der Akronyme einer Quelle ({@code POST …/rules/acronyms?sourceId=}); die App
+     * bietet dafür keinen Knopf an, die Vorschläge stehen nur in der Liste.
+     */
+    public TermRelations.ProposalRun proposeAcronymRelations(String sourceId) {
+        return harvester.acronymRelationRule().run(caller, sourceId);
+    }
+
+    /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
+    public TermRelation confirmRelation(String id, long revision) {
+        return harvester.termRelations().confirm(caller, id, revision);
+    }
+
+    /** Ablehnen ({@code POST …/{id}/reject?revision=}): bleibt als abgelehnt stehen und kommt nicht wieder. */
+    public TermRelation rejectRelation(String id, long revision) {
+        return harvester.termRelations().reject(caller, id, revision);
+    }
+
+    /** Entfernen ({@code DELETE …/{id}?revision=}): eine manuelle löscht der Core, jede andere lehnt er ab. */
+    public Optional<TermRelation> removeRelation(String id, long revision) {
+        return harvester.termRelations().remove(caller, id, revision);
     }
 
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */
@@ -154,6 +239,18 @@ public final class Workspace {
         return harvester.pages().tree(caller, sourceId, spaceKey);
     }
 
+    /**
+     * Lesetext einer gelieferten Seite wie in Anreicherung und Index des Core, damit Fundstellen, Absätze und
+     * Navigation auf denselben Zeichenpositionen liegen; {@code null} ohne Lesetext oder bei kaputter Payload.
+     */
+    public PageText pageText(PageSnapshot snapshot) {
+        try {
+            return harvester.pageText(snapshot).orElse(null);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */
     public DeliveredPage page(String sourceId, String pageId, boolean refresh) {
         return harvester.pages().page(caller, sourceId, pageId, refresh);
@@ -178,7 +275,8 @@ public final class Workspace {
         }
         access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
                 header.key().pageId()), AccessKind.CONTENT);
-        return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
+        return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image,
+                Harvester.OWNER);
     }
 
     /** Der Stand der Hintergrundbefüllung (ADR 0016, {@code Harvester.acquisitionStatus}); nicht auf dem EDT. */
@@ -292,6 +390,36 @@ public final class Workspace {
         Enrichments.Run run = harvester.enrichments().recompute(page.snapshot(), processor);
         harvester.enrichments().flush();
         return run;
+    }
+
+    /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */
+    public PageImages images(DeliveredPage page) {
+        return harvester.imageAnalysis().read(page.snapshot());
+    }
+
+    /**
+     * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
+     * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
+     */
+    public PageImages describeImages(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = harvester.imageAnalysis().describe(page.snapshot());
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
+    public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image) {
+        return storedImage(sourceId, image, null);
+    }
+
+    /**
+     * Wie {@link #storedImage(String, ImagePayload.Entry)} mit der beim Beschreiben gemerkten Anhangsversion: mit ihr
+     * kennt die Ablage die Größe, und kleine Vorschaubilder belegen keinen Platz im LargeFileGate.
+     */
+    public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image, String version) {
+        return harvester.assets().stored(sourceId, image.assetId(), version, image.sha256());
     }
 
     public List<String> enrichmentProcessors() {
@@ -650,7 +778,25 @@ public final class Workspace {
     public Assets.AssetContent assetContent(String sourceId, String pageId, String attachmentId) {
         PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return harvester.assets().content(list, attachmentId, mayStore);
+        return harvester.assets().content(list, attachmentId, mayStore, Harvester.OWNER);
+    }
+
+    /**
+     * Vorschau eines Anhangs, wie die Quelle sie erzeugt ({@code …/assets/{id}/preview}, #183): die erste verfügbare
+     * in der Reihenfolge {@link com.aresstack.spaceharvester.application.sources.AttachmentPreview#order()}; legt
+     * nur mit sync-Freigabe ab.
+     */
+    public Assets.AssetContent assetPreview(String sourceId, String pageId, String attachmentId) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return harvester.assets().preview(list, attachmentId, null, mayStore, Harvester.OWNER);
+    }
+
+    /** Ob die Quelle Vorschauen von Anhängen erzeugt ({@code SourceCapability.ATTACHMENT_PREVIEWS}). */
+    public boolean attachmentPreviews(String sourceId) {
+        return sources().stream().anyMatch(source -> source.id().equals(sourceId)
+                && source.capabilities().contains(
+                        com.aresstack.spaceharvester.application.sources.SourceCapability.ATTACHMENT_PREVIEWS));
     }
 
     // ------------------------------------------------------------------ intern

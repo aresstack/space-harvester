@@ -9,7 +9,9 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.runtime.FollowUpJobs;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
+import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.terms.TermKind;
@@ -85,6 +87,13 @@ class ReaderAcronymsTest {
                 .contains("Fundstellen markiert");
         String text = onEdt(() -> panel.reader().getDocument().getText(0, panel.reader().getDocument().getLength()));
         assertThat(text).isEqualTo(shown.text().text());
+        // Dokumentnavigation des Core (#396) als Wolkenbanner über dem Lesetext; ohne Modell nur die Überschriften.
+        Navigation navigation = onEdt(() -> panel.navigationSky().navigation());
+        assertThat(navigation).isNotNull();
+        assertThat(navigation.analysis()).isEqualTo(Navigation.Analysis.HEADINGS);
+        assertThat(navigation.chapters()).extracting(Navigation.Section::label).containsExactly("Schnittstellen");
+        Navigation.Section chapter = navigation.chapters().get(0);
+        assertThat(text.substring(chapter.start())).startsWith("Schnittstellen");
 
         List<String> marked = shown.marks().stream()
                 .map(mark -> text.substring(mark.occurrence().start(), mark.occurrence().end())).toList();
@@ -159,6 +168,28 @@ class ReaderAcronymsTest {
         });
         assertThat(onEdt(() -> panel.reader().getSelectionStart())).isEqualTo(first.start());
         assertThat(onEdt(() -> panel.reader().getSelectionEnd())).isEqualTo(first.end());
+
+        // Reiter „Bilder“ (#362): ohne Vision-Modell nennt er den Grund des Core und bietet kein Beschreiben an.
+        onEdt(() -> {
+            panel.tabs().select("Bilder");
+            return null;
+        });
+        awaitTrue(() -> onEdt(() -> panel.images().hint()).equals(ImagesTab.NO_MODEL));
+        assertThat(onEdt(() -> panel.images().describeOffered())).isFalse();
+        assertThat(onEdt(() -> panel.images().stateLabel())).isEqualTo("Nicht durchgeführt");
+        assertThat(context.runtime().workspace().images(context.runtime().workspace().page("wiki", "200", false))
+                .reason()).isEqualTo(PageImages.VISION_MODEL_MISSING);
+        onEdt(() -> {
+            panel.tabs().select("Text");
+            return null;
+        });
+
+        // Beziehungen (#120): Vorschläge der Akronym-Regel stehen im Reiter „Begriffe“ genau dieser Seite.
+        assertThat(workspace.proposeAcronymRelations("wiki").added()).isPositive();
+        ReaderDocument related = open(panel, "wiki", "200", false);
+        assertThat(related.relations()).extracting(Relation::line)
+                .contains("API · Abkürzung für · Application Programming Interface (Vorgeschlagen, Regel)");
+        assertThat(onEdt(() -> panel.terms().counts().get(2))).isEqualTo(String.valueOf(related.relations().size()));
 
         // Gleiche Seiten-ID, gleiches Akronym, andere Quelle: eigene Ausschreibung, nichts aus „wiki“
         ReaderDocument foreign = open(panel, "zweites", "200", false);
@@ -324,6 +355,14 @@ class ReaderAcronymsTest {
         exchange.sendResponseHeaders(response.status(), body.length == 0 ? -1 : body.length);
         try (OutputStream out = exchange.getResponseBody()) {
             out.write(body);
+        }
+    }
+
+    private static void awaitTrue(ThrowingSupplier<Boolean> condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (!condition.get()) {
+            assertThat(System.nanoTime()).as("Zeit abgelaufen").isLessThan(deadline);
+            Thread.sleep(20);
         }
     }
 

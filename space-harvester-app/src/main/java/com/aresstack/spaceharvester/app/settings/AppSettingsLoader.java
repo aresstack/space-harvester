@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
@@ -183,8 +184,13 @@ public final class AppSettingsLoader {
         data = data == null ? home.resolve("data") : data;
         Path exports = path(get(map(get(root, "export")), "directory"), problems);
         Path assets = path(get(map(get(root, "assets")), "directory"), problems);
-        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 50L * 1024 * 1024,
+        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 100L * 1024 * 1024,
                 "space-harvester.assets.max-size", problems);
+        // Wie AssetConfiguration des Dienstes; die Wartezeit (large-file-wait) ist in der Bibliothek fest 30 s.
+        long largeAsset = size(get(map(get(root, "assets")), "large-file-threshold"), 20L * 1024 * 1024,
+                "space-harvester.assets.large-file-threshold", problems);
+        int maxLargeAssets = Math.max(1, integer(get(map(get(root, "assets")), "max-concurrent-large-files"), 2,
+                "space-harvester.assets.max-concurrent-large-files", problems));
         Duration searchTimeout = duration(get(map(get(root, "cache")), "search-timeout"), Duration.ofSeconds(5),
                 "space-harvester.cache.search-timeout", problems);
         int maxTreeNodes = integer(get(map(get(root, "query")), "max-tree-nodes"), 50_000,
@@ -192,7 +198,7 @@ public final class AppSettingsLoader {
         Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
-                maxAsset, searchTimeout, maxTreeNodes, pdfFont);
+                maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont);
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
@@ -205,7 +211,42 @@ public final class AppSettingsLoader {
                 tls(get(network, "tls"), problems), cache,
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
-                sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems));
+                sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
+                localFiles(map(get(root, "local-files")), problems));
+    }
+
+    /**
+     * {@code space-harvester.local-files}, geprüft wie im Core: {@code roots} als YAML-Liste oder als Text getrennt
+     * durch {@code ;}; ein relativer Pfad wird gemeldet (ohne ihn zu nennen) und gewährt nichts.
+     */
+    private LocalFileSettings localFiles(Map<?, ?> localFiles, List<String> problems) {
+        boolean allowAll = flag(get(localFiles, "allow-all"), false, ROOT + "." + LocalFileSettings.ALLOW_ALL,
+                problems);
+        List<Object> raw = new ArrayList<>();
+        Object roots = get(localFiles, "roots");
+        if (roots instanceof List<?> list) {
+            raw.addAll(list);
+        } else if (roots instanceof Map<?, ?>) {
+            problems.add(ROOT + "." + LocalFileSettings.ROOTS + " ist eine Liste von Ordnern, keine Zuordnung");
+        } else if (roots != null) {
+            String text = text(roots, problems);
+            if (text != null) {
+                raw.addAll(List.of(text.split(LocalFileSettings.SEPARATOR)));
+            }
+        }
+        List<Path> granted = new ArrayList<>();
+        for (Object entry : raw) {
+            Path root = path(entry, problems);
+            if (root == null) {
+                continue;
+            }
+            if (!root.isAbsolute()) {
+                problems.add(ROOT + "." + LocalFileSettings.ROOTS + ": nur absolute Pfade sind erlaubt");
+                continue;
+            }
+            granted.add(root);
+        }
+        return new LocalFileSettings(allowAll, granted);
     }
 
     /** {@code space-harvester-app.ai-access} und {@code .ai-keepass-entry}; Unbekanntes gilt als nicht gewählt. */
@@ -602,7 +643,7 @@ public final class AppSettingsLoader {
                 text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
                 optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
-                text(get(ai, "embedding-chunk-overlap-sentences"), problems));
+                text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -610,7 +651,7 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
-                draft.tokens(), draft.overlap());
+                draft.tokens(), draft.overlap(), draft.visionModel());
     }
 
     // ------------------------------------------------------------------ Werte

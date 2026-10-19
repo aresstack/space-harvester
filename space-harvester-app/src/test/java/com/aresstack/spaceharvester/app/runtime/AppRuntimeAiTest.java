@@ -21,4 +21,15 @@ class AppRuntimeAiTest {
         assertThat(AppRuntime.aiService(without, "key", "test").rerankModel()).isNull();
         assertThat(AppRuntime.aiService(AppSettings.AiSettings.NONE, null, "test")).isEqualTo(AiServiceSettings.NONE);
     }
+
+    @Test
+    void theVisionModelReachesTheCoreOnlyWhenSet() {
+        AppSettings.AiSettings with = new AppSettings.AiSettings("https://ki.firma.de/v1", null, null, null, null,
+                List.of(), null, null, null, "gpt-4o-mini");
+        AppSettings.AiSettings without = new AppSettings.AiSettings("https://ki.firma.de/v1", null, null, null, null,
+                List.of());
+
+        assertThat(AppRuntime.aiService(with, "key", "test").visionModel()).isEqualTo("gpt-4o-mini");
+        assertThat(AppRuntime.aiService(without, "key", "test").visionModel()).isNull();
+    }
 }

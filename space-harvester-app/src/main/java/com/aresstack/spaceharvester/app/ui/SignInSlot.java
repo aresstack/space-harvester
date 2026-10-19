@@ -60,6 +60,7 @@ public final class SignInSlot extends JPanel {
     private boolean sending;
     private SignInRequests watched;
     private AutoCloseable subscription;
+    private Runnable onAccepted = () -> { };
 
     /** @param which die Anforderung, die diese Ansicht zeigen soll, etwa die des gewählten Auftrags */
     public SignInSlot(AppContext context, Function<SignInRequests, Optional<SignInRequest>> which) {
@@ -123,6 +124,14 @@ public final class SignInSlot extends JPanel {
         resendButton.addActionListener(event -> resend());
         declineButton.addActionListener(event -> decline());
         refresh();
+    }
+
+    /**
+     * Läuft im EDT, sobald die Quelle einen hier eingegebenen Code annimmt, etwa um Bilder und Anhänge der gezeigten
+     * Seite neu zu laden (wie {@code UnlockingDocumentReader} im Enterprise AI Client).
+     */
+    public void onAccepted(Runnable action) {
+        this.onAccepted = action == null ? () -> { } : action;
     }
 
     /** Zeigt die Anforderung, die {@code which} jetzt liefert; eine gleiche bleibt samt eingetipptem Code stehen. */
@@ -194,6 +203,9 @@ public final class SignInSlot extends JPanel {
             // Abgelehnt nennt die Quelle den Grund selbst (error der Anforderung).
             localError = answer == SignInRequest.Answer.FAILED ? SEND_FAILED : null;
             refresh();
+            if (answer == SignInRequest.Answer.ACCEPTED) {
+                onAccepted.run();
+            }
         }, failure -> {
             Arrays.fill(code, '\0');
             setSending(false);

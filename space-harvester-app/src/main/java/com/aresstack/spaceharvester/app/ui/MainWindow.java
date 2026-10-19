@@ -283,6 +283,12 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
+    public void openPassage(String sourceId, String passageId) {
+        show(AppContext.Section.CONTENT);
+        content.openPassage(sourceId, passageId);
+    }
+
+    @Override
     public void openSpace(String sourceId, String spaceKey) {
         show(AppContext.Section.CONTENT);
         content.openSpace(sourceId, spaceKey);
