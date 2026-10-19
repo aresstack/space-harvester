@@ -160,6 +160,18 @@ class WorkspaceTest {
     }
 
     @Test
+    void onlyThePageIsDownloadedWithDepthZeroAndWithChildrenWithoutDepth() throws Exception {
+        Workspace workspace = start().workspace();
+
+        JobStatus only = await(workspace, workspace.startExport("wiki", "DEV", "100", 0, List.of("json")));
+        JobStatus all = await(workspace, workspace.startExport("wiki", "DEV", "100", null, List.of("json")));
+
+        assertThat(only.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(workspace.exportDataset(only.id()).orElseThrow().pages()).isEqualTo(1);
+        assertThat(workspace.exportDataset(all.id()).orElseThrow().pages()).isEqualTo(2);
+    }
+
+    @Test
     void aFreshSourceDeliversPagesLiveWithoutStock() throws Exception {
         Workspace workspace = start().workspace();
 

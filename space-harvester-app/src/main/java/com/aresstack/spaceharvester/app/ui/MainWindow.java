@@ -317,10 +317,11 @@ public final class MainWindow implements AppContext.Navigator {
     }
 
     @Override
-    public void downloadPage(String sourceId, String spaceKey, String pageId) {
+    public void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
         notice("Download wird gestartet …", Comic.MUTED);
-        Downloads.startPage(context, sourceId, spaceKey, pageId, started -> {
-            notice("Download der Seite samt Unterseiten gestartet", Comic.MUTED);
+        Downloads.startPage(context, sourceId, spaceKey, pageId, withChildren, started -> {
+            notice(withChildren ? "Download der Seite samt Unterseiten gestartet" : "Download der Seite gestartet",
+                    Comic.MUTED);
             showJob(started.jobs().get(0).id());
         }, error -> notice("Download ließ sich nicht starten: " + Problems.describe(error).title(), Comic.RED));
     }
