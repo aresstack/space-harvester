@@ -153,9 +153,11 @@ zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und sch
 `source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
 bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
 
-Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung, noch nicht die Auslieferung: Bei
-REST-Abrufen von Inhalt und Vorschau sowie im Export ist der Platz frei, sobald die Datei gelesen ist, die Bytes liegen
-danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
+Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung. Ein abgelegter Anhang geht über
+`GET …/assets/{id}/content` als Strom aus der Ablage an den Client und hält seinen Platz, bis die Antwort geschrieben
+oder abgebrochen ist; die Antwort hat keine Content-Length, und passt der Inhalt am Ende nicht zu seinem Hash, bricht
+sie ab, statt als vollständig zu gelten. Bei Vorschauen und im Export ist der Platz frei, sobald die Datei gelesen ist,
+die Bytes liegen danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
 dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
 der Schranke erfasst.
 
