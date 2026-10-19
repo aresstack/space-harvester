@@ -59,6 +59,11 @@ public final class GitSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public String addressOption() {
+        return adapter(null, null, null).addressOption();
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
         return adapter(null, null, null).check(config);
     }
