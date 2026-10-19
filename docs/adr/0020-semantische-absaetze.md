@@ -117,6 +117,40 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
    (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die EAC-Kopie ChatSectionLabeler ist
    Paritätspflicht.
 
+## Nachtrag 2026-10-19: Stabile Passage-IDs (#452, #456, #460)
+
+Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
+
+- **Aufbau:** `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`, z. B.
+  `confluence:47110815@39950a2c…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 des angezeigten Textes,
+  `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
+  über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `structure`). Gelesen wird von hinten,
+  die Quellen-ID endet am ersten `:`; Seiten-IDs dürfen `@`, `#`, `:` und `/` enthalten.
+- **Nachschlagen:** `GET /api/v1/passages?id=` antwortet wie `KnowledgeResourceReader` mit `match`:
+  `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: der Text hat sich geändert, es folgen
+  alle aktuellen Absätze), `changed` (gleicher Text, Zerlegung oder Modell gewechselt, alle aktuellen Absätze) und
+  zusätzlich `unavailable` (die Seite hat gerade keine Absätze; `state` sagt warum). Eine unbekannte Seite, eine
+  unbekannte Quelle und eine Seite ohne `metadata`- oder `content`-Freigabe antworten gleich mit 404 `cache-miss`, nie
+  403: Eine ID verrät nicht, ob es die Seite gibt. Keine Passage-ID (falsche Form) ist 400 `invalid-request`; die
+  Meldung nennt die ID nicht.
+- **An allen Trefferarten** (wie `passage:` je Treffer in `KnowledgeSearchTool`), immer nur mit `content`-Freigabe und
+  nur aus dem schon geladenen Ergebnis, ohne weitere Abfrage je Treffer:
+  - Absätze der Leseansicht: `passages[].id` (`GET …/pages/{pageId}/passages`);
+  - Themenabschnitte der Navigation: `sections[].passageId`, die ID ihres ersten Absatzes;
+  - Schlagwort- und progressive Treffer: `passageId` des Absatzes, aus dem der Auszug stammt; ein Auszug der
+    Quellensuche statt des Caches trägt keine;
+  - semantische Treffer: `relevance.passageId` (bei `sort=relevance`) bzw. `passageId` der semantischen Variante,
+    der Absatz, der das ähnlichste Stück ganz enthält.
+- **Keine ID** gibt es, wenn die Absätze der Seite nicht aus genau dem Text stammen, aus dem Auszug oder Stück stammen
+  (anderer `inputSha256`), wenn das Ergebnis keine Capture kennt (Format 1), wenn kein Absatz das Stück ganz enthält
+  (Stücke nach Zeichenlänge über eine Absatzgrenze) und wenn sich Absätze im Ergebnis überlappen: Ohne Text ist ein
+  kaputtes Ergebnis nur daran zu erkennen, und eine ID darf nie still auf einen anderen Absatz zeigen. Leseansicht
+  und Treffer zählen gleich (Stelle im Ergebnis), auch wenn die Leseansicht einen Absatz hinter dem Textende auslässt.
+- **Gewollt anders als der Client** (siehe auch Punkt 10): Seite als `sourceId:pageId` statt Resource-ID;
+  Modellteil aus dem Modellnamen statt aus dem Fingerabdruck des Embedding-Raums; Versionsteile aus dem gespeicherten
+  Ergebnis; zusätzlicher Fall `unavailable`; ID im Parameter statt im Pfad; Themenabschnitte behalten `p<start>` als
+  `id` und tragen die Passage-ID zusätzlich; unsichtbar und unbekannt antworten gleich.
+
 ## Abweichungen vom Client
 
 - Passagen sind Ausschnitte des Textes statt neu zusammengefügter Sätze, damit die Leseansicht zu ihnen springen
