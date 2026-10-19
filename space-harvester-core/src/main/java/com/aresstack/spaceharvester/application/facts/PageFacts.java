@@ -53,19 +53,28 @@ public final class PageFacts {
     private final Enrichments enrichments;
     private final FactStore store;
     private final Function<PageKey, Optional<PageHeader>> headers;
+    private final FactEditStore edits;
+
+    /** Ohne Prüfablage: jeder Fakt hat Revision 0. */
+    public PageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages, Enrichments enrichments,
+                     FactStore store, Function<PageKey, Optional<PageHeader>> headers) {
+        this(catalog, access, pages, enrichments, store, headers, null);
+    }
 
     /**
      * @param enrichments für die Aktualität im Faktenblatt oder {@code null}, dann gilt jeder Fakt als veraltet
      * @param headers     Kopfdaten einer Seite im Cache (Space für die Rechteprüfung)
+     * @param edits       Prüfablage für die Revision im Faktenblatt oder {@code null}
      */
     public PageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages, Enrichments enrichments,
-                     FactStore store, Function<PageKey, Optional<PageHeader>> headers) {
+                     FactStore store, Function<PageKey, Optional<PageHeader>> headers, FactEditStore edits) {
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.access = Objects.requireNonNull(access, "access");
         this.pages = Objects.requireNonNull(pages, "pages");
         this.enrichments = enrichments;
         this.store = Objects.requireNonNull(store, "store");
         this.headers = Objects.requireNonNull(headers, "headers");
+        this.edits = edits;
     }
 
     /**
@@ -79,8 +88,11 @@ public final class PageFacts {
         }
         DeliveredPage page = pages.page(caller, sourceId, pageId, false);
         Map<String, Enrichment.Freshness> freshness = new HashMap<>();
+        String input = null;
         if (enrichments != null) {
-            for (Enrichments.View view : enrichments.view(page.snapshot())) {
+            Enrichments.Inspection inspection = enrichments.inspect(page.snapshot());
+            input = inspection.inputSha256();
+            for (Enrichments.View view : inspection.stored()) {
                 freshness.put(view.enrichment().processorId() + '\u0000' + view.enrichment().inputSha256(),
                         view.freshness());
             }
@@ -88,8 +100,14 @@ public final class PageFacts {
         List<Entry> entries = new ArrayList<>();
         for (MetadataFact fact : store.factsOf(page.header().key())) {
             if (type == null || type.equals(fact.type())) {
-                entries.add(new Entry(fact, freshness.getOrDefault(fact.provenance().processorId() + '\u0000'
-                        + fact.provenance().inputSha256(), Enrichment.Freshness.STALE)));
+                // Manuelle Fakten gelten für den Text, gegen den sie angelegt wurden.
+                Enrichment.Freshness current = fact.origin() == FactOrigin.MANUAL
+                        ? input != null && input.equals(fact.provenance().inputSha256())
+                        ? Enrichment.Freshness.CURRENT : Enrichment.Freshness.STALE
+                        : freshness.getOrDefault(fact.provenance().processorId() + '\u0000'
+                        + fact.provenance().inputSha256(), Enrichment.Freshness.STALE);
+                long revision = edits == null ? 0 : edits.find(fact.id()).map(FactEdit::revision).orElse(0L);
+                entries.add(new Entry(fact, current, revision));
             }
         }
         return new Sheet(sourceId, pageId, page.header().metadata().partitionKey(), entries);
@@ -231,7 +249,15 @@ public final class PageFacts {
         }
     }
 
-    /** Ein Fakt mit seiner Aktualität gegenüber der ausgelieferten Payload. */
-    public record Entry(MetadataFact fact, Enrichment.Freshness freshness) {
+    /**
+     * Ein Fakt mit seiner Aktualität gegenüber der ausgelieferten Payload.
+     *
+     * @param revision Revision in der Prüfablage für {@link FactEdits}, {@code 0} außerhalb
+     */
+    public record Entry(MetadataFact fact, Enrichment.Freshness freshness, long revision) {
+
+        public Entry(MetadataFact fact, Enrichment.Freshness freshness) {
+            this(fact, freshness, 0);
+        }
     }
 }

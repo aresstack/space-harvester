@@ -122,6 +122,23 @@ Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`, `OBJECT`, `VALUE`,
   Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
   es gibt keine Gesamtzahl.
 
+**Manuelle und geprüfte Fakten** (wie `FactOrigin`/`FactReview` im Enterprise AI Client) liegen außerhalb des Caches
+unter `space-harvester.facts.directory` (Standard `data/facts`, im Kern `<dataDirectory>/facts`, wirksam nach
+Neustart): `facts.json` (Schema `facts/v1`, atomar ersetzt) und `audit.jsonl` (nur angehängt), nach dem Muster der
+Begriffsbeziehungen. Ein Neuaufbau des Caches oder der Anreicherungen berührt sie nicht. Die Payloads stammen aus dem
+Inhalt der Seiten; das Verzeichnis gehört nur dem Dienstkonto. Jeder Fakt trägt `origin` (`AUTOMATIC`, `MANUAL`),
+`review` (`UNREVIEWED`, `CONFIRMED`, `REJECTED`) und `revision` (`0`, solange niemand ihn geprüft hat). Manuelle Fakten
+berührt kein Prozessorlauf. Ein geprüfter automatischer Fakt behält seinen Status, solange sein Ergebnis dieselbe
+Aussage liefert; liefert die Neuberechnung etwas anderes, bleibt die geprüfte Kopie mit alter Herkunft (dann `stale`)
+und der neue Fakt erscheint ungeprüft unter eigener Kennung. Ändern verlangt zusätzlich `sync` an der Seite, eine
+veraltete `revision` gibt 409 (`fact-conflict`):
+
+- `POST …/pages/{pageId}/facts` mit `{type, role, payload, arguments: [{role, value}], anchor}`: manueller Fakt.
+- `PUT …/pages/{pageId}/facts/{factId}/review` mit `{review, revision}`; `UNREVIEWED` nimmt einen automatischen Fakt
+  wieder heraus.
+- `DELETE …/pages/{pageId}/facts/{factId}?revision=`: manueller Fakt oder geprüfte Kopie; automatische nur verwerfen.
+- `GET …/pages/{pageId}/facts/{factId}/history`: Protokoll mit Bearbeiter (`jobOwner`), Zeitpunkt, Status, Revision.
+
 ## Reihenfolge der Quellen
 
 Höhere zuerst, geprüft in `ConfigServerImportTest` und `AzureKeyVaultSecretsTest`:
