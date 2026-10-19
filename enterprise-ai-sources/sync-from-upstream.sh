@@ -47,6 +47,9 @@ module_classes=(
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysis
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/ImageAnalysisCache
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/image/SourceImageAnalysisUseCase
+  # Dokumentnavigation (#181): Benennung der Themenabschnitte über den Chat-Port, wie im Upstream
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/SectionLabeler
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/ChatSectionLabeler
   proasteion/application:com/aresstack/enterpriseai/proasteion/application/knowledge/DocumentSourceFileTextExtractor
   # MediaWiki (#187): Brücke vom SecretProvider zur Anmeldung am Wiki, wie AdapterAssembly.sourceProviders im Upstream
   proasteion/application:com/aresstack/enterpriseai/proasteion/application/security/SecretBackedMediaWikiCredentialsProvider

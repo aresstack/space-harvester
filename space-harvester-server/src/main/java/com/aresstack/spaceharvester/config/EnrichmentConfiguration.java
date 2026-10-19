@@ -21,6 +21,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.RelationProc
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.NavigationQueries;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
@@ -59,7 +60,8 @@ class EnrichmentConfiguration {
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
-                            ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences) {
+                            ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences,
+                            ObjectProvider<NavigationLabelModel> labels) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -68,10 +70,11 @@ class EnrichmentConfiguration {
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
-        // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften (ADR 0020)
+        // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften; Themenabschnitte
+        // benennt das Chat-Modell (ADR 0020)
         EnrichmentStore enrichmentStore = store.getIfAvailable(InMemoryEnrichmentStore::new);
         processors.add(new NavigationProcessor(new DocumentNavigationBuilder(), embedding.getIfAvailable(),
-                enrichmentStore::find));
+                enrichmentStore::find, labels.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
         return new Enrichments(projector(), processors,

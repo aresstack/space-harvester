@@ -380,6 +380,11 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `ParitySharePointTest`: die Paritäts-Site `ParitySharePoint` (Test-Fixtures des Core, Paket der SharePoint-Quelle,
   Java 8, #193), REST im Format `odata=verbose` über den HTTP-Server des JDK nur auf 127.0.0.1; `Forms`, das Bild und die
   versteckte Bibliothek fehlen, `maxDepth` wirkt.
+- `ParityBetaViewTest`: die Paritäts-Oberfläche `ParityBetaView` (Test-Fixtures des Core, Paket der BetaView-Quelle,
+  Java 8, #193) über den HTTP-Server des JDK nur auf 127.0.0.1: Login mit Struts-Token und Cookie, CSRF-Token,
+  Ergebnisliste, Download; Zugangsdaten kommen nur aus einem Test-Anbieter.
+- `ParityJesTest`: derselbe Server `ParityFtp` im JES-Modus (`SITE FILETYPE=JES`): Jobs zu Besitzer und Jobnamen-Filter,
+  Ausgabe mit Jobkarte; Zugangsdaten kommen nur aus einem Test-Anbieter.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
