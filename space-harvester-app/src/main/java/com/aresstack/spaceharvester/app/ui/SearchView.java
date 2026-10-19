@@ -954,8 +954,27 @@ public final class SearchView implements View {
         return results.ranked().stream().map(Hit::of).toList();
     }
 
-    /** Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl. */
-    record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
+    /**
+     * Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl.
+     *
+     * @param attachment Dateiname des Anhangs, in dessen Text der Treffer liegt (#183), oder {@code null}
+     */
+    record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
+               String attachment) {
+
+        Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
+            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, null);
+        }
+
+        /** Der Auszug in einer Zeile; bei einem Anhangstreffer vorn „Treffer im Anhang „Name““. */
+        String excerpt() {
+            String text = snippet == null ? "" : snippet.replaceAll("\\s+", " ").strip();
+            if (attachment == null) {
+                return text;
+            }
+            String where = "Treffer im Anhang „" + attachment + "“";
+            return text.isEmpty() ? where : where + " · " + text;
+        }
 
         /** Eine aufgelöste Adresse; statt eines Auszugs die Version. */
         static Hit of(PageAddresses.Match match) {
@@ -964,7 +983,8 @@ public final class SearchView implements View {
         }
 
         static Hit of(KeywordSearch.Hit hit) {
-            return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt());
+            return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt(),
+                    hit.attachment() == null ? null : hit.attachment().title());
         }
     }
 
@@ -1076,7 +1096,7 @@ public final class SearchView implements View {
                 case 0 -> hit.title();
                 case 1 -> hit.sourceId();
                 case 2 -> hit.spaceKey();
-                case 3 -> hit.snippet() == null ? "" : hit.snippet().replaceAll("\\s+", " ").strip();
+                case 3 -> hit.excerpt();
                 default -> Texts.time(hit.modifiedAt());
             };
         }
