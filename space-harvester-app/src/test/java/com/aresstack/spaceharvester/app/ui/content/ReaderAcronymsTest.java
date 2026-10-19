@@ -9,6 +9,9 @@ import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.terms.PageTerms;
+import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -130,6 +133,17 @@ class ReaderAcronymsTest {
         });
         assertThat(onEdt(() -> panel.reader().getSelectionStart())).isGreaterThan(text.indexOf("SSO"));
         assertThat(onEdt(() -> panel.reader().getSelectedText())).isEqualTo("API");
+        // Bezeichner aus dem Begriffsindex des Core (#119), für genau diesen Text
+        assertThat(shown.terms().state()).isEqualTo(PageTerms.State.CURRENT);
+        assertThat(onEdt(() -> panel.terms().counts().get(1)))
+                .isEqualTo(String.valueOf(shown.terms().identifierCount()));
+        assertThat(onEdt(() -> panel.terms().identifierChips().size())).isEqualTo(shown.terms().identifierCount());
+        // Das globale Verzeichnis (Bereich „Begriffe“) liest denselben Index.
+        TermQueries.TermList api = workspace.terms(new TermQueries.TermSearch(null, null, TermKind.ACRONYM, "API",
+                true, 10, null));
+        assertThat(api.terms()).singleElement().satisfies(term -> {
+            assertThat(term.expansions()).contains("Application Programming Interface");
+        });
 
         // Gleiche Seiten-ID, gleiches Akronym, andere Quelle: eigene Ausschreibung, nichts aus „wiki“
         ReaderDocument foreign = open(panel, "zweites", "200", false);
