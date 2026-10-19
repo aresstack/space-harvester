@@ -32,6 +32,18 @@ class PageTreeBuilderTest {
         assertThat(tree.depth()).isEqualTo(3);
     }
 
+    /** Wie Confluence /child/page: erst Position, dann Titel (ohne Groß-/Kleinschreibung), dann Seiten-ID. */
+    @Test
+    void siblingsFollowPositionThenTitleThenPageId() {
+        PageTree tree = PageTreeBuilder.build(List.of(entry("1", null),
+                new TreeEntry("9", "1", null, "alpha"), new TreeEntry("2", "1", null, "Zulu"),
+                new TreeEntry("8", "1", 1L, "Yankee"), new TreeEntry("3", "1", 0L, "X-Ray"),
+                new TreeEntry("5", "1", null, "Beta"), new TreeEntry("4", "1", null, "Beta"),
+                new TreeEntry("7", "1", null, null)));
+
+        assertThat(render(tree)).isEqualTo("1(3,8,9,4,5,2,7)");
+    }
+
     @Test
     void pageWithMissingParentBecomesARootWithItsSubtree() {
         PageTree tree = PageTreeBuilder.build(List.of(

@@ -95,6 +95,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /** Schlüssel der Wurzel einer Partition im Enterprise AI Client ({@code space:DEV}). */
     private static final String SPACE_NODE = "space:";
+    /** {@link PageAttachments#nativeFormat()} der Ersatzliste aus dem Lesebereich; sie hat keine Rohantworten. */
+    static final String READER_ATTACHMENTS = "knowledge-reader-attachments";
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
     /** Präfix des Cursors der Discovery-Listung; versioniert das Format. */
@@ -106,6 +108,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
     private static final int TITLE_SCAN_BATCH = 500;
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
+
     private final String id;
     private final String type;
     private final String title;
@@ -113,6 +117,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final InFlightLimit inFlight;
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
+    /**
+     * Umfang aus Startpunkten und Tiefe für einen Port mit {@link PartitionListingSource} (Confluence), sonst
+     * {@code null}: Die Auflistung einer Partition behält nur Seiten, die {@code discover} in diesem Umfang findet.
+     */
+    private final SourceScope restriction;
+    /** Seiten-IDs der letzten vollständigen Discovery im {@link #restriction}; {@code null} ohne eine. */
+    private volatile Set<String> inScope;
     /** Die letzte Discovery; Folgestapel derselben Listung lesen aus ihr, statt die Quelle erneut zu befragen. */
     private volatile Discovery discovery;
 
@@ -127,8 +138,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * @param scope Umfang für {@code discover} (#187); gilt nur für einen Port ohne {@link PartitionListingSource},
-     *              {@code null} ohne diesen Weg
+     * @param scope Umfang für {@code discover} (#187); für einen Port ohne {@link PartitionListingSource} der Weg zu
+     *              seinen Seiten, für einen mit eigener Auflistung (Confluence) deren Einschränkung auf Startpunkte und
+     *              Tiefe; {@code null} ohne diesen Weg bzw. ohne Einschränkung
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope) {
@@ -138,6 +150,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         this.port = port;
         this.inFlight = inFlight;
         this.scope = port instanceof PartitionListingSource ? null : scope;
+        this.restriction = port instanceof PartitionListingSource ? scope : null;
     }
 
     /** Ob die Seiten über {@code discover} und {@code load} kommen statt über eine Seitenliste je Partition. */
@@ -441,6 +454,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle kann Seiten einer Partition nicht auflisten", null);
         }
+        // Mit Startpunkten: Jede Auflistung beginnt mit einer vollständigen Discovery im Umfang, deren Seiten bleiben.
+        Set<String> allowed = restriction == null ? null
+                : cursor == null || cursor.isEmpty() || inScope == null ? restrict() : inScope;
         PartitionResources batch;
         try {
             batch = listing.resources(partitionKey, cursor == null ? "" : cursor, limit);
@@ -448,7 +464,42 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return new PageMetadataBatch(batch.resources().stream()
-                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+                .map(resource -> pageMetadata(resource, partitionKey))
+                .filter(page -> allowed == null || allowed.contains(page.pageId())).toList(), batch.nextCursor());
+    }
+
+    /**
+     * Die Seiten im Umfang aus Startpunkten und Tiefe, wie die Indexierung im Enterprise AI Client
+     * ({@link KnowledgeSourcePort#discover}). Scheitert sie, scheitert die Auflistung, und keine Seite gilt als außerhalb
+     * des Umfangs.
+     */
+    private Set<String> restrict() {
+        inScope = null;
+        List<KnowledgeResource> found;
+        try {
+            found = port.discover(restriction);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        Set<String> pageIds = new java.util.HashSet<>();
+        for (KnowledgeResource resource : found) {
+            if (resource != null) {
+                pageIds.add(nativeId(resource.id()));
+            }
+        }
+        if (found.size() >= restriction.maxResources()) {
+            // Wie im Client begrenzt maxResources den Umfang; Seiten jenseits davon fallen aus dem Katalog.
+            LOG.warn("Discovery der Quelle {} hat die Obergrenze maxResources erreicht ({} Seiten)", id, found.size());
+        }
+        Set<String> complete = Set.copyOf(pageIds);
+        inScope = complete;
+        return complete;
+    }
+
+    @Override
+    public boolean outsideScope(String pageId) {
+        Set<String> current = inScope;
+        return restriction != null && current != null && !current.contains(pageId);
     }
 
     /**
@@ -709,10 +760,34 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         try {
             list = listing.storedAttachments(pageId);
         } catch (KnowledgeSourceException e) {
+            if (e.kind() == KnowledgeSourceException.Kind.INVALID_RESPONSE && port instanceof PageViewSource view) {
+                return readerAttachments(pageId, view, e);
+            }
             throw accessFailure(e);
         }
         return new PageAttachments(pageId, list.attachments().stream().map(KnowledgeSourceHarvestSource::attachment)
                 .toList(), list.payloads(), list.mediaType(), list.nativeFormat(), list.warnings(), list.retrievedAt());
+    }
+
+    /**
+     * Liefert die Quelle die vollständige Liste nicht (mehr als {@link AttachmentListSource#MAX_ATTACHMENTS} Einträge,
+     * wiederholte Seiten), zeigt der Enterprise AI Client im Lesebereich trotzdem die ersten Anhänge
+     * ({@code ConfluenceKnowledgeSource.readerAttachments}, höchstens 500). Ebenso hier: die Liste des Lesebereichs, ohne
+     * Rohantworten, mit Warnung. Scheitert auch sie, bleibt die Seite ohne Anhänge, wie dort.
+     */
+    private PageAttachments readerAttachments(String pageId, PageViewSource view, KnowledgeSourceException cause) {
+        List<PageAttachment> attachments = List.of();
+        String warning = "Anhangsliste nicht vollständig lieferbar (" + cause.kind() + "); es gelten die Anhänge "
+                + "des Lesebereichs";
+        try {
+            attachments = view.attachmentsOf(resource(pageId).id()).stream()
+                    .map(KnowledgeSourceHarvestSource::attachment).toList();
+        } catch (KnowledgeSourceException | RuntimeException e) {
+            LOG.warn("Quelle {}: Anhänge des Lesebereichs nicht lesbar ({})", id, e.getClass().getSimpleName());
+            warning = "Anhangsliste nicht lieferbar; die Seite bleibt ohne Anhänge";
+        }
+        return new PageAttachments(pageId, attachments, List.of(), "application/json", READER_ATTACHMENTS,
+                List.of(warning), Instant.now());
     }
 
     @Override
