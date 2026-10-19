@@ -83,7 +83,9 @@ import tools.jackson.databind.node.ObjectNode;
  * Dokumente daneben, abgeleitet beim Speichern ({@link EnrichmentFacts}), mit Typ, Quelle und Argumenten indiziert. Wie
  * die Vektoren gehören sie zu ihrem Ergebnis, werden mit ihm ersetzt und gelöscht, und {@link #find} liefert sie nie.
  * Ein Index in v1 oder v2 wird beim Öffnen hochgestuft: Die Fakten werden aus den gespeicherten Ergebnissen abgeleitet,
- * ohne etwas neu zu berechnen; die Ergebnisse selbst und ihre Formate bleiben unverändert.
+ * ohne etwas neu zu berechnen; die Ergebnisse selbst und ihre Formate bleiben unverändert. Seit
+ * {@code enrichment-store/v4} tragen auch {@code activities} und {@code relations} Fakten ({@code EVENT},
+ * {@code RELATION}); ein Index in v3 wird beim Öffnen ebenso hochgestuft.
  * <p>Ebenso liegt jeder Begriff eines {@code terms}-Ergebnisses als eigenes, indexiertes Dokument im selben Index
  * ({@link TermIndex}, #119, ADR 0019): eines je Seite, Art und Suchwert, mit allen Fundstellen gepackt und den Feldern
  * zum Filtern (Quelle, Art, Suchwert, Wörter, Prozessorversion) und Sortieren. Auch sie werden mit ihrem Ergebnis
@@ -99,13 +101,16 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         AutoCloseable {
 
     /** Schemaversion in den Commit-Daten. */
-    public static final String VERSION = "enrichment-store/v3";
+    public static final String VERSION = "enrichment-store/v4";
 
     /** Vorgängerschema ohne Vektoren und Fakten; wird beim Öffnen hochgestuft. */
     static final String VERSION_1 = "enrichment-store/v1";
 
     /** Vorgängerschema ohne Fakten; wird beim Öffnen hochgestuft. */
     static final String VERSION_2 = "enrichment-store/v2";
+
+    /** Vorgängerschema ohne Fakten aus {@code activities} und {@code relations}; wird beim Öffnen hochgestuft. */
+    static final String VERSION_3 = "enrichment-store/v3";
 
     /** Prozessor, dessen Ergebnisse Vektoren tragen ({@code EmbeddingProcessor#id()}). */
     static final String EMBEDDING = "embedding";
@@ -206,7 +211,8 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             if (exists) {
                 String schema = SegmentInfos.readLatestCommit(directory).getUserData()
                         .get(PageCacheSchema.SCHEMA_KEY);
-                if (!VERSION.equals(schema) && !VERSION_1.equals(schema) && !VERSION_2.equals(schema)) {
+                if (!VERSION.equals(schema) && !VERSION_1.equals(schema) && !VERSION_2.equals(schema)
+                        && !VERSION_3.equals(schema)) {
                     throw new PageCacheException("Anreicherungsablage " + root + " hat Schema "
                             + (schema == null ? "(unbekannt)" : schema) + ", erwartet " + VERSION
                             + "; Verzeichnis löschen (die Ergebnisse werden neu berechnet)");
@@ -737,7 +743,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
     }
 
-    /** v1/v2 → v3: Fakten aus den gespeicherten Ergebnissen ableiten, ohne etwas neu zu berechnen. */
+    /** v1/v2/v3 → v4: Fakten aus den gespeicherten Ergebnissen ableiten, ohne etwas neu zu berechnen. */
     private static void deriveFacts(IndexWriter writer) throws IOException {
         // Nahezu-Echtzeit-Leser: sieht die Löschungen der v1-Stufe ohne Commit.
         try (DirectoryReader reader = DirectoryReader.open(writer)) {

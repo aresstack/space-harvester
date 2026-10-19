@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
+import com.aresstack.spaceharvester.source.EacSourceAdapters;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
@@ -42,6 +43,27 @@ class SourceConfiguration {
     @Bean
     LocalFilesSourceAdapter localFilesSourceAdapter() {
         return new LocalFilesSourceAdapter();
+    }
+
+    /** Kopien aus dem Enterprise AI Client ohne eigenen Ordner (#187); Zugangsdaten über den SecretProvider (#188). */
+    @Bean
+    SourceAdapter ftpSourceAdapter() {
+        return EacSourceAdapters.ftp();
+    }
+
+    @Bean
+    SourceAdapter jesSourceAdapter() {
+        return EacSourceAdapters.jes();
+    }
+
+    @Bean
+    SourceAdapter ndvSourceAdapter() {
+        return EacSourceAdapters.ndv();
+    }
+
+    @Bean
+    SourceAdapter sharePointSourceAdapter() {
+        return EacSourceAdapters.sharePoint();
     }
 
     /**

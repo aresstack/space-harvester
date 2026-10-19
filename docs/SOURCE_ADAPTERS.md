@@ -11,9 +11,15 @@ Confluence-Client gibt es nicht.
 `ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
 (`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider` und `files` über
 `LocalFilesSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
-`<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
+`<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis, sowie
+`ftp`, `jes`, `ndv` und `sharepoint` über `EacSourceAdapters`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
+
+Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
+`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“) und
+`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
+über `SourceAdapter.displayName()` an.
 
 ## Vertrag
 
@@ -153,9 +159,13 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
    über die Proxy-Route je Ziel; ohne `credentialRef`, `auth` und eigene Zertifikate bis #188, also nur öffentliche und
-   lokale Repositorys). Übernommen, aber im Core noch nicht registriert: `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
-   Commons Net, #187), `source-ndv` (Natural Development Server, #187), `source-sharepoint` (SharePoint-Dokumentbibliotheken, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
-   ohne Partitionen.
+   lokale Repositorys). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
+   Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
+   `startPoints`, anonym ohne `credentialRef`) und `jes` (Spool, `credentialRef` Pflicht), `source-ndv` als `ndv`
+   (`host`, `startPoints`, `credentialRef` Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
+   Proxy-Route je Ziel, ohne `credentialRef` mit der Windows-Anmeldung des JDK). `credentialRef` löst der
+   `SecretProvider` des Katalogs auf, also der Anbieter des einbettenden Programms (#188); `auth`, `base-url` und eigene
+   Zertifikate gibt es auf diesem Weg nicht.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter`. `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen
    Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
@@ -170,6 +180,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Seiten fehlen in Liste und Suche.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
+- `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv` und `sharepoint` öffnen je eine Partition ohne Verbindung; die
+  Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
 - `PageMetadataApiTest`, `SinglePageMetadataApiTest`, `NativeSnapshotSourceTest`: alle Wege über echtes HTTP gegen
   die Fake-Confluence aus den Test-Fixtures der Kopie.

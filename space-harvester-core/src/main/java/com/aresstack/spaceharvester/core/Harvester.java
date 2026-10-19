@@ -89,6 +89,7 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.SourceSnapshots;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
@@ -757,6 +758,15 @@ public final class Harvester implements AutoCloseable {
     /** Quellen, Partitionen (Spaces), Live-Metadaten und Anhangslisten direkt bei der Quelle. */
     public SourceQueries sources() {
         return sources;
+    }
+
+    /**
+     * Die Quellentypen, die dieser Harvester kennt (#187): die eingebauten und die über
+     * {@link Builder#sourceAdapter} eingehängten, in Registrierungsreihenfolge, mit Anzeigename und ob der Typ einen
+     * Eintrag {@code options.credentialRef} verlangt.
+     */
+    public List<SourceType> sourceTypes() {
+        return sources.types();
     }
 
     /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */

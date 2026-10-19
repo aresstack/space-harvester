@@ -108,11 +108,12 @@ Protokoll als eigener Lucene-Index in `search-runs/`, sonst im Speicher; in der 
 - Die Kandidatenliste je Lauf, Vertiefen und der Trichter für den Chat bleiben im Client.
 
 **Fakten** entstehen beim Speichern einer Anreicherung aus ihrem Ergebnis, im selben Lucene-Index (`enrichments/`,
-Schema `enrichment-store/v3`; ein v1/v2-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
+Schema `enrichment-store/v4`; ein v1/v2/v3-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
 ersetzt und gelöscht. Typen nach
 dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
-(aus `entities`), `PROPERTY` (aus `properties`); Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`,
-`VALUE`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
+(aus `entities`), `PROPERTY` (aus `properties`), `EVENT` (aus `activities`) und `RELATION` (aus `relations`);
+Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`, `OBJECT`, `VALUE`, `PREDICATE`, Rollen wie `ACTOR`,
+`STATUS`, `QUALIFIER`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
 
 - `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
   wie das Lesen der Seite und `freshness` je Fakt.

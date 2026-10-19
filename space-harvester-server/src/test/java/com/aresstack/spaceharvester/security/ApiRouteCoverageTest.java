@@ -50,10 +50,11 @@ class ApiRouteCoverageTest {
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     // Das Suchlauf-Protokoll (#182) zeigt nur eigene Läufe, Fakten (#182) nur lesbarer Seiten: 200 mit leerer Liste.
     private static final String FACTS = "/api/v1/facts";
+    // Die Quellentypen (#187) sind Teil des Programms, keine Daten einer Quelle: 200 mit der Typenliste.
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
             "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS, "/api/v1/terms",
-            "/api/v1/terms/occurrences", "GET /api/v1/term-relations");
+            "/api/v1/terms/occurrences", "GET /api/v1/term-relations", "/api/v1/sources/types");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
