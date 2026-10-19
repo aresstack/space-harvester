@@ -122,6 +122,8 @@ class SourcesApiTest {
                 .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false,\"addressOption\":\"siteUrl\",")
                 .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true,\"addressOption\":\"baseUrl\",")
                 .contains("\"authModes\":[\"none\",\"basic\",\"pat\"]", "\"kind\":\"SECRET_REF\"")
+                .containsPattern("\\{\"id\":\"sharepoint\"(?:(?!\\{\"id\").)*\"tls\":true")
+                .containsPattern("\\{\"id\":\"ftp\"(?:(?!\\{\"id\").)*\"tls\":false")
                 .doesNotContain("vaultValue")
                 .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false,\"addressOption\":\"mailbox\",");
     }

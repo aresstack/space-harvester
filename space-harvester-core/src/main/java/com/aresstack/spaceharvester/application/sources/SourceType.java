@@ -17,9 +17,12 @@ import java.util.Objects;
  * @param fields           Eingabefelder unter {@code options} in Anzeigereihenfolge; {@code title}, {@code base-url},
  *                         {@code auth} und {@code client-certificate} stehen außerhalb von {@code options} und fehlen
  * @param authModes        erlaubte Werte von {@code auth.type}, zuerst {@link AuthMode#NONE}
+ * @param tls              der Typ nimmt im allgemeinen Quellenformular {@code trust-bundle} und
+ *                         {@code client-certificate} an (#394); {@code false} bei Protokollen ohne TLS wie FTP und bei
+ *                         Confluence, das sein eigenes Formular hat
  */
 public record SourceType(String id, String displayName, boolean needsCredentials, String addressOption,
-                         List<SourceField> fields, List<AuthMode> authModes) {
+                         List<SourceField> fields, List<AuthMode> authModes, boolean tls) {
 
     /** Werte von {@code auth.type} in der Quellenkonfiguration. */
     public enum AuthMode {
@@ -36,5 +39,11 @@ public record SourceType(String id, String displayName, boolean needsCredentials
         Objects.requireNonNull(displayName, "displayName");
         fields = fields == null ? List.of() : List.copyOf(fields);
         authModes = authModes == null || authModes.isEmpty() ? List.of(AuthMode.NONE) : List.copyOf(authModes);
+    }
+
+    /** Ohne TLS-Angaben. */
+    public SourceType(String id, String displayName, boolean needsCredentials, String addressOption,
+                      List<SourceField> fields, List<AuthMode> authModes) {
+        this(id, displayName, needsCredentials, addressOption, fields, authModes, false);
     }
 }
