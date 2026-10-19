@@ -35,6 +35,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.ActivityProc
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -84,6 +85,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -196,6 +198,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final TermQueries terms;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
@@ -292,7 +295,7 @@ public final class Harvester implements AutoCloseable {
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
-                    new RelationProcessor()));
+                    new RelationProcessor(), new TermProcessor()));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -320,6 +323,9 @@ public final class Harvester implements AutoCloseable {
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
+            // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
+            this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
+                    new TermProcessor().version());
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -730,6 +736,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageNavigation navigation() {
         return navigation;
+    }
+
+    /**
+     * Begriffsindex (#119, ADR 0019): Akronyme und Bezeichner aller berechtigten Seiten mit Fundstellen und Snippets auf
+     * Abruf; für eine einzelne Seite {@link com.aresstack.spaceharvester.application.terms.PageTerms#read}.
+     */
+    public TermQueries terms() {
+        return terms;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */

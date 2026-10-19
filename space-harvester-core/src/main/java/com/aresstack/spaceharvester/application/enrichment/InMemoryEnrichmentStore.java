@@ -3,6 +3,9 @@ package com.aresstack.spaceharvester.application.enrichment;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.terms.TermIndex;
+import com.aresstack.spaceharvester.application.terms.TermPayload;
+import com.aresstack.spaceharvester.application.terms.TermPosting;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -14,9 +17,10 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Flüchtige Ablage, solange kein Cache-Verzeichnis eingerichtet ist; auch Test-Fake. Die Vektorsuche vergleicht jedes
- * gespeicherte Stück einzeln, also exakt statt angenähert wie HNSW.
+ * gespeicherte Stück einzeln, also exakt statt angenähert wie HNSW; der Begriffsindex liest die Ergebnisse von
+ * {@code terms} bei jeder Abfrage.
  */
-public final class InMemoryEnrichmentStore implements EnrichmentStore, EmbeddingIndex {
+public final class InMemoryEnrichmentStore implements EnrichmentStore, EmbeddingIndex, TermIndex {
 
     private static final String EMBEDDING = "embedding";
 
@@ -91,5 +95,27 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
                 .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
                 .thenComparingInt(ChunkHit::chunk));
         return List.copyOf(hits.subList(0, Math.min(k, hits.size())));
+    }
+
+    @Override
+    public synchronized List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max) {
+        if (max < 1 || max > MAX_BATCH) {
+            throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
+        }
+        List<TermPosting> found = new ArrayList<>();
+        for (TreeMap<String, Enrichment> page : results.values()) {
+            Enrichment result = page.get(TermPayload.PROCESSOR);
+            if (result == null) {
+                continue;
+            }
+            for (TermPosting posting : TermPayload.postings(result)) {
+                if (filter.matches(posting) && (from == null || (inclusive ? ORDER.compare(posting.sortKey(), from) >= 0
+                        : ORDER.compare(posting.sortKey(), from) > 0))) {
+                    found.add(posting);
+                }
+            }
+        }
+        found.sort(Comparator.comparing(TermPosting::sortKey, ORDER));
+        return List.copyOf(found.subList(0, Math.min(max, found.size())));
     }
 }
