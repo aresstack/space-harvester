@@ -58,7 +58,7 @@ class SemanticPreparationTest {
     }
 
     private void found(KeywordSearch.Results results) {
-        when(keywords.search(any(), any(), isNull(), anyInt())).thenReturn(results);
+        when(keywords.search(any(), any(), isNull(), anyInt(), any())).thenReturn(results);
     }
 
     private static KeywordSearch.SourceState searched() {

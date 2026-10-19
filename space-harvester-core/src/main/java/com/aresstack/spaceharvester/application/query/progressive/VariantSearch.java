@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query.progressive;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import java.util.Objects;
 
 /**
@@ -17,6 +18,15 @@ public interface VariantSearch {
      */
     KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit);
 
+    /**
+     * Wie {@link #search(AccessContext, KeywordSearch.Query, int)} als Teil des Laufs {@code partOf} im
+     * Suchlauf-Protokoll (#182); ohne Protokoll dasselbe.
+     */
+    default KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit,
+                                         SearchRunId partOf) {
+        return search(caller, query, limit);
+    }
+
     /** Bricht das Laden eines Stapels ab ({@link KeywordSearch#cancel(String)}). */
     default void cancelLoading(String progressId) {
     }
@@ -27,6 +37,12 @@ public interface VariantSearch {
             @Override
             public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
                 return keywords.search(caller, query, null, limit);
+            }
+
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit,
+                                                SearchRunId partOf) {
+                return keywords.search(caller, query, null, limit, partOf);
             }
 
             @Override

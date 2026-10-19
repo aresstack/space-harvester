@@ -4,6 +4,9 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
@@ -17,6 +20,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -30,6 +34,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
@@ -75,6 +80,10 @@ import java.util.regex.Pattern;
  *
  * <p>Nur Schlagworte, nie Embeddings; die semantische Suche (nur mit Haken) ist
  * {@link com.aresstack.spaceharvester.application.ranking.RelevanceSearch}.
+ *
+ * <p>Jeder Stapel ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182): Suchtext, Quellen mit Ausgang und
+ * die Trefferzahlen je Stufe ({@link Results#searchRun()}). Gezählt wird nur Geprüftes; für Endnutzer mit delegierter
+ * Anmeldung fehlen deshalb die Stufen der ungeprüften Funde. Ein Fehler des Protokolls lässt die Suche nie scheitern.
  */
 public class KeywordSearch {
 
@@ -118,6 +127,7 @@ public class KeywordSearch {
     private final int maxQueries;
     private final ExcerptPriority excerpts;
     private final int loads;
+    private final SearchRunLog runs;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -150,6 +160,15 @@ public class KeywordSearch {
      */
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, int loads) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, loads, SearchRunLog.NONE);
+    }
+
+    /**
+     * @param runs Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE}
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, int loads, SearchRunLog runs) {
+        this.runs = Objects.requireNonNull(runs, "runs");
         if (loads < 1 || loads > MAX_LIMIT) {
             throw new IllegalArgumentException("loads muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
@@ -250,6 +269,54 @@ public class KeywordSearch {
      * @throws com.aresstack.spaceharvester.application.sources.UnknownSourceException mit unbekannter {@code sourceId}
      */
     public Results search(AccessContext caller, Query query, String cursor, int limit) {
+        return search(caller, query, cursor, limit, null);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, Query, String, int)} als Teil eines übergeordneten Laufs im Suchlauf-Protokoll,
+     * etwa einer Suchanfrage der progressiven Suche.
+     *
+     * @param partOf der übergeordnete Lauf oder {@code null}
+     */
+    public Results search(AccessContext caller, Query query, String cursor, int limit, SearchRunId partOf) {
+        Instant startedAt = Instant.now();
+        long started = System.nanoTime();
+        Tally tally = new Tally();
+        Results results = batch(caller, query, cursor, limit, tally);
+        if (runs == SearchRunLog.NONE) {
+            return results;
+        }
+        SearchRunId id = SearchRunId.random();
+        List<SearchRun.StageCount> stages = new ArrayList<>();
+        stages.add(new SearchRun.StageCount(SearchRun.Stage.QUERIES, tally.queries));
+        tally.discovered.ifPresent(count -> stages.add(new SearchRun.StageCount(SearchRun.Stage.DISCOVERED, count)));
+        tally.queued.ifPresent(count -> stages.add(new SearchRun.StageCount(SearchRun.Stage.LOAD_QUEUED, count)));
+        tally.pending.ifPresent(count -> stages.add(new SearchRun.StageCount(SearchRun.Stage.PENDING, count)));
+        tally.confirmed.ifPresent(count -> stages.add(new SearchRun.StageCount(SearchRun.Stage.CONFIRMED, count)));
+        stages.add(new SearchRun.StageCount(SearchRun.Stage.DELIVERED, results.hits().size()
+                + results.found().size()));
+        boolean recorded = SearchRunLog.recordQuietly(runs, new SearchRun(id, partOf, SearchRun.Kind.KEYWORD,
+                SearchRun.ownerOf(caller), query.text(), startedAt, Duration.ofNanos(System.nanoTime() - started),
+                results.sources().stream().map(KeywordSearch::outcome).toList(), stages, results.complete(), null));
+        return recorded ? results.withSearchRun(id.value()) : results;
+    }
+
+    private static SearchRun.SourceOutcome outcome(SourceState state) {
+        return new SearchRun.SourceOutcome(state.sourceId(), SearchRun.SourceOutcome.Status.valueOf(
+                state.status().name()), state.reason());
+    }
+
+    /** Zahlen eines Stapels für das Suchlauf-Protokoll; nur geprüfte Seiten. */
+    private static final class Tally {
+
+        int queries;
+        OptionalInt discovered = OptionalInt.empty();
+        OptionalInt queued = OptionalInt.empty();
+        OptionalInt pending = OptionalInt.empty();
+        OptionalInt confirmed = OptionalInt.empty();
+    }
+
+    private Results batch(AccessContext caller, Query query, String cursor, int limit, Tally tally) {
         Objects.requireNonNull(query, "query");
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
@@ -303,6 +370,7 @@ public class KeywordSearch {
         }
         // Alle Quellen und alle Anfragen zugleich; ausgewertet in der Reihenfolge der Quellen.
         List<String> nativeQueries = nativeQueries(query.text());
+        tally.queries = searches.isEmpty() ? 0 : nativeQueries.size();
         List<List<Future<List<SourceSearchMatch>>>> calls = new ArrayList<>();
         try (ExecutorService searching = Executors.newVirtualThreadPerTaskExecutor()) {
             for (LiveSearch search : searches) {
@@ -392,6 +460,7 @@ public class KeywordSearch {
         if (!cached) {
             // Ohne Cache: die Treffer der Quellen selbst, live geprüft.
             Checked found = check(caller, query, candidates);
+            tally.discovered = OptionalInt.of(found.hits().size());
             boolean checkedAll = complete && found.complete();
             return new Results(scope.sourceId(), found.hits(), states, next.isEmpty() ? null
                     : encode(fingerprint(query), !checkedAll, next, unavailable, Set.of(), List.of()),
@@ -410,6 +479,10 @@ public class KeywordSearch {
         List<Hit> found = discovered.hits();
         List<Hit> ranked = excerpts.prioritize(query.text(), found).apply(found);
         List<Hit> toLoad = new ArrayList<>(ranked.subList(0, Math.min(loads, ranked.size())));
+        if (!finalListOnly) {
+            // Für Endnutzer sind die Funde ungeprüft: keine Zahl, auch nicht im Protokoll.
+            tally.discovered = OptionalInt.of(found.size());
+        }
         if (position != null) {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
@@ -437,6 +510,10 @@ public class KeywordSearch {
             }
         }
         int loading = stillLoading.size();
+        if (!finalListOnly) {
+            tally.queued = OptionalInt.of(toLoad.size());
+            tally.pending = OptionalInt.of(loading);
+        }
         // Eben gefunden und geprüft: Der Cache-Treffer braucht keine zweite Rückfrage bei der Quelle.
         Map<PageKey, Hit> known = new HashMap<>();
         found.forEach(hit -> known.putIfAbsent(new PageKey(hit.sourceId(), hit.pageId()), hit));
@@ -486,6 +563,7 @@ public class KeywordSearch {
             }
         }
         Checked checked = check(caller, query, fromCache);
+        tally.confirmed = OptionalInt.of(checked.hits().size());
         fromCache.forEach(candidate -> delivered.add(mark(candidate.sourceId(), candidate.match().pageId())));
         boolean checkedAll = complete && checked.complete();
         boolean exhausted = next.isEmpty() && !moreInCache && loading == 0;
@@ -890,14 +968,25 @@ public class KeywordSearch {
      * @param found      vorläufige Treffer: Funde der Quellen mit Titel und Auszug der Quelle, ohne Inhaltsabruf,
      *                   nach Titel und Auszug bewertet ({@link ExcerptPriority}), ohne die Seiten in {@code hits}
      * @param progress   Stand des Ladens der besten Funde oder {@code null}, wenn nichts lädt; siehe {@link Progress}
+     * @param searchRun  Kennung des Laufs im Suchlauf-Protokoll (#182) oder {@code null}, wenn nicht protokolliert
      */
     public record Results(String sourceId, List<Hit> hits, List<SourceState> sources, String nextCursor,
-                          boolean complete, int loading, List<Hit> found, Progress progress) {
+                          boolean complete, int loading, List<Hit> found, Progress progress, String searchRun) {
 
         public Results {
             hits = List.copyOf(hits);
             sources = List.copyOf(sources);
             found = found == null ? List.of() : List.copyOf(found);
+        }
+
+        public Results(String sourceId, List<Hit> hits, List<SourceState> sources, String nextCursor,
+                       boolean complete, int loading, List<Hit> found, Progress progress) {
+            this(sourceId, hits, sources, nextCursor, complete, loading, found, progress, null);
+        }
+
+        /** Derselbe Stapel mit der Kennung seines Laufs im Suchlauf-Protokoll. */
+        public Results withSearchRun(String id) {
+            return new Results(sourceId, hits, sources, nextCursor, complete, loading, found, progress, id);
         }
 
         public Results(String sourceId, List<Hit> hits, List<SourceState> sources, String nextCursor,

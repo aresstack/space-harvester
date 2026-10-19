@@ -67,6 +67,9 @@ import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.facts.PageFacts;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -95,6 +98,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
@@ -164,6 +168,9 @@ public final class Harvester implements AutoCloseable {
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
 
+    /** So lange bleiben Läufe im Suchlauf-Protokoll, wenn nichts anderes eingestellt ist. */
+    public static final Duration DEFAULT_SEARCH_RUN_MAX_AGE = Duration.ofDays(30);
+
     private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
     private static final Duration POLL = Duration.ofMillis(50);
     /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
@@ -185,6 +192,8 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final SearchRuns searchRuns;
+    private final PageFacts facts;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
@@ -246,6 +255,15 @@ public final class Harvester implements AutoCloseable {
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
             opened.add(enrichmentStore);
+            // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
+            SearchRunLog runLog = SearchRunLog.NONE;
+            if (builder.searchRuns) {
+                LuceneSearchRunLog lucene = LuceneSearchRunLog.open(cacheDirectory.resolve("search-runs"),
+                        builder.searchRunMaxAge, clock);
+                opened.add(lucene);
+                runLog = lucene;
+            }
+            this.searchRuns = new SearchRuns(runLog, builder.searchRunAdministrators);
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
             Swappable<EmbeddingGeneration> model = null;
@@ -343,7 +361,7 @@ public final class Harvester implements AutoCloseable {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
-                    excerpts, builder.searchLoads);
+                    excerpts, builder.searchLoads, runLog);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -352,7 +370,7 @@ public final class Harvester implements AutoCloseable {
             RuleBasedExpansion rules = new RuleBasedExpansion();
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
                     new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts));
+                    HitScorer.of(excerpts), runLog);
             opened.add(orchestrator);
             this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
@@ -369,7 +387,9 @@ public final class Harvester implements AutoCloseable {
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex, preparation);
+                    renewal, reranker, textIndex, preparation, runLog);
+            // #182: Fakten aus den Anreicherungen, Rechte je Seite an ihrem Space im Cache.
+            this.facts = new PageFacts(catalog, access, pages, enrichments, enrichmentStore, cache::findHeader);
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
@@ -715,6 +735,24 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Anhänge und Bilder einer Seite, abgelegt unter dem Asset-Verzeichnis. */
+    /**
+     * Das Suchlauf-Protokoll (#182): Schlagwortsuche, semantische und progressive Suche legen je Lauf Anfrage, Quellen,
+     * Trefferzahlen je Stufe und Dauer ab (unter {@code cache/search-runs/}). Ein Lauf ist nur für seinen Aufrufer
+     * lesbar und für die mit {@link Builder#searchRuns} genannten Verwalter; ausschalten mit
+     * {@code searchRuns(false, …)}.
+     */
+    public SearchRuns searchRuns() {
+        return searchRuns;
+    }
+
+    /**
+     * Abfragbare Fakten je Seite aus den Anreicherungen (#182): Akronyme, Begriffe, Eigenschaften, mit den Rechten des
+     * Aufrufers je Seite.
+     */
+    public PageFacts facts() {
+        return facts;
+    }
+
     public Assets assets() {
         return assets;
     }
@@ -1111,6 +1149,9 @@ public final class Harvester implements AutoCloseable {
         private boolean prefetchSearchHits = true;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
         private boolean excerptRanking = true;
+        private boolean searchRuns = true;
+        private Duration searchRunMaxAge = DEFAULT_SEARCH_RUN_MAX_AGE;
+        private Predicate<AccessContext> searchRunAdministrators = context -> false;
         private int searchLoads = KeywordSearch.DEFAULT_LOADS;
         private Duration searchWait = Duration.ZERO;
         private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
@@ -1469,6 +1510,30 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder excerptRanking(boolean excerptRanking) {
             this.excerptRanking = excerptRanking;
+            return this;
+        }
+
+        /**
+         * Suchlauf-Protokoll (#182), Standard an mit {@link Harvester#DEFAULT_SEARCH_RUN_MAX_AGE}. Ein Lauf enthält den
+         * Suchtext (wie im Enterprise AI Client), nie im Log.
+         *
+         * @param enabled ob Läufe abgelegt werden
+         * @param maxAge  so lange bleiben sie, {@code null} ohne Frist (höchstens {@value SearchRunLog#MAX_RUNS} Läufe)
+         */
+        public Builder searchRuns(boolean enabled, Duration maxAge) {
+            if (maxAge != null && (maxAge.isNegative() || maxAge.isZero())) {
+                throw new IllegalArgumentException("maxAge muss positiv sein");
+            }
+            this.searchRuns = enabled;
+            this.searchRunMaxAge = maxAge;
+            return this;
+        }
+
+        /**
+         * Wer alle Läufe lesen darf, nicht nur die eigenen (Standard: niemand); durchgereichte Endnutzer nie.
+         */
+        public Builder searchRunAdministrators(Predicate<AccessContext> administrators) {
+            this.searchRunAdministrators = Objects.requireNonNull(administrators, "administrators");
             return this;
         }
 

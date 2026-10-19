@@ -34,7 +34,14 @@ import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.facts.FactStore;
+import com.aresstack.spaceharvester.application.facts.MetadataFact;
+import com.aresstack.spaceharvester.application.facts.PageFacts;
+import java.util.List;
+import java.util.Optional;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -111,9 +118,10 @@ class QueryConfiguration {
                                 SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
-                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
+                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads,
+                                SearchRunLog runs) {
         return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
-                excerpts(reranker.getIfUnique(), excerptRanking), loads);
+                excerpts(reranker.getIfUnique(), excerptRanking), loads, runs);
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -140,11 +148,11 @@ class QueryConfiguration {
     SearchOrchestrator searchOrchestrator(KeywordSearch keywords, ObjectProvider<SearchReranker> reranker,
                                           QueryVariantModels models,
                                           @Value("${space-harvester.search.excerpt-ranking:true}")
-                                          boolean excerptRanking) {
+                                          boolean excerptRanking, SearchRunLog runs) {
         RuleBasedExpansion rules = new RuleBasedExpansion();
         return new SearchOrchestrator(VariantSearch.of(keywords),
                 new AiQueryExpansion(models, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)));
+                HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)), runs);
     }
 
     /**
@@ -192,7 +200,7 @@ class QueryConfiguration {
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
                                     ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
                                     KeywordSearch keywords, ObjectProvider<PageCacheReader> cache,
-                                    ObjectProvider<Enrichments> enrichments) {
+                                    ObjectProvider<Enrichments> enrichments, SearchRunLog runs) {
         ExecutorService background = renewals.getIfAvailable();
         EmbeddingProcessor processor = embedding.getIfUnique();
         PageCacheReader reader = cache.getIfAvailable();
@@ -206,6 +214,32 @@ class QueryConfiguration {
                 store.getIfUnique(), vectors.getIfUnique(), processor,
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique(), preparation);
+                texts.getIfUnique(), preparation, runs);
     }
+
+    /**
+     * Fakten je Seite aus den Anreicherungen (#182), aus der Ablage der Anreicherungen im Lucene-Cache; ohne Cache gibt
+     * es keine. Rechte je Seite an ihrem Space im Cache.
+     */
+    @Bean
+    PageFacts pageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages,
+                        ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
+                        ObjectProvider<LucenePageCache> cache) {
+        LucenePageCache available = cache.getIfAvailable();
+        return new PageFacts(catalog, access, pages, enrichments.getIfAvailable(), store.getIfUnique(() -> NO_FACTS),
+                available == null ? key -> Optional.empty() : available::findHeader);
+    }
+
+    /** Ohne Ablage: keine Fakten. */
+    private static final FactStore NO_FACTS = new FactStore() {
+        @Override
+        public List<MetadataFact> factsOf(PageKey page) {
+            return List.of();
+        }
+
+        @Override
+        public List<MetadataFact> facts(Query query, String after, int limit) {
+            return List.of();
+        }
+    };
 }

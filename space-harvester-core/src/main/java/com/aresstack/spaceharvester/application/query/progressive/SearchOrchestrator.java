@@ -7,9 +7,13 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveRes
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.RankedHit;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Status;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Variant;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -42,6 +46,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Was der Aufrufer nicht sehen darf, erscheint weder als Treffer noch in einer Zahl. Suchtexte und Seiten-IDs kommen
  * nie ins Log.
  *
+ * <p>Jede Suche ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182) mit der Kennung {@link ProgressiveSearch#id()}:
+ * ursprüngliche Anfrage, Quellen, Zahl der Suchanfragen, Treffer und bestätigte Treffer, Dauer und Abschlussgrund. Jede
+ * Suchanfrage ist ein eigener Lauf der Schlagwortsuche mit {@link SearchRun#partOf()} auf diesen.
+ *
  * <p>Laufende Suchanfragen werden nie unterbrochen, nur nicht mehr abgewartet: Ein Interrupt mitten im Lesen eines
  * Lucene-Index schlösse dessen Dateikanäle.
  */
@@ -54,6 +62,7 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final QueryExpansionStrategy rules;
     private final HitScorer scorer;
     private final ExecutorService executor;
+    private final SearchRunLog runs;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
@@ -67,6 +76,13 @@ public final class SearchOrchestrator implements AutoCloseable {
      */
     public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, QueryExpansionStrategy rules,
                               HitScorer scorer) {
+        this(search, expansion, rules, scorer, SearchRunLog.NONE);
+    }
+
+    /** @param runs Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE} */
+    public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, QueryExpansionStrategy rules,
+                              HitScorer scorer, SearchRunLog runs) {
+        this.runs = Objects.requireNonNull(runs, "runs");
         this.search = Objects.requireNonNull(search, "search");
         this.expansion = Objects.requireNonNull(expansion, "expansion");
         this.rules = Objects.requireNonNull(rules, "rules");
@@ -150,7 +166,10 @@ public final class SearchOrchestrator implements AutoCloseable {
         private final AtomicBoolean finished = new AtomicBoolean();
         private final Semaphore slots;
         private final long started = System.nanoTime();
+        private final Instant startedAt = Instant.now();
         private final long deadline;
+        /** Ausgang je Quelle über alle Suchanfragen; ein Ausfall in einer macht die Quelle ausgefallen. */
+        private final Map<String, SearchRun.SourceOutcome> sources = new LinkedHashMap<>();
 
         // Nur der koordinierende Thread ändert diese Felder; die Listen gehen als Kopien hinaus.
         private final Map<PageKey, Entry> entries = new LinkedHashMap<>();
@@ -314,7 +333,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                     throw new IllegalStateException("abgebrochen");
                 }
                 try {
-                    return search.search(caller, variant, profile.limitPerSearch());
+                    return search.search(caller, variant, profile.limitPerSearch(), runId());
                 } catch (InvalidQueryException | AccessDeniedException e) {
                     throw e;
                 } catch (RuntimeException e) {
@@ -393,6 +412,14 @@ public final class SearchOrchestrator implements AutoCloseable {
 
         private void release(int index, KeywordSearch.Results results) {
             successes++;
+            for (KeywordSearch.SourceState state : results.sources()) {
+                SearchRun.SourceOutcome known = sources.get(state.sourceId());
+                if (known == null || state.status() == KeywordSearch.SourceState.Status.UNAVAILABLE
+                        && known.status() != SearchRun.SourceOutcome.Status.UNAVAILABLE) {
+                    sources.put(state.sourceId(), new SearchRun.SourceOutcome(state.sourceId(),
+                            SearchRun.SourceOutcome.Status.valueOf(state.status().name()), state.reason()));
+                }
+            }
             states.set(index, Status.DONE);
             if (results.progress() != null && !results.progress().done()) {
                 loads.add(results.progress().id());
@@ -538,9 +565,32 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
                     Duration.ofNanos(System.nanoTime() - started));
+            record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));
             result.complete(done);
+        }
+
+        /** Die Kennung im Suchlauf-Protokoll; die des Vorgangs, eine UUID. */
+        private SearchRunId runId() {
+            return new SearchRunId(id);
+        }
+
+        /** Legt den Lauf ab, bevor das Ergebnis herausgeht; ohne Treffer- oder Seitenangaben. */
+        private void record(ProgressiveResult done) {
+            if (runs == SearchRunLog.NONE) {
+                return;
+            }
+            int confirmed = (int) done.hits().stream().filter(RankedHit::confirmed).count();
+            boolean complete = done.reason() == Completion.QUALITY_REACHED
+                    || done.reason() == Completion.ALL_VARIANTS_DONE;
+            SearchRunLog.recordQuietly(runs, new SearchRun(runId(), null, SearchRun.Kind.PROGRESSIVE,
+                    SearchRun.ownerOf(caller), query.text(), startedAt, done.elapsed(),
+                    List.copyOf(sources.values()), List.of(
+                            new SearchRun.StageCount(SearchRun.Stage.QUERIES, searches),
+                            new SearchRun.StageCount(SearchRun.Stage.CONFIRMED, confirmed),
+                            new SearchRun.StageCount(SearchRun.Stage.DELIVERED, done.hits().size())),
+                    complete, done.reason().name()));
         }
 
         private void cancelLoading(String load) {
