@@ -105,8 +105,12 @@ class ExportIncludesTest {
     }
 
     private static Input input(Optional<ExportReadingView> view) {
+        return input(STORAGE, view);
+    }
+
+    private static Input input(String storage, Optional<ExportReadingView> view) {
         byte[] payload = JSON.writeValueAsBytes(JSON.createObjectNode().put("id", "100").set("body",
-                JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", STORAGE))));
+                JSON.createObjectNode().set("storage", JSON.createObjectNode().put("value", storage))));
         PageSnapshot snapshot = page("wiki", "DEV", "100", null, payload);
         return new Input(List.of(new ConvertiblePage(snapshot.header(), snapshot, 0)), view, new ArrayList<>());
     }
@@ -183,5 +187,57 @@ class ExportIncludesTest {
             assertThat(input.reported()).as(converter.format()).contains(
                     new ConversionNotice("100", Kind.OMITTED_CONTENT, "children", "not-rendered"));
         }
+    }
+
+    /** Erwähnungen mit dem Anzeigenamen der Lese-Ansicht wie im Enterprise AI Client, nicht als Benutzerkennung. */
+    @Test
+    void mentionsShowTheDisplayNameOfTheReadingView() throws Exception {
+        String storage = "<p>Frage an <ac:link><ri:user ri:userkey=\"8a7f0c1d\" /></ac:link> und "
+                + "<ac:link><ri:user ri:username=\"bwagner\" /></ac:link>.</p>";
+        String view = "<p>Frage an <a class=\"confluence-userlink user-mention\" data-username=\"aschmidt\" "
+                + "href=\"/display/~aschmidt\">Anna Schmidt</a> und <a class=\"confluence-userlink user-mention\" "
+                + "data-username=\"bwagner\" href=\"/display/~bwagner\">Bernd Wagner</a>.</p>";
+        for (ExportConverter converter : CONVERTERS) {
+            assertThat(text(converter, input(storage, available(view)))).as(converter.format())
+                    .contains("Anna Schmidt", "Bernd Wagner").doesNotContain("8a7f0c1d", "@bwagner");
+            // Ohne Ansicht bleibt die Kennung, wie bisher.
+            assertThat(text(converter, input(storage, Optional.empty()))).as(converter.format())
+                    .contains("@8a7f0c1d", "@bwagner");
+        }
+    }
+
+    /** Stimmt die Zahl der Erwähnungen nicht überein, ordnet nur der Benutzername zu, nie die Reihenfolge. */
+    @Test
+    void mentionsAreNotMatchedByOrderWhenTheCountsDiffer() throws Exception {
+        String storage = "<p><ac:link><ri:user ri:userkey=\"8a7f0c1d\" /></ac:link></p>";
+        String view = "<p><a class=\"user-mention\" data-username=\"x\">Anna Schmidt</a> "
+                + "<a class=\"user-mention\" data-username=\"y\">Bernd Wagner</a></p>";
+        assertThat(text(new MarkdownConverter(), input(storage, available(view))))
+                .contains("@8a7f0c1d").doesNotContain("Anna Schmidt", "Bernd Wagner");
+    }
+
+    /**
+     * Zuordnung über die Account-ID; Erwähnungen in eingebundenen und unsichtbaren Inhalten zählen nicht; ein eigener
+     * Linktext geht vor; ohne Namen bleibt die Account-ID statt eines leeren „@“.
+     */
+    @Test
+    void mentionsMatchTheAccountIdAndIgnoreIncludedOrHiddenNames() throws Exception {
+        String storage = "<p><ac:link><ri:user ri:account-id=\"557058:aa\" /></ac:link> "
+                + "<ac:link><ri:user ri:userkey=\"k1\" /></ac:link> "
+                + "<ac:link><ri:user ri:account-id=\"557058:cc\" /><ac:plain-text-link-body>"
+                + "<![CDATA[Team Lead]]></ac:plain-text-link-body></ac:link></p>";
+        String view = "<p><a class=\"user-mention\" data-account-id=\"557058:aa\">Anna Schmidt</a> "
+                + "<span class=\"hidden\"><a class=\"user-mention\" data-username=\"h\">Versteckt</a></span> "
+                + "<span style=\"display: none\"><a class=\"user-mention\">Auch versteckt</a></span> "
+                + "<a class=\"user-mention\" data-username=\"k\">Klaus Kern</a> "
+                + "<a class=\"user-mention\" data-account-id=\"557058:cc\">Carla Conrad</a></p>"
+                + "<div data-macro-name=\"include\"><a class=\"user-mention\">Eingebunden</a></div>";
+        String text = text(new MarkdownConverter(), input(storage, available(view)));
+        assertThat(text).contains("Anna Schmidt", "Klaus Kern", "Team Lead")
+                .doesNotContain("Versteckt", "Eingebunden", "Carla Conrad", "557058");
+
+        String alone = text(new MarkdownConverter(), input(
+                "<p><ac:link><ri:user ri:account-id=\"557058:aa\" /></ac:link></p>", Optional.empty()));
+        assertThat(alone).contains("@557058:aa");
     }
 }
