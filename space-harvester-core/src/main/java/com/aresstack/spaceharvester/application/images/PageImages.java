@@ -14,7 +14,8 @@ import java.util.Objects;
  *
  * @param state    ob und warum Beschreibungen vorliegen
  * @param reason   bei {@link State#MISSING} der Grund: {@value #NOT_ANALYSED}, {@value #NO_TEXT},
- *                 {@value #VISION_MODEL_MISSING} oder {@value #SOURCE_NOT_RELEASED}; sonst {@code null}
+ *                 {@value #VISION_MODEL_MISSING} oder {@value #SOURCE_NOT_RELEASED}; bei {@link State#STALE}
+ *                 {@value #ATTACHMENT_CHANGED}, wenn ein Bild seit dem Beschreiben ersetzt wurde; sonst {@code null}
  * @param result   das gespeicherte Ergebnis oder {@code null}
  * @param images   in Reihenfolge der Seite; bei {@link State#STALE} die des alten Ergebnisses (Beschreibungen gelten
  *                 dann nicht mehr sicher), bei {@link State#MISSING} und {@link State#FAILED} leer
@@ -31,6 +32,8 @@ public record PageImages(State state, String reason, Enrichment result, List<Ima
     public static final String VISION_MODEL_MISSING = "vision-model-missing";
     /** Die Quelle ist nicht für den KI-Dienst freigegeben ({@code ai.external-processing-sources}). */
     public static final String SOURCE_NOT_RELEASED = "source-not-released";
+    /** Ein Bildanhang hat seit dem Beschreiben eine neue Version (laut zuletzt geladener Lese-Ansicht). */
+    public static final String ATTACHMENT_CHANGED = "attachment-changed";
 
     public PageImages {
         Objects.requireNonNull(state, "state");
