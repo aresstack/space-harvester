@@ -275,34 +275,11 @@ public final class EnrichmentFacts {
     /**
      * Die Aussagen der Satzanalyse (#108) wie {@code FactCatalogStatements} im Client: je Erwähnung ein {@code MENTION},
      * je Handlung ein {@code EVENT}, je Eigenschaft oder Folge ein {@code RELATION}. Pronomen ohne aufgelösten Bezug
-     * werden kein Suchwert ({@code TERM}, Rolle), wie bei {@code activities}.
+     * werden kein Suchwert ({@code TERM}, Rolle), wie bei {@code activities}. Erwähnungen kommen zuletzt, damit sie an
+     * der Grenze {@value #MAX_PER_RESULT} nicht Handlungen und Relationen verdrängen.
      */
     private static void statements(PageKey key, JsonNode payload, MetadataFact.Provenance provenance,
                                    List<MetadataFact> facts) {
-        for (JsonNode entry : payload.path("mentions")) {
-            String surface = text(entry, "surface");
-            String normalized = text(entry, "normalized");
-            String status = text(entry, "status");
-            if (surface == null || normalized == null || status == null) {
-                continue;
-            }
-            boolean pronoun = entry.path("pronoun").asBoolean();
-            String section = text(entry, "section");
-            ObjectNode mention = JSON.createObjectNode();
-            mention.put("term", surface);
-            mention.put("normalized", normalized);
-            putNullable(mention, "lemmaCandidate", text(entry.path("lemmaCandidate"), "value"));
-            mention.put("pronoun", pronoun);
-            mention.put("status", status);
-            putNullable(mention, "section", section);
-            Arguments arguments = new Arguments();
-            if (!pronoun) {
-                arguments.add(FactTypes.TERM, normalized);
-            }
-            arguments.add(FactTypes.STATUS, status);
-            facts.add(fact(key, FactTypes.MENTION, FactTypes.MENTIONS, mention, provenance,
-                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
-        }
         for (JsonNode entry : payload.path("events")) {
             String predicate = text(entry, "predicate");
             String normalized = text(entry, "normalized");
@@ -381,6 +358,32 @@ public final class EnrichmentFacts {
             arguments.add(FactTypes.STATUS, status);
             qualifiers(arguments, negated, modal, conditional);
             facts.add(fact(key, FactTypes.RELATION, null, value, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+        // Erwähnungen zuletzt: Endet ein Ergebnis an der Grenze von MAX_PER_RESULT Fakten, fallen sie vor
+        // Handlungen und Relationen weg.
+        for (JsonNode entry : payload.path("mentions")) {
+            String surface = text(entry, "surface");
+            String normalized = text(entry, "normalized");
+            String status = text(entry, "status");
+            if (surface == null || normalized == null || status == null) {
+                continue;
+            }
+            boolean pronoun = entry.path("pronoun").asBoolean();
+            String section = text(entry, "section");
+            ObjectNode mention = JSON.createObjectNode();
+            mention.put("term", surface);
+            mention.put("normalized", normalized);
+            putNullable(mention, "lemmaCandidate", text(entry.path("lemmaCandidate"), "value"));
+            mention.put("pronoun", pronoun);
+            mention.put("status", status);
+            putNullable(mention, "section", section);
+            Arguments arguments = new Arguments();
+            if (!pronoun) {
+                arguments.add(FactTypes.TERM, normalized);
+            }
+            arguments.add(FactTypes.STATUS, status);
+            facts.add(fact(key, FactTypes.MENTION, FactTypes.MENTIONS, mention, provenance,
                     anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
         }
     }

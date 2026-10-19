@@ -20,6 +20,9 @@ public record StatementSettings(boolean enabled, boolean verify, int maxParagrap
     public static final boolean DEFAULT_VERIFY = true;
     public static final int DEFAULT_MAX_PARAGRAPHS = 40;
     public static final int DEFAULT_MAX_PARAGRAPH_CHARS = 1500;
+    /** Obergrenzen: mehr Absätze oder längere Folgen bringen eine Seite über die Grenze der Fakten je Ergebnis. */
+    public static final int LIMIT_MAX_PARAGRAPHS = 200;
+    public static final int LIMIT_MAX_PARAGRAPH_CHARS = 8000;
 
     /** Präfix der Properties in Server und App. */
     public static final String PREFIX = "space-harvester.enrichment.statements.";
@@ -36,6 +39,14 @@ public record StatementSettings(boolean enabled, boolean verify, int maxParagrap
         if (maxParagraphs < 1 || maxParagraphChars < 1) {
             throw new IllegalArgumentException(PREFIX + MAX_PARAGRAPHS + " und " + PREFIX + MAX_PARAGRAPH_CHARS
                     + " müssen positiv sein");
+        }
+        if (maxParagraphs > LIMIT_MAX_PARAGRAPHS) {
+            throw new IllegalArgumentException(PREFIX + MAX_PARAGRAPHS + " darf höchstens " + LIMIT_MAX_PARAGRAPHS
+                    + " sein");
+        }
+        if (maxParagraphChars > LIMIT_MAX_PARAGRAPH_CHARS) {
+            throw new IllegalArgumentException(PREFIX + MAX_PARAGRAPH_CHARS + " darf höchstens "
+                    + LIMIT_MAX_PARAGRAPH_CHARS + " sein");
         }
     }
 

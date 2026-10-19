@@ -131,18 +131,21 @@ veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder A
 |---|---|---|
 | `space-harvester.enrichment.statements.enabled` | `false` | Satzanalyse einschalten; ohne Chat-Modell wird sie übersprungen |
 | `space-harvester.enrichment.statements.verify` | `true` | jede Handlung und Relation mit einer zweiten Anfrage prüfen (verneint: verworfen) |
-| `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite |
-| `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge |
+| `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite, höchstens 200 |
+| `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge, höchstens 8000 |
 
 - **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` an den Dienst, sonst nie, auch
   nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
 - Die Schlüssel wirken beim Start (in der Bibliothek `Harvester.builder().statements(…)`); Chat-Modell und Freigabe
   folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
+- `MENTION`, `EVENT` und `RELATION` entstehen dann doppelt, regelbasiert und aus `statements`, mit eigenen Kennungen.
+  `processor=` an beiden Fakten-Endpunkten wählt einen Weg (etwa `entities`, `statements` oder `manual`), ohne ihn
+  kommen alle. Endet ein Ergebnis an der Grenze von 2000 Fakten, fallen Erwähnungen vor Handlungen und Relationen weg.
 
-- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
+- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…][&processor=…]`: das Faktenblatt einer Seite mit derselben Prüfung
   wie das Lesen der Seite und `freshness` je Fakt. Je Prozessor und Seite gibt es höchstens 2000 Fakten;
   `truncated` nennt die Prozessoren, deren Fakten an dieser Grenze enden (sonst leer).
-- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&cursor&limit]`: Fakten über alle
+- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&processor=…][&cursor&limit]`: Fakten über alle
   Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
   es gibt keine Gesamtzahl.
 

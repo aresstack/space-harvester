@@ -35,4 +35,13 @@ class StatementSettingsTest {
         assertThatThrownBy(() -> new StatementSettings(true, true, 0, 1500))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void limitsParagraphsAndLengthWithoutNamingTheValue() {
+        assertThatThrownBy(() -> new StatementSettings(true, true, 201, 1500))
+                .hasMessageContaining("max-paragraphs").hasMessageContaining("200").hasMessageNotContaining("201");
+        assertThatThrownBy(() -> new StatementSettings(true, true, 40, 8001))
+                .hasMessageContaining("max-paragraph-chars").hasMessageNotContaining("8001");
+        assertThat(new StatementSettings(true, true, 200, 8000).maxParagraphs()).isEqualTo(200);
+    }
 }

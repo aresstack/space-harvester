@@ -106,9 +106,9 @@ class StatementProcessorTest {
         assertThat(chat.requests()).hasSize(1);
 
         List<MetadataFact> facts = EnrichmentFacts.of(result);
-        assertThat(facts).extracting(MetadataFact::type).containsExactly(FactTypes.MENTION, FactTypes.MENTION,
-                FactTypes.MENTION, FactTypes.EVENT, FactTypes.EVENT, FactTypes.RELATION, FactTypes.RELATION,
-                FactTypes.RELATION);
+        assertThat(facts).extracting(MetadataFact::type).containsExactly(FactTypes.EVENT, FactTypes.EVENT,
+                FactTypes.RELATION, FactTypes.RELATION, FactTypes.RELATION, FactTypes.MENTION, FactTypes.MENTION,
+                FactTypes.MENTION);
         assertThat(facts).allSatisfy(fact -> {
             assertThat(fact.origin()).isEqualTo(FactOrigin.AUTOMATIC);
             assertThat(fact.review()).isEqualTo(FactReview.UNREVIEWED);
@@ -116,19 +116,20 @@ class StatementProcessorTest {
             assertThat(fact.provenance().processorVersion()).contains("test-model");
             assertThat(fact.values(FactTypes.STATUS)).containsExactly("extracted");
         });
-        assertThat(facts.getFirst().values(FactTypes.TERM)).containsExactly("sachbearbeitung");
-        assertThat(facts.getFirst().role()).isEqualTo(FactTypes.MENTIONS);
-        MetadataFact release = facts.get(4);
+        // Erwähnungen zuletzt, damit sie an der Grenze je Ergebnis nicht Handlungen und Relationen verdrängen.
+        assertThat(facts.get(5).values(FactTypes.TERM)).containsExactly("sachbearbeitung");
+        assertThat(facts.get(5).role()).isEqualTo(FactTypes.MENTIONS);
+        MetadataFact release = facts.get(1);
         assertThat(release.values(FactTypes.PREDICATE)).containsExactly("auslösen");
         assertThat(release.values("ACTOR")).containsExactly("sachbearbeitung");
         assertThat(release.values("AFFECTED_OBJECT")).containsExactly("zahlung");
         assertThat(release.anchor().charStart()).isZero();
-        MetadataFact state = facts.get(6);
+        MetadataFact state = facts.get(3);
         assertThat(state.values(FactTypes.KIND)).containsExactly("state");
         assertThat(state.values(FactTypes.SUBJECT)).containsExactly("beleg");
         assertThat(state.values(FactTypes.VALUE)).containsExactly("eingereicht");
         assertThat(state.anchor().charStart()).isEqualTo(StatementAnalyzerTest.SENTENCE.indexOf("eingereichten"));
-        MetadataFact order = facts.get(7);
+        MetadataFact order = facts.get(4);
         assertThat(order.values(FactTypes.KIND)).containsExactly("before");
         assertThat(order.values(FactTypes.SUBJECT)).containsExactly("prüfen");
         assertThat(order.values(FactTypes.OBJECT)).containsExactly("auslösen");
