@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Kopiert die Confluence-Quelle, die Dateiquelle, die Git-Quelle (#187), den Chat-Adapter (ADR 0017), die Dokument-Extraktion (#183) und ihre
+# Kopiert die Confluence-Quelle, die Dateiquelle, die Git- und die FTP/JES-Quelle (#187), den Chat-Adapter (ADR 0017), die Dokument-Extraktion (#183) und ihre
 # Basismodule unverändert aus aresstack/enterprise-ai-client in dieses Subprojekt, oder prüft, dass die Kopie noch dem festgehaltenen Upstream-Stand entspricht.
 #
 #   sync-from-upstream.sh sync <commit|tag|branch>   neu kopieren und UPSTREAM.sha256 schreiben
@@ -24,6 +24,8 @@ modules=(
   proasteion/emporion/deigma/document-tika
   proasteion/emporion/holkas/source-localfiles
   proasteion/emporion/holkas/source-git
+  proasteion/emporion/holkas/source-ftp
+  proasteion/emporion/holkas/source-ndv
   embedding-api
   embedding-openai
   chat-api

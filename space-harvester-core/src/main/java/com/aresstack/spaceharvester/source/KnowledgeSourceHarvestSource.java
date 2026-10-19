@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeMetadata;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
+import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.source.api.AddressableKnowledgeSource;
 import com.aresstack.enterpriseai.source.api.AsyncStoredContentSource;
 import com.aresstack.enterpriseai.source.api.AttachmentListSource;
@@ -28,6 +29,7 @@ import com.aresstack.enterpriseai.source.api.SourceFile;
 import com.aresstack.enterpriseai.source.api.SourceLink;
 import com.aresstack.enterpriseai.source.api.SourcePartition;
 import com.aresstack.enterpriseai.source.api.SourceQuery;
+import com.aresstack.enterpriseai.source.api.SourceScope;
 import com.aresstack.enterpriseai.source.api.SourceSearchHit;
 import com.aresstack.enterpriseai.source.api.StoredAttachmentList;
 import com.aresstack.enterpriseai.source.api.StoredContent;
@@ -52,11 +54,14 @@ import com.aresstack.spaceharvester.application.sources.StoredPage;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceWebhooks;
 import com.aresstack.spaceharvester.source.confluence.InFlightLimit;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -70,9 +75,18 @@ import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}. */
+/**
+ * {@link HarvestSource} über einen {@link KnowledgeSourcePort} aus {@code enterprise-ai-sources}.
+ *
+ * <p>Quellen ohne {@link PartitionListingSource} (MediaWiki, Git, FTP … im Enterprise AI Client) bildet sie mit einem
+ * Umfang ({@link SourceScope}) wie die Indexierung dort ab (#187): eine Partition je Quelle (Schlüssel = Quellen-ID),
+ * deren Seiten {@link KnowledgeSourcePort#discover} im Umfang liefert und {@link KnowledgeSourcePort#load} liest. Die
+ * Seiten-ID ist die Ressourcen-ID als Base64url, der Inhalt der Lesetext des Adapters ({@link KnowledgeDocument#text()},
+ * {@link KnowledgeDocumentTextProjector#NATIVE_FORMAT}). Bereiche des Ports gibt es auf diesem Weg nicht.
+ */
 final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /** Schema der öffentlichen Ressourcen-ID von Dateiquellen. */
@@ -82,6 +96,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static final String SPACE_NODE = "space:";
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
+    /** Präfix des Cursors der Discovery-Listung; versioniert das Format. */
+    private static final String DISCOVERY_CURSOR = "d1.";
+    /** {@code d1.<Versatz>.<Fingerabdruck der Discovery>}. */
+    private static final Pattern DISCOVERY_CURSOR_FORMAT = Pattern.compile("d1\\.(\\d{1,9})\\.([0-9a-f]{16})");
     /** So viele Treffer der Wortsuche prüft eine Titelsuche höchstens auf ihren Titel. */
     static final int TITLE_SEARCH_DEPTH = 1000;
     /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
@@ -92,6 +110,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final String title;
     private final KnowledgeSourcePort port;
     private final InFlightLimit inFlight;
+    /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
+    private final SourceScope scope;
+    /** Die letzte Discovery; Folgestapel derselben Listung lesen aus ihr, statt die Quelle erneut zu befragen. */
+    private volatile Discovery discovery;
 
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port) {
         this(id, type, title, port, null);
@@ -100,11 +122,26 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** @param inFlight Grenze gleichzeitiger asynchroner Abrufe; {@code null} = unbegrenzt */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight) {
+        this(id, type, title, port, inFlight, null);
+    }
+
+    /**
+     * @param scope Umfang für {@code discover} (#187); gilt nur für einen Port ohne {@link PartitionListingSource},
+     *              {@code null} ohne diesen Weg
+     */
+    KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
+                                 InFlightLimit inFlight, SourceScope scope) {
         this.id = id;
         this.type = type;
         this.title = title;
         this.port = port;
         this.inFlight = inFlight;
+        this.scope = port instanceof PartitionListingSource ? null : scope;
+    }
+
+    /** Ob die Seiten über {@code discover} und {@code load} kommen statt über eine Seitenliste je Partition. */
+    private boolean discovering() {
+        return scope != null;
     }
 
     @Override
@@ -161,6 +198,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (port instanceof AddressableKnowledgeSource || port instanceof ResourceMetadataSource
                 || LocalFilesSourceAdapter.TYPE.equals(type)) {
             capabilities.add(SourceCapability.ADDRESSES);
+        }
+        if (discovering()) {
+            capabilities.addAll(EnumSet.of(SourceCapability.PAGE_LISTING, SourceCapability.PAGE_METADATA,
+                    SourceCapability.STORED_PAGE, SourceCapability.TITLE_SEARCH, SourceCapability.ADDRESSES));
         }
         return capabilities;
     }
@@ -225,6 +266,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 }
                 return List.copyOf(found.values());
             }
+            if (discovering()) {
+                return titlesOfDiscovery(needle, spaces, limit);
+            }
             if (port instanceof PartitionListingSource listing) {
                 List<PageNode> found = new ArrayList<>();
                 for (SourcePartition partition : port.partitions()) {
@@ -250,6 +294,25 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return List.of();
+    }
+
+    /** Ohne eigene Suche: die Seiten der Discovery, der Titel ist der des Adapters. */
+    private List<PageNode> titlesOfDiscovery(String needle, SearchSpaces spaces, int limit) {
+        List<PageNode> found = new ArrayList<>();
+        String cursor = null;
+        while (found.size() < limit && spaces.permits(id)) {
+            PageMetadataBatch batch = pageMetadata(id, cursor, TITLE_SCAN_BATCH);
+            for (PageMetadata metadata : batch.pages()) {
+                if (found.size() < limit && contains(metadata.title(), needle)) {
+                    found.add(new PageNode(metadata.pageId(), metadata.title(), metadata.partitionKey(), null));
+                }
+            }
+            cursor = batch.nextCursor();
+            if (cursor == null) {
+                break;
+            }
+        }
+        return List.copyOf(found);
     }
 
     private static boolean contains(String title, String needle) {
@@ -308,6 +371,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                     && value.indexOf('/', prefix.length()) < 0;
             return own ? Optional.of(value.substring(prefix.length())) : Optional.empty();
         }
+        if (discovering() && !(port instanceof ResourceMetadataSource)) {
+            return ownResource(value).map(this::nativeId);
+        }
         if (!(port instanceof ResourceMetadataSource single)) {
             return Optional.empty();
         }
@@ -325,8 +391,35 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         return local == null || local.isEmpty() ? Optional.empty() : Optional.of(local);
     }
 
+    /**
+     * Eine Ressourcen-ID ({@code wiki:wiki.intern/w/Start}) oder ein Bookmark ({@code wiki://wiki.intern/w/Start})
+     * dieser Quelle: Schema und Endpoint der Quellenadresse ({@link KnowledgeSourcePort#sourceId()}), dahinter das
+     * Ziel. Ob es die Seite gibt, klärt erst das Laden.
+     */
+    private Optional<KnowledgeResourceId> ownResource(String value) {
+        SourceAddress address = port.sourceId();
+        if (address == null || address.scheme().isEmpty()) {
+            return Optional.empty();
+        }
+        String specific = value.startsWith(address.scheme() + "://")
+                ? value.substring(address.scheme().length() + 3)
+                : value.startsWith(address.scheme() + ":") ? value.substring(address.scheme().length() + 1) : null;
+        String locator = address.locator() + "/";
+        if (specific == null || !specific.startsWith(locator) || specific.length() == locator.length()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(KnowledgeResourceId.of(address.scheme(), specific));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
     @Override
     public List<Partition> partitions() {
+        if (discovering()) {
+            return List.of(new Partition(id, title, null));
+        }
         try {
             return port.partitions().stream().map(this::partition).toList();
         } catch (KnowledgeSourceException e) {
@@ -336,6 +429,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public PageMetadataBatch pageMetadata(String partitionKey, String cursor, int limit) {
+        if (discovering()) {
+            return discovered(partitionKey, cursor, limit);
+        }
         if (!(port instanceof PartitionListingSource listing)) {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle kann Seiten einer Partition nicht auflisten", null);
@@ -348,6 +444,122 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         }
         return new PageMetadataBatch(batch.resources().stream()
                 .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+    }
+
+    /**
+     * Ein Stapel der Discovery wie {@code IndexKnowledgeUseCase.indexSource} im Enterprise AI Client: ein Aufruf von
+     * {@link KnowledgeSourcePort#discover} im Umfang der Quelle, jede Ressource einmal, in der Reihenfolge der Quelle.
+     * Der erste Stapel fragt immer neu; Folgestapel lesen aus derselben Discovery, deren Fingerabdruck im Cursor
+     * steht. Ist sie nicht mehr da und liefert die Quelle inzwischen etwas anderes, bricht die Listung ab, statt Seiten
+     * zweier Stände zu mischen.
+     */
+    private PageMetadataBatch discovered(String partitionKey, String cursor, int limit) {
+        if (!id.equals(partitionKey)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND, "Unbekannte Partition", null);
+        }
+        int offset = 0;
+        String expected = null;
+        if (cursor != null && !cursor.isEmpty()) {
+            Matcher matcher = DISCOVERY_CURSOR_FORMAT.matcher(cursor);
+            if (!matcher.matches()) {
+                throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                        "Cursor gehört nicht zu dieser Quelle", null);
+            }
+            offset = Integer.parseInt(matcher.group(1));
+            expected = matcher.group(2);
+        }
+        Discovery current = discovery;
+        if (expected == null || current == null || !current.fingerprint().equals(expected)) {
+            current = discover();
+            discovery = current;
+            if (expected != null && !current.fingerprint().equals(expected)) {
+                throw new SourceAccessException(id, SourceAccessException.Reason.UNAVAILABLE,
+                        "Die Quelle hat sich während der Listung geändert", null);
+            }
+        }
+        List<KnowledgeResource> resources = current.resources();
+        int from = Math.min(offset, resources.size());
+        int to = Math.min(resources.size(), from + Math.max(1, limit));
+        return new PageMetadataBatch(resources.subList(from, to).stream()
+                .map(resource -> pageMetadata(resource, id)).toList(),
+                to < resources.size() ? DISCOVERY_CURSOR + to + "." + current.fingerprint() : null);
+    }
+
+    private Discovery discover() {
+        List<KnowledgeResource> found;
+        try {
+            found = port.discover(scope);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        Map<KnowledgeResourceId, KnowledgeResource> unique = new LinkedHashMap<>();
+        for (KnowledgeResource resource : found) {
+            if (resource != null) {
+                unique.putIfAbsent(resource.id(), resource);
+            }
+        }
+        MessageDigest digest = sha256();
+        for (KnowledgeResource resource : unique.values()) {
+            String version = resource.revision().version();
+            digest.update((resource.id().value() + '\n' + resource.title() + '\n' + (version == null ? "" : version)
+                    + '\n' + resource.revision().modifiedAt().map(Instant::toString).orElse("") + '\n'
+                    + resource.parentId().map(KnowledgeResourceId::value).orElse("") + '\u0000')
+                    .getBytes(StandardCharsets.UTF_8));
+        }
+        return new Discovery(HexFormat.of().formatHex(digest.digest()).substring(0, 16),
+                List.copyOf(unique.values()));
+    }
+
+    private static MessageDigest sha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 fehlt", e);
+        }
+    }
+
+    /**
+     * Der aktuelle Stand einer Seite über {@link KnowledgeSourcePort#load}, wie im Enterprise AI Client. Leitet die
+     * Quelle weiter (Wiki-Redirect), gilt die angefragte Seite als nicht gefunden: Dort bleibt nur das Ziel im Index,
+     * das die Discovery selbst liefert.
+     */
+    private KnowledgeDocument loaded(String pageId) {
+        KnowledgeResourceId requested = resourceIdOf(pageId);
+        KnowledgeDocument document;
+        try {
+            document = port.load(requested);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        if (!document.id().equals(requested)) {
+            throw new SourceAccessException(id, SourceAccessException.Reason.NOT_FOUND,
+                    "Seite leitet auf eine andere weiter", null);
+        }
+        return document;
+    }
+
+    /** Die Ressourcen-ID hinter einer Seiten-ID der Discovery; nur die kanonische Kodierung gilt. */
+    private KnowledgeResourceId resourceIdOf(String pageId) {
+        try {
+            KnowledgeResourceId resourceId = KnowledgeResourceId.of(new String(Base64.getUrlDecoder().decode(pageId),
+                    StandardCharsets.UTF_8));
+            if (encodeResourceId(resourceId).equals(pageId)) {
+                return resourceId;
+            }
+        } catch (IllegalArgumentException e) {
+            // unten: keine Seiten-ID dieser Quelle
+        }
+        throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
+                "Keine Seiten-ID dieser Quelle", null);
+    }
+
+    private static String encodeResourceId(KnowledgeResourceId resourceId) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(
+                resourceId.value().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Ergebnis eines {@code discover}-Aufrufs mit Fingerabdruck über IDs und Kopfdaten. */
+    private record Discovery(String fingerprint, List<KnowledgeResource> resources) {
     }
 
     /** Confluence verschickt Webhooks (ADR 0014), wo ein Administrator sie registriert hat. */
@@ -406,6 +618,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public PageMetadata pageMetadata(String pageId) {
+        if (discovering() && !(port instanceof ResourceMetadataSource)) {
+            return pageMetadata(loaded(pageId).resource(), id);
+        }
         if (!(port instanceof ResourceMetadataSource single)) {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle kann Metadaten einzelner Seiten nicht liefern", null);
@@ -421,6 +636,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     @Override
     public StoredPage storedPage(String pageId) {
+        if (discovering() && !(port instanceof StoredContentSource)) {
+            // Kein natives Format: abgelegt wird der Lesetext des Adapters, mit den Kopfdaten aus demselben Laden.
+            KnowledgeDocument document = loaded(pageId);
+            return new StoredPage(pageMetadata(document.resource(), id),
+                    document.text().getBytes(StandardCharsets.UTF_8), KnowledgeDocumentTextProjector.MEDIA_TYPE,
+                    KnowledgeDocumentTextProjector.NATIVE_FORMAT, Instant.now());
+        }
         if (!(port instanceof StoredContentSource stored)) {
             return HarvestSource.super.storedPage(pageId);
         }
@@ -698,6 +920,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
 
     /** Metadaten einer einzeln abgerufenen Seite; ihr Space muss in der Antwort stehen. */
     private PageMetadata withSpace(KnowledgeResource resource) {
+        if (discovering()) {
+            return pageMetadata(resource, id);
+        }
         if (resource.scope() == null || resource.scope().isEmpty()) {
             throw new SourceAccessException(id, SourceAccessException.Reason.INVALID_RESPONSE,
                     "Seite ohne Space in der Antwort der Quelle", null);
@@ -711,7 +936,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
                 nativeId(resource.id()),
                 publicResourceId(resource.id()),
                 resource.title(),
-                resource.scope() == null || resource.scope().isEmpty() ? partitionKey : resource.scope(),
+                discovering() || resource.scope() == null || resource.scope().isEmpty() ? partitionKey
+                        : resource.scope(),
                 resource.parentId().map(this::nativeId).orElse(null),
                 version == null || version.isEmpty() ? null : version,
                 resource.revision().modifiedAt().orElse(null),
@@ -733,8 +959,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * Die ID der Seite in der Quelle: die lokale ID des Adapters ({@link ResourceMetadataSource#localId}), sonst das
-     * letzte Pfadsegment der Ressourcen-ID ({@code confluence:host/page/123} → {@code 123}).
+     * Die ID der Seite in der Quelle: die lokale ID des Adapters ({@link ResourceMetadataSource#localId}), über
+     * {@code discover} die ganze Ressourcen-ID als Base64url, sonst das letzte Pfadsegment der Ressourcen-ID
+     * ({@code confluence:host/page/123} → {@code 123}).
      */
     private String nativeId(KnowledgeResourceId id) {
         if (port instanceof ResourceMetadataSource single) {
@@ -742,6 +969,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (local != null && !local.isEmpty()) {
                 return local;
             }
+        }
+        if (discovering()) {
+            return encodeResourceId(id);
         }
         return lastSegment(id);
     }
@@ -786,6 +1016,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         if (LocalFilesSourceAdapter.TYPE.equals(type)) {
             // Meldungen der Dateiquelle nennen Pfade auf dem Server; sie reichen bis in Sync-Ergebnisse und Logs.
             return new SourceAccessException(id, reason, "Dateiquelle: " + reason, null);
+        }
+        if (discovering()) {
+            // Meldungen dieser Adapter nennen Seitentitel, Pfade oder Jobnamen der Quelle; ebenso nur die Art.
+            return new SourceAccessException(id, reason, "Quelle: " + reason, null);
         }
         return new SourceAccessException(id, reason, e.getMessage(), e);
     }
