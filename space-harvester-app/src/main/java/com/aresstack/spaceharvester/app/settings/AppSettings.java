@@ -102,7 +102,7 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      */
     public AppSettings withLive(AppSettings other) {
         return new AppSettings(file, sources, proxy, asyncTransport, trustStores, storage, jobLimits, other.ai,
-                outputDirectory, other.problems, disabledSources, tls, other.cache, setupCompleted, other.syncRules,
+                outputDirectory, other.problems, disabledSources, tls, other.cache, other.setupCompleted, other.syncRules,
                 other.sync, other.aiAccess, other.localFiles);
     }
 

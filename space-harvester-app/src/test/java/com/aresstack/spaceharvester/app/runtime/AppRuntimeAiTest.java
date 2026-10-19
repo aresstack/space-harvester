@@ -32,4 +32,16 @@ class AppRuntimeAiTest {
         assertThat(AppRuntime.aiService(with, "key", "test").visionModel()).isEqualTo("gpt-4o-mini");
         assertThat(AppRuntime.aiService(without, "key", "test").visionModel()).isNull();
     }
+
+    @Test
+    void theSetupWizardMarkerAloneNeedsNoRestart(@org.junit.jupiter.api.io.TempDir java.nio.file.Path home) {
+        // Nur die Oberfläche liest den Merker; nach dem Assistenten darf eine Änderung ohne Rückfrage (Frist,
+        // Synchronisierung) die Quellen nicht still neu starten.
+        AppSettings before = new com.aresstack.spaceharvester.app.settings.AppSettingsLoader(
+                new com.aresstack.spaceharvester.app.settings.Placeholders(name -> null), home)
+                .load(home.resolve("fehlt.yml"));
+        assertThat(before.setupCompleted()).isFalse();
+
+        assertThat(AppRuntime.liveChange(before, before.withSetupCompleted())).isTrue();
+    }
 }
