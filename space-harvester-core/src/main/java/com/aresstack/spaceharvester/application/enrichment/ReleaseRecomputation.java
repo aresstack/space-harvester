@@ -222,7 +222,7 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
             // erneut (etwa ohne Chat-Modell oder für einen nicht eingerichteten Prozessor).
             boolean mismatch = release
                     ? result == null ? enrichments.appliesTo(processorId, key)
-                            : notApproved(result, notApproved) || staleEmbedding(result)
+                            : notApproved(result, notApproved) || staleEmbedding(result, key)
                     : result != null && !notApproved(result, notApproved);
             if (mismatch) {
                 due.add(processorId);
@@ -236,8 +236,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
      * gedrosselten Hintergrund neu ein, statt erst beim nächsten Abgleich oder Öffnen der Seite. Andere Prozessoren
      * rechnen wie bisher nach Bedarf neu.
      */
-    private boolean staleEmbedding(Enrichment result) {
-        return EMBEDDING.equals(result.processorId())
+    private boolean staleEmbedding(Enrichment result, PageKey key) {
+        // Nur, wenn embedding die Seite jetzt bearbeitet: Ohne Embedding-Modell (der Start läuft dann etwa für die
+        // Satzanalyse) hieße „veraltet“ sonst Entfernen.
+        return EMBEDDING.equals(result.processorId()) && enrichments.appliesTo(EMBEDDING, key)
                 && !enrichments.version(EMBEDDING).map(result.processorVersion()::equals).orElse(true);
     }
 
