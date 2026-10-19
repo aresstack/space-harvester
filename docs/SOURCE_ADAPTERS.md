@@ -58,9 +58,11 @@ Tresor, ohne das Titelfeld des Typs, das `title` füllt, bei MediaWiki `displayN
 Basis-URL, Titel, Anmeldung und Zertifikat außerhalb von `options` stehen; bei ftp, jes, ndv, sharepoint, betaview und git
 steht das Upstream-Feld `credentialRef` als `SECRET_REF` darin; bei mediawiki fehlt es, weil `options.credentialRef`
 dort abgelehnt wird), und `authModes`, die erlaubten Werte von `auth.type` (Tabelle oben:
-`none` und mit Anmeldefeld `basic`, bei Confluence und git auch `pat`; files und outlook nur `none`). Eigene Adapter
-geben das über `SourceAdapter.displayName()`, `needsCredentials()`, `addressOption()`, `fields()` und `authModes()`
-an; ohne eigene Angabe gelten der Typname, `false`, `null`, keine Felder und `none`. Geprüft in
+`none` und mit Anmeldefeld `basic`, bei Confluence und git auch `pat`; files und outlook nur `none`), und `tls`, ob der
+Typ im allgemeinen Formular `trust-bundle` und `client-certificate` annimmt (Tabelle oben: git, sharepoint, betaview,
+mediawiki; nicht ftp, jes, ndv, files, outlook und Confluence mit eigenem Formular). Eigene Adapter geben das über
+`SourceAdapter.displayName()`, `needsCredentials()`, `addressOption()`, `fields()`, `authModes()` und `tls()` an; ohne
+eigene Angabe gelten der Typname, `false`, `null`, keine Felder, `none` und `false`. Geprüft in
 `HarvesterEacSourcesTest` (`eachTypeDescribesItsFieldsAndAuthModesWithoutValues`, PR #394; Adressfelder PR #387).
 
 ## Vertrag

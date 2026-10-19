@@ -52,18 +52,18 @@ class HarvesterEacSourcesTest {
         try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
             assertThat(harvester.sourceTypes())
                     .extracting(SourceType::id, SourceType::displayName, SourceType::needsCredentials,
-                            SourceType::addressOption)
+                            SourceType::addressOption, SourceType::tls)
                     .containsExactly(
-                            tuple("confluence", "Confluence", false, null),
-                            tuple("files", "Ordner", false, "directory"),
-                            tuple("ftp", "FTP", false, "host"),
-                            tuple("jes", "JES", true, "host"),
-                            tuple("ndv", "NDV", true, "host"),
-                            tuple("sharepoint", "SharePoint", false, "siteUrl"),
-                            tuple("betaview", "BetaView", true, "baseUrl"),
-                            tuple("outlook", "Outlook", false, "mailbox"),
-                            tuple("mediawiki", "MediaWiki", false, "apiUrl"),
-                            tuple("git", "Git-Repository", false, "url"));
+                            tuple("confluence", "Confluence", false, null, false),
+                            tuple("files", "Ordner", false, "directory", false),
+                            tuple("ftp", "FTP", false, "host", false),
+                            tuple("jes", "JES", true, "host", false),
+                            tuple("ndv", "NDV", true, "host", false),
+                            tuple("sharepoint", "SharePoint", false, "siteUrl", true),
+                            tuple("betaview", "BetaView", true, "baseUrl", true),
+                            tuple("outlook", "Outlook", false, "mailbox", false),
+                            tuple("mediawiki", "MediaWiki", false, "apiUrl", true),
+                            tuple("git", "Git-Repository", false, "url", true));
         }
     }
 
