@@ -38,7 +38,7 @@ import java.util.Map;
 
 /**
  * Das Hauptfenster: rahmenloses Comic-Fenster wie der Enterprise AI Client. Oben die Icon-Leiste in zwei Gruppen
- * (Tooltip mit Namen, Strg+1 … Strg+6): links die Arbeitsbereiche Suche, Inhalte, Aufträge und Status,
+ * (Tooltip mit Namen, Strg+1 … Strg+7): links die Arbeitsbereiche Suche, Inhalte, Begriffe, Aufträge und Status,
  * rechts, abgetrennt, Wissensquellen verwalten und Einstellungen, dann ✕. Links dauerhaft der {@link Explorer} über
  * alle Wissensquellen (Breite veränderbar, einklappbar), rechts die Arbeitsfläche des gewählten Bereichs; über der
  * Statusleiste die feste Aktions- und Fortschrittszeile des Bereichs ({@link View#actions()}), sonst der globale
@@ -73,6 +73,7 @@ public final class MainWindow implements AppContext.Navigator {
     private final ActivitiesView activities;
     private final SearchView searchView;
     private final SettingsView settings;
+    private final TermsView terms;
 
     public MainWindow(AppContext context) {
         this.context = context;
@@ -83,6 +84,7 @@ public final class MainWindow implements AppContext.Navigator {
         activities = new ActivitiesView(context);
         searchView = new SearchView(context);
         settings = new SettingsView(context);
+        terms = new TermsView();
         explorer = new Explorer(context);
         explorer.onScope(searchView::scope);
         searchView.onClearScope(explorer::clearSelection);
@@ -91,6 +93,7 @@ public final class MainWindow implements AppContext.Navigator {
         views.put(AppContext.Section.CONTENT, content);
         views.put(AppContext.Section.ACTIVITIES, activities);
         views.put(AppContext.Section.SEARCH, searchView);
+        views.put(AppContext.Section.TERMS, terms);
         views.put(AppContext.Section.SETTINGS, settings);
         deck.setBackground(Comic.SURFACE);
         views.forEach((section, view) -> deck.add(view.component(), section.name()));
@@ -380,6 +383,7 @@ public final class MainWindow implements AppContext.Navigator {
             case STATUS -> SidebarIcons.compass();
             case SOURCES -> database();
             case CONTENT -> ComposerIcons.openBook();
+            case TERMS -> ComposerIcons.marker();
             case ACTIVITIES -> ComposerIcons.refresh();
             case SEARCH -> ComposerIcons.magnifier();
             case SETTINGS -> ComposerIcons.gear();

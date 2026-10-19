@@ -60,9 +60,11 @@ public record ProgressiveResult(List<RankedHit> hits, List<Variant> variants, Co
      * Ein Treffer der zusammengeführten Liste; Identität ist Quelle und Seiten-ID.
      *
      * @param hit       Kopfdaten und Auszug; aus dem Cache bestätigt, wenn {@code confirmed}
-     * @param score     Bewertung gegen die ursprüngliche Anfrage, {@link Double#NaN} ohne
+     * @param score     Bewertung gegen die ursprüngliche Anfrage, {@link Double#NaN} ohne; mit
+     *                  {@link SearchProfile.Ranking#SEMANTIC} die Kosinusähnlichkeit zu ihr
      * @param foundBy   Priorität der Suchanfrage, die ihn zuerst freigab
-     * @param confirmed ob der Treffer aus dem Volltextindex des Caches stammt, nicht nur aus der Suche der Quelle
+     * @param confirmed ob der Treffer aus dem Cache stammt (Volltextindex, semantisch die Vektoren), nicht nur aus der
+     *                  Suche der Quelle
      */
     public record RankedHit(KeywordSearch.Hit hit, double score, int foundBy, boolean confirmed) {
 

@@ -37,6 +37,7 @@ import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -149,16 +150,21 @@ class QueryConfiguration {
      * Progressive Suche (ADR 0017) wie {@code Harvester.progressiveSearch()}: die Schlagwortsuche mit ihren
      * Rechteprüfungen je Suchanfrage, Varianten vom Chat-Modell der wirksamen Konfiguration mit den Regeln als Rückfall,
      * bewertet gegen die ursprüngliche Anfrage vom Cross-Encoder ({@code rerank-model}, nur Quellen in
-     * {@code external-processing-sources}; ohne ihn keine Bewertung). Schließt vor der Schlagwortsuche und dem Cache:
-     * bricht laufende Suchen ab und wartet auf ihre Suchanfragen, ohne sie zu unterbrechen.
+     * {@code external-processing-sources}; ohne ihn keine Bewertung). Mit {@code ranking=semantic} läuft jede
+     * Suchanfrage über die {@link RelevanceSearch} ({@link SemanticVariantSearch}, ADR 0013): Die Variante findet und
+     * lädt nur, Treffer kommen aus den Vektoren mit der ursprünglichen Anfrage; ohne Embedding-Modell
+     * {@code semantic-search-unavailable}. Schließt vor der Schlagwortsuche und dem Cache: bricht laufende Suchen ab und
+     * wartet auf ihre Suchanfragen, ohne sie zu unterbrechen.
      */
     @Bean(destroyMethod = "close")
-    SearchOrchestrator searchOrchestrator(KeywordSearch keywords, ObjectProvider<SearchReranker> reranker,
-                                          QueryVariantModels models,
+    SearchOrchestrator searchOrchestrator(KeywordSearch keywords, RelevanceSearch relevance,
+                                          ObjectProvider<PageTextIndex> texts,
+                                          ObjectProvider<SearchReranker> reranker, QueryVariantModels models,
                                           @Value("${space-harvester.search.excerpt-ranking:true}")
                                           boolean excerptRanking) {
         RuleBasedExpansion rules = new RuleBasedExpansion();
-        return new SearchOrchestrator(VariantSearch.of(keywords),
+        return new SearchOrchestrator(VariantSearch.of(keywords), new SemanticVariantSearch(relevance,
+                texts.getIfUnique()),
                 new AiQueryExpansion(models, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
                 HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)));
     }

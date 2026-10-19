@@ -210,6 +210,24 @@ public class RelevanceSearch {
      *                                              es gibt keinen Rückfall auf die Titelsuche (ADR 0011)
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, int limit) {
+        return search(caller, query, text, null, Set.of(), limit);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, int)}, aber die {@link Preparation} findet mit einem
+     * anderen Text, etwa einer Variante der progressiven Suche (ADR 0017). Er bestimmt nur, welche Seiten in den Cache
+     * geladen und eingebettet werden; Kandidaten und Reihenfolge kommen weiter allein aus der Vektorsuche mit
+     * {@code text}.
+     *
+     * @param discovery         Text zum Finden in den Quellen oder {@code null}, dann der Anfragetext
+     * @param excludedSpaceKeys ohne Seiten dieser Spaces (#179): Die Vorbereitung lädt sie nicht, und sie sind keine
+     *                          Kandidaten, also füllen erlaubte Treffer das Limit; geprüft am Index und am heutigen
+     *                          Space
+     * @throws InvalidQueryException auch bei zu langem {@code discovery}
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   Set<String> excludedSpaceKeys, int limit) {
+        Set<String> excluded = Set.copyOf(excludedSpaceKeys);
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + Reranking.MAX_WINDOW + " liegen");
@@ -221,6 +239,10 @@ public class RelevanceSearch {
         if (queryText.length() > MAX_TEXT_LENGTH) {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
+        String findText = discovery == null || discovery.isBlank() ? queryText : discovery.strip();
+        if (findText.length() > MAX_TEXT_LENGTH) {
+            throw new InvalidQueryException("Suchtext hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
+        }
         scope.requireKnown(catalog);
         if (!semantic()) {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
@@ -229,7 +251,7 @@ public class RelevanceSearch {
         int preparing = 0;
         if (preparation != null) {
             try {
-                preparing = preparation.prepare(caller, query, queryText);
+                preparing = preparation.prepare(caller, query, findText, excluded);
             } catch (RuntimeException e) {
                 // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
                 LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",
@@ -247,7 +269,7 @@ public class RelevanceSearch {
         EmbeddingProcessor.Generation model = embedding.current().orElseThrow(
                 () -> new SemanticSearchUnavailableException("Kein Embedding-Modell eingestellt"));
         float[] vector = queryVector(model, queryText);
-        List<SearchHit> window = semanticCandidates(caller, query, scope, state, model, vector);
+        List<SearchHit> window = semanticCandidates(caller, query, excluded, scope, state, model, vector);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
@@ -273,7 +295,8 @@ public class RelevanceSearch {
         // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
         while (hits.size() < limit && next < ordered.size()) {
             int end = Math.min(ordered.size(), next + limit - hits.size());
-            for (Verified verified : verify(caller, query, ordered.subList(next, end), scores, contentRanked)) {
+            for (Verified verified : verify(caller, query, excluded, ordered.subList(next, end), scores,
+                    contentRanked)) {
                 complete &= !verified.failed();
                 if (verified.hit() != null && hits.size() < limit) {
                     hits.add(verified.hit());
@@ -297,6 +320,21 @@ public class RelevanceSearch {
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
         return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0);
+    }
+
+    /**
+     * Ob eine Suche über {@code query} jetzt möglich ist, in derselben Reihenfolge wie {@link #search}: zuerst die
+     * Rechte am Umfang, dann der Embedding-Dienst. Wer eine genannte Quelle oder einen Space nicht sehen darf, erfährt
+     * so nicht, ob ein Modell eingerichtet ist.
+     *
+     * @throws AccessDeniedException              wie bei {@link #search}
+     * @throws SemanticSearchUnavailableException ohne Embedding-Dienst
+     */
+    public void requireAvailable(AccessContext caller, PageSearchQuery query) {
+        SearchScope.authorize(access, catalog, caller, query).requireKnown(catalog);
+        if (!semantic()) {
+            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
+        }
     }
 
     /**
@@ -329,7 +367,7 @@ public class RelevanceSearch {
                 SearchSort.TITLE);
         Set<PageKey> fromContent = new LinkedHashSet<>();
         hits.forEach(hit -> fromContent.add(hit.page().header().key()));
-        return verify(caller, any, hits, Map.of(), fromContent).stream()
+        return verify(caller, any, Set.of(), hits, Map.of(), fromContent).stream()
                 .map(verified -> new RelatedSections.Checked(verified.hit() == null ? null : verified.hit().hit(),
                         verified.failed()))
                 .toList();
@@ -341,8 +379,8 @@ public class RelevanceSearch {
      * @param contentRanked Seiten, deren Platz aus dem Volltext stammt; sie brauchen live {@code content} wie Treffer
      *                      mit Ähnlichkeit
      */
-    private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
-                                  Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
+    private List<Verified> verify(AccessContext caller, PageSearchQuery query, Set<String> excluded,
+                                  List<SearchHit> batch, Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
         if (renewal == null) {
             return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false, indexed(hit))).toList();
         }
@@ -353,7 +391,7 @@ public class RelevanceSearch {
                 futures.add(checks.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
-                        return verify(caller, query, hit, scores.get(hit),
+                        return verify(caller, query, excluded, hit, scores.get(hit),
                                 contentRanked.contains(hit.page().header().key()));
                     } finally {
                         slots.release();
@@ -380,8 +418,8 @@ public class RelevanceSearch {
      * Wie das Lesen einer Seite: ein Metadatenabruf bei der Quelle liefert Recht und Version in einem Schritt. Die
      * Rechte gelten für den aktuellen Space der Seite, nicht den im Index.
      */
-    private Verified verify(AccessContext caller, PageSearchQuery query, SearchHit hit, Score score,
-                            boolean contentRanked) {
+    private Verified verify(AccessContext caller, PageSearchQuery query, Set<String> excluded, SearchHit hit,
+                            Score score, boolean contentRanked) {
         PageKey key = hit.page().header().key();
         HarvestSource source = catalog.find(key.sourceId()).orElse(null);
         if (source == null) {
@@ -403,7 +441,8 @@ public class RelevanceSearch {
                     key.sourceId(), e.reason());
             return Verified.FAILED;
         }
-        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(live.partitionKey())) {
+        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(live.partitionKey())
+                || excluded.contains(live.partitionKey())) {
             return Verified.DROPPED;
         }
         ResourceScope scope = ResourceScope.page(key.sourceId(), live.partitionKey(), key.pageId());
@@ -470,6 +509,14 @@ public class RelevanceSearch {
          * @return wie viele gefundene Seiten noch ohne aktuelles Embedding sind; dann ist das Ergebnis unvollständig
          */
         int prepare(AccessContext caller, PageSearchQuery query, String text);
+
+        /**
+         * Ohne Seiten dieser Spaces (#179); ohne eigene Umsetzung wie {@link #prepare(AccessContext, PageSearchQuery,
+         * String)}, die Kandidatenauswahl filtert dann trotzdem.
+         */
+        default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys) {
+            return prepare(caller, query, text);
+        }
     }
 
     @FunctionalInterface
@@ -492,9 +539,9 @@ public class RelevanceSearch {
     }
 
     /** Seiten der ähnlichsten Stücke, nach bester Ähnlichkeit, gefiltert nach Anfrage und Rechten. */
-    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                               SearchIndexState state, EmbeddingProcessor.Generation model,
-                                               float[] vector) {
+    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, Set<String> excluded,
+                                               SearchScope scope, SearchIndexState state,
+                                               EmbeddingProcessor.Generation model, float[] vector) {
         Set<PageKey> pages = new LinkedHashSet<>();
         for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), model.version(), vector,
                 MAX_CHUNKS)) {
@@ -514,7 +561,8 @@ public class RelevanceSearch {
             }
             PageSearchQuery single = query.with(page.sourceId(), page.pageId(), SearchSort.PAGE_ID);
             for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
-                if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
+                if (!excluded.contains(hit.page().header().metadata().partitionKey())
+                        && permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
                     found.add(hit);
                 }
             }
