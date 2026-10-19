@@ -56,12 +56,12 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     }
 
     /**
-     * Mit Modell im Hintergrund wie {@code embedding}: Die Warteschlange rechnet eine Berechnung nach der anderen, die
+     * Mit Modell im Hintergrund wie {@code embedding} (ohne Modell nur Überschriften, sofort): Die Warteschlange rechnet eine Berechnung nach der anderen, die
      * Navigation einer Seite also nach ihren Embeddings.
      */
     @Override
     public boolean background() {
-        return embedding != null && embedding.background();
+        return embedding != null && embedding.available() && embedding.background();
     }
 
     @Override
