@@ -19,7 +19,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -322,5 +325,35 @@ class BackgroundFillTest {
         pause.close();
         eventually(() -> loaded.size() == 2);
         assertThat(loaded).containsExactly("old-1", "new-1");
+    }
+    @Test
+    void aWithdrawalBetweenCheckAndHandOverStillWithdrawsTheRequest() throws Exception {
+        AcquisitionScheduler scheduler = scheduler(1);
+        AutoCloseable pause = scheduler.pauseBackground();
+        AtomicReference<BackgroundFill> fill = new AtomicReference<>();
+        AtomicBoolean withdrawn = new AtomicBoolean();
+        // Die Füllung der Quelle geht aus, nachdem feed() sie geprüft, aber bevor es die Anfrage eingetragen hat;
+        // revalidate() läuft genau dazwischen und sieht die Anfrage deshalb noch nicht.
+        Predicate<String> eligibleUntilFeed = sourceId -> {
+            boolean inFeed = StackWalker.getInstance().walk(frames -> frames.anyMatch(frame ->
+                    frame.getClassName().equals(BackgroundFill.class.getName())
+                            && frame.getMethodName().equals("feed")));
+            if (inFeed && withdrawn.compareAndSet(false, true)) {
+                eligible.remove(sourceId);
+                fill.get().revalidate();
+                return true;
+            }
+            return eligible.contains(sourceId);
+        };
+        BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
+        BackgroundFill started = new BackgroundFill(scheduler, queue, catalog(GAPS), SERVER, eligibleUntilFeed, NOW,
+                true);
+        open.add(started);
+        fill.set(started);
+        started.start();
+
+        eventually(() -> withdrawn.get() && started.status().inFlight() == 0);
+        pause.close();
+        assertThat(loaded).isEmpty();
     }
 }

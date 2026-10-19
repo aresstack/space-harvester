@@ -490,6 +490,10 @@ public final class BackgroundFill implements AutoCloseable {
             // Was gleich endet, kommt hier schon zurück; danach gleich weiter in der Schlange.
             again = true;
             ticket.done().whenComplete((stored, failure) -> completed(gap.key(), ticket, stored, failure));
+            if (!allowed(sourceId)) {
+                // Lief revalidate() zwischen der Prüfung oben und inFlight.put, sah es diese Anfrage nicht.
+                cancel(Map.of(gap.key(), ticket));
+            }
         }
         synchronized (monitor) {
             return again || !inFlight.isEmpty();

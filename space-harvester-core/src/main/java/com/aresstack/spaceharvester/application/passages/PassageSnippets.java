@@ -87,10 +87,13 @@ public final class PassageSnippets implements PageTextIndex {
                 return Optional.empty();
             }
             String content = text.get();
+            // Bei überlappenden Absätzen oder ohne lesbare Capture bleibt der Auszug, aber ohne ID, wie bei
+            // PagePassages.idAt.
+            String capture = PagePassages.overlapping(parsed.passages()) ? null : capture(result);
             return choose(content, parsed.passages(), terms).map(choice -> new Excerpt(
                     excerpt(content, choice.passage(), choice.first()),
-                    PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(parsed.textSha256()),
-                            choice.position(), PassageId.versionTag(parsed.segmentation()),
+                    capture == null ? null : PassageId.of(key.sourceId(), key.pageId(), capture, choice.position(),
+                            PassageId.versionTag(parsed.segmentation()),
                             PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
                             .value()));
         } catch (RuntimeException e) {
@@ -101,23 +104,30 @@ public final class PassageSnippets implements PageTextIndex {
         }
     }
 
+    private static String capture(Enrichment result) {
+        try {
+            return PassageId.captureOf(result.inputSha256());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     static Optional<String> best(String text, List<PassageSegmentation.Passage> passages, Set<String> terms) {
         return choose(text, passages, terms).map(choice -> excerpt(text, choice.passage(), choice.first()));
     }
 
     /**
-     * Der Absatz mit den meisten Suchwörtern; {@code position} zählt wie {@link PagePassages#read} nur Absätze, die
-     * im Text liegen.
+     * Der Absatz mit den meisten Suchwörtern; {@code position} zählt wie {@link PagePassages#read} nach der Stelle im
+     * Ergebnis, auch wenn ein Absatz außerhalb des Textes übersprungen wird.
      */
     static Optional<Choice> choose(String text, List<PassageSegmentation.Passage> passages, Set<String> terms) {
         Choice best = null;
         int bestScore = 0;
-        int position = -1;
-        for (PassageSegmentation.Passage passage : passages) {
+        for (int position = 0; position < passages.size(); position++) {
+            PassageSegmentation.Passage passage = passages.get(position);
             if (passage.end() > text.length()) {
                 continue;
             }
-            position++;
             Set<String> found = new LinkedHashSet<>();
             int first = -1;
             Matcher word = WORD.matcher(text).region(passage.start(), passage.end());
