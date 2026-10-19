@@ -94,14 +94,17 @@ public class DocumentNavigationController {
      * @param end      Ende, exklusiv
      * @param anchor   Textanfang an start, höchstens 60 Zeichen
      * @param parentId übergeordnetes Kapitel oder {@code null}
+     * @param passageId bei topic die Passage-ID des ersten Absatzes (auflösbar über {@code GET /api/v1/passages?id=}),
+     *                  sonst {@code null}
      */
     public record SectionEntry(String id, String label, String origin, int level, int start, int end, String anchor,
-                               @Schema(nullable = true) String parentId, List<SectionEntry> children) {
+                               @Schema(nullable = true) String parentId, List<SectionEntry> children,
+                               @Schema(nullable = true) String passageId) {
 
         static SectionEntry of(NavigationSection section) {
             return new SectionEntry(section.id(), section.label(), PassagePayload.name(section.origin()),
                     section.level(), section.start(), section.end(), section.anchor(), section.parentId(),
-                    section.children().stream().map(SectionEntry::of).toList());
+                    section.children().stream().map(SectionEntry::of).toList(), section.passageId());
         }
     }
 }
