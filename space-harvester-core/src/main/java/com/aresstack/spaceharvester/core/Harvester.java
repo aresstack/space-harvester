@@ -136,6 +136,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.GitSourceAdapter;
+import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -1548,18 +1549,29 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Die Quellentypen: die des Core, ersetzt oder ergänzt um die eigenen. */
+        /**
+         * Die Quellentypen: die des Core, ein ersetzter an seinem Platz, eigene neue dahinter. Mit
+         * {@link #configuration} liest der eingebaute Typ {@code files} die freigegebenen Ordner bei jedem Zugriff aus
+         * der wirksamen Konfiguration, ohne sie keine.
+         */
         private List<SourceAdapter> adapters() {
-            List<SourceAdapter> adapters = new ArrayList<>();
-            List<SourceAdapter> defaults = new ArrayList<>(ConfiguredSourceCatalog.DEFAULT_ADAPTERS);
+            List<SourceAdapter> defaults = new ArrayList<>();
+            for (SourceAdapter adapter : ConfiguredSourceCatalog.DEFAULT_ADAPTERS) {
+                defaults.add(configuration != null && adapter instanceof LocalFilesSourceAdapter
+                        ? LocalFilesSourceAdapter.following(configuration) : adapter);
+            }
             // Git braucht einen Ordner für die Kopien der Repositorys (#187).
             defaults.add(new GitSourceAdapter(dataDirectory.resolve("git")));
+            List<SourceAdapter> adapters = new ArrayList<>();
             for (SourceAdapter adapter : defaults) {
-                if (sourceAdapters.stream().noneMatch(own -> own.type().equals(adapter.type()))) {
-                    adapters.add(adapter);
+                adapters.add(sourceAdapters.stream().filter(own -> own.type().equals(adapter.type())).findFirst()
+                        .orElse(adapter));
+            }
+            for (SourceAdapter own : sourceAdapters) {
+                if (adapters.stream().noneMatch(added -> added.type().equals(own.type()))) {
+                    adapters.add(own);
                 }
             }
-            adapters.addAll(sourceAdapters);
             return adapters;
         }
 
