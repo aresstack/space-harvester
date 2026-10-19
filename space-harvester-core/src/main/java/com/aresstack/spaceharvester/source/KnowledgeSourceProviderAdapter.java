@@ -215,6 +215,12 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
                 ? Set.of(titleKey()) : Set.of(titleKey(), credentialKey));
     }
 
+    /** Typen mit Netz, außer nach {@link #withoutTls}. */
+    @Override
+    public boolean tls() {
+        return tls;
+    }
+
     /** {@code none}, mit Anmeldefeld auch {@code basic}, mit {@link #acceptingToken} auch {@code pat}. */
     @Override
     public List<SourceType.AuthMode> authModes() {
