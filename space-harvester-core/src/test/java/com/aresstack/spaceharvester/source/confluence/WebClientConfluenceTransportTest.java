@@ -399,6 +399,26 @@ class WebClientConfluenceTransportTest {
     }
 
     @Test
+    void aRequestWaitingForAConnectionStillEndsNormallyWhenClientsAreDiscarded() throws Exception {
+        // Eine Verbindung: die zweite Anfrage wartet im Pool, während die Clients verworfen werden.
+        WebClientConfluenceTransport transport = transport(WebClientConfluenceTransport.builder().maxConnections(1));
+        CompletableFuture<ConfluenceHttpResponse> running =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 1);
+        CompletableFuture<ConfluenceHttpResponse> waiting =
+                transport.getAsync(base.resolve("/status/200"), HEADERS, 1024).toCompletableFuture();
+        Thread.sleep(200);
+        assertThat(waiting).isNotDone();
+
+        transport.discardClients();
+        release.countDown();
+
+        assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(waiting.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        transport.close();
+    }
+
+    @Test
     void invalidLimitsAreRejected() {
         assertThatThrownBy(() -> WebClientConfluenceTransport.builder().maxConnections(0))
                 .isInstanceOf(IllegalArgumentException.class);

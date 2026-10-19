@@ -145,6 +145,25 @@ class NetworkReconfigurationTest {
         }
     }
 
+    @Test
+    void sourcesWithTheSameTargetAreOpenedAgainToo() throws Exception {
+        // Beim Start nur eine Warnung; auch dann liest die Umstellung ihr Vertrauen neu.
+        Path bundle = dir.resolve("bundle-twice.p12");
+        Files.copy(certificates.serverTrust, bundle, StandardCopyOption.REPLACE_EXISTING);
+        TrustBundles bundles = name -> load(bundle);
+        SourceSettingsConfig twin = new SourceSettingsConfig("wiki2", "confluence", null, server.baseUrl(), null,
+                Map.of(), null, "file");
+        try (ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(List.of(wiki(server.baseUrl(), "file"),
+                twin), "test", TrustBundles.reconfigurable(bundles, TrustSettings.jvm()), ProxySettings.disabled())) {
+            Files.copy(certificates.harvesterTrust, bundle, StandardCopyOption.REPLACE_EXISTING);
+            catalog.reconfigure(NetworkSettings.DEFAULT);
+
+            assertThat(spaces(catalog)).containsExactly("DEV");
+            assertThat(catalog.find("wiki2").orElseThrow().partitions()).extracting(Partition::key)
+                    .containsExactly("DEV");
+        }
+    }
+
     private static X509TrustManager load(Path file) {
         try (InputStream in = Files.newInputStream(file)) {
             KeyStore store = KeyStore.getInstance("PKCS12");

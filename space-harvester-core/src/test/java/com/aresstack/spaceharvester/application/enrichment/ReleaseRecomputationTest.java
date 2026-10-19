@@ -92,16 +92,55 @@ class ReleaseRecomputationTest {
         assertThat(navigation.calls).as("andere Prozessoren nach Bedarf").isEmpty();
     }
 
+    @Test
+    void withoutAnEmbeddingModelAnOlderEmbeddingStaysAndCountsAsNothingDue() throws Exception {
+        // Der Start läuft etwa für die Satzanalyse; embedding bearbeitet ohne Modell keine Seite.
+        Counting embedding = new Counting("embedding", "{\"vectors\":[[0.1]]}", false);
+        Counting navigation = new Counting("navigation", "{\"analysis\":\"SEMANTIC\"}");
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(embedding, navigation), store, CLOCK);
+        PageSnapshot page = text("wiki", "p1", "1", "Eins");
+        enrichments.recompute(page, "navigation");
+        store.save(new Enrichment(page.key(), "embedding", "0", "x", "1", Enrichment.Status.OK,
+                "{\"vectors\":[[0.2]]}", List.of(), null, CLOCK.instant()));
+        PageSnapshot marker = text("wiki", "p2", "1", "Zwei");
+        navigation.calls.clear();
+
+        try (ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
+                sourceId -> List.of(page, marker).iterator(), "wiki"::equals, List.of("embedding", "navigation"))) {
+            recomputation.reconcileOnStart(List.of("wiki"), () -> true, NOT_APPROVED);
+            // p2 fehlt die Navigation: Ist sie gerechnet, ist auch p1 schon geprüft.
+            long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (navigation.count("p2") == 0 && System.nanoTime() < end) {
+                Thread.onSpinWait();
+            }
+        }
+
+        assertThat(navigation.calls).containsOnlyKeys("p2");
+        assertThat(embedding.calls).isEmpty();
+        assertThat(store.find(page.key())).extracting(Enrichment::processorId).contains("embedding");
+    }
+
     /** Zählt seine Aufrufe je Seite. */
     private static final class Counting implements EnrichmentProcessor {
 
         private final String id;
         private final String payload;
+        private final boolean applies;
         private final Map<String, AtomicInteger> calls = new ConcurrentHashMap<>();
 
         private Counting(String id, String payload) {
+            this(id, payload, true);
+        }
+
+        private Counting(String id, String payload, boolean applies) {
             this.id = id;
             this.payload = payload;
+            this.applies = applies;
+        }
+
+        @Override
+        public boolean appliesTo(PageKey key) {
+            return applies;
         }
 
         int count(String pageId) {

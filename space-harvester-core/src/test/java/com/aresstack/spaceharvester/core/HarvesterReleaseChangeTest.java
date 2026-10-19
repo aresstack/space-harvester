@@ -139,10 +139,13 @@ class HarvesterReleaseChangeTest {
 
             awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id) && withoutEmbedding(harvester, id)
                     && navigationNotApproved(harvester, id)), "Rückfall ohne Modell");
-            // Nur die Berechnung, die vor dem Entzug schon lief, fragt das Modell (auch mehrmals) zu Ende; keine
-            // eingereihte Seite fragt es danach.
-            assertThat(calledPages.getFirst()).isIn(PAGES);
-            assertThat(calledPages).hasSize(calls.get()).containsOnly(calledPages.getFirst());
+            // Nur Berechnungen, die vor dem Entzug schon liefen, fragen das Modell (auch mehrmals) zu Ende; keine
+            // eingereihte Seite fragt es danach. Laufen können vor dem Entzug höchstens zwei, je eine im Hintergrund der
+            // Anreicherungen und im Lauf des Freigabewechsels (Prozessoren, die dort nicht im Hintergrund rechnen); jede
+            // hängt ab ihrem ersten Aufruf am Tor. Welche Seiten das sind, hängt an der Reihenfolge der Threads, nicht
+            // am Ablauf.
+            assertThat(calledPages).hasSize(calls.get()).isNotEmpty().allSatisfy(page -> assertThat(page).isIn(PAGES));
+            assertThat(Set.copyOf(calledPages)).as("Seiten mit Modellaufruf").hasSizeLessThanOrEqualTo(2);
         }
     }
 
@@ -254,12 +257,15 @@ class HarvesterReleaseChangeTest {
         return passages && embedding && navigation;
     }
 
-    /** Wartet mit Frist, ohne feste Pause: jede Prüfung liest den Stand der Ablage neu. */
+    /**
+     * Wartet auf den Stand der Ablage, ohne feste Pause: jede Prüfung liest ihn neu. Die 120 s gelten nur gegen Hänger,
+     * unter CI-Last darf das Rechnen länger dauern.
+     */
     private static void awaitTrue(BooleanSupplier condition, String what) throws InterruptedException {
-        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(120));
         while (!condition.getAsBoolean()) {
             if (Instant.now().isAfter(deadline)) {
-                throw new AssertionError(what + " nach 30 s nicht erreicht");
+                throw new AssertionError(what + " nach 120 s nicht erreicht");
             }
             Thread.sleep(20);
         }

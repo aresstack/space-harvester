@@ -92,6 +92,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     private final Scheduler routeScheduler;
     private final Map<ClientKey, Client> clients = new LinkedHashMap<>(16, 0.75f, true);
     private final AtomicBoolean closed = new AtomicBoolean();
+    /** Hart geschlossen ({@link #close()}): auch schon begonnene Anfragen bekommen keinen Client mehr. */
+    private volatile boolean disposed;
 
     private WebClientConfluenceTransport(Builder builder) {
         this.routes = builder.routes == null ? HttpRoutePort.direct() : builder.routes;
@@ -316,8 +318,15 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         Client evicted = null;
         Client client;
         synchronized (clients) {
-            if (closed.get()) {
+            if (disposed) {
                 throw new IOException("Transport ist geschlossen");
+            }
+            if (closed.get()) {
+                // Sanft geschlossen, während die Anfrage ihre Route wählte: Sie bekommt einen eigenen Client, der
+                // danach schließt; neue Anfragen weist schon der Einstieg ab.
+                Client late = create(key);
+                retire(late);
+                return late.web();
             }
             client = clients.get(key);
             if (client == null) {
@@ -331,7 +340,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
             }
         }
         if (evicted != null) {
-            evicted.pool().disposeLater().subscribe();
+            retire(evicted);
         }
         return client.web();
     }
@@ -396,7 +405,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     /**
      * Verwirft alle gehaltenen Clients, etwa nach einer geänderten Proxy-Anmeldung (ADR 0015): Die nächste Anfrage baut
      * neue Clients mit der dann gültigen Anmeldung. Die alten Pools schließen über {@code disposeLater}; laufende
-     * Anfragen enden normal über ihre Verbindung.
+     * Anfragen enden normal über ihre Verbindung, auch solche, die noch auf eine Verbindung warten ({@link #retire}).
      */
     public void discardClients() {
         List<Client> all;
@@ -404,9 +413,18 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
             all = new ArrayList<>(clients.values());
             clients.clear();
         }
-        for (Client client : all) {
-            client.pool().disposeLater().subscribe();
-        }
+        all.forEach(this::retire);
+    }
+
+    /**
+     * Schließt den Pool eines nicht mehr gehaltenen Clients erst, wenn keine Anfrage mehr auf eine seiner Verbindungen
+     * warten kann (nach {@code pendingAcquireTimeout}): {@code disposeLater} beendet wartende Anfragen mit einem
+     * Fehler, laufende Verbindungen dagegen schließen erst nach ihrer Antwort.
+     */
+    private void retire(Client client) {
+        Mono.delay(connectTimeout.plus(readTimeout))
+                .then(Mono.defer(() -> client.pool().disposeLater()))
+                .subscribe(ignored -> { }, failure -> { });
     }
 
     /** Anzahl gerade gehaltener Clients (für Tests der Pool-Trennung). */
@@ -418,6 +436,7 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
 
     @Override
     public void close() {
+        disposed = true;
         if (!closed.compareAndSet(false, true)) {
             return;
         }

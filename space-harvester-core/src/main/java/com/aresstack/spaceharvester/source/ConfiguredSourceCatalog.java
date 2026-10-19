@@ -431,13 +431,19 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         return replace(config, false);
     }
 
-    /** @param graceful ob laufende delegierte Aufrufe der bisherigen Instanz noch zu Ende laufen */
+    /**
+     * @param graceful ob laufende delegierte Aufrufe der bisherigen Instanz noch zu Ende laufen; so öffnet
+     *                 {@link #reconfigure} dieselben Einstellungen neu, ohne sie erneut gegen die übrigen Quellen zu
+     *                 prüfen (beim Start sind Quellen mit demselben Ziel nur eine Warnung)
+     */
     private SourceSettingsConfig replace(SourceSettingsConfig config, boolean graceful) {
         Opened previous = opened.get(Objects.requireNonNull(config, "config").id());
         if (previous == null) {
             throw new UnknownSourceException(config.id());
         }
-        requireValid(config, true);
+        if (!graceful) {
+            requireValid(config, true);
+        }
         ConfiguredSecrets.Saved saved = secrets.save(config.id());
         secrets.forget(config.id());
         Opened source;
