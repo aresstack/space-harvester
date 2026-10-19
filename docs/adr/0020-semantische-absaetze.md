@@ -7,7 +7,8 @@
   `PagePassages.read` für die Leseansicht, `PassageQueries` (`harvester.passages()`), REST
   `GET /api/v1/sources/{sourceId}/pages/{pageId}/passages`; Suchschnipsel aus Absätzen (`PassageSnippets`).
 - Embeddings je Absatz: `EmbeddingProcessor.withPassages(PassageChunks)` (Punkt 8).
-- Offen: Reiter „Absätze“ in der App (#354, Strang L); Re-Ranking auf Absatzebene (#181, eigener PR).
+- Re-Ranking auf Absatzebene: der Reranker der semantischen Suche bekommt genau den ähnlichsten Absatz (Punkt 9).
+- Offen: Reiter „Absätze“ in der App (#354, Strang L).
 
 ## Kontext
 
@@ -52,6 +53,11 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Suche und Freigabe bleiben; die Version nennt die Zerlegung (`+passages:<Fingerabdruck>`), vorhandene Embeddings
    veralten einmal und werden aus dem Cache neu berechnet. Die Satzvektoren der Themengrenzen kosten den Prozessor
    `embedding` wie `passages` je einen Aufruf je 32 Sätze.
+9. **Re-Ranking auf Absatzebene**: Der Reranker der semantischen Suche (`ModelReranker`, `/rerank`) bekommt je Treffer
+   den Titel und genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (Punkt 8), statt eines auf
+   2 000 Zeichen aufgefüllten Fensters; ohne aktuelle Absätze (veraltete Revision, Zerlegung ohne Absätze) bleibt das
+   Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
+   Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
 
 ## Abweichungen vom Client
 
