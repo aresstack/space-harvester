@@ -118,7 +118,9 @@ class AttachmentTextSearchTest {
                 + "\"kind\":\"paragraph\",\"boundary\":\"structure\",\"similarity\":null},"
                 + "{\"start\":23,\"end\":54,\"firstSentence\":1,\"sentences\":1,\"section\":null,"
                 + "\"kind\":\"paragraph\",\"boundary\":\"structure\",\"similarity\":null}]}";
-        Enrichment passages = new Enrichment(new PageKey("wiki", "101"), PassageProcessor.ID, "1", "sha256:i", "1",
+        // Die Capture ist der inputSha256 des Ergebnisses: Text und Gliederung.
+        Enrichment passages = new Enrichment(new PageKey("wiki", "101"), PassageProcessor.ID, "1",
+                "sha256:" + "c".repeat(64), "1",
                 Enrichment.Status.OK, payload, List.of(), null, NOW);
         PassageSnippets snippets = new PassageSnippets(index, key -> List.of(passages));
 
@@ -127,7 +129,7 @@ class AttachmentTextSearchTest {
 
         assertThat(hit.snippet()).isEqualTo("Die Wartung beginnt am Samstag.");
         assertThat(hit.passageId()).isEqualTo(PassageId.of("wiki", "101",
-                PassageId.captureOf(PassagePayload.textSha256(text)), 1, PassageId.versionTag("s"),
+                "c".repeat(64), 1, PassageId.versionTag("s"),
                 PassageId.versionTag("structure")).value());
         assertThat(new KeywordSearch(catalog(), new AccessGuard(deny("101", AccessKind.CONTENT)), snippets, null)
                 .search(APP, KeywordSearch.Query.of("Wartung"), null, 10).hits()).isEmpty();

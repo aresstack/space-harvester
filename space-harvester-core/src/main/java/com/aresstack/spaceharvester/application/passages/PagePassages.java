@@ -105,7 +105,9 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
             return empty(State.FAILED, result);
         }
         String content = text.text();
-        String capture = PassageId.captureOf(PassagePayload.textSha256(content));
+        // Die Capture deckt Text und Gliederung ab (inputSha256): Die Grenzen hängen auch an den Abschnitten, eine
+        // umgestufte Überschrift bei gleichem Text gibt neue Grenzen und damit neue IDs.
+        String capture = PassageId.captureOf(result.inputSha256());
         String segmentation = PassageId.versionTag(parsed.segmentation());
         String model = PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model());
         List<Passage> passages = new ArrayList<>(parsed.passages().size());
@@ -130,10 +132,10 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
     /**
      * Die Passage-ID des Absatzes, der den Bereich {@code [start, end)} ganz enthält, allein aus dem schon geladenen
      * Ergebnis {@code result} (für Treffer der semantischen Suche, wie {@code passage:} je Treffer im Client): ohne
-     * Text, die Capture steht im Ergebnis. {@code null}, wenn {@code result} kein erfolgreiches Ergebnis von
-     * {@value PassageProcessor#ID} für genau diese Seite und denselben Text ({@code inputSha256}) ist, es keine Capture
-     * kennt (Format 1), Absätze sich überlappen (kaputtes Ergebnis) oder kein Absatz den Bereich enthält. Gezählt wird
-     * wie in {@link #read}: nach der Stelle im Ergebnis.
+     * Text, die Capture ist der {@code inputSha256} des Ergebnisses wie in {@link #read}. {@code null}, wenn
+     * {@code result} kein erfolgreiches Ergebnis von {@value PassageProcessor#ID} für genau diese Seite und dieselbe
+     * Eingabe ({@code inputSha256}) ist, Absätze sich überlappen (kaputtes Ergebnis, {@link #overlapping}) oder kein
+     * Absatz den Bereich enthält. Gezählt wird wie in {@link #read}: nach der Stelle im Ergebnis.
      *
      * @param inputSha256 Eingabe-Hash der Textprojektion, aus der der Bereich stammt
      */
@@ -149,22 +151,15 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
         } catch (IllegalArgumentException e) {
             return null;
         }
-        if (parsed.textSha256() == null) {
-            return null;
-        }
         List<PassageSegmentation.Passage> passages = parsed.passages();
-        // Ohne Text ist ein kaputtes Ergebnis nur an überlappenden Absätzen zu erkennen; dann keine ID, die auf einen
-        // Absatz zeigen könnte, den die Leseansicht nie zeigt.
-        for (int index = 1; index < passages.size(); index++) {
-            if (passages.get(index).start() < passages.get(index - 1).end()) {
-                return null;
-            }
+        if (overlapping(passages)) {
+            return null;
         }
         for (int index = 0; index < passages.size(); index++) {
             PassageSegmentation.Passage passage = passages.get(index);
             if (passage.start() <= start && end <= passage.end()) {
                 try {
-                    return PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(parsed.textSha256()), index,
+                    return PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(result.inputSha256()), index,
                             PassageId.versionTag(parsed.segmentation()),
                             PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
                             .value();
@@ -174,6 +169,19 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
             }
         }
         return null;
+    }
+
+    /**
+     * Ob sich Absätze eines Ergebnisses überlappen. Ohne Text ist ein kaputtes Ergebnis nur daran zu erkennen; Treffer
+     * bekommen dann keine ID, die auf einen Absatz zeigen könnte, den die Leseansicht nie zeigt.
+     */
+    static boolean overlapping(List<PassageSegmentation.Passage> passages) {
+        for (int index = 1; index < passages.size(); index++) {
+            if (passages.get(index).start() < passages.get(index - 1).end()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static PagePassages empty(State state, Enrichment result) {
