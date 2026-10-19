@@ -236,7 +236,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         String location = first(response.headers().header("Location"));
         List<String> cookies = ConfluenceRedirects.setCookies(Map.of("Set-Cookie",
                 response.headers().header("Set-Cookie")));
-        Body body = new Body(length, maxBytes);
+        // Nur ein erfolgreicher Körper wird nach der angekündigten Länge vorbelegt; Fehler und Weiterleitungen sind klein.
+        Body body = new Body(response.statusCode().is2xxSuccessful() ? length : -1, maxBytes);
         return response.bodyToFlux(DataBuffer.class)
                 .handle((DataBuffer buffer, SynchronousSink<Void> sink) -> {
                     try {
