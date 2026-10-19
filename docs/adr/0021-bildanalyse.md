@@ -67,7 +67,8 @@ Beschreibung je Bildbytes und Modell bleibt nutzbar), legt aber die Warnung `pag
 `STALE`, bis nach dem nächsten Abgleich erneut beschrieben wird; ist der Cache älter als die Quelle, bleibt also
 auch jedes erneute Beschreiben `STALE`, bis der Abgleich die Seite holt. Eine Quelle ohne Lese-Ansicht, die ihre Bilder
 trotzdem kennt, liefert sie wie bisher über `viewImages`; die Fassung gilt dort als unbekannt und bleibt ungeprüft.
-Kein Schemawechsel (`page-images/v1`), keine Änderung an den Asset-Klassen.
+`describe` fragt die Quelle damit dreimal statt zweimal (Kopfdaten, Ansicht und Lesetext), vertretbar, weil es
+nur auf Abruf läuft. Kein Schemawechsel (`page-images/v1`), keine Änderung an den Asset-Klassen.
 
 ## Nachtrag 2026-10-19: Ersetzte Bildanhänge
 
