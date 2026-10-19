@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.enterpriseai.ui.comic.control.ComicOverlayPanel;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.ui.AppContext;
@@ -10,6 +11,10 @@ import com.aresstack.spaceharvester.app.ui.Feedback;
 import com.aresstack.spaceharvester.app.ui.PillTabs;
 import com.aresstack.spaceharvester.app.ui.Problems;
 import com.aresstack.spaceharvester.app.ui.Texts;
+import com.aresstack.spaceharvester.app.ui.content.viewer.AttachmentViewerPanel;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachment;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderAttachmentLoader;
+import com.aresstack.spaceharvester.app.ui.content.viewer.ReaderFileOpener;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -30,6 +35,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JLayeredPane;
 import javax.swing.JPanel;
 import javax.swing.JTable;
 import javax.swing.JTextArea;
@@ -43,6 +49,8 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Point;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.File;
 import java.io.IOException;
@@ -51,6 +59,8 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
  * Eine Seite: zuerst ihr lesbarer Text (statische Projektion, kein ausgeführtes HTML und keine nachgeladenen Bilder),
@@ -117,6 +127,13 @@ public final class PageDetailPanel extends JPanel {
     private final ComposerButton harvest = Comic.button("Alle Anhänge ablegen",
             "Lädt die Anhänge dieser Seite in die lokale Anhangsablage");
     private final ComposerButton saveAsset = Comic.button("Anhang speichern …", "Datei des gewählten Anhangs");
+    private final ComposerButton previewAsset = Comic.button("Vorschau",
+            "Zeigt den gewählten Anhang im Anhang-Viewer (auch per Doppelklick)");
+    /** Reiter „Anhänge“: Liste unten, der Anhang-Viewer als Comic-Overlay darüber (wie im Enterprise AI Client). */
+    private final JLayeredPane attachmentLayers = new JLayeredPane();
+    private ComicOverlayPanel attachmentOverlay;
+    private ReaderFileOpener fileOpener = ReaderFileOpener.system();
+    private Executor attachmentRenderer;
     private final ComposerButton recompute = Comic.button("Neu berechnen", "Analysen dieser Seite neu berechnen");
 
     private String sourceId;
@@ -159,11 +176,25 @@ public final class PageDetailPanel extends JPanel {
         readerPanel.add(Comic.scroll(reader), BorderLayout.CENTER);
         readerPanel.add(acronymDetail, BorderLayout.SOUTH);
 
-        JPanel attachmentsPanel = new JPanel(new BorderLayout(0, 6));
+        JPanel attachmentList = new JPanel(new BorderLayout(0, 6));
+        attachmentList.setOpaque(false);
+        attachmentList.add(assetsHint, BorderLayout.NORTH);
+        attachmentList.add(Comic.scroll(assets), BorderLayout.CENTER);
+        attachmentList.add(Comic.row(previewAsset, harvest, saveAsset), BorderLayout.SOUTH);
+        attachmentLayers.setLayout(new FillLayout());
+        attachmentLayers.add(attachmentList, JLayeredPane.DEFAULT_LAYER);
+        JPanel attachmentsPanel = new JPanel(new BorderLayout());
         attachmentsPanel.setOpaque(false);
-        attachmentsPanel.add(assetsHint, BorderLayout.NORTH);
-        attachmentsPanel.add(Comic.scroll(assets), BorderLayout.CENTER);
-        attachmentsPanel.add(Comic.row(harvest, saveAsset), BorderLayout.SOUTH);
+        attachmentsPanel.add(attachmentLayers, BorderLayout.CENTER);
+        assets.getSelectionModel().addListSelectionListener(e -> updatePreviewEnabled());
+        assets.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getClickCount() == 2 && assets.rowAtPoint(e.getPoint()) >= 0) {
+                    openAttachment();
+                }
+            }
+        });
 
         JPanel analysis = new JPanel(new BorderLayout(0, 6));
         analysis.setOpaque(false);
@@ -215,6 +246,7 @@ public final class PageDetailPanel extends JPanel {
         bookmark.addActionListener(e -> copyBookmark());
         harvest.addActionListener(e -> harvestAssets());
         saveAsset.addActionListener(e -> saveAsset());
+        previewAsset.addActionListener(e -> openAttachment());
         recompute.addActionListener(e -> recompute());
         recomputeReader.addActionListener(e -> recompute());
 
@@ -266,6 +298,7 @@ public final class PageDetailPanel extends JPanel {
         views = List.of();
         showReader(null, false);
         acronymHint.setText(" ");
+        closeAttachmentOverlay();
         assetsModel.set(null);
         enrichmentModel.set(List.of());
         properties.reset();
@@ -307,6 +340,7 @@ public final class PageDetailPanel extends JPanel {
         cards.show(deck, PAGE);
         showReader(null, false);
         acronymHint.setText(" ");
+        closeAttachmentOverlay();
         assetsModel.set(null);
         title.setText("Seite " + pageId);
         path.setText(sourceId);
@@ -712,6 +746,121 @@ public final class PageDetailPanel extends JPanel {
         }, bytes -> feedback.success("Gespeichert: " + target + " (" + Texts.bytes(bytes) + ")"), feedback::problem);
     }
 
+    /** „Vorschau“ nur mit geladener Seite und gewähltem Anhang. */
+    private void updatePreviewEnabled() {
+        previewAsset.setEnabled(page != null && assets.getSelectedRow() >= 0);
+    }
+
+    /**
+     * Öffnet den gewählten Anhang im Anhang-Viewer als Overlay über der Liste, wie {@code
+     * KnowledgeReaderPanel.openAttachment} im Enterprise AI Client; geladen wird erst jetzt. Office-Dateien zeigt
+     * der Viewer über die Vorschau der Quelle, die nur Quellen mit {@code ATTACHMENT_PREVIEWS} anbieten.
+     */
+    void openAttachment() {
+        AppRuntime runtime = context.runtime();
+        int row = assets.getSelectedRow();
+        if (runtime == null || page == null || row < 0 || row >= assetsModel.rows.size()) {
+            return;
+        }
+        PageAssets.Entry entry = assetsModel.rows.get(row);
+        com.aresstack.spaceharvester.application.sources.PageAttachment file = entry.attachment();
+        String mediaType = file.mediaType() != null && !file.mediaType().isBlank() ? file.mediaType()
+                : entry.stored() == null ? null : entry.stored().mediaType();
+        ReaderAttachment attachment = new ReaderAttachment(file.attachmentId(), file.title(), mediaType,
+                file.fileSize() == null ? -1 : file.fileSize());
+        String source = sourceId;
+        boolean previews = runtime.workspace().attachmentPreviews(source);
+        showAttachmentOverlay(new AttachmentViewerPanel(attachment,
+                attachmentLoader(runtime, source, pageId, previews), fileOpener, attachmentRenderer),
+                attachment.fileName());
+    }
+
+    /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
+    private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
+                                                           boolean previews) {
+        return new ReaderAttachmentLoader() {
+            @Override
+            public void load(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                Background.run(() -> runtime.workspace().assetContent(source, id, attachment.key()).content(), done,
+                        error -> failed.accept(reason(error)));
+            }
+
+            @Override
+            public void preview(ReaderAttachment attachment, Consumer<byte[]> done, Consumer<String> failed) {
+                if (!previews) {
+                    ReaderAttachmentLoader.super.preview(attachment, done, failed);
+                    return;
+                }
+                Background.run(() -> runtime.workspace().assetPreview(source, id, attachment.key()).content(), done,
+                        error -> failed.accept(reason(error)));
+            }
+        };
+    }
+
+    private static String reason(Throwable error) {
+        Problems.Problem problem = Problems.describe(error);
+        return problem.message() == null ? problem.title() : problem.title() + ": " + problem.message();
+    }
+
+    private void showAttachmentOverlay(JComponent content, String heading) {
+        closeAttachmentOverlay();
+        attachmentOverlay = new ComicOverlayPanel(heading, content, this::closeAttachmentOverlay, Comic.PALETTE);
+        attachmentOverlay.getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeAttachment");
+        attachmentOverlay.getActionMap().put("closeAttachment", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                closeAttachmentOverlay();
+            }
+        });
+        attachmentLayers.add(attachmentOverlay, JLayeredPane.MODAL_LAYER);
+        attachmentLayers.revalidate();
+        attachmentLayers.repaint();
+    }
+
+    void closeAttachmentOverlay() {
+        if (attachmentOverlay != null) {
+            attachmentLayers.remove(attachmentOverlay);
+            attachmentOverlay = null;
+            attachmentLayers.revalidate();
+            attachmentLayers.repaint();
+        }
+    }
+
+    /** Für Tests: der offene Anhang-Viewer oder {@code null}. */
+    AttachmentViewerPanel attachmentViewer() {
+        return attachmentOverlay == null ? null : find(attachmentOverlay);
+    }
+
+    private static AttachmentViewerPanel find(java.awt.Component root) {
+        if (root instanceof AttachmentViewerPanel viewer) {
+            return viewer;
+        }
+        if (root instanceof java.awt.Container container) {
+            for (java.awt.Component child : container.getComponents()) {
+                AttachmentViewerPanel found = find(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Für Tests: womit „Öffnen“ im Anhang-Viewer die Datei öffnet und auf welchem Thread PDF-Seiten entstehen. */
+    void setAttachmentViewerHooks(ReaderFileOpener opener, Executor renderer) {
+        this.fileOpener = opener == null ? ReaderFileOpener.system() : opener;
+        this.attachmentRenderer = renderer;
+    }
+
+    JTable assets() {
+        return assets;
+    }
+
+    ComposerButton previewAsset() {
+        return previewAsset;
+    }
+
     private void saveRaw() {
         if (page == null) {
             return;
@@ -819,6 +968,7 @@ public final class PageDetailPanel extends JPanel {
         bookmark.setEnabled(enabled);
         harvest.setEnabled(enabled);
         saveAsset.setEnabled(enabled);
+        updatePreviewEnabled();
         recompute.setEnabled(enabled);
         recomputeReader.setEnabled(enabled);
     }
@@ -885,6 +1035,40 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {
+    }
+
+    /** Jede Ebene (Liste, Overlay) füllt den Reiter „Anhänge“ (wie {@code KnowledgeReaderPanel.FillLayout}). */
+    private static final class FillLayout implements java.awt.LayoutManager {
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component comp) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(java.awt.Container parent) {
+            Dimension size = new Dimension();
+            for (java.awt.Component child : parent.getComponents()) {
+                Dimension preferred = child.getPreferredSize();
+                size.width = Math.max(size.width, preferred.width);
+                size.height = Math.max(size.height, preferred.height);
+            }
+            return size;
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(java.awt.Container parent) {
+            return new Dimension();
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            for (java.awt.Component child : parent.getComponents()) {
+                child.setBounds(0, 0, parent.getWidth(), parent.getHeight());
+            }
+        }
     }
 
     private static final class AssetsModel extends AbstractTableModel {

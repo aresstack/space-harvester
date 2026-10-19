@@ -653,6 +653,24 @@ public final class Workspace {
         return harvester.assets().content(list, attachmentId, mayStore);
     }
 
+    /**
+     * Vorschau eines Anhangs, wie die Quelle sie erzeugt ({@code …/assets/{id}/preview}, #183): die erste verfügbare
+     * in der Reihenfolge {@link com.aresstack.spaceharvester.application.sources.AttachmentPreview#order()}; legt
+     * nur mit sync-Freigabe ab.
+     */
+    public Assets.AssetContent assetPreview(String sourceId, String pageId, String attachmentId) {
+        PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return harvester.assets().preview(list, attachmentId, null, mayStore);
+    }
+
+    /** Ob die Quelle Vorschauen von Anhängen erzeugt ({@code SourceCapability.ATTACHMENT_PREVIEWS}). */
+    public boolean attachmentPreviews(String sourceId) {
+        return sources().stream().anyMatch(source -> source.id().equals(sourceId)
+                && source.capabilities().contains(
+                        com.aresstack.spaceharvester.application.sources.SourceCapability.ATTACHMENT_PREVIEWS));
+    }
+
     // ------------------------------------------------------------------ intern
 
     private PageAttachmentList visibleAttachments(String sourceId, String pageId, AccessKind kind) {
