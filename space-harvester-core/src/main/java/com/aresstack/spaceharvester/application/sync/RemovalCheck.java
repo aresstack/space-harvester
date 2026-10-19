@@ -18,6 +18,10 @@ import java.util.Objects;
  * <p>Nach ADR 0014, Punkt 4, ist „nicht gefunden“ nur dann eine Löschung, wenn die Quelle das autoritativ bestätigt
  * ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#confirmsDeletion()}); Confluence antwortet
  * auch mit 404, wenn das technische Konto die Seite nicht mehr sehen darf.
+ *
+ * <p>Eine Seite außerhalb des Umfangs einer Quelle mit Startpunkten
+ * ({@link com.aresstack.spaceharvester.application.sources.HarvestSource#outsideScope}) gilt ohne Einzelabfrage als
+ * gelöscht: Es gibt sie noch, sie gehört aber nicht mehr in den Katalog.
  */
 public class RemovalCheck {
 
@@ -88,6 +92,11 @@ public class RemovalCheck {
 
     private Result verify(String sourceId, String spaceKey, String pageId, boolean confirmsDeletion) {
         try {
+            if (queries.outsideScope(sourceId, pageId)) {
+                // Außerhalb von Startpunkten und Tiefe laut vollständiger Discovery dieses Laufs: fällt ohne
+                // Einzelabfrage und ohne Sperre wie eine gelöschte aus dem Katalog; ein Abruf auf Anforderung holt sie.
+                return new Result(pageId, Verdict.DELETED, null, null);
+            }
             PageMetadataListing.Entry current = queries.pageMetadata(sourceId, pageId).entry();
             Verdict verdict = spaceKey.equals(current.page().partitionKey())
                     ? Verdict.STILL_PRESENT : Verdict.MOVED_OUT;

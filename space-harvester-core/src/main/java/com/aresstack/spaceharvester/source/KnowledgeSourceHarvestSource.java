@@ -113,6 +113,13 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private final InFlightLimit inFlight;
     /** Umfang für {@code discover}, nur ohne {@link PartitionListingSource}; sonst {@code null}. */
     private final SourceScope scope;
+    /**
+     * Umfang aus Startpunkten und Tiefe für einen Port mit {@link PartitionListingSource} (Confluence), sonst
+     * {@code null}: Die Auflistung einer Partition behält nur Seiten, die {@code discover} in diesem Umfang findet.
+     */
+    private final SourceScope restriction;
+    /** Seiten-IDs der letzten vollständigen Discovery im {@link #restriction}; {@code null} ohne eine. */
+    private volatile Set<String> inScope;
     /** Die letzte Discovery; Folgestapel derselben Listung lesen aus ihr, statt die Quelle erneut zu befragen. */
     private volatile Discovery discovery;
 
@@ -127,8 +134,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     }
 
     /**
-     * @param scope Umfang für {@code discover} (#187); gilt nur für einen Port ohne {@link PartitionListingSource},
-     *              {@code null} ohne diesen Weg
+     * @param scope Umfang für {@code discover} (#187); für einen Port ohne {@link PartitionListingSource} der Weg zu
+     *              seinen Seiten, für einen mit eigener Auflistung (Confluence) deren Einschränkung auf Startpunkte und
+     *              Tiefe; {@code null} ohne diesen Weg bzw. ohne Einschränkung
      */
     KnowledgeSourceHarvestSource(String id, String type, String title, KnowledgeSourcePort port,
                                  InFlightLimit inFlight, SourceScope scope) {
@@ -138,6 +146,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
         this.port = port;
         this.inFlight = inFlight;
         this.scope = port instanceof PartitionListingSource ? null : scope;
+        this.restriction = port instanceof PartitionListingSource ? scope : null;
     }
 
     /** Ob die Seiten über {@code discover} und {@code load} kommen statt über eine Seitenliste je Partition. */
@@ -441,6 +450,9 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw new SourceAccessException(id, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle kann Seiten einer Partition nicht auflisten", null);
         }
+        // Mit Startpunkten: Jede Auflistung beginnt mit einer vollständigen Discovery im Umfang, deren Seiten bleiben.
+        Set<String> allowed = restriction == null ? null
+                : cursor == null || cursor.isEmpty() || inScope == null ? restrict() : inScope;
         PartitionResources batch;
         try {
             batch = listing.resources(partitionKey, cursor == null ? "" : cursor, limit);
@@ -448,7 +460,38 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             throw accessFailure(e);
         }
         return new PageMetadataBatch(batch.resources().stream()
-                .map(resource -> pageMetadata(resource, partitionKey)).toList(), batch.nextCursor());
+                .map(resource -> pageMetadata(resource, partitionKey))
+                .filter(page -> allowed == null || allowed.contains(page.pageId())).toList(), batch.nextCursor());
+    }
+
+    /**
+     * Die Seiten im Umfang aus Startpunkten und Tiefe, wie die Indexierung im Enterprise AI Client
+     * ({@link KnowledgeSourcePort#discover}). Scheitert sie, scheitert die Auflistung, und keine Seite gilt als außerhalb
+     * des Umfangs.
+     */
+    private Set<String> restrict() {
+        inScope = null;
+        List<KnowledgeResource> found;
+        try {
+            found = port.discover(restriction);
+        } catch (KnowledgeSourceException e) {
+            throw accessFailure(e);
+        }
+        Set<String> pageIds = new java.util.HashSet<>();
+        for (KnowledgeResource resource : found) {
+            if (resource != null) {
+                pageIds.add(nativeId(resource.id()));
+            }
+        }
+        Set<String> complete = Set.copyOf(pageIds);
+        inScope = complete;
+        return complete;
+    }
+
+    @Override
+    public boolean outsideScope(String pageId) {
+        Set<String> current = inScope;
+        return restriction != null && current != null && !current.contains(pageId);
     }
 
     /**
