@@ -86,7 +86,7 @@ final class AiSettingsPanel {
     private final SettingDialogs.Rows modelRows;
     private final JPanel models = new JPanel(new BorderLayout(0, 10));
     final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen; gilt ohne Neustart");
-    final ComposerButton saveModels = Comic.primary("Speichern", "Modelle übernehmen; gilt ohne Neustart");
+    final ComposerButton saveModels = Comic.primary("Speichern", "Modelle übernehmen; gilt ohne Neustart, nur die Zerlegung erst danach");
     final ComposerButton removeKey = Comic.button("API-Key entfernen", "Gespeicherten API-Key löschen");
     /** Meldungen im Reiter „KI-Dienst“ (im Assistenten die einzige). */
     final Feedback feedback = new Feedback();
@@ -136,8 +136,9 @@ final class AiSettingsPanel {
                             + "bleibt");
             modelRows.add("", advanced, "Zerlegung der Inhalte für Embeddings; die Vorgaben passen meistens");
             modelRows.add("Abschnittsgröße", chunkTokens, "Höchstens so viele Tokens je Abschnitt für Embeddings; "
-                    + "leer: 350");
-            modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1");
+                    + "leer: 350; wirkt nach Neustart");
+            modelRows.add("Überlappung", chunkOverlap, "So viele Sätze wiederholen sich zwischen Abschnitten; leer: 1; "
+                    + "wirkt nach Neustart");
             advanced.addActionListener(e -> advanced(!modelRows.shows(chunkTokens)));
             advanced(false);
         }
@@ -400,7 +401,10 @@ final class AiSettingsPanel {
                     + "API-Key eingeben; er wird nur in KeePass gespeichert.");
             return;
         }
-        if (!Dialogs.restartAllowed(root, context)) {
+        // Nur die Zerlegung für Embeddings übernimmt der Core erst beim Bauen; alles andere gilt ohne Neustart.
+        boolean restart = !java.util.Objects.equals(draft.chunkTokens(), current.chunkTokens())
+                || !java.util.Objects.equals(draft.chunkOverlapSentences(), current.chunkOverlapSentences());
+        if (restart && !Dialogs.restartAllowed(root, context)) {
             Arrays.fill(key, '\0');
             return;
         }

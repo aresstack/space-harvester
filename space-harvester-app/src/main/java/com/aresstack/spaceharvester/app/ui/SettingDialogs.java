@@ -465,6 +465,7 @@ final class SettingDialogs {
                 BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
         Shell shell = new Shell(parent, CACHE_TITLE, body);
+        shell.live();
         shell.onSaveFile(() -> {
             List<String> problems = new ArrayList<>();
             java.time.Duration age = duration(maxAge.getText());
@@ -587,6 +588,7 @@ final class SettingDialogs {
                 + "Kreispfeil am Space."), BorderLayout.NORTH);
         body.add(rows, BorderLayout.CENTER);
         Shell shell = new Shell(parent, SYNC_RULES_TITLE, body);
+        shell.live();
         shell.onSaveFile(() -> {
             List<String> problems = new ArrayList<>();
             for (JTextField field : List.of(changeSearch, inventory)) {
@@ -1024,6 +1026,8 @@ final class SettingDialogs {
         private Runnable action = () -> { };
         private Runnable close = () -> { };
         private Runnable onClose = () -> { };
+        /** Siehe {@link #live()}. */
+        private boolean live;
 
         Shell(Component parent, String title, JComponent content) {
             this.parent = parent;
@@ -1095,6 +1099,15 @@ final class SettingDialogs {
         }
 
         /**
+         * Die Einstellung übernimmt der Core zur Laufzeit (ADR 0015, {@link
+         * com.aresstack.spaceharvester.app.runtime.AppRuntime#liveChange}): kein Neustart, also keine Rückfrage wegen
+         * laufender Aufträge.
+         */
+        void live() {
+            live = true;
+        }
+
+        /**
          * Speichern einer Einstellung außerhalb der Quelle (Proxy): erst prüfen, dann schreiben; {@code unchanged}
          * schließt ohne Neustart.
          */
@@ -1110,7 +1123,7 @@ final class SettingDialogs {
                     finish();
                     return;
                 }
-                if (!Dialogs.restartAllowed(body, context)) {
+                if (!live && !Dialogs.restartAllowed(body, context)) {
                     return;
                 }
                 feedback.working("Wird gespeichert …");

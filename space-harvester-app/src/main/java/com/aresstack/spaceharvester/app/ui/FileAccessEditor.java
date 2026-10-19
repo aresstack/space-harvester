@@ -208,9 +208,7 @@ final class FileAccessEditor {
             feedback.info("Nichts geändert", null);
             return;
         }
-        if (!Dialogs.restartAllowed(panel, context)) {
-            return;
-        }
+        // Der Core übernimmt den Dateizugriff zur Laufzeit (#411, #421): laufende Aufträge laufen weiter.
         boolean all = allowAll.isSelected();
         List<String> granted = List.copyOf(roots);
         Path file = context.configFile();

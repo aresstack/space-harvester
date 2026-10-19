@@ -244,8 +244,9 @@ public final class AppRuntime implements AutoCloseable {
 
     /**
      * Ob {@code next} sich von {@code current} nur in Werten unterscheidet, die der Harvester zur Laufzeit übernimmt:
-     * KI-Dienst und Modelle, Freigaben, Aktualität, Frist, Synchronisierung und Regeln je Quelle, Dateizugriff.
-     * Quellen, Proxy, TLS, Ablage und die Zerlegung für Embeddings verlangen einen Neustart.
+     * KI-Dienst und Modelle (auch Embeddings erstmals einschalten), Freigaben, Aktualität, Frist, Synchronisierung samt
+     * Bestandsinventur, Abgleich vor der Suche und Regeln je Quelle, Dateizugriff. Einen Neustart verlangen nur, was
+     * die App beim Bauen fest übergibt: Quellen, Proxy, TLS, Ablage und die Zerlegung für Embeddings.
      */
     public static boolean liveChange(AppSettings current, AppSettings next) {
         AppSettings.AiSettings a = current.ai();
