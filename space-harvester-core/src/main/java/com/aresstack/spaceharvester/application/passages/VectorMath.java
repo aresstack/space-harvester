@@ -47,4 +47,13 @@ final class VectorMath {
         }
         return sum;
     }
+
+    /** Die Werte eines Vektors als {@code double}. */
+    static double[] values(float[] vector) {
+        double[] values = new double[vector.length];
+        for (int d = 0; d < vector.length; d++) {
+            values[d] = vector[d];
+        }
+        return values;
+    }
 }
