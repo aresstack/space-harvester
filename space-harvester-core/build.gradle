@@ -51,6 +51,8 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-test'
     testImplementation libs.archunit.junit5
     testImplementation testFixtures(project(':enterprise-ai-sources'))
+    // Git-Repositorys für den Test der Git-Quelle (#187) anlegen
+    testImplementation libs.jgit
     testImplementation libs.lucene.core
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     // SLF4J-Ausgabe in Tests wie im Server, damit Log-Prüfungen (OutputCaptureExtension) etwas sehen

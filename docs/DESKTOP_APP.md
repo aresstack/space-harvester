@@ -309,6 +309,7 @@ Core selbst.
 | `POST …/pages/{pageId}/assets/harvest` | `Assets.harvest` | Seite › Anhänge › Alle ablegen | `WorkspaceTest.attachmentsAre…` |
 | `GET …/assets/{id}/content` | `Assets.content` | Seite › Anhänge › Speichern … | `WorkspaceTest.attachmentsAre…` (byte-genau) |
 | `GET/POST …/assets/{id}/description` | `Assets.describe` | noch nicht (braucht Vision-Modell, #19) | – |
+| `GET …/assets/{id}/preview` | `Assets.preview` (#183) | noch nicht | – |
 | `GET /api/v1/info` | – (Dienst-Metadaten) | Einstellungen › Diagnose: App-, Java- und Systemversion, Analysen, Exportformate | `MainWindowTest` |
 | `/api/compat/confluence/**` | Fassade | entfällt: REST-Kompatibilität für Fremdprogramme | – |
 | – | `SourceManagement.test`, `.change`, `.remove` (#188) | Verwaltung › Wissensquellen verwalten › Quelle hinzufügen …, Bearbeiten …, Entfernen … (Verbindung testen, Speichern) | `SourceFormTest`, `ConfigFileEditorTest`, `WorkspaceTest.theWizardTests…` |

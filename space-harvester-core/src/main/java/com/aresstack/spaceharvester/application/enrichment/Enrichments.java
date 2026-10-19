@@ -162,7 +162,21 @@ public class Enrichments {
      * Prozessoren, die es nicht mehr gibt, und alle Ergebnisse einer nicht projizierbaren Payload sind veraltet.
      */
     public List<View> view(PageSnapshot snapshot) {
+        return inspect(snapshot).stored();
+    }
+
+    /**
+     * Wie {@link #view}, dazu der Eingabe-Hash des Snapshots und die Prozessoren, die für die Seite gelten, etwa um
+     * fehlende Ergebnisse zu erkennen (Analyse-Export, #359). Liest nur; berechnet und speichert nichts.
+     */
+    public Inspection inspect(PageSnapshot snapshot) {
         String input = projection(snapshot).map(PageText::inputSha256).orElse(null);
+        Map<String, String> applicable = new LinkedHashMap<>();
+        for (EnrichmentProcessor processor : processors.values()) {
+            if (processor.appliesTo(snapshot.key())) {
+                applicable.put(processor.id(), processor.version());
+            }
+        }
         List<View> views = new ArrayList<>();
         for (Enrichment enrichment : store.find(snapshot.key())) {
             if (READING_VIEW.equals(enrichment.processorId())) {
@@ -174,7 +188,14 @@ public class Enrichments {
                     : enrichment.freshness(input, processor == null ? null : processor.version());
             views.add(new View(enrichment, freshness));
         }
-        return views;
+        return new Inspection(input, views, applicable);
+    }
+
+    /** Die aktuellen Prozessoren mit ihrer Version in Ausführungsreihenfolge. */
+    public Map<String, String> processorVersions() {
+        Map<String, String> versions = new LinkedHashMap<>();
+        processors.values().forEach(processor -> versions.put(processor.id(), processor.version()));
+        return java.util.Collections.unmodifiableMap(versions);
     }
 
     /** Macht die Ergebnisse dauerhaft, etwa am Ende eines Abgleichs. */
@@ -185,6 +206,22 @@ public class Enrichments {
     /** Entfernt alle Ergebnisse einer Seite, die es im Cache nicht mehr gibt. */
     public void remove(PageKey key) {
         store.removeAll(key);
+    }
+
+    /**
+     * Was zu einer Seite gespeichert ist.
+     *
+     * @param inputSha256 Eingabe-Hash des Snapshots oder {@code null}, wenn die Payload nicht projizierbar ist
+     * @param stored      wie {@link #view}
+     * @param applicable  Kennung und aktuelle Version der Prozessoren, die für die Seite gelten, in
+     *                    Ausführungsreihenfolge
+     */
+    public record Inspection(String inputSha256, List<View> stored, Map<String, String> applicable) {
+
+        public Inspection {
+            stored = List.copyOf(stored);
+            applicable = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(applicable));
+        }
     }
 
     /** Ein Ergebnis mit seiner Aktualität. */
