@@ -10,6 +10,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
@@ -51,7 +52,17 @@ public final class TermsView implements View {
     private final Directory identifiers = new Directory("Globales Bezeichnerverzeichnis",
             new String[]{"Bezeichner", "Schreibweisen", "Fundstellen"});
     private final Directory relations = new Directory("Beziehungen zwischen Begriffen",
-            new String[]{"Begriff", "Beziehung", "Zu Begriff"});
+            new String[]{"Begriff", "Beziehung", "Zu Begriff", "Status", "Herkunft"});
+    static final String CONFIRM = "Bestätigen";
+    static final String REJECT = "Ablehnen";
+    static final String REMOVE = "Entfernen";
+    private final ComposerButton confirm = Comic.button(CONFIRM, "Die gewählte Beziehung gilt");
+    private final ComposerButton reject = Comic.button(REJECT, "Die gewählte Beziehung gilt nicht; sie bleibt als "
+            + "abgelehnt sichtbar und kommt nicht wieder");
+    private final ComposerButton remove = Comic.button(REMOVE, "Eine manuelle Beziehung ganz löschen, jede andere "
+            + "ablehnen");
+    private List<Relation> shownRelations = List.of();
+    private java.util.function.BiConsumer<String, Relation> onReview = (action, relation) -> { };
 
     private final AppContext context;
     private int acronymRequest;
@@ -73,6 +84,17 @@ public final class TermsView implements View {
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
         relations.show(List.of(), PENDING);
+        JPanel review = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 8, 0));
+        review.setOpaque(false);
+        for (ComposerButton button : List.of(confirm, reject, remove)) {
+            button.setEnabled(false);
+            review.add(button);
+        }
+        relations.actions(review);
+        relations.table().getSelectionModel().addListSelectionListener(e -> selectionChanged());
+        confirm.addActionListener(e -> review(CONFIRM));
+        reject.addActionListener(e -> review(REJECT));
+        remove.addActionListener(e -> review(REMOVE));
         if (context != null) {
             acronyms.onSearch(q -> loadAcronyms());
             identifiers.onSearch(q -> loadIdentifiers());
@@ -84,6 +106,55 @@ public final class TermsView implements View {
         if (context != null) {
             loadAcronyms();
             loadIdentifiers();
+        }
+    }
+
+    /** Zeigt Beziehungen; {@code hint} steht da, solange es keine gibt. */
+    void showRelations(List<Relation> list, String hint) {
+        shownRelations = List.copyOf(list);
+        List<List<String>> rows = new ArrayList<>(list.size());
+        for (Relation relation : list) {
+            rows.add(List.of(relation.fromTerm(), Relation.typeText(relation.type()), relation.toTerm(),
+                    Relation.statusText(relation.status()), Relation.originText(relation.origin())));
+        }
+        relations.show(rows, hint);
+        selectionChanged();
+    }
+
+    /** {@code listener} bekommt Aktion ({@link #CONFIRM}, {@link #REJECT}, {@link #REMOVE}) und Beziehung. */
+    void onReview(java.util.function.BiConsumer<String, Relation> listener) {
+        onReview = java.util.Objects.requireNonNull(listener, "listener");
+    }
+
+    /** Die Schaltflächen passen zum Stand der gewählten Beziehung; Rechte prüft der Core. */
+    private void selectionChanged() {
+        Relation selected = selectedRelation();
+        confirm.setEnabled(selected != null && !"CONFIRMED".equals(selected.status()));
+        reject.setEnabled(selected != null && !"REJECTED".equals(selected.status()));
+        remove.setEnabled(selected != null);
+    }
+
+    private Relation selectedRelation() {
+        int row = relations.table().getSelectedRow();
+        if (row < 0) {
+            return null;
+        }
+        int model = relations.table().convertRowIndexToModel(row);
+        List<String> cells = relations.visibleRow(model);
+        // Die Tabelle filtert nur ohne Core-Suche; die Zuordnung geht über die gezeigten Zellen.
+        for (Relation relation : shownRelations) {
+            if (cells.get(0).equals(relation.fromTerm()) && cells.get(2).equals(relation.toTerm())
+                    && cells.get(1).equals(Relation.typeText(relation.type()))) {
+                return relation;
+            }
+        }
+        return null;
+    }
+
+    private void review(String action) {
+        Relation selected = selectedRelation();
+        if (selected != null) {
+            onReview.accept(action, selected);
         }
     }
 
@@ -160,6 +231,14 @@ public final class TermsView implements View {
         return identifiers;
     }
 
+    Directory relations() {
+        return relations;
+    }
+
+    List<ComposerButton> reviewButtons() {
+        return List.of(confirm, reject, remove);
+    }
+
     /**
      * Ein Verzeichnis: Überschrift, „Alle berechtigten, aktuell indexierten Seiten“, Suchfeld und Tabelle; die letzte
      * Spalte ist rechtsbündig. Das Suchfeld filtert über alle Spalten.
@@ -171,6 +250,7 @@ public final class TermsView implements View {
         private final PlaceholderField search = new PlaceholderField(16, "Suchen …");
         private final JLabel hint = Comic.muted(" ");
         private Consumer<String> onSearch;
+        private final JPanel south = new JPanel(new BorderLayout(0, 6));
 
         Directory(String title, String[] columns) {
             super(new BorderLayout(0, 8));
@@ -194,7 +274,9 @@ public final class TermsView implements View {
 
             add(head, BorderLayout.NORTH);
             add(Comic.scroll(table), BorderLayout.CENTER);
-            add(hint, BorderLayout.SOUTH);
+            south.setOpaque(false);
+            south.add(hint, BorderLayout.NORTH);
+            add(south, BorderLayout.SOUTH);
             search.getDocument().addDocumentListener(new DocumentListener() {
                 @Override
                 public void insertUpdate(DocumentEvent e) {
@@ -216,6 +298,15 @@ public final class TermsView implements View {
         /** Ab jetzt sucht der Core: jede Eingabe geht an {@code listener}, die Tabelle filtert nicht mehr selbst. */
         void onSearch(Consumer<String> listener) {
             onSearch = listener;
+        }
+
+        /** Schaltflächen unter der Tabelle. */
+        void actions(JComponent actions) {
+            south.add(actions, BorderLayout.SOUTH);
+        }
+
+        List<String> visibleRow(int row) {
+            return model.visible(row);
         }
 
         String query() {
@@ -276,6 +367,10 @@ public final class TermsView implements View {
             }
             visible = matching;
             fireTableDataChanged();
+        }
+
+        List<String> visible(int row) {
+            return visible.get(row);
         }
 
         @Override

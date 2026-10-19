@@ -56,4 +56,39 @@ class TermsViewTest {
                         List.of("RSL", "–", "3"),
                         List.of("Sachbearbeitung", "Sachbearbeitung · sachbearbeitung", "5"));
     }
+
+    @Test
+    void relationsReadAsWordsAndTheReviewButtonsFollowTheSelectedRelation() throws Exception {
+        Relation proposed = new Relation("r1", "API", "ABBREVIATION", "Application Programming Interface",
+                "PROPOSED", "RULE", 1);
+        Relation confirmed = new Relation("r2", "Sachbearbeitung", "SYNONYM", "Fallbearbeitung", "CONFIRMED",
+                "MANUAL", 3);
+        List<String> seen = new ArrayList<>();
+        List<String> reviewed = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            TermsView view = new TermsView(null);
+            view.onReview((action, relation) -> reviewed.add(action + " " + relation.id()));
+            view.showRelations(List.of(proposed, confirmed), TermsView.EMPTY);
+            TermsView.Directory relations = view.relations();
+            for (int column = 0; column < relations.table().getColumnCount(); column++) {
+                seen.add(String.valueOf(relations.table().getValueAt(0, column)));
+            }
+            seen.add(enabled(view));
+            relations.table().setRowSelectionInterval(0, 0);
+            seen.add(enabled(view));
+            view.reviewButtons().get(0).doClick();
+            relations.table().setRowSelectionInterval(1, 1);
+            seen.add(enabled(view));
+            view.reviewButtons().get(1).doClick();
+        });
+        assertThat(seen).containsExactly("API", "Abkürzung für", "Application Programming Interface",
+                "Vorgeschlagen", "Regel", "000", "111", "011");
+        assertThat(reviewed).containsExactly(TermsView.CONFIRM + " r1", TermsView.REJECT + " r2");
+    }
+
+    private static String enabled(TermsView view) {
+        StringBuilder flags = new StringBuilder();
+        view.reviewButtons().forEach(button -> flags.append(button.isEnabled() ? '1' : '0'));
+        return flags.toString();
+    }
 }
