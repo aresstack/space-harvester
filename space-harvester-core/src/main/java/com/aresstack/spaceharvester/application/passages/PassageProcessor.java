@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,11 +41,12 @@ public class PassageProcessor implements EnrichmentProcessor {
     private final EmbeddingProcessor embedding;
 
     /**
-     * @param sentences Satzgrenzen, produktiv {@link OpenNlpSentenceSegmenter#german()}
+     * @param sentences Satzgrenzen, produktiv {@link OpenNlpSentenceSegmenter#german}
+     * @param tokens    Zählweise der Token, produktiv {@code KnowledgeTextSegmentation.defaults()}
      * @param embedding Quelle des Modells und der Freigabe je Quelle oder {@code null}: dann immer nach Struktur
      */
-    public PassageProcessor(SentenceSegmenter sentences, EmbeddingProcessor embedding) {
-        this.segmentation = new PassageSegmentation(Objects.requireNonNull(sentences, "sentences"));
+    public PassageProcessor(SentenceSegmenter sentences, TextSegmentation tokens, EmbeddingProcessor embedding) {
+        this.segmentation = new PassageSegmentation(Objects.requireNonNull(sentences, "sentences"), tokens);
         this.embedding = embedding;
     }
 

@@ -28,7 +28,9 @@ class PassageProcessorTest {
     private final AtomicBoolean approved = new AtomicBoolean(true);
     private final EmbeddingProcessor embedding = new EmbeddingProcessor(model::get, 1000,
             KnowledgeTextSegmentation.defaults(), sourceId -> approved.get());
-    private final PassageProcessor processor = new PassageProcessor(SentenceSegmenter.splitter(), embedding);
+    private final PassageProcessor processor = new PassageProcessor(
+            SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()), KnowledgeTextSegmentation.defaults(),
+            embedding);
 
     /** Ein Modell, das Sätze nach Thema einbettet. */
     static final class TopicModel implements EmbeddingProvider {

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.passages;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -39,7 +40,8 @@ class PassageSegmentationTest {
         }
     }
 
-    private final PassageSegmentation segmentation = new PassageSegmentation(SentenceSegmenter.splitter());
+    private final PassageSegmentation segmentation = new PassageSegmentation(
+            SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()), KnowledgeTextSegmentation.defaults());
 
     @Test
     void splitsAParagraphAtTheTopicChangeOfTheSentenceWindows() {

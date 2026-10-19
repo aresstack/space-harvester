@@ -7,6 +7,9 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
+import com.aresstack.spaceharvester.application.facts.FactTypes;
+import com.aresstack.spaceharvester.application.facts.MetadataFact;
+import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
@@ -16,6 +19,7 @@ import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
@@ -43,6 +47,7 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -80,6 +85,8 @@ class CoreParityTest {
     @TempDir
     static Path managed;
     private static final Map<String, String> CORE_SEARCH = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_FACTS = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_RUNS = new LinkedHashMap<>();
     @TempDir
     static Path searched;
 
@@ -170,6 +177,7 @@ class CoreParityTest {
             JobStatus sync = harvester.await(harvester.sync("docs", "docs").id(), Duration.ofSeconds(60));
             assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
             awaitEnrichments(harvester);
+            facts(harvester);
             for (String[] query : ParitySpace.SEARCHES) {
                 KeywordSearch.Results results = harvester.keywordSearch().search(harvester.caller(),
                         new KeywordSearch.Query(query[1], "docs", Set.of(), Set.of()), null, 10);
@@ -197,7 +205,61 @@ class CoreParityTest {
             for (String page : ParityConfluence.LIVE_HITS) {
                 CORE_SEARCH.put("prefetch." + page, cached.contains(page) ? "ja" : "nein");
             }
+            searchRun(harvester);
         }
+    }
+
+    /**
+     * Akronym-Fakten (#182) wie {@code EacParityExport.facts}: je Datei die Kurzformen der {@code ACRONYM_CANDIDATE}
+     * und die Ausschreibungen der {@code ACRONYM_DEFINITION} aus {@code Harvester.facts()}, Kurzform groß,
+     * Ausschreibung klein (die Argumente sind normalisiert); dieselben Schlüssel wie {@code eac/facts.properties}.
+     */
+    private static void facts(Harvester harvester) {
+        Map<String, Set<String>> candidates = new TreeMap<>();
+        Map<String, Set<String>> definitions = new TreeMap<>();
+        for (String[] file : ParitySpace.FILES) {
+            candidates.put(file[0], new TreeSet<>());
+            definitions.put(file[0], new TreeSet<>());
+        }
+        for (String type : List.of(FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION)) {
+            PageFacts.Results results = harvester.facts().search(harvester.caller(),
+                    new PageFacts.Search(type, List.of(), "docs", Set.of(), Set.of()), null, PageFacts.MAX_LIMIT);
+            for (MetadataFact fact : results.facts()) {
+                String file = new String(Base64.getUrlDecoder().decode(fact.page().pageId()), StandardCharsets.UTF_8);
+                String shortForm = String.join(" ", fact.values(FactTypes.SHORT_FORM)).toUpperCase(Locale.ROOT);
+                if (type.equals(FactTypes.ACRONYM_CANDIDATE)) {
+                    candidates.computeIfAbsent(file, key -> new TreeSet<>()).add(shortForm);
+                } else {
+                    definitions.computeIfAbsent(file, key -> new TreeSet<>()).add(shortForm + "="
+                            + String.join(" ", fact.values(FactTypes.LONG_FORM)).toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        candidates.forEach((file, values) -> CORE_FACTS.put("facts." + file + ".candidates",
+                values.isEmpty() ? "-" : String.join(",", values)));
+        definitions.forEach((file, values) -> CORE_FACTS.put("facts." + file + ".definitions",
+                values.isEmpty() ? "-" : String.join(",", values)));
+    }
+
+    /**
+     * Suchlauf-Protokoll (#182) wie {@code EacParityExport.searchRun}: der Lauf der Live-Suche in Confluence aus
+     * {@code Harvester.searchRuns()}; Suchtext, gefragte und ausgefallene Quellen, geprüfte Funde der Quellen.
+     */
+    private static void searchRun(Harvester harvester) {
+        SearchRun run = harvester.searchRuns().recent(harvester.caller(), 50).stream()
+                .filter(candidate -> candidate.kind() == SearchRun.Kind.KEYWORD
+                        && ParityConfluence.LIVE_SEARCH.equals(candidate.query())
+                        && candidate.sources().stream().anyMatch(source -> source.sourceId().equals("wiki")))
+                .findFirst().orElse(null);
+        if (run == null) {
+            return;
+        }
+        CORE_RUNS.put("run.live.query", run.query());
+        CORE_RUNS.put("run.live.sources", String.valueOf(run.sources().size()));
+        CORE_RUNS.put("run.live.failures", String.valueOf(run.sources().stream()
+                .filter(source -> source.status() == SearchRun.SourceOutcome.Status.UNAVAILABLE).count()));
+        run.count(SearchRun.Stage.DISCOVERED).ifPresent(count ->
+                CORE_RUNS.put("run.live.candidates", String.valueOf(count)));
     }
 
     private static Set<String> cachedPages(Harvester harvester) {
@@ -352,6 +414,18 @@ class CoreParityTest {
         List<Finding> search = ParityComparison.search(eacProperties("search.properties"), CORE_SEARCH);
         report.append('\n').append(ParityReport.section("Suche", search, gaps));
         for (Finding finding : search) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
+        List<Finding> facts = ParityComparison.facts(eacProperties("facts.properties"), CORE_FACTS);
+        report.append('\n').append(ParityReport.section("Fakten", facts, gaps));
+        List<Finding> runs = ParityComparison.searchRuns(eacProperties("search-runs.properties"), CORE_RUNS);
+        report.append('\n').append(ParityReport.section("Suchlauf", runs, gaps));
+        List<Finding> factsAndRuns = new ArrayList<>(facts);
+        factsAndRuns.addAll(runs);
+        for (Finding finding : factsAndRuns) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
                         + finding.core() + "; " + finding.detail() + ")");

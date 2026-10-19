@@ -26,20 +26,25 @@ public final class OpenNlpSentenceSegmenter implements SentenceSegmenter {
     private static final System.Logger LOG = System.getLogger(OpenNlpSentenceSegmenter.class.getName());
 
     private final SentenceDetectorME detector;
-    private final SentenceSegmenter fallback = SentenceSegmenter.splitter();
+    private final SentenceSegmenter fallback;
 
-    private OpenNlpSentenceSegmenter(SentenceModel model) {
+    private OpenNlpSentenceSegmenter(SentenceModel model, SentenceSegmenter fallback) {
         this.detector = new SentenceDetectorME(model);
+        this.fallback = fallback;
     }
 
-    /** Deutsch; ohne ladbares Modell der regelbasierte Splitter. */
-    public static SentenceSegmenter german() {
+    /**
+     * Deutsch; ohne ladbares Modell {@code fallback}.
+     *
+     * @param fallback regelbasierte Satzgrenzen, {@link SentenceSegmenter#splitter}
+     */
+    public static SentenceSegmenter german(SentenceSegmenter fallback) {
         try {
-            return new OpenNlpSentenceSegmenter(new SentenceModel(model()));
+            return new OpenNlpSentenceSegmenter(new SentenceModel(model()), fallback);
         } catch (IOException | RuntimeException e) {
             LOG.log(System.Logger.Level.WARNING, "OpenNLP-Satzmodell nicht ladbar ({0}), Satzgrenzen nach Regeln",
                     e.getClass().getName());
-            return SentenceSegmenter.splitter();
+            return fallback;
         }
     }
 

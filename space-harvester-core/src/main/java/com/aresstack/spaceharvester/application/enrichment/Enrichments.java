@@ -111,6 +111,11 @@ public class Enrichments {
         }
     }
 
+    /** Die Ablage der Ergebnisse, etwa für den Begriffsindex (#119), wenn sie ihn mitführt. */
+    public EnrichmentStore store() {
+        return store;
+    }
+
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */
     public List<String> processorIds() {
         return List.copyOf(processors.keySet());

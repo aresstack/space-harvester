@@ -1,7 +1,7 @@
 package com.aresstack.spaceharvester.application.passages;
 
-import com.aresstack.enterpriseai.astu.knowledge.KnowledgeTokenCounter;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -107,10 +107,16 @@ public final class PassageSegmentation {
     }
 
     private final SentenceSegmenter sentences;
-    private final KnowledgeTokenCounter tokens = KnowledgeTokenCounter.wordsAndSymbols();
+    private final TextSegmentation tokens;
 
-    public PassageSegmentation(SentenceSegmenter sentences) {
+    /**
+     * @param sentences Satzgrenzen
+     * @param tokens    Zählweise der Token wie im Client ({@code KnowledgeTokenCounter.wordsAndSymbols()}), produktiv
+     *                  {@code KnowledgeTextSegmentation.defaults()}
+     */
+    public PassageSegmentation(SentenceSegmenter sentences, TextSegmentation tokens) {
         this.sentences = Objects.requireNonNull(sentences, "sentences");
+        this.tokens = Objects.requireNonNull(tokens, "tokens");
     }
 
     /**
@@ -234,7 +240,7 @@ public final class PassageSegmentation {
     /** Eine Passage über {@link #MAX_PASSAGE_TOKENS} an Wortgrenzen geteilt; sonst unverändert. */
     private void bounded(List<Passage> passages, String content, int from, int to, int firstSentence, int count,
                          Block block, Boundary boundary, Double similarity) {
-        if (tokens.count(content.substring(from, to)) <= MAX_PASSAGE_TOKENS) {
+        if (tokens.tokens(content.substring(from, to)) <= MAX_PASSAGE_TOKENS) {
             passages.add(new Passage(from, to, firstSentence, count, block.section, block.kind, boundary,
                     similarity));
             return;
@@ -246,7 +252,7 @@ public final class PassageSegmentation {
         int partTokens = 0;
         boolean first = true;
         while (word.find()) {
-            int wordTokens = tokens.count(word.group());
+            int wordTokens = tokens.tokens(word.group());
             if (partStart >= 0 && partTokens + wordTokens > MAX_PASSAGE_TOKENS) {
                 passages.add(new Passage(partStart, partEnd, firstSentence, count, block.section, block.kind,
                         first ? boundary : Boundary.TOKENS, first ? similarity : null));

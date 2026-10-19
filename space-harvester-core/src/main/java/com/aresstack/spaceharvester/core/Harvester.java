@@ -30,11 +30,13 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -50,6 +52,7 @@ import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
@@ -91,6 +94,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -111,6 +115,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
@@ -208,6 +213,7 @@ public final class Harvester implements AutoCloseable {
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final PassageQueries passages;
+    private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
     private final Jobs jobs;
@@ -315,21 +321,25 @@ public final class Harvester implements AutoCloseable {
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
-                    new RelationProcessor()));
+                    new RelationProcessor(), new TermProcessor()));
             if (embedding != null) {
                 processors.add(embedding);
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
-            processors.add(new PassageProcessor(OpenNlpSentenceSegmenter.german(), embedding));
-            // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            processors.add(new PassageProcessor(
+                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
+                    embedding));
+            // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
+            // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector()));
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
             PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector()), textIndex);
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);
@@ -346,6 +356,9 @@ public final class Harvester implements AutoCloseable {
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
+            // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
+            this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
+                    new TermProcessor().version());
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -768,6 +781,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PassageQueries passages() {
         return passages;
+    }
+
+    /**
+     * Begriffsindex (#119, ADR 0019): Akronyme und Bezeichner aller berechtigten Seiten mit Fundstellen und Snippets auf
+     * Abruf; für eine einzelne Seite {@link com.aresstack.spaceharvester.application.terms.PageTerms#read}.
+     */
+    public TermQueries terms() {
+        return terms;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
