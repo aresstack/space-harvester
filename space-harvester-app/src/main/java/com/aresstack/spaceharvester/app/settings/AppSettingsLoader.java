@@ -184,7 +184,7 @@ public final class AppSettingsLoader {
         data = data == null ? home.resolve("data") : data;
         Path exports = path(get(map(get(root, "export")), "directory"), problems);
         Path assets = path(get(map(get(root, "assets")), "directory"), problems);
-        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 50L * 1024 * 1024,
+        long maxAsset = size(get(map(get(root, "assets")), "max-size"), 100L * 1024 * 1024,
                 "space-harvester.assets.max-size", problems);
         Duration searchTimeout = duration(get(map(get(root, "cache")), "search-timeout"), Duration.ofSeconds(5),
                 "space-harvester.cache.search-timeout", problems);
