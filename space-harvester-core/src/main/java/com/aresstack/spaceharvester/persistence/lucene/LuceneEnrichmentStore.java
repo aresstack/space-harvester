@@ -9,7 +9,14 @@ import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactStore;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.terms.TermIndex;
+import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermOccurrence;
+import com.aresstack.spaceharvester.application.terms.TermPayload;
+import com.aresstack.spaceharvester.application.terms.TermPosting;
+import com.aresstack.spaceharvester.application.terms.TermText;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -40,6 +47,8 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.PrefixQuery;
+import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.Sort;
@@ -75,12 +84,19 @@ import tools.jackson.databind.node.ObjectNode;
  * die Vektoren gehören sie zu ihrem Ergebnis, werden mit ihm ersetzt und gelöscht, und {@link #find} liefert sie nie.
  * Ein Index in v1 oder v2 wird beim Öffnen hochgestuft: Die Fakten werden aus den gespeicherten Ergebnissen abgeleitet,
  * ohne etwas neu zu berechnen; die Ergebnisse selbst und ihre Formate bleiben unverändert.
+ * <p>Ebenso liegt jeder Begriff eines {@code terms}-Ergebnisses als eigenes, indexiertes Dokument im selben Index
+ * ({@link TermIndex}, #119, ADR 0019): eines je Seite, Art und Suchwert, mit allen Fundstellen gepackt und den Feldern
+ * zum Filtern (Quelle, Art, Suchwert, Wörter, Prozessorversion) und Sortieren. Auch sie werden mit ihrem Ergebnis
+ * ersetzt und gelöscht; ein fehlgeschlagenes Ergebnis hinterlässt keine. Das Schema bleibt dafür gleich: Ein
+ * Index ohne Begriffsdokumente hat nur noch keine {@code terms}-Ergebnisse, und die berechnet der nächste Lauf aus den
+ * gecachten Seiten.
  *
  * <p>Ergebnisse lassen sich jederzeit neu berechnen. Darum wird nicht jedes {@link #save} einzeln dauerhaft gemacht,
  * sondern spätestens alle {@value #COMMIT_EVERY} Änderungen, bei {@link #flush()} und beim Schließen; Lesen sieht
  * jede Änderung sofort. Was ein Absturz verliert, fehlt danach und wird beim nächsten Lauf neu berechnet.
  */
-public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIndex, FactStore, AutoCloseable {
+public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIndex, TermIndex, FactStore,
+        AutoCloseable {
 
     /** Schemaversion in den Commit-Daten. */
     public static final String VERSION = "enrichment-store/v3";
@@ -122,6 +138,23 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
     private static final String CHUNK = "chunk";
     private static final String CHAR_START = "charStart";
     private static final String CHAR_END = "charEnd";
+    /** Ergebnis ({@link #ID}), zu dem ein Begriffsdokument gehört. */
+    private static final String TERM_OF = "termOf";
+    /** Seite eines Begriffsdokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
+    private static final String TERM_PAGE = "termPage";
+    private static final String TERM_SOURCE = "termSource";
+    private static final String TERM_KIND = "termKind";
+    private static final String TERM_NORMALIZED = "termNormalized";
+    private static final String TERM_WORD = "termWord";
+    private static final String TERM_VERSION = "termVersion";
+    /** {@link TermIndex#sortKey}, indexiert für Bereichsabfragen und als DocValues zum Sortieren. */
+    private static final String TERM_SORT = "termSort";
+    private static final String TERM = "term";
+    private static final String TERM_COUNT = "termCount";
+    private static final String TERM_EXPANSION = "termExpansion";
+    private static final String TERM_SECTION = "termSection";
+    /** Fundstellen als Folge von Ganzzahlpaaren (Anfang, Ende), je vier Bytes. */
+    private static final String TERM_OCCURRENCES = "termOccurrences";
     /** Ergebnis ({@link #ID}), zu dem ein Faktendokument gehört. */
     private static final String FACT_OF = "factOf";
     /** Seite eines Faktendokuments; getrennt von {@link #PAGE}, damit {@link #find} nur Ergebnisse sieht. */
@@ -222,9 +255,10 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         requireOpen();
         try {
             String id = id(enrichment.key(), enrichment.processorId());
-            writer.deleteDocuments(new Term(VECTOR_OF, id), new Term(FACT_OF, id));
+            writer.deleteDocuments(new Term(VECTOR_OF, id), new Term(TERM_OF, id), new Term(FACT_OF, id));
             writer.updateDocument(new Term(ID, id), document(enrichment));
             writer.addDocuments(vectors(enrichment));
+            writer.addDocuments(terms(enrichment));
             writer.addDocuments(facts(enrichment));
             changed();
         } catch (IOException e) {
@@ -261,7 +295,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         requireOpen();
         try {
             writer.deleteDocuments(new Term(PAGE, page(key)), new Term(VECTOR_PAGE, page(key)),
-                    new Term(FACT_PAGE, page(key)));
+                    new Term(TERM_PAGE, page(key)), new Term(FACT_PAGE, page(key)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
@@ -275,7 +309,7 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         String prefix = sourceId + SEPARATOR;
         try {
             writer.deleteDocuments(new PrefixQuery(new Term(PAGE, prefix)), new PrefixQuery(new Term(VECTOR_PAGE,
-                    prefix)), new PrefixQuery(new Term(FACT_PAGE, prefix)));
+                    prefix)), new PrefixQuery(new Term(TERM_PAGE, prefix)), new PrefixQuery(new Term(FACT_PAGE, prefix)));
             writer.commit();
             uncommitted = 0;
             searchers.maybeRefreshBlocking();
@@ -322,6 +356,58 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
                         .thenComparing(hit -> hit.page().pageId()).thenComparing(hit -> hit.page().sourceId())
                         .thenComparingInt(ChunkHit::chunk));
                 return hits;
+            } finally {
+                searchers.release(searcher);
+            }
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht gelesen werden", e);
+        }
+    }
+
+    @Override
+    public List<TermPosting> postings(Filter filter, String from, boolean inclusive, int max) {
+        Objects.requireNonNull(filter, "filter");
+        if (max < 1 || max > MAX_BATCH) {
+            throw new IllegalArgumentException("max muss zwischen 1 und " + MAX_BATCH + " liegen");
+        }
+        requireOpen();
+        if (filter.sourceIds().isEmpty()) {
+            return List.of();
+        }
+        BooleanQuery.Builder query = new BooleanQuery.Builder()
+                .add(new TermInSetQuery(TERM_SOURCE, filter.sourceIds().stream().map(BytesRef::new).toList()),
+                        BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(TERM_VERSION, filter.processorVersion())), BooleanClause.Occur.FILTER);
+        if (filter.kind() != null) {
+            query.add(new TermQuery(new Term(TERM_KIND, filter.kind().id())), BooleanClause.Occur.FILTER);
+        }
+        if (filter.normalized() != null) {
+            query.add(new TermQuery(new Term(TERM_NORMALIZED, filter.normalized())), BooleanClause.Occur.FILTER);
+        }
+        if (filter.prefix() != null) {
+            org.apache.lucene.search.Query prefix = new BooleanQuery.Builder()
+                    .add(new PrefixQuery(new Term(TERM_NORMALIZED, filter.prefix())), BooleanClause.Occur.SHOULD)
+                    .add(new PrefixQuery(new Term(TERM_WORD, filter.prefix())), BooleanClause.Occur.SHOULD)
+                    .build();
+            query.add(prefix, BooleanClause.Occur.FILTER);
+        }
+        if (from != null) {
+            query.add(TermRangeQuery.newStringRange(TERM_SORT, from, null, inclusive, false),
+                    BooleanClause.Occur.FILTER);
+        } else {
+            query.add(new MatchAllDocsQuery(), BooleanClause.Occur.FILTER);
+        }
+        try {
+            IndexSearcher searcher = searchers.acquire();
+            try {
+                TopDocs top = searcher.search(query.build(), max,
+                        new Sort(new SortField(TERM_SORT, SortField.Type.STRING)), false);
+                StoredFields stored = searcher.storedFields();
+                List<TermPosting> postings = new ArrayList<>(top.scoreDocs.length);
+                for (ScoreDoc hit : top.scoreDocs) {
+                    postings.add(posting(stored.document(hit.doc)));
+                }
+                return postings;
             } finally {
                 searchers.release(searcher);
             }
@@ -501,6 +587,46 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         return docs;
     }
 
+    /** Ein Dokument je Begriff eines gültigen {@code terms}-Ergebnisses ({@link TermPayload#postings}). */
+    private static List<Document> terms(Enrichment enrichment) {
+        List<TermPosting> postings = TermPayload.postings(enrichment);
+        if (postings.isEmpty()) {
+            return List.of();
+        }
+        String id = id(enrichment.key(), enrichment.processorId());
+        List<Document> docs = new ArrayList<>(postings.size());
+        for (TermPosting posting : postings) {
+            Document doc = new Document();
+            doc.add(new StringField(TERM_OF, id, Field.Store.NO));
+            doc.add(new StringField(TERM_PAGE, page(enrichment.key()), Field.Store.NO));
+            doc.add(new StringField(TERM_SOURCE, enrichment.key().sourceId(), Field.Store.NO));
+            doc.add(new StringField(TERM_KIND, posting.kind().id(), Field.Store.YES));
+            doc.add(new StringField(TERM_NORMALIZED, posting.normalized(), Field.Store.YES));
+            for (String word : TermText.words(posting.normalized())) {
+                doc.add(new StringField(TERM_WORD, word, Field.Store.NO));
+            }
+            doc.add(new StringField(TERM_VERSION, posting.processorVersion(), Field.Store.NO));
+            doc.add(new StringField(TERM_SORT, posting.sortKey(), Field.Store.NO));
+            doc.add(new SortedDocValuesField(TERM_SORT, new BytesRef(posting.sortKey())));
+            doc.add(new StoredField(SOURCE_ID, enrichment.key().sourceId()));
+            doc.add(new StoredField(PAGE_ID, enrichment.key().pageId()));
+            doc.add(new StoredField(TERM, posting.term()));
+            doc.add(new StoredField(TERM_COUNT, posting.count()));
+            storeIfPresent(doc, TERM_EXPANSION, posting.expansion());
+            storeIfPresent(doc, TERM_SECTION, posting.section());
+            storeIfPresent(doc, REVISION, posting.revision());
+            doc.add(new StoredField(INPUT_SHA256, posting.inputSha256()));
+            doc.add(new StoredField(PROCESSOR_VERSION, posting.processorVersion()));
+            ByteBuffer packed = ByteBuffer.allocate(posting.occurrences().size() * 8);
+            for (TermOccurrence occurrence : posting.occurrences()) {
+                packed.putInt(occurrence.start()).putInt(occurrence.end());
+            }
+            doc.add(new StoredField(TERM_OCCURRENCES, packed.array()));
+            docs.add(doc);
+        }
+        return docs;
+    }
+
     /** Ein Dokument je Fakt des Ergebnisses ({@link EnrichmentFacts}); andere Prozessoren tragen keine. */
     private static List<Document> facts(Enrichment enrichment) {
         List<MetadataFact> facts = EnrichmentFacts.of(enrichment);
@@ -528,6 +654,21 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
             docs.add(doc);
         }
         return docs;
+    }
+
+    private static TermPosting posting(Document doc) {
+        PageKey key = new PageKey(doc.get(SOURCE_ID), doc.get(PAGE_ID));
+        TermKind kind = TermKind.of(doc.get(TERM_KIND));
+        String normalized = doc.get(TERM_NORMALIZED);
+        BytesRef bytes = doc.getBinaryValue(TERM_OCCURRENCES);
+        ByteBuffer packed = ByteBuffer.wrap(bytes.bytes, bytes.offset, bytes.length);
+        List<TermOccurrence> occurrences = new ArrayList<>(bytes.length / 8);
+        while (packed.remaining() >= 8) {
+            occurrences.add(new TermOccurrence(packed.getInt(), packed.getInt()));
+        }
+        return new TermPosting(key, kind, doc.get(TERM), normalized, doc.getField(TERM_COUNT).numericValue()
+                .intValue(), doc.get(TERM_EXPANSION), doc.get(TERM_SECTION), occurrences, doc.get(REVISION),
+                doc.get(INPUT_SHA256), doc.get(PROCESSOR_VERSION), TermIndex.sortKey(normalized, kind, key));
     }
 
     private static String factJson(MetadataFact fact) {

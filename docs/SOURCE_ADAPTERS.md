@@ -205,7 +205,7 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
    `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
-   Commons Net, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
+   Commons Net, #187), `source-ndv` (Natural Development Server, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
    ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).

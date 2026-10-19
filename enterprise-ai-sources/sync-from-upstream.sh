@@ -26,6 +26,7 @@ modules=(
   proasteion/emporion/holkas/source-mediawiki
   proasteion/emporion/holkas/source-git
   proasteion/emporion/holkas/source-ftp
+  proasteion/emporion/holkas/source-ndv
   embedding-api
   embedding-openai
   chat-api
