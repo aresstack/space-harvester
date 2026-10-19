@@ -5,6 +5,9 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
+import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
+import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
@@ -51,6 +54,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import java.time.Clock;
 import java.time.Duration;
@@ -105,10 +109,28 @@ class QueryConfiguration {
                 InMemoryEnrichmentStore::new)), Clock.systemUTC());
     }
 
-    /** Live-Navigation (#177); der Cache nennt nur den Space von Verweiszielen. */
+    /** Live-Navigation (#177); der Cache nennt nur den Space von Verweiszielen. Titeltreffer gehen in den Katalog. */
     @Bean
-    PageNavigation pageNavigation(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access) {
-        return new PageNavigation(catalog, cache.getIfAvailable(), access);
+    PageNavigation pageNavigation(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache, AccessGuard access,
+                                  FindingCatalog findings) {
+        return new PageNavigation(catalog, cache.getIfAvailable(), access, findings);
+    }
+
+    /**
+     * Katalogisiert die Funde der Quellensuche (Schlagwort- und Titelsuche) als Kopfdaten (ADR 0016): im Hintergrund,
+     * mit den Zugangsdaten der Quelle, nur für technische Clients und nur, was die Richtlinie dem suchenden Client an
+     * der Seite freigibt; Endnutzer katalogisieren nichts. Neue Lücken gehen an die Hintergrundfüllung. Ohne Cache
+     * nichts.
+     */
+    @Bean
+    FindingCatalog findingCatalog(SourceCatalog catalog, AccessGuard access, ObjectProvider<LucenePageCache> cache,
+                                  ObjectProvider<BackgroundFill> fill) {
+        LucenePageCache available = cache.getIfAvailable();
+        if (available == null) {
+            return FindingCatalog.NONE;
+        }
+        return new FindingCataloging(catalog, access, new LuceneFindingStore(available),
+                gaps -> fill.ifAvailable(background -> background.offer(gaps)), Clock.systemUTC());
     }
 
     /** Die Titel- und Metadatensuche im Index, etwa für die Confluence-kompatible Fassade. */
@@ -137,9 +159,10 @@ class QueryConfiguration {
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
                                 @Value("${space-harvester.search.loads:}") String loadsValue,
                                 @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
-                                SearchRunLog runs) {
+                                SearchRunLog runs, FindingCatalog findings) {
         return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
-                excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs);
+                excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs,
+                findings);
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */

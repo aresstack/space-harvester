@@ -96,13 +96,13 @@ class EnrichmentApiTest {
         assertThat(recomputed.statusCode()).isEqualTo(200);
         JsonNode run = json.readTree(recomputed.body());
         assertThat(run.get("supported").asBoolean()).isTrue();
-        assertThat(run.get("computed").asInt()).isEqualTo(7);
+        assertThat(run.get("computed").asInt()).isEqualTo(8);
         assertThat(run.get("failed").asInt()).isZero();
         JsonNode enrichments = json.readTree(get("/api/v1/sources/wiki/pages/501?view=extended").body())
                 .get("enrichments");
         assertThat(enrichments).extracting(entry -> entry.get("processor").asString())
-                .containsExactly("acronyms", "activities", "entities", "outline", "properties", "relations",
-                        "terms");
+                .containsExactly("acronyms", "activities", "entities", "outline", "passages", "properties",
+                        "relations", "terms");
         JsonNode acronyms = enrichments.get(0);
         assertThat(acronyms.get("processor").asString()).isEqualTo("acronyms");
         assertThat(acronyms.get("processorVersion").asString()).isEqualTo("3");
@@ -152,7 +152,7 @@ class EnrichmentApiTest {
         JsonNode enrichments = json.readTree(get("/api/v1/sources/wiki/pages/503?view=extended").body())
                 .get("enrichments");
         assertThat(enrichments).extracting(entry -> entry.get("freshness").asString())
-                .containsExactly("stale", "stale", "stale", "stale", "stale", "stale", "stale");
+                .containsExactly("stale", "stale", "stale", "stale", "stale", "stale", "stale", "stale");
     }
 
     @Test

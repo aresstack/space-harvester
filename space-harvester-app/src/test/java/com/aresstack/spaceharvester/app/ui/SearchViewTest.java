@@ -210,7 +210,7 @@ class SearchViewTest {
     }
 
     @Test
-    void keywordSearchIsTheDefaultAndTheSemanticCheckboxNamesWhereVariantsComeFrom() throws Exception {
+    void keywordSearchIsTheDefaultAndWithoutAnEmbeddingModelTheSemanticCheckboxIsLocked() throws Exception {
         start(false);
 
         SearchView[] view = new SearchView[1];
@@ -225,9 +225,10 @@ class SearchViewTest {
         }
 
         assertThat(semantic.isSelected()).as("Vorgabe bleibt die Schlagwortsuche").isFalse();
-        // Ohne Chat-Modell bildet der Core die Varianten nach Regeln; der Tooltip sagt es.
-        await(semantic::isEnabled);
-        assertThat(semantic.getToolTipText()).contains("nach Regeln");
+        // Ohne Embedding-Modell gibt es keine semantische Suche: der Haken ist gesperrt und nennt den Grund.
+        assertThat(semantic.isEnabled()).isFalse();
+        assertThat(semantic.getToolTipText()).contains("Gesperrt", "Embedding-Modell");
+        assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Schlagwortsuche");
         assertThat(columns).containsExactly("Titel", "Quelle", "Space", "Auszug", "Geändert");
         assertThat(find(whole(view[0]), AbstractButton.class)).extracting(AbstractButton::getText)
                 .doesNotContain("Relevanz", "Titel", "Neueste");
@@ -235,13 +236,17 @@ class SearchViewTest {
 
     @Test
     void theSemanticCheckboxRunsTheProgressiveSearchOfTheCoreUntilItNamesWhyItEnded() throws Exception {
-        start(false);
+        start(false, embeddings());
         SearchView[] view = new SearchView[1];
         SwingUtilities.invokeAndWait(() -> view[0] = new SearchView(context));
         await(() -> context.runtime() != null);
+        SwingUtilities.invokeAndWait(() -> view[0].scope(List.of()));
+        // Mit Embedding-Modell ist der Haken frei; ohne Chat-Modell kommen die Varianten nach Regeln.
+        await(view[0].semantic::isEnabled);
+        assertThat(view[0].semantic.getToolTipText()).contains("nach Regeln");
         SwingUtilities.invokeAndWait(() -> {
-            view[0].scope(List.of());
             view[0].semantic.setSelected(true);
+            assertThat(view[0].modeLabel.getText()).isEqualTo("Modus: Semantische Suche");
             view[0].search("Betrieb Plattform Wartung");
         });
         // Sofort sichtbar, dass gesucht wird; am Ende der Grund aus dem Core, ohne „Weitere laden“.
@@ -311,6 +316,41 @@ class SearchViewTest {
 
     private void start(boolean withOffline) throws Exception {
         start(withOffline, "");
+    }
+
+    /**
+     * Ein KI-Dienst nur mit Embedding-Modell (Dimension 3) auf 127.0.0.1, für beide Confluence-Quellen freigegeben;
+     * jeder Text bekommt denselben Vektor.
+     */
+    private String embeddings() throws IOException {
+        HttpServer service = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+        service.createContext("/v1/embeddings", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            int inputs = Math.max(1, tools.jackson.databind.json.JsonMapper.builder().build().readTree(body)
+                    .path("input").size());
+            StringBuilder data = new StringBuilder();
+            for (int i = 0; i < inputs; i++) {
+                data.append(i == 0 ? "" : ",").append("{\"object\":\"embedding\",\"index\":").append(i)
+                        .append(",\"embedding\":[0.6,0.8,0.0]}");
+            }
+            byte[] answer = ("{\"object\":\"list\",\"data\":[" + data + "]}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, answer.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(answer);
+            }
+        });
+        service.start();
+        servers.add(service);
+        return """
+                  ai:
+                    base-url: http://127.0.0.1:%d/v1
+                    embedding-model: test-embedding
+                    embedding-dimensions: 3
+                    external-processing-sources:
+                      - alpha
+                      - beta
+                """.formatted(service.getAddress().getPort());
     }
 
     /** @param ai ein {@code ai:}-Block unter {@code space-harvester} oder leer */

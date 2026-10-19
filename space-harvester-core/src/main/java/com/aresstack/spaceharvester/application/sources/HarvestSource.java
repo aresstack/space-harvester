@@ -209,6 +209,22 @@ public interface HarvestSource {
     }
 
     /**
+     * Eine Vorschau, die die Quelle selbst aus einem Anhang aus {@link #attachments(String)} erzeugt (#183), über die
+     * Anmeldung und den Netzweg der Quelle; bei Confluence die Dokumentkonvertierung, etwa ein Office-Dokument als PDF.
+     * Nur PDF oder Bild, nie gekürzt. Nur mit {@link SourceCapability#ATTACHMENT_PREVIEWS}.
+     *
+     * @param maxBytes größte Vorschau, die der Aufrufer annimmt
+     * @throws AttachmentTooLargeException über {@code maxBytes} oder der Grenze der Quelle
+     * @throws SourceAccessException       {@code NOT_FOUND}, wenn es die Vorschau für den Typ nicht gibt,
+     *                                     {@code UNAVAILABLE}, solange die Quelle sie noch erzeugt,
+     *                                     {@code UNSUPPORTED} ohne diese Fähigkeit, sonst wie {@link #attachmentFile}
+     */
+    default byte[] attachmentPreview(PageAttachment attachment, AttachmentPreview preview, long maxBytes) {
+        throw new SourceAccessException(id(), SourceAccessException.Reason.UNSUPPORTED,
+                "Quelle erzeugt keine Vorschauen von Anhängen", null);
+    }
+
+    /**
      * Die Bilder der Lese-Ansicht einer Seite, so wie die Quelle sie darstellt; auch Bilder, die nicht als Anhang
      * im Storage-Format stehen (Makros, gerenderte Diagramme). Lädt keine Bytes.
      *

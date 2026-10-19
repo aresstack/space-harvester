@@ -20,6 +20,14 @@ public interface EnrichmentProcessor {
     EnrichmentOutput process(PageText text);
 
     /**
+     * Wie {@link #process(PageText)}, mit der Seite, zu der der Text gehört; für Prozessoren, deren Verfahren von der
+     * Quelle abhängt (etwa nur freigegebene Quellen an den KI-Dienst, ADR 0011). {@link Enrichments} ruft diese Form.
+     */
+    default EnrichmentOutput process(PageKey key, PageText text) {
+        return process(text);
+    }
+
+    /**
      * Ob der Prozessor diese Seite bearbeitet. Ein Prozessor, der Inhalte an einen externen Dienst schickt, bearbeitet
      * nur Seiten aus dafür freigegebenen Quellen (ADR 0011); für alle anderen entsteht kein Ergebnis.
      */

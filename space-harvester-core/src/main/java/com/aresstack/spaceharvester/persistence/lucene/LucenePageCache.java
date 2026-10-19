@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.persistence.lucene;
 
 import static com.aresstack.spaceharvester.persistence.lucene.PageCacheSchema.HEADER_FIELDS;
 
+import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
@@ -184,7 +185,8 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
      * Cache noch den Stand hat, den der Aufrufer vor seinem Abruf gelesen hat ({@link #state}) (Nachladen beim Lesen
      * einer Seite und bei der Suche, ADR 0010). Die kurze Wartezeit lässt gleichzeitige Einzelablagen nacheinander
      * zum Zug kommen; ein laufender Abgleich hält die Sperre länger, dann bleibt es beim Nicht-Ablegen. So überschreibt ein spät ankommender Abruf nie neuere Kopfdaten oder eine neuere Payload, die
-     * ein Abgleich oder ein anderer Abruf inzwischen abgelegt hat.
+     * ein Abgleich oder ein anderer Abruf inzwischen abgelegt hat. Kopfdaten ohne Inhalt, die inzwischen etwa das
+     * Katalogisieren eines Fundes abgelegt hat (ADR 0016), halten den Abruf nicht auf, solange sie nicht neuer sind.
      *
      * @param expectedState {@link #state} vor dem Abruf
      * @return ob gespeichert wurde
@@ -203,7 +205,9 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             if (closed) {
                 return false;
             }
-            if (!Objects.equals(state(snapshot.key()), expectedState)) {
+            StoredPage now = stored(snapshot.key()).orElse(null);
+            if (!Objects.equals(now == null ? null : state(now), expectedState)
+                    && !onlyCataloguedSince(now, expectedState, snapshot)) {
                 return false;
             }
             // Die Sperre ist wiedereintrittsfähig: begin() nimmt sie ein zweites Mal, der Lauf gibt sie wieder ab.
@@ -216,6 +220,106 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
             writeLock.unlock();
         }
     }
+
+    /**
+     * Ob seit dem gelesenen Stand nur Kopfdaten ohne Inhalt hinzukamen, etwa durch das Katalogisieren eines Fundes
+     * ({@link #tryCatalog}), die nicht neuer sind als der Abruf: vorher und jetzt keine Payload, und die Kopfdaten sind
+     * dieselben wie die des Abrufs oder wurden vor ihm beobachtet. Dann verdrängt der Abruf nichts Neueres.
+     */
+    private static boolean onlyCataloguedSince(StoredPage now, String expectedState, PageSnapshot snapshot) {
+        if (now == null || now.snapshot() != null || expectedState != null && !expectedState.endsWith(":-")) {
+            return false;
+        }
+        PageHeader header = now.header();
+        return header.metadataHash().equals(snapshot.metadataHash())
+                && header.attributesHash().equals(snapshot.attributesHash())
+                || header.observedAt().isBefore(snapshot.retrievedAt());
+    }
+
+    /**
+     * Der Katalogeintrag einer Seite für das Katalogisieren von Funden (ADR 0016), ohne Payload: gesperrt oder mit der
+     * Version seiner Kopfdaten; leer, wenn der Katalog die Seite nicht kennt.
+     */
+    public Optional<FindingCataloging.Entry> catalogEntry(PageKey key) {
+        Objects.requireNonNull(key, "key");
+        return read(searcher -> {
+            if (searcher.count(new TermQuery(PageCacheSchema.withheldTerm(key))) > 0) {
+                return Optional.of(new FindingCataloging.Entry(true, null));
+            }
+            TopDocs top = searcher.search(new TermQuery(PageCacheSchema.pageTerm(key)), 1);
+            if (top.scoreDocs.length == 0) {
+                return Optional.<FindingCataloging.Entry>empty();
+            }
+            Document doc = searcher.storedFields().document(top.scoreDocs[0].doc,
+                    Set.of(PageCacheSchema.VERSION_FIELD));
+            return Optional.of(new FindingCataloging.Entry(false, doc.get(PageCacheSchema.VERSION_FIELD)));
+        });
+    }
+
+    /**
+     * Legt die Kopfdaten eines Fundes der Quellensuche in den Katalog (ADR 0016), wie {@link #saveHeader}, aber nur,
+     * wenn binnen {@link #FILL_WAIT} kein anderer Schreiblauf offen ist, und nur, wenn die Seite fehlt oder ihr Eintrag
+     * eine andere Version nennt. Eine gesperrte Seite (zurückgehaltener Stand oder in der bestätigten Generation ihres
+     * Space gesperrt) bekommt nie wieder ein Seitendokument; neuere Kopfdaten (später beobachtet) bleiben; ohne Version
+     * ersetzt der Fund keinen Eintrag. Ein gespeicherter Inhalt bleibt erhalten.
+     */
+    public FindingCataloging.Outcome tryCatalog(PageHeader header) {
+        Objects.requireNonNull(header, "header");
+        requireOpen();
+        try {
+            if (!writeLock.tryLock(FILL_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                return FindingCataloging.Outcome.BUSY;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return FindingCataloging.Outcome.BUSY;
+        }
+        try {
+            if (closed) {
+                return FindingCataloging.Outcome.BUSY;
+            }
+            PageKey key = header.key();
+            String spaceKey = header.metadata().partitionKey();
+            // Unter der Schreibsperre ist der gelesene Stand der zuletzt bestätigte.
+            boolean withheld = read(searcher -> searcher.count(new TermQuery(PageCacheSchema.withheldTerm(key))) > 0)
+                    || first(new TermQuery(PageCacheSchema.spaceTerm(key.sourceId(), spaceKey)),
+                    Set.of(PageCacheSchema.WITHHELD_PAGE), doc -> PageCacheSchema.withheldPageIds(doc)
+                            .containsKey(key.pageId())).orElse(false);
+            if (withheld) {
+                return FindingCataloging.Outcome.WITHHELD;
+            }
+            Document existing = first(new TermQuery(PageCacheSchema.pageTerm(key)), CATALOG_FIELDS, doc -> doc)
+                    .orElse(null);
+            if (existing != null) {
+                String current = existing.get(PageCacheSchema.VERSION_FIELD);
+                String observed = existing.get(PageCacheSchema.OBSERVED_AT);
+                if (header.revision() == null || header.revision().equals(current)
+                        || observed != null && Instant.parse(observed).isAfter(header.observedAt())) {
+                    return FindingCataloging.Outcome.UNCHANGED;
+                }
+            }
+            boolean loaded = existing != null && existing.get(PageCacheSchema.RAW_SHA256) != null;
+            String loadedVersion = existing == null ? null
+                    : existing.get(PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD);
+            // Die Sperre ist wiedereintrittsfähig: begin() nimmt sie ein zweites Mal, der Lauf gibt sie wieder ab.
+            try (Batch batch = begin()) {
+                batch.saveHeader(header);
+                batch.commit();
+            }
+            if (!loaded) {
+                return FindingCataloging.Outcome.NOT_LOADED;
+            }
+            return header.revision().equals(loadedVersion) ? FindingCataloging.Outcome.CURRENT
+                    : FindingCataloging.Outcome.OUTDATED;
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /** Gespeicherte Felder für {@link #tryCatalog}: Version und Beobachtungszeit der Kopfdaten, Stand des Inhalts. */
+    private static final Set<String> CATALOG_FIELDS = Set.of(PageCacheSchema.VERSION_FIELD,
+            PageCacheSchema.OBSERVED_AT, PageCacheSchema.RAW_SHA256,
+            PageCacheSchema.SNAPSHOT + PageCacheSchema.VERSION_FIELD);
 
     @Override
     public void saveHeader(PageHeader header) {

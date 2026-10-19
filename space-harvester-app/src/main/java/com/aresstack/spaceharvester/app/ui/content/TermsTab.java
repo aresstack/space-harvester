@@ -6,6 +6,9 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.Texts;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.terms.PageTerms;
+import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermPayload;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -26,10 +29,10 @@ import java.util.function.Consumer;
 
 /**
  * Der Reiter „Begriffe“ der Leseansicht (#339): nur für die angezeigte Seite die Zahl der erkannten Akronyme,
- * Bezeichner und Beziehungen, der Stand der Analyse vom letzten Seitenabgleich und die erkannten Begriffe als Pillen.
- * Ein Klick auf einen Begriff springt zu seiner nächsten Fundstelle im Lesetext ({@code onJump}). Die Daten stammen
- * aus dem Core ({@link PageAcronyms}); Bezeichner und Beziehungen folgen mit dem Begriffsindex (#119/#120). Nur auf dem
- * EDT.
+ * Bezeichner und Beziehungen, der Stand der Analyse vom letzten Seitenabgleich und die erkannten Begriffe als Pillen,
+ * erst die Akronyme, dann die Bezeichner. Ein Klick auf einen Begriff springt zu seiner nächsten Fundstelle im Lesetext
+ * ({@code onJump}). Die Daten stammen aus dem Core: Akronyme aus {@link PageAcronyms}, Bezeichner (Nomen,
+ * Nominalgruppen, Kennungen) aus {@link PageTerms} (#119); Beziehungen folgen mit #120. Nur auf dem EDT.
  */
 final class TermsTab extends JPanel {
 
@@ -43,9 +46,16 @@ final class TermsTab extends JPanel {
     private final JLabel analysis = Comic.text("Analyse vom letzten Seitenabgleich");
     private final PlaceholderField filter = new PlaceholderField(12, "Begriffe filtern …");
     private final JPanel chips = new JPanel(new WrapFlow());
+    private final JLabel identifierTitle = Comic.text("Bezeichner");
+    private final JPanel identifierChips = new JPanel(new WrapFlow());
     private final JLabel hint = Comic.muted(" ");
-    private Consumer<PageAcronyms.Acronym> onJump = acronym -> { };
+    private Consumer<List<Span>> onJump = spans -> { };
     private PageAcronyms shown;
+    private PageTerms shownTerms;
+
+    /** Eine Fundstelle im Lesetext (Zeichenpositionen wie im Core-Ergebnis). */
+    record Span(int start, int end) {
+    }
 
     TermsTab() {
         super(new BorderLayout(0, 10));
@@ -87,9 +97,19 @@ final class TermsTab extends JPanel {
         }
 
         chips.setOpaque(false);
+        identifierChips.setOpaque(false);
+        identifierTitle.setFont(Comic.semiBold(13f));
+        JPanel identifiers = new JPanel(new BorderLayout(0, 4));
+        identifiers.setOpaque(false);
+        identifiers.add(identifierTitle, BorderLayout.NORTH);
+        identifiers.add(identifierChips, BorderLayout.CENTER);
+        JPanel lists = new JPanel(new BorderLayout(0, 10));
+        lists.setOpaque(false);
+        lists.add(chips, BorderLayout.NORTH);
+        lists.add(identifiers, BorderLayout.CENTER);
         JPanel body = new JPanel(new BorderLayout(0, 6));
         body.setOpaque(false);
-        body.add(chips, BorderLayout.NORTH);
+        body.add(lists, BorderLayout.NORTH);
         body.add(hint, BorderLayout.CENTER);
 
         add(top, BorderLayout.NORTH);
@@ -114,21 +134,33 @@ final class TermsTab extends JPanel {
         show(null);
     }
 
-    void onJump(Consumer<PageAcronyms.Acronym> listener) {
+    /** {@code listener} bekommt die Fundstellen des angeklickten Begriffs in Textreihenfolge. */
+    void onJump(Consumer<List<Span>> listener) {
         onJump = Objects.requireNonNull(listener, "listener");
     }
 
-    /** Zeigt die Begriffe der Seite; {@code null} heißt: keine Seite oder noch nicht geladen. */
+    /** Zeigt nur die Akronyme der Seite; Bezeichner bleiben offen. */
     void show(PageAcronyms acronyms) {
+        show(acronyms, null);
+    }
+
+    /**
+     * Zeigt die Begriffe der Seite; {@code acronyms} {@code null} heißt: keine Seite oder noch nicht geladen,
+     * {@code terms} {@code null}: Bezeichner unbekannt.
+     */
+    void show(PageAcronyms acronyms, PageTerms terms) {
         shown = acronyms;
+        shownTerms = terms;
         PageAcronyms.State current = acronyms == null ? PageAcronyms.State.MISSING : acronyms.state();
         state.setText(stateText(current));
         tone(state, stateColor(current));
         // Nur ein aktuelles Ergebnis hat Begriffe und Fundstellen; veraltet oder fehlgeschlagen zählt nichts.
         boolean any = current == PageAcronyms.State.CURRENT;
         acronymCount.setText(any ? String.valueOf(acronyms.acronyms().size()) : NOT_YET);
-        identifierCount.setText(NOT_YET);
-        identifierCount.setToolTipText("Bezeichner folgen mit dem Begriffsindex (#119)");
+        boolean identifiers = terms != null && terms.state() == PageTerms.State.CURRENT;
+        identifierCount.setText(identifiers ? String.valueOf(terms.identifierCount()) : NOT_YET);
+        identifierCount.setToolTipText(identifiers ? "Nomen, Nominalgruppen und Kennungen"
+                : "Für diesen Text liegt noch keine aktuelle Begriffsanalyse vor");
         relationCount.setText(NOT_YET);
         relationCount.setToolTipText("Beziehungen folgen mit dem Begriffsindex (#120)");
         analysis.setText(acronyms == null || acronyms.result() == null ? "Analyse vom letzten Seitenabgleich"
@@ -154,23 +186,48 @@ final class TermsTab extends JPanel {
             }
         }
         for (PageAcronyms.Acronym acronym : visible) {
-            chips.add(chip(acronym));
+            chips.add(chip(label(acronym), tooltip(acronym), acronym.occurrences().stream()
+                    .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
         }
-        hint.setText(hint(shown, visible.size(), !query.isEmpty()));
-        chips.revalidate();
-        chips.repaint();
+        identifierChips.removeAll();
+        int identifiers = 0;
+        if (shownTerms != null && shownTerms.state() == PageTerms.State.CURRENT) {
+            for (TermPayload.Entry entry : shownTerms.terms()) {
+                if (entry.kind() == TermKind.ACRONYM || !query.isEmpty()
+                        && !entry.term().toLowerCase(Locale.ROOT).contains(query)) {
+                    continue;
+                }
+                identifierChips.add(chip(entry.term(), tooltip(entry), entry.occurrences().stream()
+                        .map(occurrence -> new Span(occurrence.start(), occurrence.end())).toList()));
+                identifiers++;
+            }
+        }
+        identifierTitle.setVisible(identifiers > 0);
+        hint.setText(hint(shown, visible.size() + identifiers, !query.isEmpty()));
+        for (JPanel list : List.of(chips, identifierChips)) {
+            list.revalidate();
+            list.repaint();
+        }
     }
 
-    private ResearchPillButton chip(PageAcronyms.Acronym acronym) {
-        ResearchPillButton chip = new ResearchPillButton(label(acronym), 26, 26, 10);
+    private ResearchPillButton chip(String label, String tooltip, List<Span> spans) {
+        ResearchPillButton chip = new ResearchPillButton(label, 26, 26, 10);
         chip.setFont(Comic.semiBold(12f));
         chip.setFills(Comic.SURFACE, ResearchUiPalette.SECONDARY_SURFACE, ResearchUiPalette.ACCENT_BLUE);
         chip.setForegrounds(Comic.INK, Color.WHITE, Color.WHITE);
         chip.setBorders(Comic.MUTED, Comic.INK, ResearchUiPalette.ACCENT_BLUE);
-        chip.setToolTipText(tooltip(acronym));
-        chip.setEnabled(!acronym.occurrences().isEmpty());
-        chip.addActionListener(e -> onJump.accept(acronym));
+        chip.setToolTipText(tooltip);
+        chip.setEnabled(!spans.isEmpty());
+        chip.addActionListener(e -> onJump.accept(spans));
         return chip;
+    }
+
+    /** „Kennung · 3 Fundstellen · zuerst in „Betrieb“ · Klick …“ */
+    static String tooltip(TermPayload.Entry entry) {
+        String kind = entry.kind() == TermKind.IDENTIFIER ? "Kennung" : "Nomen";
+        String where = entry.count() == 1 ? "1 Fundstelle" : entry.count() + " Fundstellen";
+        return kind + " · " + where + (entry.section() == null ? "" : " · zuerst in „" + entry.section() + "“")
+                + (entry.occurrences().isEmpty() ? "" : " · Klick springt zur nächsten Fundstelle im Lesetext");
     }
 
     /** „RSL · Rückmeldeschlüssel“, ohne Ausschreibung nur das Akronym. */
@@ -216,7 +273,7 @@ final class TermsTab extends JPanel {
             case STALE -> "Die Analyse passt nicht mehr zum angezeigten Text; „Analyse neu berechnen“ unter Text "
                     + "zeigt die Begriffe wieder.";
             case FAILED -> "Die letzte Analyse ist fehlgeschlagen; „Analyse neu berechnen“ unter Text startet sie neu.";
-            case CURRENT -> acronyms.acronyms().isEmpty() ? "Auf dieser Seite wurden keine Akronyme erkannt."
+            case CURRENT -> visible == 0 && !filtered ? "Auf dieser Seite wurden keine Begriffe erkannt."
                     : visible == 0 && filtered ? "Kein Begriff passt zum Filter." : " ";
         };
     }
@@ -265,6 +322,14 @@ final class TermsTab extends JPanel {
     List<ResearchPillButton> chips() {
         List<ResearchPillButton> list = new ArrayList<>();
         for (java.awt.Component component : chips.getComponents()) {
+            list.add((ResearchPillButton) component);
+        }
+        return list;
+    }
+
+    List<ResearchPillButton> identifierChips() {
+        List<ResearchPillButton> list = new ArrayList<>();
+        for (java.awt.Component component : identifierChips.getComponents()) {
             list.add((ResearchPillButton) component);
         }
         return list;

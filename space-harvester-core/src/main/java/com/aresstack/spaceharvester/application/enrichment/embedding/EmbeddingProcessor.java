@@ -209,6 +209,36 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             return version;
         }
 
+        /** Kennung des Modells, z. B. {@code e5-small-v2@2024-01}. */
+        public String modelId() {
+            return provider.modelId();
+        }
+
+        /**
+         * Bettet Texte als Dokumente mit diesem Modell ein, in derselben Reihenfolge (semantische Absätze, #181).
+         *
+         * @throws EmbeddingUnavailableException wenn das Modell nicht erreichbar ist oder nicht je Text einen
+         *                                       endlichen Vektor der Dimension liefert
+         */
+        public List<float[]> embed(List<String> texts) {
+            List<float[]> vectors = provider.embed(List.copyOf(texts));
+            if (vectors == null || vectors.size() != texts.size()) {
+                throw new EmbeddingUnavailableException("Modell lieferte nicht je Text einen Vektor");
+            }
+            for (float[] vector : vectors) {
+                if (vector == null || vector.length != provider.dimensions()) {
+                    throw new EmbeddingUnavailableException("Modell lieferte keinen Vektor der Dimension "
+                            + provider.dimensions());
+                }
+                for (float v : vector) {
+                    if (!Float.isFinite(v)) {
+                        throw new EmbeddingUnavailableException("Modell lieferte keinen endlichen Vektor");
+                    }
+                }
+            }
+            return vectors;
+        }
+
         /**
          * Bettet eine Suchanfrage mit diesem Modell ein.
          *

@@ -2,11 +2,13 @@ package com.aresstack.spaceharvester.application.assets;
 
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
+import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
+import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.security.MessageDigest;
@@ -214,7 +216,7 @@ public class Assets {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
         String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
-                ? image.mediaType() : sniff(content), content);
+                ? image.mediaType() : sniff(content), content, viewFileName(image));
         Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
                 AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
         store.put(asset, content);
@@ -470,15 +472,16 @@ public class Assets {
 
     /**
      * Der Medientyp beim Ablegen (#183): die Angabe der Quelle, es sei denn, der Inhalt zeigt eindeutig etwas anderes.
-     * Ohne {@link DocumentText} bleibt die Angabe der Quelle.
+     * Ohne {@link DocumentText} bleibt die Angabe der Quelle. Der Dateiname verfeinert nur, was der Inhalt offenlässt
+     * ({@link DocumentText#detect(String, byte[])}).
      */
-    private String mediaType(String sourceId, String declared, byte[] content) {
+    private String mediaType(String sourceId, String declared, byte[] content, String fileName) {
         if (documents == null) {
             return declared;
         }
         String detected;
         try {
-            detected = documents.detect(content).orElse(null);
+            detected = documents.detect(fileName, content).orElse(null);
         } catch (RuntimeException e) {
             LOG.log(System.Logger.Level.INFO, "Typerkennung am Inhalt gescheitert: source={0} ({1})", sourceId,
                     e.getClass().getName());
@@ -543,6 +546,135 @@ public class Assets {
             return "image/svg+xml";
         }
         return "application/octet-stream";
+    }
+
+    /** Version der Vorschauen, die die Quelle selbst erzeugt ({@link #preview}); ändert sich, damit alte neu entstehen. */
+    public static final String PREVIEW_RENDITION = "source-preview-1";
+
+    /**
+     * Eine Vorschau eines Anhangs in seiner aktuellen Version, wie die Quelle sie selbst erzeugt (#183; bei Confluence
+     * die Dokumentkonvertierung, etwa ein Office-Dokument als PDF): aus der Ablage oder über die Quelle geladen. Ohne
+     * Art in der Reihenfolge {@link AttachmentPreview#order()}, wie der Lesebereich des Enterprise AI Client
+     * ({@code BrowseKnowledgeSourceUseCase#attachmentPreview}): die erste, die die Quelle liefern kann; eine
+     * Verweigerung beendet die Suche, weil die nächste Art genauso scheitert. Abgelegt wird je Anhang, Version und Art
+     * ({@link #previewId}, Version {@link #previewVersion}), nie ohne Version der Quelle.
+     *
+     * @param preview  gewünschte Art oder {@code null} für die erste verfügbare
+     * @param mayStore wie bei {@link #content(PageAttachmentList, String, boolean)}
+     * @throws SourceAccessException  {@code NOT_FOUND}, wenn der Anhang nicht zur Seite gehört oder es keine Vorschau
+     *                                gibt, {@code UNAVAILABLE}, solange die Quelle sie noch erzeugt, {@code UNSUPPORTED}
+     *                                für Quellen ohne {@link SourceCapability#ATTACHMENT_PREVIEWS}, sonst wie die Quelle
+     * @throws AssetTooLargeException wenn die Vorschau die Grenze überschreitet
+     */
+    public AssetContent preview(PageAttachmentList list, String attachmentId, AttachmentPreview preview,
+                                boolean mayStore) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        String sourceId = list.sourceId();
+        List<AttachmentPreview> kinds = preview == null ? AttachmentPreview.order() : List.of(preview);
+        String version = previewVersion(attachment.version());
+        for (AttachmentPreview kind : kinds) {
+            Optional<Asset> stored = store.find(sourceId, previewId(attachmentId, kind), version);
+            if (stored.isPresent()) {
+                return new AssetContent(stored.get(), store.read(stored.get()));
+            }
+        }
+        HarvestSource source = source(sourceId);
+        if (!source.capabilities().contains(SourceCapability.ATTACHMENT_PREVIEWS)) {
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
+                    "Quelle erzeugt keine Vorschauen von Anhängen", null);
+        }
+        SourceAccessException last = null;
+        for (AttachmentPreview kind : kinds) {
+            byte[] content;
+            try {
+                content = previewBytes(source, attachment, kind);
+            } catch (SourceAccessException e) {
+                if (!skippable(e)) {
+                    throw e;
+                }
+                last = e;
+                continue;
+            }
+            String mediaType = mediaType(sourceId, previewType(content), content, null);
+            Asset asset = new Asset(sourceId, list.attachments().pageId(), previewId(attachmentId, kind), version,
+                    previewTitle(attachment.title(), mediaType), mediaType, AssetKind.of(mediaType, null),
+                    content.length, sha256(content), clock.instant());
+            if (mayStore && version != null) {
+                store.put(asset, content);
+            }
+            return new AssetContent(asset, content);
+        }
+        throw last;
+    }
+
+    /** Lädt eine Vorschau über die Quelle, mit derselben Begrenzung gleichzeitiger Downloads wie Anhänge. */
+    private byte[] previewBytes(HarvestSource source, PageAttachment attachment, AttachmentPreview kind) {
+        try {
+            if (!downloads.tryAcquire(DOWNLOAD_WAIT.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(source.id(), SourceAccessException.Reason.RATE_LIMITED,
+                        "Zu viele gleichzeitige Downloads von Vorschauen", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(source.id(), SourceAccessException.Reason.UNAVAILABLE,
+                    "Download abgebrochen", e);
+        }
+        byte[] content;
+        try {
+            content = source.attachmentPreview(attachment, kind, maxBytes);
+        } catch (AttachmentTooLargeException e) {
+            throw new AssetTooLargeException(source.id(), maxBytes);
+        } finally {
+            downloads.release();
+        }
+        if (content.length > maxBytes) {
+            throw new AssetTooLargeException(source.id(), maxBytes);
+        }
+        return content;
+    }
+
+    /**
+     * Ob nach diesem Fehler die nächste Vorschauart versucht wird: nur, wenn es diese Art nicht gibt oder sie noch
+     * entsteht; Verweigerung, Anmeldung, Drosselung und fehlende Fähigkeit gelten für jede Art.
+     */
+    private static boolean skippable(SourceAccessException e) {
+        return switch (e.reason()) {
+            case NOT_FOUND, UNAVAILABLE, INVALID_RESPONSE -> true;
+            default -> false;
+        };
+    }
+
+    /** Kennung einer Vorschau im Speicher: Art und Anhang. */
+    public static String previewId(String attachmentId, AttachmentPreview preview) {
+        return "preview-" + preview.name().toLowerCase(Locale.ROOT) + "-" + attachmentId;
+    }
+
+    /** Version einer Vorschau im Speicher: {@link #PREVIEW_RENDITION} und die Version des Anhangs, ohne diese keine. */
+    public static String previewVersion(String attachmentVersion) {
+        return attachmentVersion == null || attachmentVersion.isBlank() ? null
+                : PREVIEW_RENDITION + ":" + attachmentVersion;
+    }
+
+    /** Medientyp einer Vorschau nach ihren ersten Bytes: PDF oder Bild. */
+    static String previewType(byte[] content) {
+        if (content.length > 4 && content[0] == '%' && content[1] == 'P' && content[2] == 'D' && content[3] == 'F') {
+            return "application/pdf";
+        }
+        return sniff(content);
+    }
+
+    /** Dateiname einer Vorschau: der des Anhangs mit der Endung der Vorschau, etwa {@code Planung.xlsx.pdf}. */
+    static String previewTitle(String title, String mediaType) {
+        String extension = switch (base(mediaType)) {
+            case "application/pdf" -> ".pdf";
+            case "image/png" -> ".png";
+            case "image/jpeg" -> ".jpg";
+            case "image/gif" -> ".gif";
+            case "image/svg+xml" -> ".svg";
+            default -> "";
+        };
+        String name = title == null ? "" : title;
+        return name.toLowerCase(Locale.ROOT).endsWith(extension) ? name : name + extension;
     }
 
     /**
@@ -706,8 +838,8 @@ public class Assets {
         String version = described.version() != null ? described.version() : attachment.version();
         String declaredType = described.mediaType() != null && !described.mediaType().isBlank()
                 ? described.mediaType() : attachment.mediaType();
-        String mediaType = mediaType(source.id(), declaredType, content);
         String title = described.title().isEmpty() ? attachment.title() : described.title();
+        String mediaType = mediaType(source.id(), declaredType, content, title);
         // Hat eine Binärsignatur die Angabe der Quelle ersetzt, zählt die Dateiendung (.drawio, .svg) nicht mehr: Ein PDF
         // namens report.drawio ist ein Dokument, kein Diagramm.
         boolean corrected = !base(mediaType).equals(base(declaredType)) && !textual(base(mediaType));

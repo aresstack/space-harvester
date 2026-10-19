@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationListe
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
+import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -30,12 +31,14 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -48,6 +51,10 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CachedPage;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
@@ -92,6 +99,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -106,6 +114,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -113,6 +122,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.GitSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -140,6 +150,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -210,6 +221,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final PassageQueries passages;
     private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
@@ -324,6 +336,11 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
+            // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
+            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
+            processors.add(new PassageProcessor(
+                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
+                    embedding));
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
@@ -346,8 +363,20 @@ public final class Harvester implements AutoCloseable {
                     new EnrichingCacheFill(PageCacheFill.of(cache::state, cache::trySave), enrichments, texts),
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
+            this.passages = new PassageQueries(pages, enrichments, projector);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
-            this.navigation = new PageNavigation(catalog, reader, access);
+            // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
+            // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
+            AtomicReference<BackgroundFill> filling = new AtomicReference<>();
+            FindingCataloging findings = new FindingCataloging(catalog, access, new LuceneFindingStore(cache),
+                    gaps -> {
+                        BackgroundFill fill = filling.get();
+                        if (fill != null) {
+                            fill.offer(gaps);
+                        }
+                    }, clock);
+            opened.add(findings);
+            this.navigation = new PageNavigation(catalog, reader, access, findings);
             this.search = new PageSearch(catalog, index, access);
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
@@ -410,7 +439,7 @@ public final class Harvester implements AutoCloseable {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
-                    excerpts, builder.selection(), runLog);
+                    excerpts, builder.selection(), runLog, findings);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -455,6 +484,7 @@ public final class Harvester implements AutoCloseable {
             opened.add(changeEvents);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
+                    new AnalysisConverter(new EnrichmentAnalyses(enrichments)),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
@@ -487,6 +517,7 @@ public final class Harvester implements AutoCloseable {
                         fillFollows ? settings.sync().backgroundFillAnywhere() : builder.backgroundFill);
                 opened.add(fill);
                 this.backgroundFill = fill;
+                filling.set(fill);
             } else {
                 this.backgroundFill = null;
             }
@@ -771,6 +802,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageNavigation navigation() {
         return navigation;
+    }
+
+    /**
+     * Semantische Absätze einer Seite (#181, ADR 0020); in der Leseansicht ohne Aufrufer
+     * {@link com.aresstack.spaceharvester.application.passages.PagePassages#read} mit {@link #enrichments()}.
+     */
+    public PassageQueries passages() {
+        return passages;
     }
 
     /**
@@ -1351,7 +1390,8 @@ public final class Harvester implements AutoCloseable {
 
         /**
          * Ein weiterer Quellentyp des einbettenden Programms (#188), z. B. MediaWiki; ein Typ, den der Core schon kennt
-         * ({@link ConfiguredSourceCatalog#TYPES}), wird durch ihn ersetzt. Ein Typ zweimal ist ein Fehler beim Bauen.
+         * ({@link ConfiguredSourceCatalog#TYPES} und {@code git} mit Kopien unter {@code <dataDirectory>/git}), wird
+         * durch ihn ersetzt. Ein Typ zweimal ist ein Fehler beim Bauen.
          */
         public Builder sourceAdapter(SourceAdapter adapter) {
             sourceAdapters.add(Objects.requireNonNull(adapter, "adapter"));
@@ -1403,7 +1443,10 @@ public final class Harvester implements AutoCloseable {
         /** Die Quellentypen: die des Core, ersetzt oder ergänzt um die eigenen. */
         private List<SourceAdapter> adapters() {
             List<SourceAdapter> adapters = new ArrayList<>();
-            for (SourceAdapter adapter : ConfiguredSourceCatalog.DEFAULT_ADAPTERS) {
+            List<SourceAdapter> defaults = new ArrayList<>(ConfiguredSourceCatalog.DEFAULT_ADAPTERS);
+            // Git braucht einen Ordner für die Kopien der Repositorys (#187).
+            defaults.add(new GitSourceAdapter(dataDirectory.resolve("git")));
+            for (SourceAdapter adapter : defaults) {
                 if (sourceAdapters.stream().noneMatch(own -> own.type().equals(adapter.type()))) {
                     adapters.add(adapter);
                 }
