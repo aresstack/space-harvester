@@ -4,8 +4,16 @@ import static com.aresstack.spaceharvester.application.enrichment.EnrichmentTest
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -217,6 +225,43 @@ class EnrichmentsTest {
         assertThat(store.find(page.key())).isEmpty();
         // Auf ausdrücklichen Wunsch im aufrufenden Thread.
         assertThat(enrichments.recompute(page, "remote")).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+    }
+
+    @Test
+    void navigationOfAnUnapprovedSourceIsComputedAtOnceAndStaysCurrent() {
+        // Ein geschlossener Hintergrund nähme nichts an: Was eingeplant würde, fehlte im Ergebnis.
+        ExecutorService closed = Enrichments.background(1);
+        closed.shutdown();
+        EmbeddingProcessor embedding = new EmbeddingProcessor(() -> new EmbeddingProvider() {
+            @Override
+            public String modelId() {
+                return "remote@1";
+            }
+
+            @Override
+            public int dimensions() {
+                return 3;
+            }
+
+            @Override
+            public List<float[]> embed(List<String> texts) {
+                throw new AssertionError("nicht freigegeben");
+            }
+        }, 1000, KnowledgeTextSegmentation.defaults(), sourceId -> sourceId.equals("approved"))
+                .withPassages(new PassageChunks(new PassageSegmentation(
+                        SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()),
+                        KnowledgeTextSegmentation.defaults())));
+        NavigationProcessor navigation = new NavigationProcessor(new DocumentNavigationBuilder(), embedding,
+                store::find);
+        Enrichments enrichments = new Enrichments(PROJECTOR, List.of(navigation), store, CLOCK, closed);
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(navigation.background(page.key())).isFalse();
+        assertThat(navigation.background(new PageKey("approved", "101"))).isTrue();
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 1, 0, 0));
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 1, 0));
+        assertThat(store.find(page.key())).singleElement()
+                .satisfies(result -> assertThat(result.payloadJson()).contains("\"reason\":\"source-not-approved\""));
     }
 
     @Test
