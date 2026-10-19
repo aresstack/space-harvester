@@ -48,6 +48,11 @@ public final class ContextualSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public String addressOption() {
+        return new KnowledgeSourceProviderAdapter(provider.apply(null)).addressOption();
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
         return new KnowledgeSourceProviderAdapter(provider.apply(null)).check(config);
     }

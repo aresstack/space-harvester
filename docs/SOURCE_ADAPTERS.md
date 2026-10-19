@@ -16,10 +16,13 @@ Confluence-Client gibt es nicht.
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
-Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
-`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
-über `SourceAdapter.displayName()` an.
+Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
+(Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
+`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188), und `addressOption`, unter welchem
+Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
+(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
+Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
+`SourceAdapter.addressOption()` an.
 
 ## Vertrag
 
