@@ -37,6 +37,12 @@ public class PageImageAnalysis {
     public static final String TRUNCATED = "images-truncated";
     /** Warnung: Die Quelle hat keine Lese-Ansicht, also keine Bilder. */
     public static final String NO_READING_VIEW = "no-reading-view";
+    /**
+     * Warnung: Die Lese-Ansicht der Quelle gehörte nicht zur gespeicherten Fassung der Seite (neuer oder nicht
+     * bestätigt), die Bilder also womöglich zu einer anderen; das Ergebnis gilt dann als veraltet, wie die abgelegte
+     * Ansicht im Export ({@code page-changed}).
+     */
+    public static final String PAGE_CHANGED = "page-changed";
 
     private final Assets assets;
     private final Enrichments enrichments;
@@ -97,16 +103,7 @@ public class PageImageAnalysis {
         // Die Version steht vor dem ersten Bild fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = ImageProcessor.version(model);
         List<String> warnings = new ArrayList<>();
-        List<HarvestSource.ViewImage> images;
-        try {
-            images = assets.viewImages(key.sourceId(), key.pageId());
-        } catch (SourceAccessException e) {
-            if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
-                throw e;
-            }
-            images = List.of();
-            warnings.add(NO_READING_VIEW);
-        }
+        List<HarvestSource.ViewImage> images = images(snapshot, warnings);
         if (images.size() > MAX_IMAGES) {
             images = images.subList(0, MAX_IMAGES);
             warnings.add(TRUNCATED);
@@ -168,6 +165,36 @@ public class PageImageAnalysis {
             return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
                     ImageStatus.FAILED, "asset-store-unavailable");
         }
+    }
+
+    /**
+     * Die Bilder der Lese-Ansicht mit ihrer Fassung, wie {@code ExportAssetCollection.readingView}: Nennt die Quelle
+     * eine andere Fassung als die gespeicherte (oder keine bestätigte), steht {@value #PAGE_CHANGED} in den Warnungen.
+     * Eine Quelle ohne Lese-Ansicht kann ihre Bilder trotzdem kennen; dann gilt die Fassung als unbekannt.
+     */
+    private List<HarvestSource.ViewImage> images(PageSnapshot snapshot, List<String> warnings) {
+        PageKey key = snapshot.key();
+        HarvestSource.ReadingPage live;
+        try {
+            live = assets.readingPage(key.sourceId(), key.pageId());
+        } catch (SourceAccessException e) {
+            if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                throw e;
+            }
+            try {
+                return assets.viewImages(key.sourceId(), key.pageId());
+            } catch (SourceAccessException unsupported) {
+                if (unsupported.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                    throw unsupported;
+                }
+                warnings.add(NO_READING_VIEW);
+                return List.of();
+            }
+        }
+        if (live.version() == null || !live.version().equals(snapshot.revision())) {
+            warnings.add(PAGE_CHANGED);
+        }
+        return live.images();
     }
 
     private List<PageAttachment> attachments(PageKey key) {

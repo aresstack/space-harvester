@@ -115,6 +115,8 @@ class AnalysisConverterTest {
         assertThat(first.path("facts").get(0).path("processorId").asString()).isEqualTo("acronyms");
         assertThat(first.path("facts").get(0).path("origin").asString()).isEqualTo("AUTOMATIC");
         assertThat(first.path("facts").get(0).path("review").asString()).isEqualTo("UNREVIEWED");
+        assertThat(first.path("facts").valueStream().map(f -> f.path("state").asString()))
+                .isNotEmpty().containsOnly("CURRENT");
 
         JsonNode second = pages.get(1);
         assertThat(second.path("parentPageId").asString()).isEqualTo("100");
@@ -148,6 +150,73 @@ class AnalysisConverterTest {
         assertThat(analysis.path("pages").get(0).path("enrichments").path("acronyms").path("state").asString())
                 .isEqualTo("MISSING");
         assertThat(store.find(only.key())).isEmpty();
+    }
+
+    @Test
+    void factsOfANewerVersionAreMarkedStaleAgainstTheExportedOne() throws Exception {
+        PageSnapshot exported = page("confluence", "DEV", "100", null, ACRONYM);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(exported));
+        enrichments.refresh(exported);
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        ExportConverters converters = new ExportConverters(List.of(new JsonArrayConverter(),
+                new AnalysisConverter(new EnrichmentAnalyses(enrichments))), ExportConverters.DEFAULT_MAX_BYTES);
+        String id = new Exports(jobs, cache, writer, converters, clock)
+                .start("confluence", "DEV", "client-a", List.of("json")).id();
+
+        // Erst nach dem Export kommt eine neue Fassung, deren Fakten die alten ersetzen.
+        enrichments.refresh(page("confluence", "DEV", "100", null,
+                "{\"text\":\"Das CI (Continuous Integration) ist neu.\"}".getBytes(StandardCharsets.UTF_8)));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        new ExportConversions(jobs, writer, converters).convert(id, "client-a", AnalysisConverter.FORMAT, out);
+        JsonNode page = json.readTree(out.toByteArray()).path("pages").get(0);
+
+        assertThat(page.path("inputSha256").asString())
+                .isEqualTo(PROJECTOR.project(exported).orElseThrow().inputSha256());
+        assertThat(page.path("enrichments").path("acronyms").path("state").asString()).isEqualTo("STALE");
+        assertThat(page.path("facts")).isNotEmpty().allSatisfy(fact -> {
+            assertThat(fact.path("state").asString()).isEqualTo("STALE");
+            assertThat(fact.path("inputSha256").asString()).isNotEqualTo(page.path("inputSha256").asString());
+        });
+    }
+
+    @Test
+    void factsOfAnOlderProcessorVersionAreStaleEvenWithTheSameText() throws Exception {
+        PageSnapshot exported = page("confluence", "DEV", "100", null, ACRONYM);
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(exported));
+        // Dieselbe Seite, berechnet von einer älteren Fassung des Prozessors.
+        new Enrichments(PROJECTOR, List.of(new OlderVersion(new AcronymProcessor())), store, clock).refresh(exported);
+        FileSystemExportArtifactWriter writer = new FileSystemExportArtifactWriter(root);
+        ExportConverters converters = new ExportConverters(List.of(
+                new AnalysisConverter(new EnrichmentAnalyses(enrichments))), ExportConverters.DEFAULT_MAX_BYTES);
+        String id = new Exports(jobs, cache, writer, converters, clock)
+                .start("confluence", "DEV", "client-a", List.of("analysis")).id();
+
+        JsonNode page = json.readTree(root.resolve(id).resolve("analysis.json").toFile()).path("pages").get(0);
+
+        assertThat(page.path("enrichments").path("acronyms").path("state").asString()).isEqualTo("STALE");
+        assertThat(page.path("facts")).isNotEmpty().allSatisfy(fact -> {
+            assertThat(fact.path("inputSha256").asString()).isEqualTo(page.path("inputSha256").asString());
+            assertThat(fact.path("state").asString()).isEqualTo("STALE");
+        });
+    }
+
+    /** Ein Prozessor mit einer älteren Version als der aktuelle. */
+    private record OlderVersion(EnrichmentProcessor processor) implements EnrichmentProcessor {
+
+        @Override
+        public String id() {
+            return processor.id();
+        }
+
+        @Override
+        public String version() {
+            return "older-" + processor.version();
+        }
+
+        @Override
+        public EnrichmentOutput process(PageText text) {
+            return processor.process(text);
+        }
     }
 
     /** Scheitert immer. */
