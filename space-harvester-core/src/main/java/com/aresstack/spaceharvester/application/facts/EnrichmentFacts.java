@@ -36,7 +36,7 @@ public final class EnrichmentFacts {
     /** Prozessoren, deren Ergebnisse Fakten tragen. */
     public static final Set<String> PROCESSORS = Set.of(ACRONYMS, ENTITIES, PROPERTIES, ACTIVITIES, RELATIONS);
 
-    /** Höchstens so viele Fakten je Ergebnis. */
+    /** Höchstens so viele Fakten je Ergebnis, also je Prozessor und Seite; was darüber liegt, meldet {@link #truncated}. */
     public static final int MAX_PER_RESULT = 2_000;
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -52,6 +52,16 @@ public final class EnrichmentFacts {
 
     /** Die Fakten des Ergebnisses, leer für andere Prozessoren, fehlgeschlagene oder unlesbare Ergebnisse. */
     public static List<MetadataFact> of(Enrichment enrichment) {
+        List<MetadataFact> facts = derive(enrichment);
+        return facts.size() > MAX_PER_RESULT ? List.copyOf(facts.subList(0, MAX_PER_RESULT)) : List.copyOf(facts);
+    }
+
+    /** Ob das Ergebnis mehr als {@value #MAX_PER_RESULT} Fakten trägt, {@link #of} also nicht alle liefert. */
+    public static boolean truncated(Enrichment enrichment) {
+        return derive(enrichment).size() > MAX_PER_RESULT;
+    }
+
+    private static List<MetadataFact> derive(Enrichment enrichment) {
         if (!derivesFrom(enrichment.processorId()) || enrichment.status() != Enrichment.Status.OK) {
             return List.of();
         }
@@ -78,7 +88,7 @@ public final class EnrichmentFacts {
             // Ein Eintrag passt nicht zum Format: lieber keine Fakten als halbe.
             return List.of();
         }
-        return facts.size() > MAX_PER_RESULT ? List.copyOf(facts.subList(0, MAX_PER_RESULT)) : List.copyOf(facts);
+        return facts;
     }
 
     private static void acronyms(PageKey key, JsonNode payload, MetadataFact.Provenance provenance,

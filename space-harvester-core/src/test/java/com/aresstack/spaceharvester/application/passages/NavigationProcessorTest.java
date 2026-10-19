@@ -8,7 +8,10 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.snapshot.NativePayload;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -44,11 +47,19 @@ class NavigationProcessorTest {
         }
     });
     private final AtomicBoolean approved = new AtomicBoolean(true);
-    private final EmbeddingProcessor embedding = new EmbeddingProcessor(model::get, 1000,
-            KnowledgeTextSegmentation.defaults(), sourceId -> approved.get())
-            .withPassages(new PassageChunks(new PassageSegmentation(
-                    SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()),
-                    KnowledgeTextSegmentation.defaults())));
+    /** Satzgrenzen wie ein Satzmodell; ohne Modell nur Überschriften (no-sentence-model). */
+    private static final SentenceSegmenter SENTENCE_MODEL = new SentenceSegmenter() {
+        @Override
+        public List<String> sentences(String paragraph) {
+            return SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()).sentences(paragraph);
+        }
+
+        @Override
+        public String id() {
+            return "test-model";
+        }
+    };
+    private final EmbeddingProcessor embedding = embedding(SENTENCE_MODEL);
     private final List<Enrichment> stored = new ArrayList<>();
     private final DocumentNavigationBuilder builder = new DocumentNavigationBuilder();
     private final NavigationProcessor processor = new NavigationProcessor(builder, embedding, key -> stored);
@@ -91,6 +102,9 @@ class NavigationProcessorTest {
         assertThat(calls.get()).isEqualTo(before);
         assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_NOT_APPROVED);
         assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.HEADINGS);
+        // Gilt bis Text, Modell oder Verfahren wechseln; kein Platz in der Warteschlange.
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(processor.background(KEY)).isFalse();
     }
 
     @Test
@@ -119,6 +133,161 @@ class NavigationProcessorTest {
                 .isEqualTo(PagePassages.State.MISSING);
     }
 
+    /** Ein Benenner, der zählt, was ihn erreicht. */
+    private class Labeler implements NavigationLabelModel {
+
+        final List<List<String>> calls = new ArrayList<>();
+        String model = "gpt-x";
+        boolean down;
+        boolean approvedSource = true;
+
+        @Override
+        public String version() {
+            return "test:" + model;
+        }
+
+        @Override
+        public boolean available() {
+            return model != null;
+        }
+
+        @Override
+        public boolean mayLabel(String sourceId) {
+            return approvedSource;
+        }
+
+        @Override
+        public Labels labels(String documentTitle, List<String> sectionTexts) {
+            calls.add(sectionTexts);
+            if (down) {
+                return new Labels(java.util.Collections.nCopies(sectionTexts.size(), null), false);
+            }
+            List<String> names = new ArrayList<>();
+            for (int i = 0; i < sectionTexts.size(); i++) {
+                names.add("Thema " + (i + 1));
+            }
+            return new Labels(names, true);
+        }
+    }
+
+    @Test
+    void theChatModelNamesTheTopicSectionsAndItsChangeRecomputes() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        EnrichmentOutput output = named.process(KEY, text);
+        DocumentNavigationView view = read(output, named);
+
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(view.chapters().getFirst().children().getFirst().label()).isEqualTo("Thema 1");
+        assertThat(labeler.calls).hasSize(1);
+        String before = named.version();
+        labeler.model = "gpt-y";
+        assertThat(named.version()).isNotEqualTo(before);
+        assertThat(read(output, named).state()).isEqualTo(PagePassages.State.STALE);
+    }
+
+    @Test
+    void anUnreachableChatModelKeepsTheAnalysisLabelsAndIsRetried() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        labeler.down = true;
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        DocumentNavigationView view = read(named.process(KEY, text), named);
+
+        assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.SEMANTIC);
+        assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_MODEL_UNAVAILABLE);
+        assertThat(view.state()).isEqualTo(PagePassages.State.STALE);
+        assertThat(view.chapters().getFirst().children().getFirst().label()).doesNotStartWith("Thema");
+    }
+
+    @Test
+    void noTextOfAnUnapprovedSourceReachesTheChatModel() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        labeler.approvedSource = false;
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        DocumentNavigationView view = read(named.process(KEY, text), named);
+
+        assertThat(labeler.calls).isEmpty();
+        assertThat(view.chapters().getFirst().children().getFirst().label()).doesNotStartWith("Thema");
+    }
+
+    @Test
+    void withoutSentenceModelOnlyTheHeadingsAppearLikeInTheClient() {
+        EmbeddingProcessor splitter = embedding(SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()));
+        NavigationProcessor bySplitter = new NavigationProcessor(builder, splitter, key -> stored);
+
+        DocumentNavigationView view = read(bySplitter.process(KEY, text), bySplitter);
+
+        assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.HEADINGS);
+        assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_NO_SENTENCE_MODEL);
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(bySplitter.background(KEY)).isFalse();
+    }
+
+    @Test
+    void failedEmbeddingsAreTheirOwnReasonAndAreRetried() {
+        stored.add(new Enrichment(KEY, embedding.id(), embedding.version(), text.inputSha256(), "1",
+                Enrichment.Status.FAILED, "{}", List.of(), Enrichments.PROCESSOR_ERROR, Instant.EPOCH));
+
+        DocumentNavigationView view = read(processor.process(KEY, text));
+
+        assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_INDEXING_FAILED);
+        assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.HEADINGS);
+        assertThat(view.state()).isEqualTo(PagePassages.State.STALE);
+    }
+
+    @Test
+    void theTitleOfThePageReachesTheChatModel() {
+        storeEmbeddings();
+        List<String> titles = new ArrayList<>();
+        Labeler labeler = new Labeler() {
+            @Override
+            public Labels labels(String documentTitle, List<String> sectionTexts) {
+                titles.add(documentTitle);
+                return super.labels(documentTitle, sectionTexts);
+            }
+        };
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+        PageSnapshot snapshot = PageSnapshot.of("wiki", new PageMetadata("101", "wiki:101", "Reisekosten", "DEV", null,
+                "1", Instant.EPOCH, null, null), new NativePayload(new byte[0], "text/plain", "test"), Instant.EPOCH);
+
+        named.process(snapshot, text);
+
+        assertThat(titles).containsExactly("Reisekosten");
+    }
+
+    @Test
+    void theViewNamesTheTextItBelongsToAndFindsEverySection() {
+        storeEmbeddings();
+        Enrichment result = enrichment(processor.process(KEY, text));
+
+        DocumentNavigationView view = DocumentNavigationView.read(KEY, "Reisekosten",
+                List.of(new Enrichments.View(result, Enrichment.Freshness.CURRENT)), text, builder);
+
+        assertThat(view.title()).isEqualTo("Reisekosten");
+        assertThat(view.inputSha256()).isEqualTo(text.inputSha256());
+        assertThat(view.textSha256()).isEqualTo(PassagePayload.textSha256(text.text()));
+        List<NavigationSection> all = view.flatten();
+        assertThat(all).hasSizeGreaterThan(view.chapters().size());
+        assertThat(all.getFirst()).isEqualTo(view.chapters().getFirst());
+        assertThat(all.get(1)).isEqualTo(view.chapters().getFirst().children().getFirst());
+        NavigationSection topic = view.chapters().getFirst().children().getFirst();
+        assertThat(view.find(topic.id())).isEqualTo(topic);
+        assertThat(view.find("gibt-es-nicht")).isNull();
+        assertThat(DocumentNavigationView.read(KEY, "Reisekosten", List.of(), null, builder).inputSha256()).isNull();
+    }
+
+    private EmbeddingProcessor embedding(SentenceSegmenter sentences) {
+        return new EmbeddingProcessor(model::get, 1000, KnowledgeTextSegmentation.defaults(),
+                sourceId -> approved.get()).withPassages(new PassageChunks(new PassageSegmentation(sentences,
+                KnowledgeTextSegmentation.defaults())));
+    }
+
     private void storeEmbeddings() {
         EnrichmentOutput vectors = embedding.process(text);
         stored.add(new Enrichment(KEY, embedding.id(), vectors.version() != null ? vectors.version()
@@ -127,9 +296,15 @@ class NavigationProcessorTest {
     }
 
     private DocumentNavigationView read(EnrichmentOutput output) {
-        Enrichment result = enrichment(output);
+        return read(output, processor);
+    }
+
+    private DocumentNavigationView read(EnrichmentOutput output, NavigationProcessor by) {
+        Enrichment result = new Enrichment(KEY, NavigationProcessor.ID, output.version() != null ? output.version()
+                : by.version(), text.inputSha256(), "1", Enrichment.Status.OK, output.payloadJson(),
+                output.warnings(), null, Instant.EPOCH);
         return DocumentNavigationView.read(KEY, List.of(new Enrichments.View(result,
-                result.freshness(text.inputSha256(), processor.version()))), text, builder);
+                result.freshness(text.inputSha256(), by.version()))), text, builder);
     }
 
     private Enrichment enrichment(EnrichmentOutput output) {

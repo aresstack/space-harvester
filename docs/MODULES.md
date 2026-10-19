@@ -1,6 +1,6 @@
 # Module: Core-Bibliothek und Spring-Boot-Server (#100)
 
-**Stand:** 17.10.2026, Trennung umgesetzt · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100) · **Entscheidung:** [ADR 0006](adr/0006-core-bibliothek-und-server.md)
+**Stand:** 17.10.2026, Trennung umgesetzt; Paketliste, Quellentypen und Einstiege nachgezogen auf `main` ceb6c84 (PR #399) · **Issue:** [#100](https://github.com/aresstack/space-harvester/issues/100) · **Entscheidung:** [ADR 0006](adr/0006-core-bibliothek-und-server.md)
 
 Space Harvester wird in eine eigenständig nutzbare Bibliothek und einen Spring-Boot-Dienst getrennt, der die
 Bibliothek verwendet. Dieses Dokument ordnet den bestehenden Code den Modulen zu und hält die Entscheidungen fest,
@@ -58,8 +58,8 @@ Kein Paket aus `application`, `source`, `persistence`, `output` oder `embedding`
 
 | Paket | Begründung |
 | --- | --- |
-| `application.*` (access, assets, compat, convert, enrichment, export, harvest, jobs, query, ranking, snapshot, sources, sync, tree, `ServiceInfo`) | Anwendungsfälle, Ports und Domänentypen; frameworkneutral |
-| `source`, `source.confluence`, `source.network` | Quellenadapter (Confluence, Dateien), Proxy/PAC, mTLS, asynchroner Transport; ohne sie kann die Bibliothek nichts ernten |
+| `application.*` (access, acquisition, assets, compat, configuration, convert, diagrams, enrichment, export, facts, harvest, images, jobs, navigation, passages, query, ranking, reading, searchrun, signin, snapshot, sources, sync, terms, tree, `ServiceInfo`) | Anwendungsfälle, Ports und Domänentypen; frameworkneutral |
+| `source`, `source.confluence`, `source.network` | Quellenadapter (confluence, files, git, ftp, jes, ndv, sharepoint, betaview, outlook, mediawiki; [SOURCE_ADAPTERS.md](SOURCE_ADAPTERS.md#auswahl)), Proxy/PAC, mTLS, asynchroner Transport; ohne sie kann die Bibliothek nichts ernten |
 | `persistence.lucene`, `persistence.files` | Umsetzung der Ports SnapshotRepository, PageCacheReader, PageSearchIndex, JobStore, SyncBaselineStore, EnrichmentStore, AssetStore |
 | `output.convert`, `output.export` | Konverter JSON/Markdown/DOCX/PDF und Exportdateien |
 | `ai`, `source.ai` | externer KI-Dienst hinter dem Port `EmbeddingProvider` (ADR 0011; ersetzt `embedding.onnx`) |
@@ -118,7 +118,11 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    Tür, keine zweite Implementierung. Paketnamen bleiben unverändert, damit Historie und Importe stabil bleiben.
    Erweiterungspunkte für einbettende Programme wie den Enterprise AI Client (#188, ADR 0012), alle am
    `Harvester.Builder`:
-   - `sourceAdapter(SourceAdapter)`: weitere Quellentypen; ein Typ des Core gleichen Namens wird ersetzt.
+   - `sourceAdapter(SourceAdapter)`: weitere Quellentypen; ein Typ des Core gleichen Namens wird ersetzt
+     (`ConfiguredSourceCatalog.DEFAULT_ADAPTERS` und `git` mit Kopien unter `<dataDirectory>/git`), derselbe Typ
+     zweimal ist ein Fehler. Upstream-Provider ohne Seitenliste werden über `KnowledgeSourceProviderAdapter`
+     (`connected` mit `withoutTls()`, `withCredentialRefPassThrough()`, `requiringCredentials()`, `named()`) zum Typ;
+     `Harvester.sourceTypes()` beschreibt jeden Typ mit Anzeigename, Adressfeld, Feldern und Anmeldearten (#187).
    - `secretProvider(SourceSecrets)`: Zugangsdaten des Programms (KeePassRPC, Tresor, Abfrage). Er wird erst beim
      ersten Zugriff gefragt und nur unter `source:<id>` bzw. `source:<id>:client-certificate`, wenn die Konfiguration
      nichts nennt.
@@ -145,6 +149,18 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
      DIAGNOSTICS.md), mit Ursache und Hinweis je gescheitertem Schritt.
 
    Die Einstellungen dauerhaft ablegen bleibt Sache des Programms.
+
+   Seiteninhalt und Analysen (#181, #182, ADR 0020) liest das Programm über weitere Einstiege des `Harvester`:
+   - `passages()`: semantische Absätze einer Seite (`PassageQueries`, PR #360).
+   - `documentNavigation()`: Kapitel aus den Überschriften und erkannte Themenabschnitte (`NavigationQueries`,
+     PR #396), Bezeichnungen mit Chat-Modell über `ChatSectionLabeler` (PR #401); ohne Embeddings je Absatz nur die
+     Überschriften.
+   - `facts()`: Faktenblatt einer Seite und Fakten über alle Seiten (`PageFacts`); je Prozessor und Seite höchstens
+     2000 Fakten, das Blatt nennt abgeschnittene Prozessoren (`Sheet.truncated`, PR #399).
+   - `factEdits()`: manuelle und geprüfte Fakten mit Protokoll (`FactEdits`, PR #383), abgelegt unter
+     `<dataDirectory>/facts`.
+   - `terms()`, `termRelations()`: Begriffsindex und Begriffsbeziehungen (#119, #120).
+   - `assets()`, `imageAnalysis()`: Anhänge mit Text, Vorschau und Bildbeschreibung (#183, #184, ADR 0021).
 
    Adressen (#178, wie `ResolveKnowledgeAddressUseCase` und `KnowledgeBookmarkIds` im Enterprise AI Client):
    `Harvester.pages().pageByUrl(caller, quelle, adresse, refresh)` liest eine Seite über URL mit oder ohne Seiten-ID,

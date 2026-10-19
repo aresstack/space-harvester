@@ -24,6 +24,11 @@ public final class PassageChunks implements PassageChunking {
     }
 
     @Override
+    public boolean sentenceModel() {
+        return segmentation.sentenceModel();
+    }
+
+    @Override
     public List<Piece> passages(PageText text, Function<List<String>, List<float[]>> sentences) {
         return segmentation.segment(text, sentences).passages().stream()
                 .map(passage -> new Piece(passage.start(), passage.end(), passage.section()))

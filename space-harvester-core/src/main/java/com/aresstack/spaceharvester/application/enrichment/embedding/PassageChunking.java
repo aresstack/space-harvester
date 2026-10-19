@@ -13,6 +13,11 @@ public interface PassageChunking {
     /** Fingerabdruck der Zerlegung; Teil der Version des Prozessors {@code embedding}. */
     String fingerprint();
 
+    /** Ob die Satzgrenzen aus einem Satzmodell statt aus dem Regel-Splitter kommen. */
+    default boolean sentenceModel() {
+        return true;
+    }
+
     /**
      * Die Absätze der Seite in Lesereihenfolge.
      *

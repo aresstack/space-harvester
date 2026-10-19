@@ -36,8 +36,10 @@ public class DocumentNavigationController {
             description = "Hauptkapitel in Lesereihenfolge mit Unterabschnitten, wie die Dokumentnavigation im "
                     + "Enterprise AI Client. origin=heading ist eine Überschrift der Seite, origin=topic ein "
                     + "erkannter Themenabschnitt (Embeddings je Absatz, zusammengefasst nach Thema). analysis=semantic "
-                    + "mit erkannten Abschnitten, sonst analysis=headings mit reason (no-model, source-not-approved, "
-                    + "not-embedded, no-topic-change, model-unavailable). Stellen sind UTF-16-Positionen im Text der "
+                    + "mit erkannten Abschnitten, sonst analysis=headings mit reason (no-model, no-sentence-model, "
+                    + "source-not-approved, not-embedded, indexing-failed, no-topic-change, model-unavailable). Bei analysis=semantic sagt "
+                    + "reason=model-unavailable, dass das Chat-Modell die Abschnitte nicht benennen konnte und die "
+                    + "Bezeichnungen aus der Analyse stammen. Stellen sind UTF-16-Positionen im Text der "
                     + "Seite. state wie bei …/passages; ohne Ergebnis zeigt die Antwort sofort die Überschriften. "
                     + "Rechte wie GET …/pages/{pageId}.")
     @ApiResponse(responseCode = "200", description = "NavigationResponse")
@@ -60,16 +62,25 @@ public class DocumentNavigationController {
      *
      * @param state    current, stale, failed oder missing
      * @param analysis semantic oder headings
-     * @param reason   bei headings warum, sonst {@code null}
-     * @param chapters Hauptkapitel in Lesereihenfolge
+     * @param reason   bei headings warum; bei semantic {@code model-unavailable}, wenn das Chat-Modell nicht
+     *                 benennen konnte; sonst {@code null}
+     * @param chapters    Hauptkapitel in Lesereihenfolge
+     * @param title       Titel der Seite
+     * @param inputSha256 Eingabe-Hash des Textes, zu dem die Stellen gehören, wie bei …/passages; damit prüft eine
+     *                    Ansicht eine verspätete Antwort gegen den gezeigten Text
+     * @param textSha256  SHA-256 des Textes selbst
      */
     public record NavigationResponse(String sourceId, String pageId, String state, String analysis,
-                                     @Schema(nullable = true) String reason, List<SectionEntry> chapters) {
+                                     @Schema(nullable = true) String reason, List<SectionEntry> chapters,
+                                     @Schema(nullable = true) String title,
+                                     @Schema(nullable = true) String inputSha256,
+                                     @Schema(nullable = true) String textSha256) {
 
         static NavigationResponse of(String sourceId, String pageId, DocumentNavigationView found) {
             return new NavigationResponse(sourceId, pageId, PassagePayload.name(found.state()),
                     PassagePayload.name(found.analysis()), found.reason(),
-                    found.chapters().stream().map(SectionEntry::of).toList());
+                    found.chapters().stream().map(SectionEntry::of).toList(), found.title(), found.inputSha256(),
+                    found.textSha256());
         }
     }
 

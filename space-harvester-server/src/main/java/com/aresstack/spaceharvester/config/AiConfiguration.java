@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -19,6 +20,7 @@ import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import java.util.Optional;
@@ -174,6 +176,17 @@ class AiConfiguration {
     ImageDescriber visionImageDescriber(ConfiguredSourceCatalog catalog, TrustBundles trust,
                                   ObjectProvider<BuildProperties> build, LiveConfiguration live) {
         return new VisionImageDescriber(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
+    /**
+     * Benennung der Themenabschnitte der Dokumentnavigation über das Chat-Modell (#181, ADR 0020): folgt
+     * {@code ai.chat-model} und {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell gelten die
+     * Bezeichnungen der Analyse.
+     */
+    @Bean
+    NavigationLabelModel navigationLabels(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatNavigationLabeler(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */

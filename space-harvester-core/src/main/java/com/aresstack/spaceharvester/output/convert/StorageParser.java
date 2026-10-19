@@ -51,6 +51,9 @@ import org.jsoup.parser.Parser;
  */
 public final class StorageParser {
 
+    /** Größter {@code colspan}, den HTML erlaubt; größere Werte zählen als dieser. */
+    private static final int MAX_COLSPAN = 1000;
+
     private static final Map<String, String> PANELS = Map.of("info", "Info", "note", "Hinweis", "warning", "Warnung",
             "tip", "Tipp", "panel", "Kasten", "expand", "Aufklappbar");
     private static final Set<String> TEXT_DIAGRAMS = Set.of("plantuml", "plantumlrender", "mermaid", "mermaid-cloud",
@@ -236,29 +239,78 @@ public final class StorageParser {
         return new ListBlock(false, items, checked);
     }
 
+    /**
+     * Tabelle auf ihrem Raster wie {@code MarkdownTable} des Enterprise AI Client: eine Zelle mit {@code colspan} oder
+     * {@code rowspan} wiederholt ihren Inhalt an jeder Stelle, die sie überdeckt, damit kein Wert in die Nachbarspalte
+     * rutscht; {@code rowspan="0"} reicht bis zur letzten Zeile, freie Stellen bleiben leer.
+     */
     private void table(Element element, List<Block> blocks) {
-        List<List<List<Block>>> rows = new ArrayList<>();
-        boolean headerRow = false;
+        List<Element> rows = new ArrayList<>();
         for (Element row : element.select("tr")) {
-            if (row.closest("table") != element) {
-                continue;
+            if (row.closest("table") == element) {
+                rows.add(row);
             }
-            List<List<Block>> cells = new ArrayList<>();
+        }
+        Map<Long, List<Block>> taken = new HashMap<>();
+        boolean headerRow = false;
+        int width = 0;
+        for (int r = 0; r < rows.size(); r++) {
+            int column = 0;
             boolean allHeaders = true;
-            for (Element cell : row.children()) {
-                if (cell.normalName().equals("td") || cell.normalName().equals("th")) {
-                    cells.add(blocks(cell));
-                    allHeaders &= cell.normalName().equals("th");
+            boolean anyCell = false;
+            for (Element cell : rows.get(r).children()) {
+                if (!cell.normalName().equals("td") && !cell.normalName().equals("th")) {
+                    continue;
                 }
+                while (taken.containsKey(gridKey(r, column))) {
+                    column++;
+                }
+                int colspan = Math.min(MAX_COLSPAN, Math.max(1, span(cell, "colspan")));
+                int rowspan = span(cell, "rowspan");
+                int lastRow = rowspan == 0 ? rows.size() : Math.min(rows.size(), r + Math.max(1, rowspan));
+                List<Block> content = blocks(cell);
+                for (int covered = r; covered < lastRow; covered++) {
+                    for (int c = column; c < column + colspan; c++) {
+                        taken.put(gridKey(covered, c), content);
+                    }
+                }
+                column += colspan;
+                anyCell = true;
+                allHeaders &= cell.normalName().equals("th");
             }
-            if (rows.isEmpty()) {
-                headerRow = allHeaders && !cells.isEmpty();
+            if (r == 0) {
+                headerRow = allHeaders && anyCell;
             }
-            rows.add(cells);
+            width = Math.max(width, column);
         }
-        if (!rows.isEmpty()) {
-            blocks.add(new Table(rows, headerRow));
+        for (Long key : taken.keySet()) {
+            width = Math.max(width, (int) (key & 0xffffffffL) + 1);
         }
+        List<List<List<Block>>> grid = new ArrayList<>();
+        for (int r = 0; r < rows.size(); r++) {
+            List<List<Block>> cells = new ArrayList<>();
+            for (int c = 0; c < width; c++) {
+                cells.add(taken.getOrDefault(gridKey(r, c), List.of()));
+            }
+            grid.add(cells);
+        }
+        if (!grid.isEmpty()) {
+            blocks.add(new Table(grid, headerRow));
+        }
+    }
+
+    /** {@code colspan}/{@code rowspan} der Zelle; fehlend oder unlesbar 1, negativ 1. */
+    private static int span(Element cell, String attribute) {
+        try {
+            int value = Integer.parseInt(cell.attr(attribute).trim());
+            return value < 0 ? 1 : value;
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
+    private static long gridKey(int row, int column) {
+        return ((long) row << 32) | (column & 0xffffffffL);
     }
 
     /**

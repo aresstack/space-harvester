@@ -24,6 +24,7 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -152,5 +153,20 @@ class PageFactsTest {
                 .isInstanceOf(CacheMissException.class);
         assertThatThrownBy(() -> facts().factsOf(CALLER, "wiki", "p3", null))
                 .isInstanceOf(CacheMissException.class);
+    }
+
+    @Test
+    void theSheetNamesTheProcessorsWhoseFactsEndAtTheLimit() {
+        store.save(FactTestResults.many(new PageKey("wiki", "p2"), EnrichmentFacts.ENTITIES,
+                EnrichmentFacts.MAX_PER_RESULT + 1));
+        AccessGuard guard = new AccessGuard(policy);
+        PageQueries queries = new PageQueries(catalog, cache, guard,
+                new PageFreshness(new SourceQueries(catalog, CLOCK), null, CLOCK), 1000);
+        PageFacts facts = new PageFacts(catalog, guard, queries,
+                new Enrichments(snapshot -> Optional.empty(), List.of(), store, CLOCK), store,
+                key -> cache.page(key).map(CachedPage::header));
+
+        assertThat(facts.factsOf(CALLER, "wiki", "p2", null).truncated()).containsExactly(EnrichmentFacts.ENTITIES);
+        assertThat(facts.factsOf(CALLER, "wiki", "p1", null).truncated()).isEmpty();
     }
 }
