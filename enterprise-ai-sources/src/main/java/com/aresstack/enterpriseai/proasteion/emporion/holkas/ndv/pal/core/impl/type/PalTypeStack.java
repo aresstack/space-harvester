@@ -1,0 +1,53 @@
+package com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.impl.type;
+
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.pal.core.api.IPalTypeStack;
+
+/**
+ * Stapelbefehl-Datensatz (Typ-Schlüssel 9).
+ * Wird ausschließlich vom Client zum Server gesendet.
+ */
+public final class PalTypeStack extends PalType implements IPalTypeStack {
+
+    /** Quellcode syntaktisch prüfen (ohne zu speichern). */
+    public static final String CHECK = "CHECK";
+    /** Quellcode kompilieren und als Objekt speichern. */
+    public static final String STOW = "STOW";
+    /** Bibliothekskatalog anfordern / Bibliothek laden. */
+    public static final String CAT = "CAT";
+    /** Quellcode speichern (ohne zu kompilieren). */
+    public static final String SAVE = "SAVE";
+
+    private String befehl;
+    private int datenbankNummer;
+    private int dateiNummer;
+
+    public PalTypeStack() {
+        super.typSchluessel = 9;
+    }
+
+    public PalTypeStack(String command) {
+        super.typSchluessel = 9;
+        this.befehl = command;
+    }
+
+    @Override
+    public void serialize() {
+        try {
+            textInPuffer(befehl);
+            ganzzahlInPuffer(datenbankNummer);
+            ganzzahlInPuffer(dateiNummer);
+        } catch (NullPointerException e) {
+            // Fehler wird still geschluckt (Befehl ist null)
+        }
+    }
+
+    @Override
+    public void restore() {
+        // Leer — der Server sendet diesen Datensatz-Typ nie an den Client.
+    }
+
+    @Override
+    public int get() {
+        return 9;
+    }
+}
