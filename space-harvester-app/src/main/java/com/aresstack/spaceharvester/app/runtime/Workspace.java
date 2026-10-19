@@ -411,7 +411,15 @@ public final class Workspace {
 
     /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
     public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image) {
-        return harvester.assets().stored(sourceId, image.assetId(), null, image.sha256());
+        return storedImage(sourceId, image, null);
+    }
+
+    /**
+     * Wie {@link #storedImage(String, ImagePayload.Entry)} mit der beim Beschreiben gemerkten Anhangsversion: mit ihr
+     * kennt die Ablage die Größe, und kleine Vorschaubilder belegen keinen Platz im LargeFileGate.
+     */
+    public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image, String version) {
+        return harvester.assets().stored(sourceId, image.assetId(), version, image.sha256());
     }
 
     public List<String> enrichmentProcessors() {

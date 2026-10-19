@@ -92,6 +92,18 @@ class ReaderPassageLinkTest {
         assertThat(onEdt(() -> panel.feedback().isVisible())).isFalse();
         assertThat(onEdt(view::chosenSource)).isEqualTo("wiki");
 
+        // FOUND, aber der Reiter kennt den Absatz nicht (anderes Ergebnis als die Auflösung): Hinweis statt Stille.
+        PassageLookup found = workspace.passage(target.id());
+        String absent = PassageId.of("wiki", "300", "0".repeat(PassageId.CAPTURE_LENGTH), 99, "aaaaaaaa",
+                "bbbbbbbb").value();
+        onEdt(() -> {
+            panel.showPassage(new PassageLookup(PassageId.parse(absent), PassageLookup.Match.FOUND, found.page(),
+                    found.passages()));
+            return null;
+        });
+        assertThat(onEdt(() -> panel.feedback().isVisible())).isTrue();
+        assertThat(onEdt(() -> panel.feedback().text())).startsWith(PageDetailPanel.PASSAGE_MISSING);
+
         // Neue Fassung der Seite: dieselbe ID öffnet die Seite trotzdem, mit Hinweis und ohne gewählten Absatz.
         synchronized (wiki) {
             page.storage(CHANGED).version(2, "2026-10-19T08:00:00.000Z");

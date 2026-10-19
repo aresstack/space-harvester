@@ -102,13 +102,19 @@ final class ImagesTab extends JPanel {
         list.repaint();
     }
 
-    /**
-     * Zeigt die Bilder; außer bei {@link PassagesTab.State#CURRENT} ist {@code images} leer.
-     *
-     * @param reason Grund des Core für den Zustand ({@code vision-model-missing}, {@code source-not-released},
-     *               {@code not-analysed}) oder {@code null}
-     */
+    /** Wie {@link #show(PassagesTab.State, String, List, List)} ohne Warnungen des Core. */
     void show(PassagesTab.State current, String reason, List<Image> images) {
+        show(current, reason, List.of(), images);
+    }
+
+    /**
+     * Zeigt die Bilder; bei {@link PassagesTab.State#STALE} die alten Beschreibungen, als „Veraltet“ markiert.
+     *
+     * @param reason   Grund des Core für den Zustand ({@code vision-model-missing}, {@code source-not-released},
+     *                 {@code not-analysed}, bei STALE {@code attachment-changed}) oder {@code null}
+     * @param warnings Hinweise des Core ({@code PageImages.warnings()}), etwa {@code page-changed}
+     */
+    void show(PassagesTab.State current, String reason, List<String> warnings, List<Image> images) {
         boolean blocked = "vision-model-missing".equals(reason) || "source-not-released".equals(reason);
         describe.setVisible(!blocked);
         state.setText(stateText(current));
@@ -124,21 +130,23 @@ final class ImagesTab extends JPanel {
                 BorderFactory.createEmptyBorder(2, 8, 2, 8)));
         list.removeAll();
         lines.clear();
-        List<Image> shown = current == PassagesTab.State.CURRENT ? images : List.of();
+        boolean stale = current == PassagesTab.State.STALE;
+        List<Image> shown = current == PassagesTab.State.CURRENT || stale ? images : List.of();
         for (int i = 0; i < shown.size(); i++) {
             if (i > 0) {
                 list.add(Box.createVerticalStrut(6));
             }
-            list.add(entry(shown.get(i)));
-            lines.add(shown.get(i).name() + " · " + statusText(shown.get(i)));
+            list.add(entry(shown.get(i), stale));
+            lines.add(shown.get(i).name() + " · " + statusText(shown.get(i)) + (stale ? " · Veraltet" : ""));
         }
         hint.setText("vision-model-missing".equals(reason) ? NO_MODEL
-                : "source-not-released".equals(reason) ? NOT_RELEASED : hint(current, shown.size()));
+                : "source-not-released".equals(reason) ? NOT_RELEASED
+                : hint(current, reason, warnings == null ? List.of() : warnings, shown.size()));
         list.revalidate();
         list.repaint();
     }
 
-    private JPanel entry(Image image) {
+    private JPanel entry(Image image, boolean stale) {
         JLabel preview = new JLabel(image.preview(), SwingConstants.CENTER);
         preview.setPreferredSize(new Dimension(96, 72));
         preview.setBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true));
@@ -149,7 +157,7 @@ final class ImagesTab extends JPanel {
         }
         JLabel name = Comic.text(image.name());
         name.setFont(Comic.semiBold(13f));
-        JLabel status = Comic.muted(statusText(image));
+        JLabel status = Comic.muted(statusText(image) + (stale ? " · Veraltet" : ""));
         JPanel head = new JPanel(new BorderLayout(8, 0));
         head.setOpaque(false);
         head.add(name, BorderLayout.WEST);
@@ -160,7 +168,8 @@ final class ImagesTab extends JPanel {
         description.setWrapStyleWord(true);
         description.setOpaque(false);
         description.setFont(Comic.regular(13f));
-        description.setForeground(Comic.INK);
+        // Veraltete Beschreibungen bleiben lesbar, aber ausgegraut.
+        description.setForeground(stale ? Comic.MUTED : Comic.INK);
         JPanel lines = new JPanel(new BorderLayout(0, 4));
         lines.setOpaque(false);
         lines.add(head, BorderLayout.NORTH);
@@ -191,6 +200,26 @@ final class ImagesTab extends JPanel {
             case FAILED -> "Fehlgeschlagen";
             case MISSING -> "Nicht durchgeführt";
         };
+    }
+
+    /** Hinweis bei {@code page-changed}: neues Beschreiben hilft erst, wenn der Bestand die Quelle eingeholt hat. */
+    static final String PAGE_CHANGED = "Die Quelle ist weiter als der gespeicherte Stand; erst nach dem Abgleich der "
+            + "Quelle gelten neue Beschreibungen („Aktualität prüfen“ zeigt den Unterschied).";
+    /** Hinweis bei {@code attachment-changed}. */
+    static final String ATTACHMENT_CHANGED = "Ein Bild wurde seither ersetzt; „" + DESCRIBE
+            + "“ erneuert die Beschreibungen.";
+
+    /** Wie {@link #hint(PassagesTab.State, int)}, bei STALE mit dem genauen Grund des Core. */
+    static String hint(PassagesTab.State state, String reason, List<String> warnings, int count) {
+        if (state == PassagesTab.State.STALE) {
+            if (warnings.contains("page-changed")) {
+                return PAGE_CHANGED;
+            }
+            if ("attachment-changed".equals(reason)) {
+                return ATTACHMENT_CHANGED;
+            }
+        }
+        return hint(state, count);
     }
 
     static String hint(PassagesTab.State state, int count) {

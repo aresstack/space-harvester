@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.RelationConflictException;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
 
 import java.awt.BorderLayout;
 import java.util.ArrayList;
@@ -46,6 +47,10 @@ public final class TermsView implements View {
     static final String NO_RUNTIME = "Die Laufzeit ist noch nicht gestartet.";
     /** Einträge je Abfrage; mehr zeigt die Suche. */
     static final int LIMIT = TermQueries.MAX_LIMIT;
+    /** Höchstens so viele Beziehungen je Status lädt die Liste ({@code TermRelations.relations}). */
+    static final int RELATION_LIMIT = TermRelations.MAX_LIMIT;
+    static final String MORE_RELATIONS = "Es gibt weitere Beziehungen; gezeigt werden die ersten " + RELATION_LIMIT
+            + " je Status. Ein Suchbegriff grenzt die Liste ein.";
 
     private final JPanel root = new JPanel(new BorderLayout());
     private final PillTabs tabs = new PillTabs();
@@ -134,15 +139,19 @@ public final class TermsView implements View {
         AppRuntime runtime = context.runtime();
         Background.run(() -> {
             List<Relation> all = new ArrayList<>();
-            runtime.workspace().termRelations(term, null, LIMIT).relations().forEach(r -> all.add(Relation.of(r)));
-            runtime.workspace().termRelations(term, ReviewStatus.REJECTED, LIMIT).relations()
-                    .forEach(r -> all.add(Relation.of(r)));
-            return all;
+            TermRelations.RelationList open = runtime.workspace().termRelations(term, null, RELATION_LIMIT);
+            TermRelations.RelationList rejected = runtime.workspace().termRelations(term, ReviewStatus.REJECTED,
+                    RELATION_LIMIT);
+            open.relations().forEach(r -> all.add(Relation.of(r)));
+            rejected.relations().forEach(r -> all.add(Relation.of(r)));
+            return new LoadedRelations(all, open.nextCursor() != null || rejected.nextCursor() != null);
         }, found -> {
             if (request == relationRequest) {
-                showRelations(found, q.isEmpty() ? NO_RELATIONS : NO_MATCH);
-                if (notice != null) {
-                    relations.message(notice);
+                showRelations(found.list(), q.isEmpty() ? NO_RELATIONS : NO_MATCH);
+                // Der Core liefert je Status höchstens RELATION_LIMIT; mehr nur mit Hinweis, nicht still gekürzt.
+                String message = relationsMessage(notice, found.more());
+                if (message != null) {
+                    relations.message(message);
                 }
             }
         }, failure -> {
@@ -150,6 +159,14 @@ public final class TermsView implements View {
                 showRelations(List.of(), "Beziehungen nicht lesbar: " + failure.getMessage());
             }
         });
+    }
+
+    /** Hinweis unter der Liste: {@code notice} und, wenn der Core mehr hat, {@link #MORE_RELATIONS}. */
+    static String relationsMessage(String notice, boolean more) {
+        return notice == null ? more ? MORE_RELATIONS : null : more ? notice + " " + MORE_RELATIONS : notice;
+    }
+
+    private record LoadedRelations(List<Relation> list, boolean more) {
     }
 
     /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */

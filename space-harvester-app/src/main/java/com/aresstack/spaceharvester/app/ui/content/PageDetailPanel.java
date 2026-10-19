@@ -692,24 +692,29 @@ public final class PageDetailPanel extends JPanel {
 
     static final String PASSAGE_OLDER = "Der Absatz gehört zu einer älteren Fassung der Seite";
     static final String PASSAGE_CHANGED = "Den Absatz gibt es nicht mehr";
+    static final String PASSAGE_MISSING = "Der Absatz steht nicht im Reiter „Absätze“";
+    /** Seit #470 folgt die Passage-ID der ganzen Prozessorversion (Zerlegung, Modell, Format, Dienst). */
+    static final String PASSAGE_RECOMPUTED = "Die Absätze wurden seither neu berechnet. Angezeigt werden alle Absätze.";
 
     /**
      * Zeigt den über seine Passage-ID geöffneten Absatz im Reiter „Absätze“ und markiert ihn im Lesetext, wie ein Klick
      * auf ihn ohne Wechsel zum Text. Die Hinweise folgen den Fällen von {@code KnowledgeResourceReader} im Client.
      */
-    private void showPassage(PassageLookup lookup) {
+    void showPassage(PassageLookup lookup) {
         tabs.select(PASSAGES);
         switch (lookup.match()) {
             case FOUND -> {
                 PassagesTab.Passage passage = passages.select(lookup.requested().value());
-                if (passage != null && shown != null && passage.end() <= reader.getDocument().getLength()) {
+                if (passage == null) {
+                    // Der Reiter zeigt ein anderes Ergebnis als die Auflösung: lieber sagen als schweigen.
+                    feedback.info(PASSAGE_MISSING, PASSAGE_RECOMPUTED);
+                } else if (shown != null && passage.end() <= reader.getDocument().getLength()) {
                     mark(new TermsTab.Span(passage.start(), passage.end()));
                 }
             }
             case OLDER_VERSION -> feedback.info(PASSAGE_OLDER, "Sein Text ist nicht mehr vorhanden (Seite seither "
                     + "geändert). Angezeigt werden die aktuellen Absätze.");
-            case CHANGED -> feedback.info(PASSAGE_CHANGED, "Zerlegung oder Embedding-Modell haben gewechselt. Angezeigt "
-                    + "werden alle Absätze.");
+            case CHANGED -> feedback.info(PASSAGE_CHANGED, PASSAGE_RECOMPUTED);
             case UNAVAILABLE -> {
                 // Der Reiter „Absätze“ nennt selbst, warum gerade keine vorliegen.
             }
@@ -870,7 +875,7 @@ public final class PageDetailPanel extends JPanel {
         Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
             if (shown == page) {
                 images.describing(false);
-                images.show(found.state(), found.reason(), found.images());
+                images.show(found.state(), found.reason(), found.warnings(), found.images());
             }
         }, error -> {
             if (shown == page) {
@@ -898,7 +903,7 @@ public final class PageDetailPanel extends JPanel {
             if (shown != page) {
                 return;
             }
-            images.show(found.state(), found.reason(), found.images());
+            images.show(found.state(), found.reason(), found.warnings(), found.images());
             feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
                     : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
         }, error -> {
@@ -913,21 +918,46 @@ public final class PageDetailPanel extends JPanel {
     /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
     private static ImageRows imageRows(AppRuntime runtime, String sourceId, PageImages found) {
         List<ImagesTab.Image> rows = new ArrayList<>();
+        java.util.Map<String, String> versions;
+        try {
+            versions = found.result() == null ? java.util.Map.of()
+                    : ImagePayload.attachmentVersions(found.result().payloadJson());
+        } catch (IllegalArgumentException e) {
+            versions = java.util.Map.of();
+        }
         for (ImagePayload.Entry entry : found.images()) {
-            Icon preview = runtime.workspace().storedImage(sourceId, entry).map(PageDetailPanel::thumbnail)
-                    .orElse(null);
+            String version = entry.assetId() == null ? null : versions.get(entry.assetId());
+            Icon preview = preview(() -> runtime.workspace().storedImage(sourceId, entry, version));
             String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
                     : entry.filename() : entry.title();
             rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
                     entry.reason(), preview));
         }
-        return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), List.copyOf(rows),
-                found.describedCount());
+        return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), found.warnings(),
+                List.copyOf(rows), found.describedCount());
     }
 
-    /** Ein Vorschaubild höchstens 96 × 72 groß; {@code null}, wenn sich die Bytes nicht lesen lassen. */
+    /**
+     * Die Vorschau eines Bildes oder {@code null}: Scheitert das Lesen (etwa {@code RATE_LIMITED} am LargeFileGate),
+     * steht nur bei diesem Bild „Keine Vorschau“, die übrigen laden weiter.
+     */
+    static Icon preview(java.util.function.Supplier<java.util.Optional<byte[]>> stored) {
+        try {
+            return stored.get().map(PageDetailPanel::thumbnail).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Ein Vorschaubild höchstens 96 × 72 groß; {@code null}, wenn sich die Bytes nicht lesen lassen oder das Bild über
+     * {@link com.aresstack.spaceharvester.app.ui.content.viewer.ReaderImageStore#MAX_PIXELS} liegt.
+     */
     static Icon thumbnail(byte[] bytes) {
         try {
+            if (com.aresstack.spaceharvester.app.ui.content.viewer.ReaderImageStore.tooLarge(bytes)) {
+                return null;
+            }
             java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
             if (image == null) {
                 return null;
@@ -941,7 +971,8 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
-    private record ImageRows(PassagesTab.State state, String reason, List<ImagesTab.Image> images, int described) {
+    private record ImageRows(PassagesTab.State state, String reason, List<String> warnings,
+                             List<ImagesTab.Image> images, int described) {
     }
 
     private void harvestAssets() {
@@ -1072,6 +1103,10 @@ public final class PageDetailPanel extends JPanel {
 
     void closeAttachmentOverlay() {
         if (attachmentOverlay != null) {
+            AttachmentViewerPanel viewer = find(attachmentOverlay);
+            if (viewer != null) {
+                viewer.close(); // erst hier endgültig: Aus- und Einhängen (Baum/Liste) lässt den Viewer leben
+            }
             attachmentLayers.remove(attachmentOverlay);
             attachmentOverlay = null;
             attachmentLayers.revalidate();

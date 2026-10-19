@@ -102,6 +102,33 @@ class AttachmentViewerPanelTest {
     }
 
     @Test
+    void takingTheViewerOutAndBackInKeepsItAliveUntilClosed() throws Exception {
+        FakeLoader loader = new FakeLoader().file("att-pdf", pdf(2));
+        run(() -> {
+            AttachmentViewerPanel viewer = new AttachmentViewerPanel(
+                    new ReaderAttachment("att-pdf", "Ablauf.pdf", "application/pdf", 3100), loader, null,
+                    Runnable::run);
+            // wie ContentView.arrange() beim Umschalten von Baum und Liste: aus der Hierarchie genommen (headless
+            // ruft Swing removeNotify ohne Fenster nicht selbst)
+            viewer.removeNotify();
+            viewer.next();
+            assertThat(viewer.page()).as("Blättern geht weiter").isEqualTo(1);
+            assertThat(viewer.infoText()).startsWith("Seite 2 / 2");
+            viewer.close();
+        });
+    }
+
+    @Test
+    void aVeryLongTextIsOnlyDecodedAsFarAsTheViewShowsIt() {
+        byte[] text = new byte[AttachmentViewerPanel.MAX_TEXT_CHARS * 4 + 10];
+        java.util.Arrays.fill(text, (byte) 'a');
+        text[AttachmentViewerPanel.MAX_TEXT_CHARS * 4 - 1] = (byte) 0xC3; // „ä“ genau an der Schnittstelle
+        text[AttachmentViewerPanel.MAX_TEXT_CHARS * 4] = (byte) 0xA4;
+        String shown = AttachmentViewerPanel.decodeText(text, null);
+        assertThat(shown).startsWith("aaa").contains("[… gekürzt").doesNotContain("\uFFFD").doesNotContain("Ã");
+    }
+
+    @Test
     void anUnknownTypeShowsNameTypeSizeAndNoPreviewWithoutLoading() throws Exception {
         byte[] bin = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
         FakeLoader loader = new FakeLoader().file("att-bin", bin);

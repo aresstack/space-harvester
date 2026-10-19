@@ -94,6 +94,17 @@ class TermRelationsViewTest {
         assertThat(workspace.termRelations(null, null, 10).relations()).hasSize(1);
     }
 
+    @Test
+    void theListUsesTheRelationLimitAndSaysWhenTheCoreHasMore() {
+        assertThat(TermsView.RELATION_LIMIT).isEqualTo(
+                com.aresstack.spaceharvester.application.terms.TermRelations.MAX_LIMIT);
+        assertThat(TermsView.relationsMessage(null, false)).isNull();
+        assertThat(TermsView.relationsMessage(null, true)).isEqualTo(TermsView.MORE_RELATIONS);
+        assertThat(TermsView.relationsMessage(TermsView.CONFLICT, true))
+                .isEqualTo(TermsView.CONFLICT + " " + TermsView.MORE_RELATIONS);
+        assertThat(TermsView.relationsMessage(TermsView.CONFLICT, false)).isEqualTo(TermsView.CONFLICT);
+    }
+
     private static void await(BooleanSupplier condition) throws Exception {
         for (int i = 0; i < 600; i++) {
             boolean[] done = new boolean[1];

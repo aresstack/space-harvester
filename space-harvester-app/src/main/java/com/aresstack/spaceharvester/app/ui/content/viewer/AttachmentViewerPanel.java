@@ -126,6 +126,8 @@ public final class AttachmentViewerPanel extends JPanel {
     /** Zählt jede Zeichenanfrage; ein älteres Ergebnis wird verworfen. */
     private int renderGeneration;
     private boolean closed;
+    /** Zählt jedes Laden; ein Dekodier-Ergebnis für ein älteres Laden wird verworfen. */
+    private int loadGeneration;
     private final javax.swing.Timer sharpen = new javax.swing.Timer(250, event -> sharpenPage());
     /** Text statt Bild (Textansicht). */
     private boolean showingText;
@@ -510,14 +512,17 @@ public final class AttachmentViewerPanel extends JPanel {
         SwingUtilities.invokeLater(canvas::requestFocusInWindow);
     }
 
-    /** Das Overlay ist zu: ein offenes PDF wird auf seinem Zeichen-Thread geschlossen. */
+    /**
+     * Aus der Hierarchie genommen (etwa beim Umschalten von Baum und Liste, das die Detailansicht aus- und wieder
+     * einhängt): nur den Schärfe-Timer anhalten. Endgültig schließt erst {@link #close()} beim Schließen des Overlays.
+     */
     @Override
     public void removeNotify() {
         super.removeNotify();
-        close();
+        sharpen.stop();
     }
 
-    /** Gibt das PDF frei; danach zeichnet das Overlay nichts mehr. */
+    /** Gibt das PDF frei; danach zeichnet das Overlay nichts mehr. Nur beim ausdrücklichen Schließen. */
     public void close() {
         closed = true;
         sharpen.stop();
@@ -532,6 +537,7 @@ public final class AttachmentViewerPanel extends JPanel {
 
     /** Lädt und zeigt den Anhang je nach Typ. */
     private void loadAttachment() {
+        loadGeneration++;
         showingText = false;
         canvas.setStaticImage(null);
         busy.setVisible(true);
@@ -564,14 +570,45 @@ public final class AttachmentViewerPanel extends JPanel {
             return;
         }
         if (!preview && attachment.kind() == ReaderAttachmentKind.TEXT) {
-            showText(decodeText(bytes, attachment.mediaType()));
+            decodeAside(() -> decodeText(bytes, attachment.mediaType()), this::showText);
             return;
         }
         if (isPdf(bytes)) {
             openPdf(bytes);
             return;
         }
-        ReaderImageStore.Loaded loaded = ReaderImageStore.Loaded.of(bytes);
+        decodeAside(() -> ReaderImageStore.Loaded.of(bytes), this::showLoaded);
+    }
+
+    /**
+     * Dekodiert abseits des EDT (auf dem Zeichen-Thread, wie das PDF) und zeigt das Ergebnis auf dem EDT, aber nur,
+     * wenn der Viewer offen ist und inzwischen nichts anderes geladen wurde.
+     */
+    private <T> void decodeAside(java.util.function.Supplier<T> work, Consumer<T> apply) {
+        final int generation = loadGeneration;
+        busy.setVisible(true);
+        renderer.execute(() -> {
+            T result;
+            try {
+                result = work.get();
+            } catch (RuntimeException | OutOfMemoryError e) {
+                onEdt(() -> {
+                    if (!closed && generation == loadGeneration) {
+                        showUnavailable("Anhang nicht darstellbar: " + (e.getMessage() == null
+                                ? e.getClass().getSimpleName() : e.getMessage()));
+                    }
+                });
+                return;
+            }
+            onEdt(() -> {
+                if (!closed && generation == loadGeneration) {
+                    apply.accept(result);
+                }
+            });
+        });
+    }
+
+    private void showLoaded(ReaderImageStore.Loaded loaded) {
         if (!loaded.ok()) {
             showUnavailable(loaded.failure());
             return;
@@ -850,19 +887,30 @@ public final class AttachmentViewerPanel extends JPanel {
                 offset = 2;
             }
         }
+        // Mehr als MAX_TEXT_CHARS Zeichen zeigt die Ansicht nie: nur so viele Bytes dekodieren, wie dafür reichen.
+        int end = bytes.length;
+        boolean cut = (long) end - offset > (long) MAX_TEXT_CHARS * 4;
+        if (cut) {
+            end = offset + MAX_TEXT_CHARS * 4;
+            while (end > offset && (bytes[end] & 0xC0) == 0x80) {
+                end--; // nicht mitten in einer UTF-8-Folge abschneiden
+            }
+            end -= (end - offset) % 2; // und nicht mitten in einem UTF-16-Zeichen
+        }
         String text;
         if (charset != null) {
-            text = new String(bytes, offset, bytes.length - offset, charset);
+            text = new String(bytes, offset, end - offset, charset);
         } else {
             try {
                 text = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes, 0, end))
+                        .toString();
             } catch (CharacterCodingException notUtf8) {
-                text = new String(bytes, Charset.forName("windows-1252"));
+                text = new String(bytes, 0, end, Charset.forName("windows-1252"));
             }
         }
-        if (text.length() > MAX_TEXT_CHARS) {
-            text = text.substring(0, MAX_TEXT_CHARS) + "\n\n[… gekürzt; die ganze Datei über „" + SAVE_TEXT
+        if (cut || text.length() > MAX_TEXT_CHARS) {
+            text = text.substring(0, Math.min(text.length(), MAX_TEXT_CHARS)) + "\n\n[… gekürzt; die ganze Datei über „" + SAVE_TEXT
                     + "“ oder „" + OPEN_TEXT + "“]";
         }
         return text;

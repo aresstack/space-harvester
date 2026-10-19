@@ -1,11 +1,14 @@
 package com.aresstack.spaceharvester.app.ui.content.viewer;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import javax.swing.ImageIcon;
 import java.awt.image.BufferedImage;
 import java.awt.image.PixelGrabber;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
 
 /**
  * Der Bildweg des Anhang-Viewers: dekodiert Bilddaten ({@link Loaded}) und erkennt animierte GIFs.
@@ -15,9 +18,50 @@ import java.nio.charset.StandardCharsets;
  * der Diashow, die KI-Beschreibung und die Einmalcode-Abfrage. SVG zeichnet die App nicht selbst (kein Batik im
  * Klassenpfad): Ein SVG-Anhang meldet „SVG nicht darstellbar“ und bleibt über Speichern und Öffnen erreichbar.</p>
  */
-final class ReaderImageStore {
+public final class ReaderImageStore {
+
+    /**
+     * Höchstens so viele Pixel dekodiert die App (wie {@code PdfPages.MAX_PIXELS} im Core): ein PNG von wenigen KB mit
+     * 40000 × 40000 px legte sonst Gigabytes an.
+     */
+    public static final long MAX_PIXELS = 40_000_000L;
 
     private ReaderImageStore() {
+    }
+
+    /**
+     * Die Größe laut Bildkopf, ohne die Pixel zu dekodieren; {@code null}, wenn ImageIO das Format nicht kennt.
+     */
+    static int[] dimensions(byte[] data) {
+        try (ImageInputStream in = ImageIO.createImageInputStream(new ByteArrayInputStream(data))) {
+            if (in == null) {
+                return null;
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(in);
+            if (!readers.hasNext()) {
+                return null;
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(in, true, true);
+                return new int[] {reader.getWidth(0), reader.getHeight(0)};
+            } finally {
+                reader.dispose();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** Ob das Bild laut Kopf mehr als {@link #MAX_PIXELS} Pixel hat; solche Bilder dekodiert die App nicht. */
+    public static boolean tooLarge(byte[] data) {
+        int[] size = data == null ? null : dimensions(data);
+        return size != null && (long) size[0] * size[1] > MAX_PIXELS;
+    }
+
+    /** Wie {@link #decode}, aber {@code null} für Bilder über {@link #MAX_PIXELS}. */
+    public static BufferedImage decodeBounded(byte[] data) {
+        return data == null || tooLarge(data) ? null : decode(data);
     }
 
     /** Ein geladenes Bild: Original-Bytes (zum Speichern) und dekodiertes Bild (erstes Bild eines GIFs). */
@@ -42,6 +86,11 @@ final class ReaderImageStore {
                 return new Loaded(null, null, bytes == null ? null : "Bild: leere Antwort (0 Bytes)");
             }
             boolean svg = isSvg(bytes);
+            int[] size = svg ? null : dimensions(bytes);
+            if (size != null && (long) size[0] * size[1] > MAX_PIXELS) {
+                return new Loaded(null, null, "Bild zu groß zum Anzeigen (" + size[0] + " × " + size[1]
+                        + " Pixel, höchstens " + MAX_PIXELS / 1_000_000 + " Megapixel)");
+            }
             BufferedImage image = svg ? null : decode(bytes);
             return new Loaded(image == null ? null : bytes, image,
                     "Bilddaten nicht lesbar (" + bytes.length + " Bytes, " + (svg ? "SVG nicht darstellbar)"
@@ -95,7 +144,7 @@ final class ReaderImageStore {
         ImageIcon icon = new ImageIcon(data);
         int w = icon.getIconWidth();
         int h = icon.getIconHeight();
-        if (w <= 0 || h <= 0) {
+        if (w <= 0 || h <= 0 || (long) w * h > MAX_PIXELS) {
             return null;
         }
         int[] pixels = new int[w * h];
