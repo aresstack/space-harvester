@@ -6,7 +6,6 @@ import com.aresstack.spaceharvester.application.sources.SearchSpaces;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +33,7 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermInSetQuery;
@@ -46,7 +46,9 @@ import org.apache.lucene.util.BytesRef;
 
 /**
  * Volltextindex über den Cache ({@link PageTextIndex}, #180) in einem eigenen Lucene-Index neben dem Seiten-Index:
- * ein Dokument je Seite mit Titel und Lesetext, BM25 mit {@link StandardAnalyzer}, Titel doppelt gewichtet. Er ist
+ * ein Dokument je Seite mit Titel und Lesetext, BM25 mit {@link StandardAnalyzer}, Titel doppelt gewichtet. Dazu ein
+ * Dokument je Anhang einer Seite mit Dateiname (als Titel) und Text (#183, ab Schema {@code v2}); es trägt Quelle, Seite
+ * und Space der Seite, und die Suche liefert je Seite nur ihr bestes Dokument. Er ist
  * abgeleitet: ein Index in anderem oder fehlendem Schema wird beim Öffnen leer neu angelegt und füllt sich beim
  * nächsten Abruf oder Abgleich. Seiten-Index und Payloads bleiben davon unberührt.
  *
@@ -55,8 +57,8 @@ import org.apache.lucene.util.BytesRef;
  */
 public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
-    /** Schemaversion in den Commit-Daten. */
-    public static final String VERSION = "page-text-index/v1";
+    /** Schemaversion in den Commit-Daten; {@code v2}: Anhänge als eigene Dokumente der Seite (#183). */
+    public static final String VERSION = "page-text-index/v2";
     /** So viel Text je Seite wird indiziert und für Auszüge gespeichert; der Rest einer sehr langen Seite fehlt. */
     public static final int MAX_TEXT_CHARS = 1_000_000;
     /** Höchstens so viele Treffer je Suche. */
@@ -73,6 +75,15 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
     private static final String TITLE = "title";
     private static final String TEXT = "text";
     private static final String INPUT_SHA256 = "inputSha256";
+    /** Art des Dokuments: {@value #PAGE_KIND} oder {@value #ATTACHMENT_KIND}. */
+    private static final String KIND = "kind";
+    /** Die Seite, zu der ein Dokument gehört (Seite und ihre Anhänge), zum gemeinsamen Entfernen. */
+    private static final String PAGE = "page";
+    private static final String ATTACHMENT_ID = "attachmentId";
+    private static final String PAGE_KIND = "page";
+    private static final String ATTACHMENT_KIND = "attachment";
+    /** So viele Dokumente liest eine Suche höchstens, um je Seite das beste zu finden. */
+    static final int MAX_DOCUMENTS = 8 * MAX_LIMIT;
     private static final char SEPARATOR = '\u0000';
     private static final int MAX_TERMS = 32;
     private static final Pattern SPACES = Pattern.compile("\\s+");
@@ -139,6 +150,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
                 : entry.text();
         Document doc = new Document();
         doc.add(new StringField(ID, id(entry.key()), Field.Store.NO));
+        doc.add(new StringField(KIND, PAGE_KIND, Field.Store.YES));
+        doc.add(new StringField(PAGE, id(entry.key()), Field.Store.NO));
         doc.add(new StringField(SOURCE_ID, entry.key().sourceId(), Field.Store.YES));
         doc.add(new StoredField(PAGE_ID, entry.key().pageId()));
         doc.add(new StringField(SPACE_KEY, entry.spaceKey(), Field.Store.YES));
@@ -151,29 +164,124 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
         }
+        respace(entry.key(), entry.spaceKey());
+    }
+
+    /**
+     * Hat die Seite den Space gewechselt, folgen ihr die Anhänge sofort, nicht erst bei der nächsten Ernte: Sonst
+     * blendete der Space-Filter der Suche sie aus. Text und Stand bleiben; die nächste Ernte schreibt den Stand neu.
+     */
+    private void respace(PageKey page, String spaceKey) {
+        Query moved = new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(PAGE, id(page))), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(KIND, ATTACHMENT_KIND)), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SPACE_KEY, spaceKey)), BooleanClause.Occur.MUST_NOT)
+                .build();
+        List<AttachmentEntry> entries = read(searcher -> {
+            int count = searcher.count(moved);
+            if (count == 0) {
+                return List.<AttachmentEntry>of();
+            }
+            StoredFields stored = searcher.storedFields();
+            List<AttachmentEntry> found = new java.util.ArrayList<>(count);
+            for (ScoreDoc hit : searcher.search(moved, count).scoreDocs) {
+                Document doc = stored.document(hit.doc);
+                found.add(new AttachmentEntry(page, spaceKey, doc.get(ATTACHMENT_ID), doc.get(TITLE), doc.get(TEXT),
+                        doc.get(INPUT_SHA256)));
+            }
+            return found;
+        });
+        entries.forEach(this::putAttachment);
+    }
+
+    @Override
+    public synchronized void removeAttachment(PageKey page, String attachmentId) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        requireOpen();
+        try {
+            writer.deleteDocuments(new Term(ID, attachmentId(page, attachmentId)));
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    @Override
+    public synchronized void putAttachment(AttachmentEntry entry) {
+        Objects.requireNonNull(entry, "entry");
+        requireOpen();
+        String text = entry.text().length() > MAX_TEXT_CHARS ? entry.text().substring(0, MAX_TEXT_CHARS)
+                : entry.text();
+        String id = attachmentId(entry.page(), entry.attachmentId());
+        Document doc = new Document();
+        doc.add(new StringField(ID, id, Field.Store.NO));
+        doc.add(new StringField(KIND, ATTACHMENT_KIND, Field.Store.YES));
+        doc.add(new StringField(PAGE, id(entry.page()), Field.Store.NO));
+        doc.add(new StringField(ATTACHMENT_ID, entry.attachmentId(), Field.Store.YES));
+        doc.add(new StringField(SOURCE_ID, entry.page().sourceId(), Field.Store.YES));
+        doc.add(new StoredField(PAGE_ID, entry.page().pageId()));
+        doc.add(new StringField(SPACE_KEY, entry.spaceKey(), Field.Store.YES));
+        doc.add(new TextField(TITLE, entry.title(), Field.Store.YES));
+        doc.add(new TextField(TEXT, text, Field.Store.YES));
+        doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
+        try {
+            writer.updateDocument(new Term(ID, id), doc);
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
+    @Override
+    public Optional<String> attachmentInputSha256(PageKey page, String attachmentId) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        requireOpen();
+        return stored(attachmentId(page, attachmentId), INPUT_SHA256);
+    }
+
+    @Override
+    public synchronized void retainAttachments(PageKey page, Set<String> attachmentIds) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentIds, "attachmentIds");
+        requireOpen();
+        BooleanQuery.Builder stale = new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(PAGE, id(page))), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(KIND, ATTACHMENT_KIND)), BooleanClause.Occur.FILTER);
+        if (!attachmentIds.isEmpty()) {
+            stale.add(new TermInSetQuery(ATTACHMENT_ID, attachmentIds.stream().map(BytesRef::new).toList()),
+                    BooleanClause.Occur.MUST_NOT);
+        }
+        try {
+            writer.deleteDocuments(stale.build());
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
     }
 
     @Override
     public Optional<String> inputSha256(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
-        return read(searcher -> {
-            TopDocs top = searcher.search(new TermQuery(new Term(ID, id(key))), 1);
-            return top.scoreDocs.length == 0 ? Optional.<String>empty()
-                    : Optional.ofNullable(searcher.storedFields().document(top.scoreDocs[0].doc, Set.of(INPUT_SHA256))
-                            .get(INPUT_SHA256));
-        });
+        return stored(id(key), INPUT_SHA256);
     }
 
     @Override
     public Optional<String> text(PageKey key) {
         Objects.requireNonNull(key, "key");
         requireOpen();
+        return stored(id(key), TEXT);
+    }
+
+    /** Ein gespeichertes Feld des Dokuments mit dieser ID. */
+    private Optional<String> stored(String id, String field) {
         return read(searcher -> {
-            TopDocs top = searcher.search(new TermQuery(new Term(ID, id(key))), 1);
+            TopDocs top = searcher.search(new TermQuery(new Term(ID, id)), 1);
             return top.scoreDocs.length == 0 ? Optional.<String>empty()
-                    : Optional.ofNullable(searcher.storedFields().document(top.scoreDocs[0].doc, Set.of(TEXT))
-                            .get(TEXT));
+                    : Optional.ofNullable(searcher.storedFields().document(top.scoreDocs[0].doc, Set.of(field))
+                            .get(field));
         });
     }
 
@@ -182,7 +290,8 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         Objects.requireNonNull(key, "key");
         requireOpen();
         try {
-            writer.deleteDocuments(new Term(ID, id(key)));
+            // Die Seite und ihre Anhänge; Einträge von vor v2 hat das Öffnen schon verworfen.
+            writer.deleteDocuments(new Term(PAGE, id(key)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
@@ -232,16 +341,35 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         }
         query.setMinimumNumberShouldMatch(1);
         Set<String> wanted = Set.copyOf(terms);
+        BooleanQuery built = query.build();
         return read(searcher -> {
-            TopDocs top = searcher.search(query.build(), limit);
-            StoredFields stored = searcher.storedFields();
-            List<Match> matches = new ArrayList<>(top.scoreDocs.length);
-            for (ScoreDoc hit : top.scoreDocs) {
-                Document doc = stored.document(hit.doc);
-                matches.add(new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
-                        window(doc.get(TEXT), wanted)));
+            // Je Seite nur ihr bestes Dokument: so viele Dokumente lesen, bis genug Seiten beisammen sind.
+            int documents = Math.min(limit * 2, MAX_DOCUMENTS);
+            while (true) {
+                TopDocs top = searcher.search(built, documents);
+                StoredFields stored = searcher.storedFields();
+                Map<String, Match> pages = new java.util.LinkedHashMap<>();
+                for (ScoreDoc hit : top.scoreDocs) {
+                    if (pages.size() == limit) {
+                        break;
+                    }
+                    Document doc = stored.document(hit.doc);
+                    String page = doc.get(SOURCE_ID) + SEPARATOR + doc.get(PAGE_ID);
+                    if (pages.containsKey(page)) {
+                        continue;
+                    }
+                    String snippet = window(doc.get(TEXT), wanted);
+                    pages.put(page, ATTACHMENT_KIND.equals(doc.get(KIND))
+                            ? new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), "", snippet,
+                                    doc.get(ATTACHMENT_ID), doc.get(TITLE))
+                            : new Match(doc.get(SOURCE_ID), doc.get(PAGE_ID), doc.get(SPACE_KEY), doc.get(TITLE),
+                                    snippet));
+                }
+                if (pages.size() == limit || top.scoreDocs.length < documents || documents >= MAX_DOCUMENTS) {
+                    return List.copyOf(pages.values());
+                }
+                documents = Math.min(documents * 2, MAX_DOCUMENTS);
             }
-            return matches;
         });
     }
 
@@ -341,6 +469,10 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
 
     private static String id(PageKey key) {
         return key.sourceId() + SEPARATOR + key.pageId();
+    }
+
+    private static String attachmentId(PageKey page, String attachmentId) {
+        return id(page) + SEPARATOR + attachmentId;
     }
 
     private void changed() throws IOException {
