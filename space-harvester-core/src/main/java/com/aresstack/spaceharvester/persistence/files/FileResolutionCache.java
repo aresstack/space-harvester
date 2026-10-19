@@ -42,23 +42,38 @@ public final class FileResolutionCache implements ResolutionCache {
         this.file = directory.resolve(FILE);
         try {
             Files.createDirectories(directory);
-            if (Files.exists(file)) {
-                JsonNode root = JSON.readTree(Files.readString(file, StandardCharsets.UTF_8));
-                if (SCHEMA.equals(root.path("schema").asString(null))) {
-                    for (var source : root.path("sources").properties()) {
-                        Map<String, List<String>> entries = new TreeMap<>();
-                        for (var entry : source.getValue().properties()) {
-                            List<String> ids = new ArrayList<>();
-                            entry.getValue().forEach(id -> ids.add(id.asString()));
-                            entries.put(entry.getKey(), List.copyOf(ids));
-                        }
-                        bySource.put(source.getKey(), entries);
-                    }
-                }
-            }
         } catch (IOException e) {
             throw new UncheckedIOException(e);
-        } catch (RuntimeException e) {
+        }
+        if (Files.exists(file)) {
+            load();
+        }
+    }
+
+    /** Eine kaputte oder fremde Datei wird verworfen; der nächste {@link #replace} baut sie neu auf. */
+    private void load() {
+        try {
+            JsonNode root = JSON.readTree(Files.readString(file, StandardCharsets.UTF_8));
+            if (!SCHEMA.equals(root.path("schema").asString(null))) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "Ergebnis-Cache der Akronymauflösung mit fremdem Schema verworfen; beginnt leer");
+                return;
+            }
+            for (var source : root.path("sources").properties()) {
+                Map<String, List<String>> entries = new TreeMap<>();
+                for (var entry : source.getValue().properties()) {
+                    List<String> ids = new ArrayList<>();
+                    for (JsonNode id : entry.getValue()) {
+                        if (!id.isString()) {
+                            throw new IllegalStateException("Beziehungskennung ist kein Text");
+                        }
+                        ids.add(id.asString());
+                    }
+                    entries.put(entry.getKey(), List.copyOf(ids));
+                }
+                bySource.put(source.getKey(), entries);
+            }
+        } catch (IOException | RuntimeException e) {
             bySource.clear();
             LOG.log(System.Logger.Level.WARNING, "Ergebnis-Cache der Akronymauflösung unlesbar ({0}); beginnt leer",
                     e.getClass().getName());

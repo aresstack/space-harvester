@@ -9,8 +9,10 @@ import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-/** {@link FileResolutionCache}: übersteht einen Neustart, beginnt bei Schaden leer, je Quelle ersetzt. */
+/** {@link FileResolutionCache}: übersteht einen Neustart, verwirft kaputte oder fremde Dateien, je Quelle ersetzt. */
 class FileResolutionCacheTest {
 
     @TempDir
@@ -29,9 +31,28 @@ class FileResolutionCacheTest {
         assertThat(reopened.find("f3")).contains(List.of("r3"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "{kaputt",
+        "[]",
+        "{\"schema\":\"term-relations-ai-cache/v0\",\"sources\":{\"wiki\":{\"f1\":[\"r1\"]}}}",
+        "{\"schema\":\"term-relations-ai-cache/v1\",\"sources\":{\"wiki\":{\"f1\":[{\"x\":1}]}}}"
+    })
+    void aDamagedOrForeignFileIsDiscardedAndRebuilt(String content) throws Exception {
+        Path file = directory.resolve(FileResolutionCache.FILE);
+        Files.writeString(file, content, StandardCharsets.UTF_8);
+
+        FileResolutionCache cache = new FileResolutionCache(directory);
+        assertThat(cache.find("f1")).isEmpty();
+
+        cache.replace("wiki", Map.of("f2", List.of("r2")));
+        assertThat(new FileResolutionCache(directory).find("f2")).contains(List.of("r2"));
+        assertThat(Files.readString(file, StandardCharsets.UTF_8)).contains(FileResolutionCache.SCHEMA);
+    }
+
     @Test
-    void aDamagedFileStartsEmpty() throws Exception {
-        Files.writeString(directory.resolve(FileResolutionCache.FILE), "{kaputt", StandardCharsets.UTF_8);
+    void anUnreadablePathDoesNotStopTheStart() throws Exception {
+        Files.createDirectories(directory.resolve(FileResolutionCache.FILE));
 
         assertThat(new FileResolutionCache(directory).find("f1")).isEmpty();
     }
