@@ -134,7 +134,7 @@ Nicht angebunden sind:
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | Bildreferenzen im Storage (`ac:image`, `ri:attachment`, `ri:url`) | — | `StorageParser#image` | SH+ |
-| Bilder der Leseansicht (Inline, Vorschaubilder, draw.io-Vorschau; ohne Emoticons) | `conf/ConfluencePageView`, `#viewImage`, `#loadViewImage` | keine | in Arbeit (Strang Q, Runde 7: Bildreferenzen aus Anhängen und `PageViewSource`) |
+| Bilder der Leseansicht (Inline, Vorschaubilder, draw.io-Vorschau; ohne Emoticons) | `conf/ConfluencePageView`, `#viewImage`, `#loadViewImage` | `Assets.viewImages` (Bilder der Leseansicht ohne Bytes) und `Assets.viewImage` (aus der Ablage oder über die Anmeldung geladen, `HarvestSource#viewImages`); draw.io als PNG des Core über `Assets.viewDiagram` (#322); die App zeigt sie in der Leseansicht (#192, #314) | gleich (Vergleichstest Leseansicht: Bilder Core ≥ Maßstab) |
 | Authentifizierter Abruf, dauerhafte, versionierte Ablage, Wiederverwendung | `doc/ExportGraphics`, `exedra/…/reader/ReaderImageStore` (flüchtig) | `Assets`, `core/persistence/files/FileSystemAssetStore` (SHA-256, versioniert) | SH+ |
 | Bilder beim Herunterladen mitbeschaffen, Asset-Manifest im Datenbestand | `know/KnowledgeExportUseCase#figures` | eigener Auftrag „Bilder beschaffen“ nach jedem Export (`ExportAssetCollection`, #200), SHA-256-adressiert, `assets.json` (`ExportAssetManifest`) mit Status je Datei, darunter `SIGN_IN_REQUIRED` und `REDUNDANT` (#303); Nachholen über `ExportConversions.collectImages` | gleich (#200, #303) |
 | Dateityp am Inhalt erkennen (Magic Bytes) | `deigma/document-tika/…/TikaContentDetector`, `ExportGraphics#decode` | `DocumentText#detect` über dieselbe `DocumentExtraction.detector()` wie im EAC (#328); beim Ablegen eines Anhangs wird der Typ an den Magic Bytes geprüft und bei Bedarf korrigiert | gleich (Vergleichstest Dokumenttext: derselbe Typ je Datei) |
@@ -262,7 +262,7 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 
 | Issue | Thema | Strang |
 |---|---|---|
-| #176 | Leseansicht (`body.view`/`export_view`) als Core-Use-Case | Q |
+| #176 | Leseansicht (`body.view`/`export_view`) als Core-Use-Case | erledigt: `ReadingViews`, REST `…/reading-view`, Bilder, Konverter (#218, #230), Vergleichstest; KI-Text bleibt gewollt auf `storage` |
 | #177 | Live-Navigation: Kindseiten, Breadcrumbs, Querverweise | Q; App: Pfad und Reiter „Verweise“ (#329, L) |
 | #178 | URL- und Ressourcenauflösung vollständig | Q |
 | #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q, erledigt |
