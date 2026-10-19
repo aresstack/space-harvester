@@ -85,8 +85,8 @@ final class AiSettingsPanel {
     private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
     private final SettingDialogs.Rows modelRows;
     private final JPanel models = new JPanel(new BorderLayout(0, 10));
-    final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen und neu starten");
-    final ComposerButton saveModels = Comic.primary("Speichern", "Modelle übernehmen und neu starten");
+    final ComposerButton save = Comic.primary("Speichern", "KI-Einstellungen übernehmen; gilt ohne Neustart");
+    final ComposerButton saveModels = Comic.primary("Speichern", "Modelle übernehmen; gilt ohne Neustart");
     final ComposerButton removeKey = Comic.button("API-Key entfernen", "Gespeicherten API-Key löschen");
     /** Meldungen im Reiter „KI-Dienst“ (im Assistenten die einzige). */
     final Feedback feedback = new Feedback();
