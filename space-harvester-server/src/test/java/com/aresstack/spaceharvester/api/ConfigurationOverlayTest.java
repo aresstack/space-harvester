@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.StorageSettings;
@@ -14,6 +15,8 @@ import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.source.network.ProxySettings;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
 import java.net.URI;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.HashMap;
@@ -21,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class ConfigurationOverlayTest {
 
@@ -32,7 +36,8 @@ class ConfigurationOverlayTest {
                     SyncMode.SYNC_CACHE),
             new NetworkSettings(new ProxySettings(ProxySettings.Mode.MANUAL_PROXY, null, "proxy.example", 3128,
                     List.of("*.intern"), null, null, null), TrustSettings.system()),
-            new StorageSettings(Path.of("data", "cache")));
+            new StorageSettings(Path.of("data", "cache")))
+            .withLocalFiles(new LocalFileSettings(true, List.of(Path.of("/srv/wissen, alt"), Path.of("/mnt/doku"))));
 
     @Test
     void propertiesRoundTripWithoutNetwork() {
@@ -41,6 +46,42 @@ class ConfigurationOverlayTest {
 
         assertThat(parsed.problems()).isEmpty();
         assertThat(parsed.configuration()).isEqualTo(FULL.withNetwork(NetworkSettings.DEFAULT));
+    }
+
+    @Test
+    void grantedFoldersAreSeparatedBySemicolonsOrGivenAsAList(@TempDir Path folder) throws IOException {
+        Path comma = Files.createDirectory(folder.resolve("Wissen, alt"));
+        HarvesterConfiguration text = ConfigurationOverlay.overlay(HarvesterConfiguration.DEFAULT, Map.of(
+                "local-files.roots", comma + ";" + folder, "local-files.allow-all", false)).orThrow();
+        HarvesterConfiguration list = ConfigurationOverlay.overlay(HarvesterConfiguration.DEFAULT, Map.of(
+                "space-harvester.local-files.roots", List.of(comma.toString(), folder.toString()))).orThrow();
+        HarvesterConfiguration indexed = ConfigurationOverlay.overlay(text, Map.of(
+                "local-files.roots[0]", folder.toString())).orThrow();
+
+        assertThat(text.localFiles().roots()).containsExactly(comma, folder);
+        assertThat(list.localFiles()).isEqualTo(text.localFiles());
+        assertThat(indexed.localFiles().roots()).containsExactly(folder);
+        assertThat(ConfigurationOverlay.overlay(text, Map.of("local-files.roots", "")).orThrow().localFiles())
+                .isEqualTo(LocalFileSettings.DEFAULT);
+    }
+
+    @Test
+    void aGrantedFolderMustBeAbsoluteButMayNotExistYetOrBeAFile(@TempDir Path folder) throws IOException {
+        Path file = Files.writeString(folder.resolve("geheim-liste.txt"), "x");
+        Path missing = folder.resolve("noch-nicht-verbunden");
+
+        HarvesterConfiguration.Parsed relative = ConfigurationOverlay.overlay(FULL,
+                Map.of("local-files.roots", "relativ/geheim-ordner"));
+
+        assertThat(relative.problems()).singleElement().satisfies(problem -> {
+            assertThat(problem.key()).isEqualTo(LocalFileSettings.ROOTS);
+            assertThat(problem.message()).doesNotContain("geheim-ordner");
+        });
+        // Wie im Client gewährt eine Datei einfach nichts; geprüft wird ohne Dateisystem.
+        assertThat(ConfigurationOverlay.overlay(FULL, Map.of("local-files.roots", file.toString())).orThrow()
+                .localFiles().roots()).containsExactly(file);
+        assertThat(ConfigurationOverlay.overlay(FULL, Map.of("local-files.roots", missing.toString())).orThrow()
+                .localFiles().roots()).containsExactly(missing);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.access.DelegatedSourceAccessFactory;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
@@ -41,10 +42,13 @@ class SourceConfiguration {
         return new ConfluenceSourceAdapter();
     }
 
-    /** Quellentyp {@code files}: lokale Verzeichnisse. */
+    /**
+     * Quellentyp {@code files}: lokale Verzeichnisse. Die freigegebenen Ordner ({@code space-harvester.local-files})
+     * liest der Adapter bei jedem Dateizugriff aus der wirksamen Konfiguration, also ohne Neustart.
+     */
     @Bean
-    LocalFilesSourceAdapter localFilesSourceAdapter() {
-        return new LocalFilesSourceAdapter();
+    LocalFilesSourceAdapter localFilesSourceAdapter(ConfigurationManager manager) {
+        return new LocalFilesSourceAdapter(() -> manager.current().configuration().localFiles().grants());
     }
 
     /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */

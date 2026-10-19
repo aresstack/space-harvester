@@ -33,15 +33,20 @@ eine `SourceAdapter`-Bean (`SourceConfiguration`), der Katalog bekommt alle Bean
 | `betaview` | `EacSourceAdapters.betaView()` | `baseUrl` | `none`, `basic`; Anmeldung Pflicht | eigener Verweis bei `none` | ja | ja |
 | `outlook` | `EacSourceAdapters.outlook()` (`ContextualSourceAdapter`) | `mailbox` | `none` | – | Fehler | Fehler |
 | `mediawiki` | `MediaWikiSources.adapter()` | `apiUrl` | `none`, `basic` | nicht erlaubt, dafür `auth` | ja | ja |
-| `git` | `GitSourceAdapter` | `url` | `none` | ja, nur HTTPS (#188) | siehe unten | Fehler |
+| `git` | `GitSourceAdapter` | `url` | `none`, `basic`, `pat` | eigener Verweis bei `none` | siehe unten | ja |
 
 „Anmeldung Pflicht“ heißt `needsCredentials = true`: `auth.type basic` oder ein eigener `options.credentialRef`.
 Ein eigener Verweis (etwa `keepass:jes`) geht unverändert an den `SourceSecrets` des Programms; zusammen mit
-`auth.type basic` ist er ein Fehler, weil dann `source:<id>` gilt. „Fehler“ heißt: Die Angabe verhindert den Start,
+`auth.type basic` oder `pat` ist er ein Fehler, weil dann `source:<id>` gilt; ein Verweis auf `source:…` ist immer ein
+Fehler („options.credentialRef darf nicht auf source:… zeigen; dafür gibt es auth“), weil er die Zugangsdaten einer
+anderen Quelle an diesen Host schickte. Bei `git` ist `pat` ein Token ohne Benutzer, `basic` Benutzer und Token als
+Passwort, beides unter `source:<id>` (#393); `pat` gibt es sonst nur bei Confluence, FTPS für ftp, jes und ndv nicht,
+wie im Enterprise AI Client ([ADR 0022](adr/0022-erweiterbarer-builder-und-secretprovider.md)). Die Meldungen nennen
+nur Schlüssel, nie Werte. „Fehler“ heißt: Die Angabe verhindert den Start,
 statt still übergangen zu werden. Bei `git` liest `GitSourceAdapter.open` ein `trust-bundle` für eigene Server-CAs,
 die Prüfung (`check` über einen `KnowledgeSourceProviderAdapter` ohne Netz) lehnt `trust-bundle` aber mit
 „trust-bundle passt nicht zu type git“ ab; auf `main` (ceb6c84) startet eine Git-Quelle mit `trust-bundle` deshalb
-nicht. `auth` gibt es für `git` noch nicht.
+nicht.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
 (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
@@ -52,10 +57,10 @@ Confluence `null`, die Adresse steht dort in `base-url`. Dazu `fields`, die Eing
 Quellen-Editor des Enterprise AI Client (`key`, `label`, `hint`, `kind`
 TEXT|NUMBER|FLAG|DIRECTORY|SECRET_REF|CLIENT_CERTIFICATE, `required`, `advanced`, `defaultValue`; nie ein Wert aus dem
 Tresor, ohne das Titelfeld des Typs, das `title` füllt, bei MediaWiki `displayName`; bei Confluence leer, weil
-Basis-URL, Titel, Anmeldung und Zertifikat außerhalb von `options` stehen; bei ftp, jes, ndv, sharepoint, betaview, git
-und mediawiki steht das Upstream-Feld `credentialRef` als `SECRET_REF` darin, bei mediawiki obwohl
-`options.credentialRef` dort abgelehnt wird), und `authModes`, die erlaubten Werte von `auth.type` (Tabelle oben:
-`none` und mit Anmeldefeld `basic`, bei Confluence auch `pat`; files, outlook und git nur `none`). Eigene Adapter
+Basis-URL, Titel, Anmeldung und Zertifikat außerhalb von `options` stehen; bei ftp, jes, ndv, sharepoint, betaview und git
+steht das Upstream-Feld `credentialRef` als `SECRET_REF` darin; bei mediawiki fehlt es, weil `options.credentialRef`
+dort abgelehnt wird), und `authModes`, die erlaubten Werte von `auth.type` (Tabelle oben:
+`none` und mit Anmeldefeld `basic`, bei Confluence und git auch `pat`; files und outlook nur `none`). Eigene Adapter
 geben das über `SourceAdapter.displayName()`, `needsCredentials()`, `addressOption()`, `fields()` und `authModes()`
 an; ohne eigene Angabe gelten der Typname, `false`, `null`, keine Felder und `none`. Geprüft in
 `HarvesterEacSourcesTest` (`eachTypeDescribesItsFieldsAndAuthModesWithoutValues`, PR #394; Adressfelder PR #387).
