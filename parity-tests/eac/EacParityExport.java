@@ -45,6 +45,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -130,6 +132,7 @@ public final class EacParityExport {
         search(source, new File(out, "search.properties"), new File(out, "search-runs.properties"));
         facts(new File(out, "facts.properties"));
         git(new File(out, "git.properties"));
+        files(new File(out, "files.properties"));
     }
 
     /**
@@ -229,6 +232,48 @@ public final class EacParityExport {
             }
             out.println("git." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
             out.println("git." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /**
+     * Dateiquelle (#193) über {@link ParityFiles}: der ganze Ordner mit {@code exclude} = {@link ParityFiles#EXCLUDE}
+     * ({@code all}); je Pfad Titel und welche Sätze aus {@link ParityFiles#SENTENCES} (Index ab 0) oder
+     * {@link ParityFiles#EXCLUDED_SENTENCE} ({@code excluded}) der geladene Text enthält, {@code -} ohne.
+     */
+    private static void files(File target) throws Exception {
+        Path directory = Files.createTempDirectory("parity-files").resolve("pfiles");
+        ParityFiles.create(directory);
+        LocalFilesSourceProvider provider = new LocalFilesSourceProvider(DocumentExtraction.detector(),
+                DocumentExtraction.registry());
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("directory", directory.toAbsolutePath().toString());
+        values.put("exclude", ParityFiles.EXCLUDE);
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("files", provider.locator(settings)), settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            String value = resource.id().value();
+            byPath.put(value.substring(value.lastIndexOf("/pfiles/") + "/pfiles/".length()), resource);
+        }
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            out.println("files.all.documents=" + join(new ArrayList<String>(byPath.keySet())));
+            for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+                String text = source.load(entry.getValue().id()).text();
+                List<String> found = new ArrayList<String>();
+                for (int i = 0; i < ParityFiles.SENTENCES.length; i++) {
+                    if (text != null && text.contains(ParityFiles.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                if (text != null && text.contains(ParityFiles.EXCLUDED_SENTENCE)) {
+                    found.add("excluded");
+                }
+                out.println("files.all.title." + entry.getKey() + "=" + entry.getValue().title());
+                out.println("files.all.sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+            }
+        } finally {
+            out.close();
         }
     }
 

@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
@@ -90,6 +91,7 @@ class CoreParityTest {
     private static final Map<String, String> CORE_FACTS = new LinkedHashMap<>();
     private static final Map<String, String> CORE_RUNS = new LinkedHashMap<>();
     private static final Map<String, String> CORE_GIT = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_FILES = new LinkedHashMap<>();
     @TempDir
     static Path gitData;
     @TempDir
@@ -147,6 +149,7 @@ class CoreParityTest {
         sourceManagement();
         search();
         git();
+        files();
     }
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
@@ -258,6 +261,47 @@ class CoreParityTest {
                 }
                 CORE_GIT.put("git." + prefix + ".title." + path, page.header().metadata().title());
                 CORE_GIT.put("git." + prefix + ".sentences." + path, found.isEmpty() ? "-" : String.join(",", found));
+            });
+        }
+    }
+
+    /**
+     * Dateiquelle (#193) wie {@code EacParityExport.files}: der Ordner {@link ParityFiles} als Typ {@code files} mit
+     * {@code exclude} = {@link ParityFiles#EXCLUDE}; je Pfad Titel und Sätze im abgelegten Inhalt. Dieselben Schlüssel
+     * wie {@code eac/files.properties}.
+     */
+    private static void files() throws Exception {
+        Path directory = gitData.resolve("pfiles");
+        ParityFiles.create(directory);
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("parity", "files", "Parität", null, null,
+                        Map.of("directory", directory.toString(), "exclude", ParityFiles.EXCLUDE)))
+                .dataDirectory(gitData.resolve("data-files"))
+                .build()) {
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            Map<String, ListedPage> byPath = new TreeMap<>();
+            for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                // Ressourcen-ID der Ordner-Quelle: …/<Quelle>/<Pfad relativ zum Ordner, Base64url>
+                String value = page.header().metadata().resourceId();
+                byPath.put(new String(Base64.getUrlDecoder().decode(value.substring(value.lastIndexOf('/') + 1)),
+                        StandardCharsets.UTF_8), page);
+            }
+            CORE_FILES.put("files.all.documents", String.join(",", byPath.keySet()));
+            byPath.forEach((path, page) -> {
+                String text = new String(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < ParityFiles.SENTENCES.length; i++) {
+                    if (text.contains(ParityFiles.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                if (text.contains(ParityFiles.EXCLUDED_SENTENCE)) {
+                    found.add("excluded");
+                }
+                CORE_FILES.put("files.all.title." + path, page.header().metadata().title());
+                CORE_FILES.put("files.all.sentences." + path, found.isEmpty() ? "-" : String.join(",", found));
             });
         }
     }
@@ -489,6 +533,9 @@ class CoreParityTest {
         List<Finding> factsAndRuns = new ArrayList<>(facts);
         factsAndRuns.addAll(runs);
         factsAndRuns.addAll(git);
+        List<Finding> files = ParityComparison.files(eacProperties("files.properties"), CORE_FILES);
+        report.append('\n').append(ParityReport.section("Dateiquelle", files, gaps));
+        factsAndRuns.addAll(files);
         for (Finding finding : factsAndRuns) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "

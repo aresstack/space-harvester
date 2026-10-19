@@ -313,12 +313,24 @@ public final class ParityComparison {
      * (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC). Ein fehlender Pfad oder Satz ist eine Lücke.
      */
     public static List<Finding> git(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("git", eac, core);
+    }
+
+    /**
+     * Dateiquelle (#193) wie {@link #git}: je Umfang ({@code all} mit Ausschluss, {@code start} ab Startpunkt) die
+     * gelisteten Pfade (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC).
+     */
+    public static List<Finding> files(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("files", eac, core);
+    }
+
+    private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
         List<Finding> findings = new ArrayList<>();
         for (Map.Entry<String, String> entry : eac.entrySet()) {
             String key = entry.getKey();
             String expected = entry.getValue();
             String actual = core.getOrDefault(key, "fehlt");
-            String check = key.substring("git.".length());
+            String check = key.substring(format.length() + 1);
             String state = check.substring(0, check.indexOf('.'));
             String rest = check.substring(state.length() + 1);
             Verdict verdict;
@@ -334,7 +346,7 @@ public final class ParityComparison {
                 title = rest.equals("documents") ? "Dokumente (" + state + ")"
                         : "Sätze in " + rest.substring("sentences.".length()) + " (" + state + ")";
             }
-            findings.add(new Finding("git", check, title, expected, actual, verdict,
+            findings.add(new Finding(format, check, title, expected, actual, verdict,
                     verdict == Verdict.CORE_WENIGER ? "im Core weniger oder anders" : ""));
         }
         return findings;
