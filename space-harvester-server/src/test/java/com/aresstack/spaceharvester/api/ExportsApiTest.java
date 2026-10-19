@@ -237,6 +237,12 @@ class ExportsApiTest {
         assertThat(markdown.headers().firstValue("X-Conversion-Notice-Kinds").orElse("")).isEmpty();
         HttpResponse<byte[]> docx = send("GET", "/api/v1/exports/" + id + "/conversions/docx", null);
         assertThat(docx.body()).startsWith((byte) 'P', (byte) 'K');
+        // Analyse-Export (#359): erst auf Abruf, eine Seite je exportierter Seite.
+        HttpResponse<byte[]> analysis = send("GET", "/api/v1/exports/" + id + "/conversions/analysis", null);
+        assertThat(analysis.statusCode()).isEqualTo(200);
+        JsonNode analysisJson = json.readTree(analysis.body());
+        assertThat(analysisJson.path("format").asString()).isEqualTo("space-harvester/analysis-export/v1");
+        assertThat(analysisJson.path("pages").size()).isEqualTo(3);
         // Unbekanntes Format, fremder Client: wie beim Export.
         assertThat(send("GET", "/api/v1/exports/" + id + "/conversions/pptx", null).statusCode()).isEqualTo(400);
         assertThat(send("GET", "/api/v1/exports/" + id + "/conversions/markdown", OTHER_TOKEN).statusCode())
