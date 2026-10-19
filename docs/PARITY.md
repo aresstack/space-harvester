@@ -103,7 +103,7 @@ Nicht angebunden sind:
 | Kindseiten eines Knotens live, in Confluence-Reihenfolge, mit `hasChildren` | `ConfluenceKnowledgeSource#children`, `#treeBatch` | `PageNavigation#children`: live, Reihenfolge der Quelle, `hasChildren`, Stapel mit Cursor | gleich (Vergleichstest) |
 | Vorfahren und Breadcrumbs mit Space-Namen | `#position`, `ConfluenceRestClient#lineage` | `PageNavigation#position`: Space mit Namen, Vorfahren von oben, Rechte je Vorfahr | gleich (Vergleichstest) |
 | Seiten über ihren Titel finden, auch nicht abgeglichene | — (nur exakter Titel bei der Adressauflösung: `ConfluenceRestClient#pageIdByTitle`) | `PageNavigation#findByTitle(caller, sourceId, spaceKeys, title, limit)` → `TitleMatches(sourceId, pages, truncated)`: „Titel enthält“, Spaces wählbar (leer = alle), `limit` 1 bis 100, braucht `metadata` auf die Quelle, jeder Treffer läuft durch die Zugriffsprüfung, `truncated` zählt nur sichtbare Seiten; Confluence über die CQL-Suche des EAC-Adapters mit Space-Filter und Titelprüfung (höchstens 1000 Funde geprüft), Ordner über den Dateinamen; Fähigkeit `title-search`; REST `GET /api/v1/sources/{id}/pages?title=…&spaceKey=…&limit=…` (Standard 25) (#305); der Titelfilter des Explorers fragt darüber die Quellen, auch nach nie geladenen Seiten (#314) | SH+ |
-| Hierarchie anderer Quellen (Ordner in Git) | `PageNavigationSource` in `source-git` | keine | fehlt → #187 |
+| Hierarchie anderer Quellen (Ordner in Git) | `PageNavigationSource` in `source-git` | Adapter `source-git` unverändert aus dem EAC übernommen (`enterprise-ai-sources`, #351), im Core noch nicht registriert | teilweise → #187 |
 
 ## 4. Seitenabruf
 
@@ -225,7 +225,8 @@ Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` r
 | Lokale Dateien | `source-localfiles` | `core/source/LocalFilesSourceAdapter` (Kopie) | gleich, mit Text aus PDF und Office-Dateien (#328) |
 | Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | nur Option `directory` | teilweise → #187 |
 | Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort` | keine | fehlt → #187 |
-| MediaWiki, Git, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
+| Git | `proasteion/emporion/holkas/source-git` | `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`) unverändert übernommen, JGit 5.13.5 wie im Upstream, Upstream-Tests laufen in `:enterprise-ai-sources:test` (#351); im Core noch nicht registriert, das folgt über den allgemeinen Pfad für Quellen ohne Partitionen | teilweise → #187 |
+| MediaWiki, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
 | Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | `Harvester.sourceManagement()` (#227): `validate`, `test`, `add`, `change`, `remove` mit Rückzug von Cache, Anreicherungen und Assets | gleich (Vergleichstest Quellenverwaltung), mit `setEnabled` und Ablehnung desselben Ziels unter neuer ID |
 | Eigene Adapter, Embedding-Anbieter, Reranker, Secret-Speicher einhängen | Kompositionspunkt `app/composition` | `Harvester.builder()` mit `sourceAdapter`, `secretProvider`, `embeddings`, `reranker` (#226) | gleich |
 | Werkzeuge für Agenten (`knowledge_search`, `_read`, `_tree`, `_attachments`, `_resolve_url`) | `astu/acropolis/…/mcp/*Tool` | — | EAC (Adapter); die Use-Cases dahinter liefern #177, #178, #180 |

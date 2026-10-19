@@ -24,6 +24,7 @@ Space, `ChangeListingSource`; davor #191, #179, #178, #177, #176, #18) auf `main
 | `proasteion/application` | nur `DocumentSourceFileTextExtractor`: Text aus Dateien einer Quelle wie im Enterprise AI Client (#183) |
 | `proasteion/emporion/holkas/source-localfiles` | vollständig: `LocalFilesSourceProvider`, `LocalFilesKnowledgeSource` (#18) |
 | `proasteion/emporion/holkas/source-git` | vollständig (#187): `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`), JGit 5.13 wie im Upstream; im Core noch nicht registriert |
+| `proasteion/emporion/holkas/source-ftp` | vollständig (#187): `FtpSourceProvider`, `FtpKnowledgeSource` (MVS-Datensätze und Member), `JesSourceProvider`, `JesKnowledgeSource` (Spool), Apache Commons Net 3.9.0 wie im Upstream; im Core noch nicht registriert |
 | `embedding-api`, `embedding-openai` | vollständig: `EmbeddingPort`, `OpenAiCompatibleEmbeddingAdapter` für `POST /embeddings` (ADR 0011) |
 | `chat-api`, `chat-openai` | vollständig: `ChatCompletionPort`, `OpenAiCompatibleChatAdapter` für `POST /chat/completions`, Suchvarianten (ADR 0017) |
 | `model-api` | nur `ModelCatalogPort`, `ModelCatalogException` |
