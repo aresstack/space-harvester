@@ -147,6 +147,7 @@ public class Assets {
         for (PageAttachment attachment : list.attachments().attachments()) {
             if (stop != null) {
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
                 continue;
             }
             Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
@@ -165,14 +166,17 @@ public class Assets {
                         content.asset(), null));
             } catch (AssetTooLargeException e) {
                 entries.add(failed(list, attachment, "asset-too-large"));
+                indexed |= forgetStale(list, attachment);
             } catch (AssetStoreFullException e) {
                 stop = "asset-store-full";
                 entries.add(failed(list, attachment, stop));
+                indexed |= forgetStale(list, attachment);
             } catch (SourceAccessException e) {
                 if (e.reason() == SourceAccessException.Reason.RATE_LIMITED) {
                     stop = code(e.reason());
                 }
                 entries.add(failed(list, attachment, code(e.reason())));
+                indexed |= forgetStale(list, attachment);
             }
         }
         finishIndexing(list, indexed);
@@ -508,8 +512,38 @@ public class Assets {
         } catch (AssetStoreException e) {
             LOG.log(System.Logger.Level.WARNING, "Anhangstext nicht lesbar: source={0} ({1})", asset.sourceId(),
                     e.getClass().getName());
+            return false;
         }
-        return false;
+        // Diagrammdaten (draw.io) und Dokumente ohne Extraktion: nur der Dateiname, wie Bilder ohne Beschreibung.
+        return indexText(list, asset, "", "");
+    }
+
+    /**
+     * Nach einem gescheiterten Ablegen: Liegt die aktuelle Version des Anhangs nicht in der Ablage, stammt ein
+     * vorhandener Indexeintrag von einer älteren Version (oder fehlt); er fällt heraus, damit die Suche keinen Text alter
+     * Bytes liefert. Die nächste erfolgreiche Ernte legt ihn neu an.
+     *
+     * @return ob der Index geändert worden sein kann
+     */
+    private boolean forgetStale(PageAttachmentList list, PageAttachment attachment) {
+        if (texts == null) {
+            return false;
+        }
+        try {
+            if (store.find(list.sourceId(), attachment.attachmentId(), attachment.version()).isPresent()) {
+                return false;
+            }
+            PageKey page = new PageKey(list.sourceId(), list.attachments().pageId());
+            if (texts.attachmentInputSha256(page, attachment.attachmentId()).isEmpty()) {
+                return false;
+            }
+            texts.removeAttachment(page, attachment.attachmentId());
+            return true;
+        } catch (RuntimeException e) {
+            LOG.log(System.Logger.Level.WARNING, "Veralteter Anhangstext in {0} nicht entfernt ({1})",
+                    list.sourceId(), e.getClass().getName());
+            return false;
+        }
     }
 
     private boolean indexDescription(PageAttachmentList list, Asset asset, ImageDescription description) {

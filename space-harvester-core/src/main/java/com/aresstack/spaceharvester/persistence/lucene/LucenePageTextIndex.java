@@ -33,6 +33,7 @@ import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.search.TermInSetQuery;
@@ -159,6 +160,47 @@ public final class LucenePageTextIndex implements PageTextIndex, AutoCloseable {
         doc.add(new StoredField(INPUT_SHA256, entry.inputSha256()));
         try {
             writer.updateDocument(new Term(ID, id(entry.key())), doc);
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);
+        }
+        respace(entry.key(), entry.spaceKey());
+    }
+
+    /**
+     * Hat die Seite den Space gewechselt, folgen ihr die Anhänge sofort, nicht erst bei der nächsten Ernte: Sonst
+     * blendete der Space-Filter der Suche sie aus. Text und Stand bleiben; die nächste Ernte schreibt den Stand neu.
+     */
+    private void respace(PageKey page, String spaceKey) {
+        Query moved = new BooleanQuery.Builder()
+                .add(new TermQuery(new Term(PAGE, id(page))), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(KIND, ATTACHMENT_KIND)), BooleanClause.Occur.FILTER)
+                .add(new TermQuery(new Term(SPACE_KEY, spaceKey)), BooleanClause.Occur.MUST_NOT)
+                .build();
+        List<AttachmentEntry> entries = read(searcher -> {
+            int count = searcher.count(moved);
+            if (count == 0) {
+                return List.<AttachmentEntry>of();
+            }
+            StoredFields stored = searcher.storedFields();
+            List<AttachmentEntry> found = new java.util.ArrayList<>(count);
+            for (ScoreDoc hit : searcher.search(moved, count).scoreDocs) {
+                Document doc = stored.document(hit.doc);
+                found.add(new AttachmentEntry(page, spaceKey, doc.get(ATTACHMENT_ID), doc.get(TITLE), doc.get(TEXT),
+                        doc.get(INPUT_SHA256)));
+            }
+            return found;
+        });
+        entries.forEach(this::putAttachment);
+    }
+
+    @Override
+    public synchronized void removeAttachment(PageKey page, String attachmentId) {
+        Objects.requireNonNull(page, "page");
+        Objects.requireNonNull(attachmentId, "attachmentId");
+        requireOpen();
+        try {
+            writer.deleteDocuments(new Term(ID, attachmentId(page, attachmentId)));
             changed();
         } catch (IOException e) {
             throw new PageCacheException("Volltextindex " + path + " kann nicht geschrieben werden", e);

@@ -174,6 +174,11 @@ public final class PassageSnippets implements PageTextIndex {
     }
 
     @Override
+    public void removeAttachment(PageKey page, String attachmentId) {
+        index.removeAttachment(page, attachmentId);
+    }
+
+    @Override
     public void retainAttachments(PageKey page, Set<String> attachmentIds) {
         index.retainAttachments(page, attachmentIds);
     }

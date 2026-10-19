@@ -56,6 +56,8 @@ class PassageSnippetsTest {
                 "sha256:a");
         snippets.putAttachment(entry);
         assertThat(index.attachments).containsExactly(entry);
+        snippets.removeAttachment(KEY, "att-1");
+        assertThat(index.attachments).isEmpty();
     }
 
     @Test
@@ -139,6 +141,11 @@ class PassageSnippetsTest {
         @Override
         public void putAttachment(AttachmentEntry entry) {
             attachments.add(entry);
+        }
+
+        @Override
+        public void removeAttachment(PageKey page, String attachmentId) {
+            attachments.removeIf(entry -> entry.page().equals(page) && entry.attachmentId().equals(attachmentId));
         }
 
         @Override

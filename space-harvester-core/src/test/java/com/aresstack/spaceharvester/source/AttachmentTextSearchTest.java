@@ -216,6 +216,55 @@ class AttachmentTextSearchTest {
                 .extracting(PageTextIndex.Match::attachmentId).containsExactly("att5");
     }
 
+    @Test
+    void aDiagramAttachmentStandsInTheIndexWithItsFileName() {
+        files.put("att3", "<mxfile><diagram name=\"x\"/></mxfile>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assets().harvest(list("101", attachment("att3", "Topologie Netzwerk.drawio", "application/vnd.jgraph.mxfile")));
+
+        List<KeywordSearch.Hit> hits = search(allow()).search(APP, KeywordSearch.Query.of("Topologie"), null, 10)
+                .hits();
+
+        assertThat(hits).extracting(KeywordSearch.Hit::pageId).containsExactly("101");
+        assertThat(hits.getFirst().attachment()).isEqualTo(new KeywordSearch.AttachmentMatch("att3",
+                "Topologie Netzwerk.drawio"));
+        assertThat(hits.getFirst().snippet()).isEmpty();
+    }
+
+    @Test
+    void aNewVersionThatCannotBeStoredRemovesTheTextOfTheOldOne() {
+        files.put("att1", DocumentFixtures.pdf("Wartungsfenster Samstag"));
+        Assets assets = assets();
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF)));
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+        files.remove("att1");
+
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF, "2")));
+
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), SearchSpaces.all(), 10)).isEmpty();
+        // Die alte Version bleibt in der Ablage; nur der Index liefert ihren Text nicht mehr als aktuellen.
+        files.put("att1", DocumentFixtures.pdf("Wartungsfenster Sonntag"));
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF, "2")));
+        assertThat(index.search("Sonntag", Set.of("wiki"), SearchSpaces.all(), 10)).hasSize(1);
+    }
+
+    @Test
+    void attachmentsFollowTheirPageIntoAnotherSpace() {
+        files.put("att1", DocumentFixtures.pdf("Wartungsfenster Samstag"));
+        Assets assets = assets();
+        PageKey page = new PageKey("wiki", "101");
+        index.put(new PageTextIndex.Entry(page, "DEV", "Planung", "Seitentext", "sha256:p1"));
+        assets.harvest(list("101", attachment("att1", "betrieb.pdf", DocumentFixtures.PDF)));
+
+        index.put(new PageTextIndex.Entry(page, "OPS", "Planung", "Seitentext", "sha256:p2"));
+
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), new SearchSpaces(Set.of("OPS"), Set.of()), 10))
+                .extracting(PageTextIndex.Match::attachmentId).containsExactly("att1");
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), new SearchSpaces(Set.of("DEV"), Set.of()), 10))
+                .isEmpty();
+        assertThat(index.search("Wartungsfenster", Set.of("wiki"), new SearchSpaces(Set.of(), Set.of("DEV")), 10))
+                .hasSize(1);
+    }
+
     private KeywordSearch search(AccessGuard guard) {
         return new KeywordSearch(catalog(), guard, index, null);
     }
@@ -261,7 +310,11 @@ class AttachmentTextSearchTest {
     }
 
     private static PageAttachment attachment(String id, String title, String mediaType) {
-        return new PageAttachment(id, "test:wiki/attachment/" + id, title, mediaType, null, "1", null, null);
+        return attachment(id, title, mediaType, "1");
+    }
+
+    private static PageAttachment attachment(String id, String title, String mediaType, String version) {
+        return new PageAttachment(id, "test:wiki/attachment/" + id, title, mediaType, null, version, null, null);
     }
 
     private static PageAttachmentList list(String pageId, PageAttachment... attachments) {
@@ -274,7 +327,11 @@ class AttachmentTextSearchTest {
 
         @Override
         public AttachmentFile attachmentFile(PageAttachment attachment, long maxBytes) {
-            return new AttachmentFile(attachment, files.get(attachment.attachmentId()), NOW);
+            byte[] content = files.get(attachment.attachmentId());
+            if (content == null) {
+                throw new SourceAccessException("wiki", SourceAccessException.Reason.UNAVAILABLE, "weg", null);
+            }
+            return new AttachmentFile(attachment, content, NOW);
         }
 
         @Override

@@ -49,6 +49,10 @@ public interface PageTextIndex {
         return Optional.empty();
     }
 
+    /** Entfernt den Text eines Anhangs der Seite; ein unbekannter Anhang ist kein Fehler. */
+    default void removeAttachment(PageKey page, String attachmentId) {
+    }
+
     /** Entfernt die Anhänge der Seite, die nicht mehr zu ihr gehören; die Seite selbst bleibt. */
     default void retainAttachments(PageKey page, Set<String> attachmentIds) {
     }
@@ -71,7 +75,7 @@ public interface PageTextIndex {
     /**
      * Eine Seite im Index.
      *
-     * @param spaceKey    Space bzw. Partition der Seite
+     * @param spaceKey    Space bzw. Partition der Seite; ein anderer als bisher gilt auch für die Anhänge der Seite
      * @param inputSha256 Stand des Eintrags: Eingabe-Hash der Projektion samt Titel und Space
      */
     record Entry(PageKey key, String spaceKey, String title, String text, String inputSha256) {
