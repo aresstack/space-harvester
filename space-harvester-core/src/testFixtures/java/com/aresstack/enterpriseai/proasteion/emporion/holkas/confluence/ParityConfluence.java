@@ -37,6 +37,7 @@ import java.util.zip.ZipOutputStream;
  *       jeweils mit Vorschaubild {@code ablauf.png} und Quelldaten {@code ablauf}; Mermaid.</li>
  *   <li>Ausgeführte Makros: {@code include} und {@code excerpt-include} einer Seite aus einem anderen Space,
  *       {@code children}, Jira-Vorgang.</li>
+ *   <li>Erwähnungen mit Kennung im Storage und Namen in der Ansicht, dazu eine versteckte und eine eingebundene.</li>
  *   <li>Anhänge PDF und DOCX mit je einem Merksatz.</li>
  * </ul>
  */
@@ -49,7 +50,11 @@ public final class ParityConfluence {
     public static final String SCOPE_ROOT = "1002";
     /** Seite mit Anhängen, Inline-Bild, {@code inc-drawio} und Jira. */
     public static final String ATTACHMENTS_PAGE = "1011";
-    /** Alle Seiten des Space in Baumreihenfolge. */
+    /**
+     * Alle Seiten des Space, in der Tiefe zuerst und Geschwister in der Reihenfolge, in der {@link #install} sie
+     * anhängt. {@link FakeConfluence} liefert keine Position; der Core ordnet Geschwister ohne Position wie Confluence
+     * nach Titel, seine Kapitelreihenfolge weicht unter „Handbuch“ deshalb von dieser ab.
+     */
     public static final String[] PAGES = {"1001", "1002", "1003", "1005", "1006", "1007", "1008", "1004", "1009",
             "1010", "1011"};
     /** Tiefste Gliederungsebene unter dem Space (Handbuch = 1, Ebene 7 = 7). */
@@ -72,6 +77,19 @@ public final class ParityConfluence {
             "Satz Lima mit Symbol im Text.",
             "Satz Mike nach dem Symbol.",
     };
+
+    /**
+     * Erwähnungen ({@code ri:user}) mit dem Anzeigenamen der Ansicht (#413): Kennung im Storage und Name. „Architektur“
+     * erwähnt über die Benutzerkennung, die Ansicht trägt daneben eine versteckte Erwähnung; „Makros“ erwähnt nach dem
+     * gerenderten {@code include}, das selbst eine Erwähnung ({@link #INCLUDED_MENTION}) mitbringt. Beide zählen für
+     * die Zuordnung nicht.
+     */
+    public static final String[][] MENTIONS = {
+            {"8a7f0c1d", "Anna Schmidt"},
+            {"c0a8f00d", "Carla Conrad"},
+    };
+    public static final String HIDDEN_MENTION = "Versteckte Person";
+    public static final String INCLUDED_MENTION = "Bernd Wagner";
 
     /**
      * Sätze, die nur ein ausgeführtes Makro ({@code include}, {@code excerpt-include}) in die Seite „Makros“ bringt:
@@ -140,7 +158,8 @@ public final class ParityConfluence {
                         + macro("code", "<ac:parameter ac:name=\"language\">java</ac:parameter>"
                         + "<ac:plain-text-body><![CDATA[System.out.println(\"Delta\");]]></ac:plain-text-body>")
                         + "<p><ac:image ac:alt=\"Systembild\"><ri:attachment ri:filename=\"system.svg\"/>"
-                        + "</ac:image></p>",
+                        + "</ac:image></p>"
+                        + "<p>Ansprechpartnerin ist " + mention(MENTIONS[0][0]) + ".</p>",
                 "<p>Satz Charlie zur Architektur. Siehe <a href=\"https://example.org/doku\" class=\"external-link\">"
                         + "Dokumentation</a> und <a href=\"mailto:team@example.org\" class=\"external-link\">Team</a>."
                         + "</p>"
@@ -150,7 +169,9 @@ public final class ParityConfluence {
                         + "<div class=\"code panel pdl\"><div class=\"codeContent panelContent pdl\">"
                         + "<pre class=\"syntaxhighlighter-pre\" data-syntaxhighlighter-params=\"brush: java\">"
                         + "System.out.println(&quot;Delta&quot;);</pre></div></div>"
-                        + "<p>" + image("1002", "system.svg", "2001", "image/svg+xml", "Systembild", false) + "</p>");
+                        + "<p>" + image("1002", "system.svg", "2001", "image/svg+xml", "Systembild", false) + "</p>"
+                        + "<p><span class=\"hidden\">" + userLink("hidden", HIDDEN_MENTION) + "</span>"
+                        + "Ansprechpartnerin ist " + userLink("aschmidt", MENTIONS[0][1]) + ".</p>");
         confluence.child(HOME, "1002");
         confluence.attachment("att2001", "1002", "system.svg", "image/svg+xml", SYSTEM_SVG);
 
@@ -197,13 +218,16 @@ public final class ParityConfluence {
                         + " ri:content-title=\"Baustein\"/></ac:link></ac:parameter>")
                         + macro("excerpt-include", "<ac:parameter ac:name=\"\"><ac:link><ri:page"
                         + " ri:space-key=\"LIB\" ri:content-title=\"Baustein\"/></ac:link></ac:parameter>")
-                        + macro("children", ""),
+                        + macro("children", "")
+                        + "<p>Fragen an " + mention(MENTIONS[1][0]) + ".</p>",
                 "<p>Satz Golf vor den Makros.</p>"
-                        + rendered("include", "<p>" + MACRO_SENTENCES[0] + "</p>")
+                        + rendered("include", "<p>" + MACRO_SENTENCES[0] + " Von "
+                        + userLink("bwagner", INCLUDED_MENTION) + ".</p>")
                         + rendered("excerpt-include", "<p>" + MACRO_SENTENCES[1] + "</p>")
                         + rendered("children", "<ul class=\"childpages-macro\"><li>"
                         + "<a href=\"/wiki/spaces/PARITY/pages/1010/Juliett\" data-linked-resource-id=\"1010\""
-                        + " data-linked-resource-type=\"page\">Juliett</a></li></ul>"));
+                        + " data-linked-resource-type=\"page\">Juliett</a></li></ul>")
+                        + "<p>Fragen an " + userLink("cconrad", MENTIONS[1][1]) + ".</p>");
         confluence.child(HOME, "1009");
         page(confluence, "1010", "Juliett", "<p>Satz Juliett.</p>", "<p>Satz Juliett.</p>");
         confluence.child("1009", "1010");
@@ -334,6 +358,17 @@ public final class ParityConfluence {
     private static String macro(String name, String parameters) {
         return "<ac:structured-macro ac:name=\"" + name + "\" ac:schema-version=\"1\">" + parameters
                 + "</ac:structured-macro>";
+    }
+
+    /** Eine Erwähnung im Storage über die Benutzerkennung. */
+    private static String mention(String userKey) {
+        return "<ac:link><ri:user ri:userkey=\"" + userKey + "\"/></ac:link>";
+    }
+
+    /** Eine Erwähnung in der Ansicht, wie Confluence sie rendert. */
+    private static String userLink(String username, String name) {
+        return "<a class=\"confluence-userlink user-mention\" data-username=\"" + username + "\""
+                + " href=\"/wiki/display/~" + username + "\">" + name + "</a>";
     }
 
     /** Ein von Confluence gerendertes Makro in der Leseansicht. */
