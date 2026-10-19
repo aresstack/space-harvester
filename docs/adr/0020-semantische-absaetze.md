@@ -79,7 +79,7 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
    `analysis=headings` und Grund: `no-model`, `no-sentence-model` (kein OpenNLP-Satzmodell, wie `NO_SENTENCE_MODEL`
    im Client: kein Clustern über Absätze aus dem Regel-Splitter), `source-not-approved`, `not-embedded` (wird
    wiederholt, sobald die Embeddings da sind), `indexing-failed` (Embeddings dieses Textes gescheitert, wie
-   `INDEXING_FAILED`; wird ebenso wiederholt), `no-topic-change`, `model-unavailable`. Bei `analysis=semantic` heißt
+   `INDEXING_FAILED`; gilt bis zum Wechsel von Text oder Modell), `no-topic-change`, `model-unavailable`. Bei `analysis=semantic` heißt
    `model-unavailable`, dass das Chat-Modell nicht benennen konnte (Punkt 6). Ein nicht erreichbares Modell ist nie
    ein Fehler der Anfrage.
 5. **Lesen** über `Harvester.documentNavigation().page(caller, sourceId, pageId)` → `DocumentNavigationView(state,

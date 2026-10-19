@@ -94,6 +94,18 @@ class LocalFileGrantsTest {
         }
     }
 
+    @Test
+    void aFileAsGrantedFolderGrantsNothingAndIsNoErrorWhenSaved() {
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        KnowledgeSourceHarvestSource source = open(new LocalFilesSourceAdapter(
+                () -> manager.current().configuration().localFiles().grants()));
+
+        assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withLocalFiles(new LocalFileSettings(false,
+                List.of(elsewhere.resolve("plan.md"))))).outcome()).isEqualTo(ConfigurationManager.Outcome.ACTIVATED);
+
+        assertThatThrownBy(() -> source.storedPage(id("plan.md"))).isInstanceOf(SourceAccessException.class);
+    }
+
     private KnowledgeSourceHarvestSource open(LocalFilesSourceAdapter adapter) {
         SourceSettingsConfig config = new SourceSettingsConfig("docs", "files", null, null, null,
                 Map.of("directory", directory.toString()));
