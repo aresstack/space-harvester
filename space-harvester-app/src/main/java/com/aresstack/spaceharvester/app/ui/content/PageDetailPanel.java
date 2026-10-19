@@ -950,8 +950,8 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** Grund im Anhang-Viewer, solange die Quelle einen Einmalcode verlangt; danach lädt die Seite neu. */
-    static final String SIGN_IN_PENDING = "Die Quelle verlangt einen Einmalcode. Bitte oben eingeben, danach lädt "
-            + "die Seite neu.";
+    static final String SIGN_IN_PENDING = "Für diesen Anhang ist eine zusätzliche Anmeldung (Einmalcode) "
+            + "erforderlich.";
 
     /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
     private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,

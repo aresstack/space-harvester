@@ -63,8 +63,9 @@ final class ReadingPane extends JPanel {
     static final int MAX_WIDTH = 720;
     /** Höchstens so viele Bilder je Seite; weitere erscheinen als Platzhalter. */
     static final int MAX_IMAGES = 200;
-    /** Platzhalter eines Bilds, für das die Quelle einen Einmalcode verlangt; das Formular steht über der Seite. */
-    static final String SIGN_IN_PENDING = "Einmalcode nötig (oben eingeben): ";
+    /** Platzhalter eines Bilds, für das die Quelle einen Einmalcode verlangt; Text wie im EAC. */
+    static final String SIGN_IN_PENDING = "Für dieses Bild ist eine zusätzliche Anmeldung (Einmalcode) "
+            + "erforderlich: ";
     /** Adressraum der vorab geladenen Bilder; {@code .invalid} wird nie aufgelöst. */
     private static final String IMAGE_BASE = "http://reading.invalid/image/";
     private static final Set<String> REMOVED = Set.of("script", "style", "link", "meta", "iframe", "frame", "object",
