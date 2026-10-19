@@ -528,9 +528,10 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
-            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
+            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
+            // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared());
+                    TikaDocumentText.shared(), textIndex);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);

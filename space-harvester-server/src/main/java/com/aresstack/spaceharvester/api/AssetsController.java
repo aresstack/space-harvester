@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Asset;
 import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
+import com.aresstack.spaceharvester.application.assets.AssetText;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
@@ -149,6 +150,38 @@ public class AssetsController {
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
         return download(assets.preview(list, attachmentId, preview, mayStore), ifNoneMatch);
+    }
+
+    @GetMapping("/{attachmentId}/text")
+    @Operation(summary = "Text eines Dokument-Anhangs",
+            description = "Der Text der aktuellen Version (#183; PDF, Word, Excel, PowerPoint, OpenDocument, RTF, "
+                    + "Markdown, Klartext über Apache Tika): aus der Ablage oder, falls es für diese Bytes und diese "
+                    + "Extraktion noch keinen gibt, gelesen. Wie bei content legt nur ab, wer sync hat; dann kommt der "
+                    + "Text auch in den Volltextindex der Seite. Bilder, Grafiken und Diagrammdaten haben hier keinen "
+                    + "Text. Freigabe content.")
+    @ApiResponse(responseCode = "200", description = "Text des Anhangs")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle, Seite oder Anhang, oder nicht sichtbar")
+    @ApiResponse(responseCode = "415", description = "Kein lesbares Dokument (document-text-unsupported)")
+    @ApiResponse(responseCode = "422", description = "Dokument defekt, verschlüsselt oder für die Extraktion zu groß "
+            + "(document-text-failed, document-text-too-large)")
+    @ApiResponse(responseCode = "429", description = "Zu viele Extraktionen gleichzeitig (document-text-busy)")
+    @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder der "
+            + "Anhang ist größer als space-harvester.assets.max-size (asset-too-large)")
+    @ApiResponse(responseCode = "503", description = "Keine Extraktion konfiguriert oder Zeit abgelaufen "
+            + "(document-text-not-configured, document-text-timeout)")
+    public AssetTextResponse text(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
+            @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId) {
+        requireAttachmentId(sourceId, attachmentId);
+        PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        AssetText text = assets.text(list, attachmentId, mayStore);
+        PageAttachment attachment = list.attachments().attachments().stream()
+                .filter(a -> a.attachmentId().equals(attachmentId)).findFirst().orElseThrow();
+        return AssetTextResponse.of(attachment, text);
     }
 
     private static AttachmentPreview previewKind(String kind) {
@@ -314,6 +347,23 @@ public class AssetsController {
         static HarvestEntry of(AssetHarvest.Entry entry) {
             return new HarvestEntry(entry.attachmentId(), entry.status(),
                     entry.asset() == null ? null : StoredAsset.of(entry.asset()), entry.code());
+        }
+    }
+
+    /**
+     * Text eines Dokument-Anhangs.
+     *
+     * @param sha256    Inhalt, aus dem der Text gelesen ist
+     * @param extractor Kennung und {@code extractorVersion} Version der Extraktion
+     * @param truncated ob der Text an der Zeichengrenze der Extraktion abgeschnitten wurde
+     */
+    public record AssetTextResponse(String attachmentId, @Schema(nullable = true) String version, String title,
+                                    String sha256, String extractor, String extractorVersion, boolean truncated,
+                                    Instant createdAt, String text) {
+
+        static AssetTextResponse of(PageAttachment attachment, AssetText text) {
+            return new AssetTextResponse(attachment.attachmentId(), attachment.version(), attachment.title(),
+                    text.sha256(), text.extractor(), text.version(), text.truncated(), text.createdAt(), text.text());
         }
     }
 
