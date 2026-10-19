@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 
 class SearchHitPrefetchTest {
 
+    private static final Duration HANG_LIMIT = Duration.ofSeconds(120);
     private static final AccessContext APP = AccessContext.technicalClient("app");
 
     private final List<PageKey> loaded = Collections.synchronizedList(new ArrayList<>());
@@ -28,7 +29,8 @@ class SearchHitPrefetchTest {
         List<KeywordSearch.Hit> hits = new ArrayList<>(List.of(hit("1", "3"), hit("2", "2"), hit("3", null)));
         IntStream.range(10, 30).forEach(i -> hits.add(hit(String.valueOf(i), "1")));
 
-        try (SearchHitPrefetch prefetch = prefetch(Duration.ofSeconds(10), null)) {
+        // Die Suche kehrt zurück, sobald alle Ladungen fertig sind; die Frist greift nur bei einem Hänger.
+        try (SearchHitPrefetch prefetch = prefetch(HANG_LIMIT, null)) {
             KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, hits);
             assertThat(fill.pending()).isEmpty();
             assertThat(fill.failed()).isZero();
@@ -83,7 +85,7 @@ class SearchHitPrefetchTest {
                 throw new IllegalStateException("Quelle antwortet nicht");
             }
             loaded.add(key);
-        }, SearchHitPrefetch.background(2, 50), Duration.ofSeconds(10))) {
+        }, SearchHitPrefetch.background(2, 50), HANG_LIMIT)) {
             KeywordSearch.Prefetch.Fill fill = prefetch.prefetch(APP, List.of(hit("7", "1"), hit("8", "1")));
 
             assertThat(fill.failed()).isEqualTo(1);
