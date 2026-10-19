@@ -106,6 +106,8 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     /** Stapel, mit dem die Titelsuche Partitionen ohne eigene Suche durchgeht. */
     private static final int TITLE_SCAN_BATCH = 500;
 
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(KnowledgeSourceHarvestSource.class);
+
     private final String id;
     private final String type;
     private final String title;
@@ -482,6 +484,10 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             if (resource != null) {
                 pageIds.add(nativeId(resource.id()));
             }
+        }
+        if (found.size() >= restriction.maxResources()) {
+            // Wie im Client begrenzt maxResources den Umfang; Seiten jenseits davon fallen aus dem Katalog.
+            LOG.warn("Discovery der Quelle {} hat die Obergrenze maxResources erreicht ({} Seiten)", id, found.size());
         }
         Set<String> complete = Set.copyOf(pageIds);
         inScope = complete;

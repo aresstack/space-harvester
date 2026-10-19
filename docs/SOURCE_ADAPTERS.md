@@ -69,7 +69,7 @@ an; ohne eigene Angabe gelten der Typname, `false`, `null`, keine Felder und `no
 |---|---|---|
 | `partitions()` | `KnowledgeSourcePort.partitions()` | alle sichtbaren Spaces |
 | `pageMetadata(space, cursor, limit)` | `PartitionListingSource` | alle Seiten eines Space ohne Inhalt, mit Cursor (#5) |
-| `outsideScope(pageId)` | `KnowledgeSourcePort.discover(scope)` | Seite außerhalb von `startPoints`/`maxDepth` laut der letzten vollständigen Discovery; der Abgleich entfernt sie wie eine gelöschte (nur Confluence mit eigenen Startpunkten, sonst immer `false`) |
+| `outsideScope(pageId)` | `KnowledgeSourcePort.discover(scope)` | Seite außerhalb von `startPoints`/`maxDepth` laut der letzten vollständigen Discovery; der Abgleich entfernt sie wie eine gelöschte (nur Confluence mit eigenen Startpunkten, sonst immer `false`); wie im Client stehen Seiten jenseits von `maxResources` nicht im Katalog, erreicht die Discovery die Grenze, warnt das Log mit Quell-ID und Anzahl |
 | `pageMetadata(pageId)` | `ResourceMetadataSource` | eine Seite ohne Inhalt, unabhängig vom Space (#6) |
 | `storedPage(pageId)` | `StoredContentSource` | native Antwort Byte für Byte mit Kopfdaten aus derselben Antwort (#8) |
 | `attachments(pageId)` | `AttachmentListSource` | alle Anhänge einer Seite als Metadaten, auch nicht eingebettete, mit allen Listenantworten Byte für Byte; nie Dateibytes (#9) |
