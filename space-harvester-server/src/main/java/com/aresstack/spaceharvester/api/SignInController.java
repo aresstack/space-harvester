@@ -64,7 +64,7 @@ public class SignInController {
             description = "accepted: die wartenden Aufträge laden weiter; rejected: die Quelle hat den Code nicht "
                     + "angenommen, error nennt den Grund; failed: Senden gescheitert; gone: keine offene Anforderung.")
     @ApiResponse(responseCode = "200", description = "AnswerResponse")
-    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet")
+    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet oder die der Aufrufer hält")
     public ResponseEntity<AnswerResponse> submit(@Parameter(hidden = true) AccessContext caller,
                                                  @PathVariable String requestId, @RequestBody CodeRequest body) {
         char[] code = body == null || body.code() == null ? new char[0] : body.code();
@@ -86,7 +86,7 @@ public class SignInController {
     @PostMapping("/{requestId}/resend")
     @Operation(summary = "Code erneut anfordern", description = "Nur wenn resendAvailable.")
     @ApiResponse(responseCode = "200", description = "SignInResponse")
-    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet")
+    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet oder die der Aufrufer hält")
     @ApiResponse(responseCode = "502", description = "Die Quelle hat nicht geantwortet")
     public ResponseEntity<SignInResponse> resend(@Parameter(hidden = true) AccessContext caller,
                                                  @PathVariable String requestId) {
@@ -105,7 +105,7 @@ public class SignInController {
     @Operation(summary = "Anmeldung ablehnen",
             description = "Die wartenden Aufträge laden ohne diese Dateien weiter; sie fehlen mit sign-in-required.")
     @ApiResponse(responseCode = "204", description = "Abgelehnt")
-    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet")
+    @ApiResponse(responseCode = "404", description = "Keine Anforderung, auf die ein eigener Auftrag wartet oder die der Aufrufer hält")
     public ResponseEntity<Void> decline(@Parameter(hidden = true) AccessContext caller,
                                         @PathVariable String requestId) {
         if (own(caller, requestId).isEmpty() || !signIns.decline(requestId)) {
@@ -121,9 +121,13 @@ public class SignInController {
         return signIns.request(requestId).flatMap(request -> visible(caller, request));
     }
 
-    /** Die Anforderung mit den eigenen wartenden Aufträgen; leer, wenn keiner davon dem Aufrufer gehört. */
+    /**
+     * Die Anforderung mit den eigenen wartenden Aufträgen, oder ohne Aufträge, wenn der Aufrufer sie beim Lesen auf
+     * Abruf angelegt hat ({@link SignInRequests#ownedBy}); leer, wenn beides nicht zutrifft.
+     */
     private Optional<SignInResponse> visible(AccessContext caller, SignInRequest request) {
         String owner = ExportsController.owner(caller);
+        boolean held = signIns.ownedBy(request.id(), owner);
         List<String> own = request.jobIds().stream().filter(jobId -> {
             try {
                 return owner.equals(jobs.status(jobId).owner());
@@ -131,7 +135,7 @@ public class SignInController {
                 return false;
             }
         }).toList();
-        return own.isEmpty() ? Optional.empty() : Optional.of(SignInResponse.of(request, own));
+        return own.isEmpty() && !held ? Optional.empty() : Optional.of(SignInResponse.of(request, own));
     }
 
     /** @param code der Einmalcode; wird nach dem Senden überschrieben */

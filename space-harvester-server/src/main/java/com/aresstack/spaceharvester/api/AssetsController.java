@@ -104,6 +104,8 @@ public class AssetsController {
     @ApiResponse(responseCode = "200", description = "Inhalt des Anhangs")
     @ApiResponse(responseCode = "304", description = "Inhalt unverändert (If-None-Match)")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle, Seite oder Anhang, oder nicht sichtbar")
+    @ApiResponse(responseCode = "403", description = "Die Quelle verlangt einen Einmalcode (sign-in-required); die "
+            + "Antwort nennt signInRequestId für /api/v1/sign-ins")
     @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder der "
             + "Anhang ist größer als space-harvester.assets.max-size (asset-too-large)")
     public ResponseEntity<byte[]> content(
@@ -117,7 +119,7 @@ public class AssetsController {
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         // Nur wer sync hat, legt beim Lesen auch ab; alle anderen bekommen die Datei, ohne die Ablage zu füllen.
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return download(assets.content(list, attachmentId, mayStore), ifNoneMatch);
+        return download(assets.content(list, attachmentId, mayStore, ExportsController.owner(caller)), ifNoneMatch);
     }
 
     @GetMapping(path = "/{attachmentId}/preview", produces = MediaType.ALL_VALUE)
@@ -130,6 +132,8 @@ public class AssetsController {
     @ApiResponse(responseCode = "200", description = "Vorschau als PDF oder Bild")
     @ApiResponse(responseCode = "304", description = "Inhalt unverändert (If-None-Match)")
     @ApiResponse(responseCode = "400", description = "Unbekannte Vorschauart (invalid-query)")
+    @ApiResponse(responseCode = "403", description = "Die Quelle verlangt einen Einmalcode (sign-in-required); die "
+            + "Antwort nennt signInRequestId für /api/v1/sign-ins")
     @ApiResponse(responseCode = "404", description = "Unbekannte Quelle, Seite oder Anhang, nicht sichtbar, oder die "
             + "Quelle hat für diesen Typ keine Vorschau")
     @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder die "
@@ -149,7 +153,8 @@ public class AssetsController {
         AttachmentPreview preview = previewKind(kind);
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return download(assets.preview(list, attachmentId, preview, mayStore), ifNoneMatch);
+        return download(assets.preview(list, attachmentId, preview, mayStore, ExportsController.owner(caller)),
+                ifNoneMatch);
     }
 
     @GetMapping("/{attachmentId}/text")

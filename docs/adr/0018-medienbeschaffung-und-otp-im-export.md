@@ -52,6 +52,11 @@ fehlendes Bild; er profitiert nur von einer vorher in der Leseansicht freigescha
    `OneTimeCodePrompt` im Enterprise AI Client), Phase „Wartet auf Anmeldung“. Bereits abgelegte Bilder bleiben.
    Nach der Annahme lädt er dieselbe Datei neu und macht weiter. Je Quelle gibt es eine Anforderung, weil die Sitzung
    für die ganze Quelle gilt; weitere Aufträge derselben Quelle warten auf dieselbe.
+   Beim Lesen auf Abruf (Leseansicht-Bild, Anhang, Vorschau) wartet niemand: `Assets` legt dieselbe Anforderung je
+   Quelle an oder übernimmt sie (`SignInRequests.open`, gehalten bis zum Ende der Wartezeit), antwortet mit
+   `SignInPendingException` (REST 403 `sign-in-required` mit `signInRequestId`) und liest nach der Annahme erneut.
+   Schlüssel ist die Quelle, weil die Sitzung der Quelle geteilt ist; mit Sitzungen je Benutzer wäre er Quelle und
+   Benutzer.
 4. **Ohne Anmeldung** (abgelehnt, Wartezeit abgelaufen, oder keine Oberfläche: Wartezeit null, der Standard im
    Core und im Server, bis eine Eingabemaske sie setzt; empfohlen 15 min) fehlen die übrigen Dateien des Laufs mit
    `SIGN_IN_REQUIRED`, ohne erneut zu warten. Nachholen startet einen neuen Lauf (`collectImages`); schon abgelegte
