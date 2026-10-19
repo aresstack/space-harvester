@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Gemeinsame Schranke für große Dateien in {@link Assets}: Jede Datei liegt beim Laden, Ablegen, Lesen aus der Ablage,
@@ -114,6 +115,27 @@ public final class LargeFileGate {
         return new Permit(this);
     }
 
+    /**
+     * Wie {@link #enter}, aber für einen Platz, der den Thread wechselt, etwa bis zum Ende einer gestreamten Antwort:
+     * ohne Wiedereintritt, aus jedem Thread schließbar. Nie aufrufen, während derselbe Thread schon einen Platz hält.
+     */
+    public Permit detached(String sourceId, Long size) {
+        if (!large(size)) {
+            return NONE;
+        }
+        try {
+            if (!permits.tryAcquire(maxWait.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new SourceAccessException(sourceId, SourceAccessException.Reason.RATE_LIMITED,
+                        "Zu viele gleichzeitige große Dateien", null);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNAVAILABLE,
+                    "Warten auf große Datei abgebrochen", e);
+        }
+        return new Permit(this, true);
+    }
+
     private void exit() {
         int[] held = depth.get();
         held[0]--;
@@ -127,17 +149,26 @@ public final class LargeFileGate {
     public static final class Permit implements AutoCloseable {
 
         private final LargeFileGate gate;
-        private boolean closed;
+        private final boolean detached;
+        private final AtomicBoolean closed = new AtomicBoolean();
 
         private Permit(LargeFileGate gate) {
+            this(gate, false);
+        }
+
+        private Permit(LargeFileGate gate, boolean detached) {
             this.gate = gate;
+            this.detached = detached;
         }
 
         @Override
         public void close() {
-            if (gate != null && !closed) {
-                closed = true;
-                gate.exit();
+            if (gate != null && closed.compareAndSet(false, true)) {
+                if (detached) {
+                    gate.permits.release();
+                } else {
+                    gate.exit();
+                }
             }
         }
     }

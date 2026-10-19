@@ -124,6 +124,18 @@ public class Enrichments {
         return store;
     }
 
+    /** Ob es den Prozessor gibt und er die Seite bearbeitet ({@link EnrichmentProcessor#appliesTo}). */
+    public boolean appliesTo(String processorId, PageKey key) {
+        EnrichmentProcessor processor = processors.get(processorId);
+        return processor != null && processor.appliesTo(key);
+    }
+
+    /** Die aktuelle Version des Prozessors ({@link EnrichmentProcessor#version()}); leer, wenn es ihn nicht gibt. */
+    public Optional<String> version(String processorId) {
+        EnrichmentProcessor processor = processors.get(processorId);
+        return processor == null ? Optional.empty() : Optional.of(processor.version());
+    }
+
     /** Die Kennungen der Prozessoren in Ausführungsreihenfolge. */
     public List<String> processorIds() {
         return List.copyOf(processors.keySet());

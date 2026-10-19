@@ -139,10 +139,63 @@ class HarvesterReleaseChangeTest {
 
             awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id) && withoutEmbedding(harvester, id)
                     && navigationNotApproved(harvester, id)), "Rückfall ohne Modell");
-            // Nur die Berechnung, die vor dem Entzug schon lief, fragt das Modell (auch mehrmals) zu Ende; keine
-            // eingereihte Seite fragt es danach.
-            assertThat(calledPages.getFirst()).isIn(PAGES);
-            assertThat(calledPages).hasSize(calls.get()).containsOnly(calledPages.getFirst());
+            // Nur Berechnungen, die vor dem Entzug schon liefen, fragen das Modell (auch mehrmals) zu Ende; keine
+            // eingereihte Seite fragt es danach. Laufen können vor dem Entzug höchstens zwei, je eine im Hintergrund der
+            // Anreicherungen und im Lauf des Freigabewechsels (Prozessoren, die dort nicht im Hintergrund rechnen); jede
+            // hängt ab ihrem ersten Aufruf am Tor. Welche Seiten das sind, hängt an der Reihenfolge der Threads, nicht
+            // am Ablauf.
+            assertThat(calledPages).hasSize(calls.get()).isNotEmpty().allSatisfy(page -> assertThat(page).isIn(PAGES));
+            assertThat(Set.copyOf(calledPages)).as("Seiten mit Modellaufruf").hasSizeLessThanOrEqualTo(2);
+        }
+    }
+
+    @Test
+    void aRevocationWhileStoppedTakesEffectAtTheNextStartWithoutTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung mit Modell");
+        }
+        calls.set(0);
+
+        // Entzug, während der Dienst nicht läuft: Der Start gleicht aus den gespeicherten Ergebnissen ab.
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id)
+                    && withoutEmbedding(harvester, id) && navigationNotApproved(harvester, id)), "Rückfall beim Start");
+            assertThat(calls).hasValue(0);
+        }
+    }
+
+    @Test
+    void aReleaseWhileStoppedTakesEffectAtTheNextStartWithTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id)), "Absätze nach Struktur");
+        }
+        assertThat(calls).hasValue(0);
+
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung beim Start");
+            assertThat(calls.get()).isGreaterThanOrEqualTo(PAGES.size());
+        }
+    }
+
+    @Test
+    void atTheStartOnlyPagesThatDoNotFitTheReleaseCallTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung mit Modell");
+            // Wie ein abgebrochener Lauf: einer Seite fehlt das Embedding.
+            harvester.enrichments().store().remove(new PageKey("wiki", PAGES.getLast()), "embedding");
+        }
+        calls.set(0);
+        calledPages.clear();
+
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            // Der Abgleich geht die Seiten in ihrer Reihenfolge durch; ist die letzte neu gerechnet, ist über die
+            // anderen entschieden.
+            awaitTrue(() -> withModel(harvester, PAGES.getLast()), "Neuberechnung der unvollständigen Seite");
+            assertThat(calledPages).isNotEmpty().containsOnly(PAGES.getLast());
+            assertThat(PAGES).allMatch(id -> withModel(harvester, id));
         }
     }
 
@@ -204,12 +257,15 @@ class HarvesterReleaseChangeTest {
         return passages && embedding && navigation;
     }
 
-    /** Wartet mit Frist, ohne feste Pause: jede Prüfung liest den Stand der Ablage neu. */
+    /**
+     * Wartet auf den Stand der Ablage, ohne feste Pause: jede Prüfung liest ihn neu. Die 120 s gelten nur gegen Hänger,
+     * unter CI-Last darf das Rechnen länger dauern.
+     */
     private static void awaitTrue(BooleanSupplier condition, String what) throws InterruptedException {
-        Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
+        Instant deadline = Instant.now().plus(Duration.ofSeconds(120));
         while (!condition.getAsBoolean()) {
             if (Instant.now().isAfter(deadline)) {
-                throw new AssertionError(what + " nach 30 s nicht erreicht");
+                throw new AssertionError(what + " nach 120 s nicht erreicht");
             }
             Thread.sleep(20);
         }

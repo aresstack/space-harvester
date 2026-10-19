@@ -26,6 +26,8 @@ System.out.println("Delta");
 
 ![Systembild](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAE0lEQVR4XmP4jwMwoAvAwOCUAAC6Hr9BwiIU8gAAAABJRU5ErkJggg==)
 
+Ansprechpartnerin ist Anna Schmidt.
+
 ## Komponenten
 
 ### Komponenten

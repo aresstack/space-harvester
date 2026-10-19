@@ -241,8 +241,11 @@ public class TermRelationsController {
         return ResponseEntity.accepted().body(RefreshJobResponse.of(jobs.cancel(jobId, caller.jobOwner())));
     }
 
-    /** Nur eigene Aufträge der Anreicherung ohne Space; andere gelten als unbekannt. */
+    /** Nur eigene Aufträge der KI-Akronymauflösung; andere Anreicherungsaufträge gelten als unbekannt. */
     private JobStatus ownRefresh(AccessContext caller, String jobId) {
+        if (!resolution.started(jobId)) {
+            throw new UnknownJobException(jobId);
+        }
         JobStatus job = jobs.status(jobId, caller.jobOwner());
         if (job.type() != JobType.ENRICHMENT || job.partitionKey() != null) {
             throw new UnknownJobException(jobId);

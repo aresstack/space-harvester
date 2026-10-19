@@ -153,9 +153,11 @@ zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und sch
 `source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
 bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
 
-Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung, noch nicht die Auslieferung: Bei
-REST-Abrufen von Inhalt und Vorschau sowie im Export ist der Platz frei, sobald die Datei gelesen ist, die Bytes liegen
-danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
+Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung. Ein abgelegter Anhang geht über
+`GET …/assets/{id}/content` als Strom aus der Ablage an den Client und hält seinen Platz, bis die Antwort geschrieben
+oder abgebrochen ist; die Antwort hat keine Content-Length, und passt der Inhalt am Ende nicht zu seinem Hash, bricht
+sie ab, statt als vollständig zu gelten. Bei Vorschauen und im Export ist der Platz frei, sobald die Datei gelesen ist,
+die Bytes liegen danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
 dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
 der Schranke erfasst.
 
@@ -174,6 +176,14 @@ dort fest 30 s.
   mehr bei vielen gleichzeitigen Nutzern); Download, Hash, Ablage und Auslieferung arbeiten auf demselben
   `byte[]`, die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
   Wer `max-size` oder `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
+- **Kopien:** Der Confluence-Transport legt einen erfolgreichen Körper gleich in der angekündigten Länge an, das
+  JSON-Paket liest jede Datei erst beim Schreiben, und Export-Bilder übernehmen ihre Bytes ohne Kopie. Eine Kopie
+  bleibt in `ConfluenceHttpResponse` aus dem Enterprise AI Client (Konstruktor und `body()`; Vorschlag als
+  Upstream-Patch 08).
+- **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
+  keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
+  Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
+  Textes bräuchte eine Änderung dort.
 
 ## Reihenfolge der Quellen
 
@@ -201,6 +211,10 @@ Konfiguration, lässt sie von den betroffenen Komponenten vorbereiten und aktivi
 Aufträge benutzen danach die neue Konfiguration, laufende enden mit der bisherigen. Ist etwas ungültig oder lehnt eine
 Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bisherige Version wirksam.
 
+Das gilt auch für Proxy, PAC und TLS: Eine Umstellung bricht keinen laufenden Auftrag ab. Seitenabrufe, die gerade
+laufen oder auf eine freie Verbindung warten, enden noch über den bisherigen Weg. Erst die folgenden Abrufe nehmen die
+neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konfiguration-zur-laufzeit.md)).
+
 **Eine geänderte YAML-Datei allein löst nichts aus.** Weder Spring Boot noch der Core beobachten die Datei. Im Server
 übernimmt nur ein ausdrücklicher Weg die neue Konfiguration; die App übergibt sie beim Speichern der Einstellungen.
 
@@ -227,7 +241,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
-| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
+| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) samt Ergebnis-Cache der KI-Akronymauflösung (#122, `ai-cache.json`: nur Fingerabdrücke und Beziehungs-IDs, Auslösung über `POST /api/v1/term-relations/refresh?sourceId=` mit `{"kind":"acronym"}`, Auftrag unter `/api/v1/term-relations/refresh-jobs/{id}`) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
 ### Regeln je Quelle
 
@@ -336,9 +350,11 @@ veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte we
 Quelle geladen.
 
 **Embedding je Absatz (#181, PR #388):** Mit Embedding-Modell bettet der Prozessor `embedding` je semantischem Absatz
-ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Ein Absatz über
-`ai.embedding-chunk-chars` Zeichen wird wie bisher geteilt; Budget und Überlappung der Zerlegung
-(`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
+ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Wie im Client wird
+ein Absatz nur nach Tokens begrenzt; nur mit gesetztem `ai.embedding-chunk-chars` (Standard 0, ohne Zeichengrenze) wird
+ein Absatz darüber geteilt. Der Umstieg auf diese Standards bettet vorhandene Seiten beim nächsten Start einmal im gedrosselten
+Hintergrund neu ein; bis dahin findet die Relevanzsuche eine solche Seite nur über ihre Schlagworte. Budget und
+Überlappung der Zerlegung (`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
 Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
 Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
 diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embedding-model` und der Freigabe
@@ -355,7 +371,13 @@ neuen Abruf von der Quelle, ohne neue Version und ohne 503. Neu freigegeben rech
 Absätze und Navigation nach Struktur (`source-not-approved`), die Embeddings der Quelle entfallen. Ob eine Berechnung
 das Modell fragen darf, prüft ihre Ausführung: Ab dem Aktivieren eines Entzugs fragt auch keine schon eingereihte
 Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. `images`
-rechnet nur auf Abruf und prüft die Freigabe dann. Das Log nennt nur Quelle und Anzahl der Seiten.
+rechnet nur auf Abruf und prüft die Freigabe dann; schon gespeicherte Bildbeschreibungen bleiben nach einem Entzug
+lesbar (nur mit den Rechten an der Seite), neue entstehen erst nach erneuter Freigabe. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
+ein Lauf ab, gleicht der Start das einmal im selben Hintergrund ab, allein aus den gespeicherten Ergebnissen: Nur
+Seiten, die nicht zur Freigabe passen (nicht freigegeben, aber mit Embedding oder ohne `source-not-approved`;
+freigegeben, aber mit `source-not-approved` oder ohne Ergebnis eines Prozessors, der für die Seite gilt), rechnen neu,
+und nur mit den Prozessoren, deren Ergebnis nicht passt. Das Log nennt nur Quelle und Anzahl der
+Seiten.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
 mit dem abgelehnten Wert.

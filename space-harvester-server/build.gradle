@@ -64,6 +64,9 @@ tasks.withType(AbstractArchiveTask).configureEach {
 tasks.named('test') {
     useJUnitPlatform()
     workingDir = rootProject.projectDir
+    // Die zwischengespeicherten Spring-Kontexte der Servertests füllen den Gradle-Standard von 512 MiB fast ganz
+    // (Old Gen 99 %); einzelne Läufe endeten im OutOfMemoryError des Testprozesses.
+    maxHeapSize = '1g'
     // Bilder der Folgeaufträge nie ins Arbeitsverzeichnis (Standard data/assets); Tests mit eigenem Ordner gewinnen.
     systemProperty 'space-harvester.assets.directory', layout.buildDirectory.dir('test-assets').get().asFile.path
     systemProperty 'space-harvester.term-relations.directory',
