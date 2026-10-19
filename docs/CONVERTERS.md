@@ -52,7 +52,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 
 ## Analyse-Export (#359)
 
-`format=analysis` schreibt `analysis.json` (Schema `space-harvester/analysis-export/v1`, Converter `analysis/1`):
+`format=analysis` schreibt `analysis.json` (Schema `space-harvester/analysis-export/v1`, Converter `analysis/2`):
 alle Analysedaten der exportierten Seiten, getrennt von den Originaldaten. Am sinnvollsten auf Abruf über die
 Konvertierung eines fertigen Exports (`ExportConversions.convert(…, "analysis", …)`, App: Knopf „Analyse“); dann
 entsteht die Datei erst beim Klick.
@@ -71,8 +71,16 @@ entsteht die Datei erst beim Klick.
                           "review": "UNREVIEWED", "state": "CURRENT", "processorId": "acronyms",
                           "processorVersion": "2", "inputSha256": "sha256:…", "revision": "3",
                           "payload": { … }, "arguments": [{ "role": "SHORT_FORM", "ordinal": 0, "value": "api" }],
-                          "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }] }] }
+                          "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }],
+              "images": [{ "attachmentId": "att1", "title": "plan.png", "mediaType": "image/png",
+                           "sha256": "sha256:…", "describer": "openai-compatible-vision-v1", "modelVersion": "…",
+                           "createdAt": "…", "description": "…" }] }] }
 ```
+
+`images` nennt jedes exportierte Bild der Seite (`assets.json`), für dessen Bytes das eingestellte Vision-Modell schon
+eine Beschreibung abgelegt hat, auch ein einzeln beschriebenes ohne Bildanalyse der Seite (ADR 0021). Über `sha256`
+gehört sie genau zu den exportierten Bytes; ohne beschaffte Bilder oder ohne Beschreibung bleibt die Liste leer.
+Beschrieben wird dabei nichts.
 
 - **Zuordnung.** Je Seite `sourceId`, `spaceKey`, `pageId`, die exportierte `revision` und `rawSha256` wie in
   `pages.json`; `inputSha256` ist der Eingabe-Hash dieser Version, wie ihn die Prozessoren bekämen. Seiten linear in
