@@ -38,6 +38,8 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
 import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -136,6 +138,7 @@ import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
@@ -332,7 +335,8 @@ public final class Harvester implements AutoCloseable {
                                 ai::mayProcessExternally);
             }
             this.embeddingModel = model;
-            if (embedding != null) {
+            if (embedding != null || builder.statements.enabled()) {
+                // Auch die Satzanalyse (#108) rechnet über das Netz: nie im Abgleich selbst.
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -357,6 +361,16 @@ public final class Harvester implements AutoCloseable {
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);
             processors.add(new ImageProcessor(() -> describer));
+            if (builder.statements.enabled()) {
+                // #108: Satzanalyse über das Chat-Modell (ai.chat-model) der wirksamen Konfiguration, zusätzlich zu
+                // entities/activities/relations, im Hintergrund und nur für Quellen in external-processing-sources.
+                StatementSettings statementSettings = builder.statements;
+                StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
+                        catalog, trustBundles, builder.userAgent);
+                processors.add(new StatementProcessor(
+                        OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)),
+                        () -> statementSettings, chats, chats.mayProcessExternally()));
+            }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
@@ -1387,6 +1401,7 @@ public final class Harvester implements AutoCloseable {
         private boolean changeEvents;
         private final Map<String, char[]> webhookSecrets = new HashMap<>();
         private ImageDescriber imageDescriber;
+        private StatementSettings statements = StatementSettings.DEFAULT;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 1500;
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
@@ -1561,6 +1576,17 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder imageDescriber(ImageDescriber imageDescriber) {
             this.imageDescriber = imageDescriber;
+            return this;
+        }
+
+        /**
+         * Satzanalyse über das Chat-Modell (Prozessor {@code statements}, #108); Standard aus
+         * ({@link StatementSettings#DEFAULT}). Eingeschaltet schickt sie Absätze der Seiten an {@code ai.chat-model},
+         * aber nur aus Quellen in {@code external-processing-sources}, im Hintergrund der Anreicherungen; ohne
+         * Chat-Modell wird der Prozessor übersprungen. Wirkt beim Bauen; das Chat-Modell folgt der Konfiguration.
+         */
+        public Builder statements(StatementSettings statements) {
+            this.statements = Objects.requireNonNull(statements, "statements");
             return this;
         }
 

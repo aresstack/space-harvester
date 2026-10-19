@@ -8,6 +8,10 @@ import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
+import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
@@ -15,13 +19,16 @@ import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -174,9 +181,37 @@ class AiConfiguration {
         return Enrichments.background(100);
     }
 
-    /** Hintergrund der Anreicherungen, die über das Netz rechnen. */
+    /**
+     * Satzanalyse über das Chat-Modell (Prozessor {@code statements}, #108), nur mit
+     * {@code space-harvester.enrichment.statements.enabled=true} (Standard aus, wie im Enterprise AI Client). Das
+     * Chat-Modell ({@code ai.chat-model}, {@code base-url}) und die Freigabe je Quelle
+     * ({@code ai.external-processing-sources}) folgen der wirksamen Konfiguration; ohne Chat-Modell wird der Prozessor
+     * übersprungen, und Inhalte nicht freigegebener Quellen gehen nie an den Dienst. {@code verify},
+     * {@code max-paragraphs} und {@code max-paragraph-chars} wirken beim Start.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
+    StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          @Value("${space-harvester.enrichment.statements.verify:"
+                                                  + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraphs:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPHS + "}") int maxParagraphs,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraph-chars:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPH_CHARS + "}")
+                                          int maxParagraphChars) {
+        StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
+        StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
+                userAgent(build));
+        return new StatementProcessor(OpenNlpSentenceSegmenter.german(
+                SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults())), () -> settings, chats,
+                chats.mayProcessExternally());
+    }
+
+    /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */
     @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
+    @ConditionalOnExpression("'${space-harvester.ai.embedding-model:}' != '' "
+            + "or '${space-harvester.enrichment.statements.enabled:false}' == 'true'")
     ExecutorService enrichmentBackground() {
         return Enrichments.background(1000);
     }

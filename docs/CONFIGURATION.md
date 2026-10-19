@@ -113,8 +113,29 @@ Schema `enrichment-store/v4`; ein v1/v2/v3-Bestand erhält sie beim Öffnen; ohn
 ersetzt und gelöscht. Typen nach
 dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
 (aus `entities`), `PROPERTY` (aus `properties`), `EVENT` (aus `activities`) und `RELATION` (aus `relations`);
+`MENTION`, `EVENT` und `RELATION` auch aus der Satzanalyse `statements` (unten);
 Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`, `OBJECT`, `VALUE`, `PREDICATE`, Rollen wie `ACTOR`,
 `STATUS`, `QUALIFIER`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
+
+**Satzanalyse über das Chat-Modell** (Prozessor `statements`, wie Issue #108 im Enterprise AI Client): zusätzlich zum
+regelbasierten Weg schlägt das Chat-Modell `ai.chat-model` je Absatz Erwähnungen, Handlungen mit Rollen und
+Eigenschaften mit Wortbereichen vor; behalten wird nur, was wörtlich im Satz steht, optional bestätigt eine zweite
+Ja/Nein-Anfrage jede Aussage. Satzgrenzen wie bei `passages` (OpenNLP, ADR 0020), kein Wortartmodell. Die Fakten tragen
+`STATUS` `extracted`, `model_validated`, `uncertain` oder `unresolved_reference`, `QUALIFIER` auch `conditional`,
+Herkunft `AUTOMATIC` mit Prozessor `statements` und einer Version samt Chat-Modell (ein Modellwechsel macht sie
+veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder Abruf.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `space-harvester.enrichment.statements.enabled` | `false` | Satzanalyse einschalten; ohne Chat-Modell wird sie übersprungen |
+| `space-harvester.enrichment.statements.verify` | `true` | jede Handlung und Relation mit einer zweiten Anfrage prüfen (verneint: verworfen) |
+| `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite |
+| `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge |
+
+- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` an den Dienst, sonst nie, auch
+  nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
+- Die Schlüssel wirken beim Start (in der Bibliothek `Harvester.builder().statements(…)`); Chat-Modell und Freigabe
+  folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
 
 - `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
   wie das Lesen der Seite und `freshness` je Fakt.
