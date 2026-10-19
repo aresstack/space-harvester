@@ -42,6 +42,11 @@ tasks.withType(JavaCompile).configureEach {
 tasks.named('test') {
     useJUnitPlatform()
     systemProperty 'java.awt.headless', 'true'
+    // Die Meldung des Vergleichs nennt die Schlüssel der neuen Lücke; ohne sie zeigt das CI-Protokoll nur die Zeile.
+    testLogging {
+        events 'failed'
+        exceptionFormat 'full'
+    }
     // Bericht des Vergleichs Core gegen Enterprise AI Client, auch wenn alles grün ist
     systemProperty 'parity.report', layout.buildDirectory.file('reports/parity/parity-report.md').get().asFile.path
 }
