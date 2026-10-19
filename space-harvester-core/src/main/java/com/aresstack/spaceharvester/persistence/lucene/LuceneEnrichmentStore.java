@@ -312,6 +312,21 @@ public final class LuceneEnrichmentStore implements EnrichmentStore, EmbeddingIn
         }
     }
 
+    @Override
+    public synchronized void remove(PageKey key, String processorId) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(processorId, "processorId");
+        requireOpen();
+        try {
+            String id = id(key, processorId);
+            writer.deleteDocuments(new Term(ID, id), new Term(VECTOR_OF, id), new Term(TERM_OF, id),
+                    new Term(FACT_OF, id));
+            changed();
+        } catch (IOException e) {
+            throw new PageCacheException("Anreicherungsablage " + path + " kann nicht geschrieben werden", e);
+        }
+    }
+
     /** Entfernt alle Ergebnisse und Vektoren einer Quelle (#188), auch abgelegte Lese-Ansichten. */
     public synchronized void removeSource(String sourceId) {
         Objects.requireNonNull(sourceId, "sourceId");
