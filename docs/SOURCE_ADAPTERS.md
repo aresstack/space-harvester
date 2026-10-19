@@ -250,8 +250,8 @@ space-harvester:
 Stand #187 auf `main`: Quellen ohne Partitionen (PR #357), MediaWiki (PR #370) und die Typen git (PR #368), ftp, jes,
 ndv, sharepoint (PR #372), betaview (PR #378) und outlook (PR #380) sind registriert, die Typenliste mit
 Anzeigenamen (PR #375), Adressfeld (PR #387), Feldern und Anmeldearten (PR #394); Anmeldung und TLS für ftp, jes,
-ndv, sharepoint und betaview kamen mit PR #390, `credentialRef` für git mit PR #377 (#188). Noch offen: `auth` und
-`client-certificate` für git sowie `trust-bundle` für git durch die Prüfung (siehe Auswahl), Bereiche
+ndv, sharepoint und betaview kamen mit PR #390, für git mit PR #377 und PR #393 (`auth` pat/basic,
+`client-certificate`, `trust-bundle`; #188). Noch offen: Bereiche
 (`partitions()`) für Quellen ohne Seitenliste, Freigaben für `files` in der Konfiguration des Dienstes, ein
 asynchroner Transport für MediaWiki (Upstream-Naht).
 
@@ -324,9 +324,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
-   über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
-   aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
-   `trust-bundle` liest `open`, die Prüfung lehnt es aber ab, siehe Auswahl; `auth` noch nicht). Ebenfalls registriert über
+   über die Proxy-Route je Ziel; Anmeldung über `auth.type pat` (`token`) oder `basic` (Benutzer, Token als Passwort)
+   unter `source:<id>`, ohne Geheimnis vom Anbieter des einbettenden Programms (#188), oder bei `auth.type none` über
+   einen eigenen Verweis `options.credentialRef`; aufgelöst je Abruf; Server-CAs über `trust-bundle`, mTLS über
+   `client-certificate`). Ebenfalls registriert über
    `EacSourceAdapters` (ftp, jes, ndv, sharepoint und betaview über `KnowledgeSourceProviderAdapter.connected`,
    outlook über `ContextualSourceAdapter` ohne Netz; eine Partition je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
    `port`, `startPoints`, anonym ohne Anmeldung) und `jes` (Spool, Anmeldung Pflicht), `source-ndv` als `ndv`
@@ -367,8 +368,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `basic` erfüllt die Pflichtangabe von JES und NDV; `credentialRef` neben `basic`, Zertifikate bei FTP/NDV und
   `base-url` verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
-  `credentialRef` wird angenommen und erst beim Abruf aufgelöst. `GitSourceAdapterTest`: Benutzer und Token je
-  Abruf frisch über den `SecretProvider`, ein Eintrag ohne Benutzer ist erlaubt, einer ohne Token nicht (#377).
+  `credentialRef` wird erst beim Abruf aufgelöst, `trust-bundle` besteht Prüfung und Abgleich. `GitSourceAdapterTest`:
+  Benutzer und Token je Abruf frisch über den `SecretProvider`, ein Eintrag ohne Benutzer ist erlaubt, einer ohne Token
+  nicht (#377); `pat` und `basic` über `auth`, `authModes`, unvollständige oder gemischte Angaben ohne Werte in der
+  Meldung, kein Verweis auf `source:…`.
 - `HarvesterEacSourcesTest`: Anzeigename, `needsCredentials` und `addressOption` aller Typen in fester Reihenfolge,
   dazu `fields` und `authModes` ohne Werte (#387, #394).
 - `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
