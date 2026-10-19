@@ -297,6 +297,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   durch Abgleich, Cache und Suche; `exclude` schließt den Entwurf aus, das Bild ohne Text wird keine Seite.
 - `ParityFtpTest`: der Paritäts-Server `ParityFtp` (Test-Fixtures des Core, Paket der FTP-Quelle, Java 8, #193), ein
   anonymer FTP-Server im Prozess nur auf 127.0.0.1 mit Unix-Auflistung, durch Abgleich, Cache und Suche; `maxDepth` wirkt.
+- `ParitySharePointTest`: die Paritäts-Site `ParitySharePoint` (Test-Fixtures des Core, Paket der SharePoint-Quelle,
+  Java 8, #193), REST im Format `odata=verbose` über den HTTP-Server des JDK nur auf 127.0.0.1; `Forms`, das Bild und die
+  versteckte Bibliothek fehlen, `maxDepth` wirkt.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
