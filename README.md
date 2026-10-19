@@ -1,5 +1,7 @@
 # Space Harvester
 
+![Space Harvester – Vom Dokument zum Wissensnetz](docs/images/space-harvester-banner.png)
+
 Eigenständiger, headless Spring-Boot-Dienst (Java 21), der Wissensquellen erfasst und maschinenlesbar exportiert,
 zunächst Confluence Data Center. Über eine REST-API sollen Spaces aufgelistet, Seitenmetadaten mit Versionsinformationen
 und reproduzierbaren Hashwerten paginiert abgefragt und vollständige Spaces asynchron als JSON/NDJSON exportiert werden.
