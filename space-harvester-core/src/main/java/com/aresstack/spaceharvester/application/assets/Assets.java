@@ -17,6 +17,10 @@ import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import java.io.ByteArrayInputStream;
+import java.io.Closeable;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
@@ -261,6 +265,35 @@ public class Assets {
      */
     public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, String owner) {
         return unlocking(list.sourceId(), owner, () -> content(list, attachmentId, mayStore));
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean, String)}, aber ein abgelegter Anhang kommt als Strom
+     * aus der Ablage, ohne ganz im Speicher zu liegen. Eine große Datei hält ihren Platz an der Schranke
+     * ({@link LargeFileGate}), bis der Aufrufer den Strom schließt, auch aus einem anderen Thread. Ein nicht
+     * abgelegter Anhang wird wie bisher geladen und aus dem Speicher geliefert.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> stream(list, attachmentId, mayStore));
+    }
+
+    private AssetStream stream(PageAttachmentList list, String attachmentId, boolean mayStore) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        if (stored.isPresent()) {
+            Asset asset = stored.get();
+            LargeFileGate.Permit permit = gate.detached(asset.sourceId(), asset.size());
+            try {
+                return new AssetStream(asset, store.open(asset), permit);
+            } catch (RuntimeException e) {
+                permit.close();
+                throw e;
+            }
+        }
+        AssetContent content = download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
+        return new AssetStream(content.asset(), new ByteArrayInputStream(content.content()), null);
     }
 
     /**
@@ -1326,6 +1359,42 @@ public class Assets {
     }
 
     /** Ein Anhang mit seinen Bytes; die Bytes erscheinen nie in {@link #toString()}. */
+    /**
+     * Ein Anhang als Strom; {@link #close()} schließt den Strom und gibt einen belegten Platz an der Schranke frei,
+     * mehrfaches Schließen ist harmlos.
+     */
+    public static final class AssetStream implements Closeable {
+
+        private final Asset asset;
+        private final InputStream content;
+        private final LargeFileGate.Permit permit;
+
+        AssetStream(Asset asset, InputStream content, LargeFileGate.Permit permit) {
+            this.asset = asset;
+            this.content = content;
+            this.permit = permit;
+        }
+
+        public Asset asset() {
+            return asset;
+        }
+
+        public InputStream content() {
+            return content;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                content.close();
+            } finally {
+                if (permit != null) {
+                    permit.close();
+                }
+            }
+        }
+    }
+
     public record AssetContent(Asset asset, byte[] content) {
 
         @Override

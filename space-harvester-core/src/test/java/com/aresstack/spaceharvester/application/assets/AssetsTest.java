@@ -341,6 +341,40 @@ class AssetsTest {
         assertThat(assets.harvest(list(unknownSize)).entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
     }
 
+    /** Ein gestreamter großer Anhang hält seinen Platz, bis der Strom geschlossen ist, auch aus einem anderen Thread. */
+    @Test
+    void aStreamedLargeFileHoldsItsPlaceUntilItsStreamIsClosedFromAnyThread() throws Exception {
+        LargeFileGate gate = new LargeFileGate(4, 1, java.time.Duration.ofMillis(100));
+        Assets assets = assets(1000, null, null, gate);
+        source.file("att1", "1", "gross-1");
+        PageAttachment large = new PageAttachment("att1", "test:wiki/attachment/att1", "a.txt", "text/plain", 7L,
+                "1", null, null);
+        assets.harvest(list(large));
+
+        Assets.AssetStream stream = assets.stream(list(large), "att1", false, null);
+        assertThat(stream.content().readAllBytes()).isEqualTo("gross-1".getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> gate.enter("wiki", 5L).close())
+                .isInstanceOfSatisfying(SourceAccessException.class,
+                        e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.RATE_LIMITED));
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        try {
+            other.submit(() -> {
+                stream.close();
+                return null;
+            }).get(5, TimeUnit.SECONDS);
+        } finally {
+            other.shutdown();
+        }
+        try (LargeFileGate.Permit permit = gate.enter("wiki", 5L)) {
+            assertThat(permit).isNotNull();
+        }
+        stream.close(); // mehrfach harmlos
+        try (LargeFileGate.Permit permit = gate.enter("wiki", 5L)) {
+            assertThat(permit).isNotNull();
+        }
+    }
+
     @Test
     void nestedUseOfTheGateInOneThreadTakesOnlyOnePlace() {
         LargeFileGate gate = new LargeFileGate(0, 1, java.time.Duration.ZERO);
