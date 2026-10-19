@@ -346,6 +346,13 @@ public final class PageDetailPanel extends JPanel {
      * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
      * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
      */
+    /** Lädt die gezeigte Seite aus dem Bestand neu; ohne gezeigte Seite nichts. EDT. */
+    void reloadShown() {
+        if (sourceId != null && pageId != null) {
+            load(sourceId, pageId, false);
+        }
+    }
+
     public void load(String sourceId, String pageId, boolean refresh) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {

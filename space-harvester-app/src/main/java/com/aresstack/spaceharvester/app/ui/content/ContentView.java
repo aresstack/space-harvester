@@ -54,6 +54,8 @@ public final class ContentView implements View {
         list.onOpen(this::openPage);
         this.signIn = new SignInSlot(context, requests -> sourceId == null ? java.util.Optional.empty()
                 : requests.pendingFor(sourceId));
+        // Nach dem Einmalcode lädt die gezeigte Seite neu, damit Bilder und Anhänge ohne Sperre erscheinen.
+        signIn.onAccepted(detail::reloadShown);
         root.setBackground(Comic.SURFACE);
 
         crumbs.setFont(Comic.regular(13f));
