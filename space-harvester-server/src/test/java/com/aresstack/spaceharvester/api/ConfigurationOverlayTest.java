@@ -66,23 +66,20 @@ class ConfigurationOverlayTest {
     }
 
     @Test
-    void aGrantedFolderMustBeAbsoluteAndNoFileButMayNotExistYet(@TempDir Path folder) throws IOException {
+    void aGrantedFolderMustBeAbsoluteButMayNotExistYetOrBeAFile(@TempDir Path folder) throws IOException {
         Path file = Files.writeString(folder.resolve("geheim-liste.txt"), "x");
         Path missing = folder.resolve("noch-nicht-verbunden");
 
         HarvesterConfiguration.Parsed relative = ConfigurationOverlay.overlay(FULL,
                 Map.of("local-files.roots", "relativ/geheim-ordner"));
-        HarvesterConfiguration.Parsed notADirectory = ConfigurationOverlay.overlay(FULL,
-                Map.of("local-files.roots", file.toString()));
 
         assertThat(relative.problems()).singleElement().satisfies(problem -> {
             assertThat(problem.key()).isEqualTo(LocalFileSettings.ROOTS);
             assertThat(problem.message()).doesNotContain("geheim-ordner");
         });
-        assertThat(notADirectory.problems()).singleElement().satisfies(problem -> {
-            assertThat(problem.key()).isEqualTo(LocalFileSettings.ROOTS);
-            assertThat(problem.message()).doesNotContain("geheim-liste");
-        });
+        // Wie im Client gewährt eine Datei einfach nichts; geprüft wird ohne Dateisystem.
+        assertThat(ConfigurationOverlay.overlay(FULL, Map.of("local-files.roots", file.toString())).orThrow()
+                .localFiles().roots()).containsExactly(file);
         assertThat(ConfigurationOverlay.overlay(FULL, Map.of("local-files.roots", missing.toString())).orThrow()
                 .localFiles().roots()).containsExactly(missing);
     }

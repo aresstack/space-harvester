@@ -3,7 +3,6 @@ package com.aresstack.spaceharvester.application.configuration;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
-import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -193,13 +192,11 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
             }
         }
         for (Path root : localFiles.roots()) {
-            // Nie den Pfad nennen; ein fehlender Ordner gewährt wie im Client nichts, bis er da ist.
+            // Nie den Pfad nennen und nie aufs Dateisystem zugreifen: Eine nicht erreichbare UNC-Wurzel hielte sonst
+            // jede Aktivierung auf. Ein fehlender Ordner oder eine Datei gewährt wie im Client einfach nichts.
             if (!root.isAbsolute()) {
                 problems.add(new ConfigurationProblem(LocalFileSettings.ROOTS,
                         "Jeder freigegebene Ordner braucht einen absoluten Pfad"));
-            } else if (Files.exists(root) && !Files.isDirectory(root)) {
-                problems.add(new ConfigurationProblem(LocalFileSettings.ROOTS,
-                        "Ein freigegebener Ordner muss ein Verzeichnis sein"));
             }
         }
         return problems.stream().distinct().toList();

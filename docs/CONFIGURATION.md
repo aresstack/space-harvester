@@ -245,8 +245,9 @@ space-harvester:
 - Verglichen wird der wirkliche Ort (Links aufgelöst) bei jedem Dateizugriff; ein Link aus dem Verzeichnis einer
   Quelle hinaus führt nur in einen freigegebenen Ordner.
 - Ein Ordner, den es noch nicht gibt, gewährt nichts, bis er da ist, etwa ein gemapptes oder UNC-Laufwerk, das
-  später verbunden wird; dafür ist kein Neustart nötig. Ein relativer Pfad oder ein Eintrag, der eine Datei statt
-  eines Verzeichnisses ist, wird abgelehnt (`problems` mit `key: local-files.roots`, nie der Pfad).
+  später verbunden wird; dafür ist kein Neustart nötig. Ebenso gewährt ein Eintrag, der eine Datei ist, nichts. Nur
+  ein relativer Pfad wird abgelehnt (`problems` mit `key: local-files.roots`, nie der Pfad); beim Speichern greift
+  die Prüfung nicht auf das Dateisystem zu.
 - Eine Freigabe liest nichts ein; eingelesen wird nur, was eine Quelle nennt.
 - `POST /api/v1/configuration` nimmt `local-files.allow-all` und `local-files.roots` (Text mit `;` oder Liste) an;
   `GET` zeigt sie unter `localFiles`.

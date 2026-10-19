@@ -13,8 +13,8 @@ import java.util.Objects;
  * Freigaben bei jedem Dateizugriff ({@link LocalFileGrants}).
  *
  * <p>Wie im Client gewährt ein Ordner, den es (noch) nicht gibt, nichts, bis er da ist, etwa ein gemapptes oder
- * UNC-Laufwerk, das später verbunden wird. {@link HarvesterConfiguration#validate()} verlangt absolute Pfade und lehnt
- * einen vorhandenen Eintrag ab, der kein Verzeichnis ist.
+ * UNC-Laufwerk, das später verbunden wird; ebenso ein Eintrag, der eine Datei ist.
+ * {@link HarvesterConfiguration#validate()} verlangt nur absolute Pfade und greift nicht aufs Dateisystem zu.
  *
  * @param allowAll ob alles freigegeben ist, was das Konto des Dienstes lesen darf
  * @param roots    weitere freigegebene Ordner, normalisiert und ohne Doppelte
