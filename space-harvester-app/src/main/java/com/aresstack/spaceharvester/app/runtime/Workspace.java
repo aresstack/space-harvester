@@ -135,6 +135,15 @@ public final class Workspace {
     }
 
     /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
+    /**
+     * Die Dokumentnavigation einer Seite ({@code GET …/pages/{pageId}/navigation}): Überschriften und erkannte
+     * Themenabschnitte zum Text des Cache, sonst sofort die Überschriften.
+     */
+    public com.aresstack.spaceharvester.application.passages.DocumentNavigationView documentNavigation(
+            String sourceId, String pageId) {
+        return harvester.documentNavigation().page(caller, sourceId, pageId);
+    }
+
     public List<TermRelation> termRelationsFor(java.util.Collection<String> normalized, String sourceId,
                                                String spaceKey) {
         return harvester.termRelations().forTerms(caller, normalized, sourceId, spaceKey);

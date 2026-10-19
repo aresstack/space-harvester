@@ -1,13 +1,14 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationView;
+import com.aresstack.spaceharvester.application.passages.NavigationSection;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Die Dokumentnavigation einer Seite, wie sie der Navigationsbanner über dem Reiter „Text“ zeigt: Hauptkapitel in
- * Lesereihenfolge, jedes mit seinen Unterabschnitten. App-seitiges Gegenstück zur angekündigten Core-Antwort
- * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ({@code DocumentNavigationView} mit
- * {@code NavigationSection}); sobald der Core sie liefert, ist die Anbindung eine kleine Abbildung auf diesen Datensatz.
+ * Lesereihenfolge, jedes mit seinen Unterabschnitten. Abgebildet aus der Core-Antwort
+ * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ({@link #of}).
  * Inhaltlich wie {@code DocumentNavigation} im Enterprise AI Client.
  *
  * @param state    Stand der Analyse
@@ -46,6 +47,18 @@ public record Navigation(State state, Analysis analysis, String reason, List<Sec
         }
         reason = reason == null ? "" : reason;
         chapters = chapters == null ? List.of() : List.copyOf(chapters);
+    }
+
+    /** Die Antwort des Core ({@code harvester.documentNavigation().page}) als Navigation des Banners. */
+    public static Navigation of(DocumentNavigationView view) {
+        return new Navigation(State.valueOf(view.state().name()), Analysis.valueOf(view.analysis().name()),
+                view.reason(), view.chapters().stream().map(Navigation::section).toList());
+    }
+
+    private static Section section(NavigationSection section) {
+        return new Section(section.id(), section.label(), Origin.valueOf(section.origin().name()), section.level(),
+                section.start(), section.end(), section.anchor(), section.parentId(),
+                section.children().stream().map(Navigation::section).toList());
     }
 
     public boolean isEmpty() {

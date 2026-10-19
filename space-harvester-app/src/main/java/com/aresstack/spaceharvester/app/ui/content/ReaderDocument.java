@@ -37,6 +37,7 @@ final class ReaderDocument {
     private final PageTerms terms;
     private PagePassages passages;
     private List<com.aresstack.spaceharvester.app.ui.Relation> relations;
+    private Navigation navigation;
 
     private ReaderDocument(StyledDocument document, PageText text, PageAcronyms acronyms, PageTerms terms) {
         this.document = document;
@@ -116,6 +117,16 @@ final class ReaderDocument {
 
     ReaderDocument withPassages(PagePassages passages) {
         this.passages = passages;
+        return this;
+    }
+
+    /** Die Dokumentnavigation für diesen Text oder {@code null}, wenn nicht abgefragt. */
+    Navigation navigation() {
+        return navigation;
+    }
+
+    ReaderDocument withNavigation(Navigation navigation) {
+        this.navigation = navigation;
         return this;
     }
 

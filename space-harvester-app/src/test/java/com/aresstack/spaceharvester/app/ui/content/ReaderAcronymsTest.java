@@ -87,6 +87,13 @@ class ReaderAcronymsTest {
                 .contains("Fundstellen markiert");
         String text = onEdt(() -> panel.reader().getDocument().getText(0, panel.reader().getDocument().getLength()));
         assertThat(text).isEqualTo(shown.text().text());
+        // Dokumentnavigation des Core (#396) als Wolkenbanner über dem Lesetext; ohne Modell nur die Überschriften.
+        Navigation navigation = onEdt(() -> panel.navigationSky().navigation());
+        assertThat(navigation).isNotNull();
+        assertThat(navigation.analysis()).isEqualTo(Navigation.Analysis.HEADINGS);
+        assertThat(navigation.chapters()).extracting(Navigation.Section::label).containsExactly("Schnittstellen");
+        Navigation.Section chapter = navigation.chapters().get(0);
+        assertThat(text.substring(chapter.start())).startsWith("Schnittstellen");
 
         List<String> marked = shown.marks().stream()
                 .map(mark -> text.substring(mark.occurrence().start(), mark.occurrence().end())).toList();

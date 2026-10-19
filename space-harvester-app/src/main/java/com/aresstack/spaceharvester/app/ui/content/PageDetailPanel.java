@@ -383,6 +383,7 @@ public final class PageDetailPanel extends JPanel {
             PageText text = project(delivered.snapshot());
             ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
             relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
+            navigation(runtime, document, sourceId, pageId);
             return new Loaded(delivered, enrichments, document,
                     Payloads.display(delivered.snapshot().payload()),
                     Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh);
@@ -509,7 +510,9 @@ public final class PageDetailPanel extends JPanel {
         // Neu berechnet bei gleichem Text: die Navigation gilt weiter; sonst gehörte sie zum vorigen Text.
         boolean sameText = shown != null && document != null && shown.text() != null && document.text() != null
                 && shown.text().text().equals(document.text().text());
-        if (!sameText) {
+        if (document != null && document.navigation() != null) {
+            showNavigation(document.navigation());
+        } else if (!sameText) {
             showNavigation(null);
         }
         shown = document;
@@ -550,6 +553,26 @@ public final class PageDetailPanel extends JPanel {
         } catch (RuntimeException e) {
             // Beziehungen sind eine Zugabe; ohne sie zeigt der Reiter „Begriffe“ den Rest unverändert.
             LOG.log(System.Logger.Level.DEBUG, "Beziehungen nicht lesbar: {0}", e.getMessage());
+        }
+    }
+
+    /**
+     * Hängt die Dokumentnavigation des Core an, wenn sie zum gezeigten Text gehört; sonst bleibt der Banner aus. Die
+     * Positionen des Core beziehen sich auf den Text des Cache, den der Reiter „Text“ zeigt.
+     */
+    private static void navigation(AppRuntime runtime, ReaderDocument document, String sourceId, String pageId) {
+        if (document.text() == null) {
+            return;
+        }
+        try {
+            Navigation navigation = Navigation.of(runtime.workspace().documentNavigation(sourceId, pageId));
+            int length = document.text().text().length();
+            if (navigation.flatten().stream().allMatch(section -> section.end() <= length)) {
+                document.withNavigation(navigation);
+            }
+        } catch (RuntimeException e) {
+            // Die Navigation ist eine Zugabe; ohne sie zeigt der Reiter „Text“ den Lesetext allein.
+            LOG.log(System.Logger.Level.DEBUG, "Dokumentnavigation nicht lesbar: {0}", e.getClass().getSimpleName());
         }
     }
 
@@ -1059,6 +1082,7 @@ public final class PageDetailPanel extends JPanel {
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
             ReaderDocument document = document(source, id, updated, text, font);
             relations(runtime, document, source, cached.header().metadata().partitionKey());
+            navigation(runtime, document, source, id);
             return new Recomputed(run, updated, document);
         }, result -> {
             if (current != request) {
@@ -1161,9 +1185,8 @@ public final class PageDetailPanel extends JPanel {
 
     /**
      * Zeigt die Dokumentnavigation der angezeigten Seite als Wolkenbanner über dem Reiter „Text“; {@code null} oder
-     * leer blendet ihn aus. Die Positionen beziehen sich auf den angezeigten Lesetext. Noch ruft niemand den Core dafür
-     * auf: {@code harvester.documentNavigation().page(caller, sourceId, pageId)} folgt mit dem Core-PR von V, dann
-     * bildet die App dessen {@code DocumentNavigationView} auf {@link Navigation} ab. EDT.
+     * leer blendet ihn aus. Die Positionen beziehen sich auf den angezeigten Lesetext. Beim Laden fragt die App
+     * {@code harvester.documentNavigation().page(caller, sourceId, pageId)} ab ({@link Navigation#of}). EDT.
      */
     void showNavigation(Navigation navigation) {
         readerPage.setNavigation(navigation == null || navigation.isEmpty() ? null : navigation);
