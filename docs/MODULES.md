@@ -153,7 +153,8 @@ Das Spielzeugmodell `embedding/tiny` (16 KiB, erzeugt mit `generate.py` im Core)
    Seiteninhalt und Analysen (#181, #182, ADR 0020) liest das Programm über weitere Einstiege des `Harvester`:
    - `passages()`: semantische Absätze einer Seite (`PassageQueries`, PR #360).
    - `documentNavigation()`: Kapitel aus den Überschriften und erkannte Themenabschnitte (`NavigationQueries`,
-     PR #396); ohne Embeddings je Absatz nur die Überschriften.
+     PR #396), Bezeichnungen mit Chat-Modell über `ChatSectionLabeler` (PR #401); ohne Embeddings je Absatz nur die
+     Überschriften.
    - `facts()`: Faktenblatt einer Seite und Fakten über alle Seiten (`PageFacts`); je Prozessor und Seite höchstens
      2000 Fakten, das Blatt nennt abgeschnittene Prozessoren (`Sheet.truncated`, PR #399).
    - `factEdits()`: manuelle und geprüfte Fakten mit Protokoll (`FactEdits`, PR #383), abgelegt unter

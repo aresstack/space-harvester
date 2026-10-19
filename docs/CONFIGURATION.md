@@ -276,10 +276,11 @@ ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne e
 (`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
 Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
 Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
-diese Embeddings je Absatz und rechnet selbst nichts beim KI-Dienst; sie hat keine eigenen Schlüssel, auch keine
-Fristen oder Parallelität, und folgt `ai.embedding-model` und der Freigabe `ai.external-processing-sources`. Ein
-Benenner der Themenabschnitte (`SectionLabeler`) ist im Core vorgesehen, aber weder im Server noch im
-`Harvester` verdrahtet.
+diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embedding-model` und der Freigabe
+`ai.external-processing-sources`. Die Themenabschnitte benennt mit `ai.chat-model` die Kopie `ChatSectionLabeler`
+(PR #401, ADR 0020), nur in der Anreicherung und nur für freigegebene Quellen, mit fester Frist von 60 s und
+höchstens zwei Benennungen zugleich (nicht einstellbar); ohne Chat-Modell bleibt der erste Satz, bei Ausfall des
+Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht gespeicherte Navigationen alt.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
 mit dem abgelehnten Wert.
