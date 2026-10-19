@@ -159,6 +159,8 @@ public final class SearchView implements View {
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
+                    // Sobald Suchtreffer die Passage-ID ihres Absatzes tragen (Core-PR nach #452), springt der Treffer
+                    // dorthin: context.navigator().openPassage(hit.sourceId(), passageId) statt openPage.
                     context.navigator().openPage(hit.sourceId(), hit.pageId());
                 }
             }

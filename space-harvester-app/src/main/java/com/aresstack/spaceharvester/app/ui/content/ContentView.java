@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.app.ui.PlaceholderField;
 import com.aresstack.spaceharvester.app.ui.SignInSlot;
 import com.aresstack.spaceharvester.app.ui.View;
+import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 
 import javax.swing.BorderFactory;
@@ -136,6 +137,20 @@ public final class ContentView implements View {
         this.sourceId = sourceId;
         renderCrumbs();
         detail.load(sourceId, pageId, false);
+    }
+
+    /**
+     * Öffnet einen Absatz über seine stabile Passage-ID (#452): seine Seite im Reiter „Absätze“, der Absatz markiert.
+     * {@code sourceId} ist die Quelle des Aufrufers (z. B. eines Suchtreffers); maßgeblich ist die ID selbst.
+     */
+    public void openPassage(String sourceId, String passageId) {
+        String source = PassageId.looksLike(passageId) ? PassageId.parse(passageId).sourceId() : sourceId;
+        if (!Objects.equals(source, this.sourceId)) {
+            this.spaceKey = null;
+        }
+        this.sourceId = source;
+        renderCrumbs();
+        detail.openPassage(passageId);
     }
 
     /** Nach dem Laden kennt die Seite ihren Space. */

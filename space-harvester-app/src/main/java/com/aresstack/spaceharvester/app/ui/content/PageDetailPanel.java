@@ -22,6 +22,9 @@ import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.images.ImagePayload;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageLookup;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -354,6 +357,27 @@ public final class PageDetailPanel extends JPanel {
      * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
      */
     public void load(String sourceId, String pageId, boolean refresh) {
+        load(sourceId, pageId, refresh, null);
+    }
+
+    /**
+     * Öffnet die Seite eines Absatzes über seine stabile Passage-ID (#452, wie ein {@code ReaderLink} mit Passage im
+     * Enterprise AI Client): Seite laden, Reiter „Absätze“ wählen, den Absatz hervorheben und im Lesetext markieren.
+     * Gehört die ID zu einer älteren Fassung oder gibt es den Absatz nicht mehr, öffnet die Seite trotzdem mit einem
+     * Hinweis; eine unbekannte oder nicht sichtbare Seite meldet sich wie jeder andere Ladefehler.
+     */
+    public void openPassage(String passageId) {
+        if (!PassageId.looksLike(passageId)) {
+            cards.show(deck, PAGE);
+            feedback.problem(new InvalidQueryException("Keine Passage-ID"), Problems.Step.PAGE);
+            return;
+        }
+        PassageId id = PassageId.parse(passageId);
+        load(id.sourceId(), id.pageId(), false, passageId);
+    }
+
+    /** Wie {@link #load(String, String, boolean)}; mit {@code passageId} löst der Core zuerst den Absatz auf. */
+    private void load(String sourceId, String pageId, boolean refresh, String passageId) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {
             return;
@@ -385,6 +409,8 @@ public final class PageDetailPanel extends JPanel {
         setActionsEnabled(false);
         Font font = reader.getFont();
         Background.run(() -> {
+            // Zuerst die ID: Der Core zieht dabei fehlende Absätze nach, die der Lesetext danach schon kennt.
+            PassageLookup passage = passageId == null ? null : runtime.workspace().passage(passageId);
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
             PageText text = project(delivered.snapshot());
@@ -393,7 +419,7 @@ public final class PageDetailPanel extends JPanel {
             navigation(runtime, document, sourceId, pageId);
             return new Loaded(delivered, enrichments, document,
                     Payloads.display(delivered.snapshot().payload()),
-                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh);
+                    Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh, passage);
         }, loaded -> {
             if (current != request) {
                 return;
@@ -412,6 +438,9 @@ public final class PageDetailPanel extends JPanel {
                 loadImages();
             }
             loadPosition();
+            if (loaded.passage() != null) {
+                showPassage(loaded.passage());
+            }
         }, error -> {
             if (current != request) {
                 return;
@@ -632,9 +661,41 @@ public final class PageDetailPanel extends JPanel {
         }
         tabs.select(READ);
         reader.requestFocusInWindow();
+        mark(target);
+    }
+
+    /** Markiert die Stelle im Lesetext, auch wenn gerade ein anderer Reiter vorne liegt. */
+    private void mark(TermsTab.Span target) {
         reader.select(target.start(), target.end());
+        reader.getCaret().setSelectionVisible(true);
         readerPage.revealBelowSky(target.start());
         showAcronymAt(target.start());
+    }
+
+    static final String PASSAGE_OLDER = "Der Absatz gehört zu einer älteren Fassung der Seite";
+    static final String PASSAGE_CHANGED = "Den Absatz gibt es nicht mehr";
+
+    /**
+     * Zeigt den über seine Passage-ID geöffneten Absatz im Reiter „Absätze“ und markiert ihn im Lesetext, wie ein Klick
+     * auf ihn ohne Wechsel zum Text. Die Hinweise folgen den Fällen von {@code KnowledgeResourceReader} im Client.
+     */
+    private void showPassage(PassageLookup lookup) {
+        tabs.select(PASSAGES);
+        switch (lookup.match()) {
+            case FOUND -> {
+                PassagesTab.Passage passage = passages.select(lookup.requested().value());
+                if (passage != null && shown != null && passage.end() <= reader.getDocument().getLength()) {
+                    mark(new TermsTab.Span(passage.start(), passage.end()));
+                }
+            }
+            case OLDER_VERSION -> feedback.info(PASSAGE_OLDER, "Sein Text ist nicht mehr vorhanden (Seite seither "
+                    + "geändert). Angezeigt werden die aktuellen Absätze.");
+            case CHANGED -> feedback.info(PASSAGE_CHANGED, "Zerlegung oder Embedding-Modell haben gewechselt. Angezeigt "
+                    + "werden alle Absätze.");
+            case UNAVAILABLE -> {
+                // Der Reiter „Absätze“ nennt selbst, warum gerade keine vorliegen.
+            }
+        }
     }
 
     /** Markiert die nächste bzw. vorige Fundstelle und zeigt ihre Ausschreibung. */
@@ -1241,8 +1302,9 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /** @param checked ob der Bediener ausdrücklich „Aktualität prüfen“ gewählt hat */
+    /** {@code passage} nur beim Öffnen über eine Passage-ID ({@link #openPassage}). */
     private record Loaded(DeliveredPage page, List<Enrichments.View> enrichments, ReaderDocument reader,
-                          String display, String storage, boolean checked) {
+                          String display, String storage, boolean checked, PassageLookup passage) {
     }
 
     private record Recomputed(Enrichments.Run run, List<Enrichments.View> views, ReaderDocument reader) {

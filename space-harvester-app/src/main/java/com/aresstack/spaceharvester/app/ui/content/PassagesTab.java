@@ -24,13 +24,16 @@ import java.util.function.Consumer;
 /**
  * Der Reiter „Absätze“ der Leseansicht (#354): die semantischen Absätze der angezeigten Seite, wie die
  * Passagensegmentierung des Core (#181) sie an Themenwechseln bildet, nummeriert mit Themenzeile und kurzem Anriss.
- * Ein Klick markiert den Absatz im Lesetext ({@code onJump}). Die Daten stammen aus {@link PagePassages}; die App
- * segmentiert nichts selbst. Nur auf dem EDT.
+ * Ein Klick markiert den Absatz im Lesetext ({@code onJump}); über seine Passage-ID gewählt ({@link #select}) ist er
+ * hervorgehoben. Die Daten stammen aus {@link PagePassages}; die App segmentiert nichts selbst. Nur auf dem EDT.
  */
 final class PassagesTab extends JPanel {
 
-    /** Ein Absatz, wie ihn der Core liefert: Themenzeile, Anriss und Lage im projizierten Text. */
-    record Passage(String title, String preview, int start, int end) {
+    /**
+     * Ein Absatz, wie ihn der Core liefert: stabile Passage-ID ({@code PassageId}, #452), Themenzeile, Anriss und Lage
+     * im projizierten Text.
+     */
+    record Passage(String id, String title, String preview, int start, int end) {
 
         Passage {
             Objects.requireNonNull(title, "title");
@@ -46,6 +49,9 @@ final class PassagesTab extends JPanel {
     private final JLabel mode = Comic.muted(" ");
     private Consumer<List<TermsTab.Span>> onJump = spans -> { };
     private final List<String> titles = new ArrayList<>();
+    private final List<Passage> shown = new ArrayList<>();
+    private final List<JPanel> rows = new ArrayList<>();
+    private int selected = -1;
 
     PassagesTab() {
         super(new BorderLayout(0, 10));
@@ -82,7 +88,7 @@ final class PassagesTab extends JPanel {
         }
         List<Passage> passages = new ArrayList<>();
         for (PagePassages.Passage passage : result.passages()) {
-            passages.add(new Passage(passage.title(), preview(passage), passage.start(), passage.end()));
+            passages.add(new Passage(passage.id(), passage.title(), preview(passage), passage.start(), passage.end()));
         }
         show(State.valueOf(result.state().name()), passages, result.mode() == PassagePayload.Mode.STRUCTURE);
     }
@@ -128,15 +134,21 @@ final class PassagesTab extends JPanel {
                 BorderFactory.createEmptyBorder(2, 8, 2, 8)));
         list.removeAll();
         titles.clear();
-        List<Passage> shown = current == State.CURRENT ? passages : List.of();
-        for (int i = 0; i < shown.size(); i++) {
+        shown.clear();
+        rows.clear();
+        selected = -1;
+        List<Passage> visible = current == State.CURRENT ? passages : List.of();
+        for (int i = 0; i < visible.size(); i++) {
             if (i > 0) {
                 list.add(Box.createVerticalStrut(6));
             }
-            list.add(entry(i + 1, shown.get(i)));
-            titles.add(shown.get(i).title());
+            JPanel row = entry(i + 1, visible.get(i));
+            list.add(row);
+            rows.add(row);
+            shown.add(visible.get(i));
+            titles.add(visible.get(i).title());
         }
-        hint.setText(hint(current, shown.size()));
+        hint.setText(hint(current, visible.size()));
         list.revalidate();
         list.repaint();
     }
@@ -157,7 +169,7 @@ final class PassagesTab extends JPanel {
         }
         JPanel row = new JPanel(new BorderLayout(10, 0));
         row.setOpaque(false);
-        row.setBorder(BorderFactory.createEmptyBorder(8, 2, 8, 2));
+        row.setBorder(border(false));
         row.add(index, BorderLayout.WEST);
         row.add(lines, BorderLayout.CENTER);
         row.setAlignmentX(LEFT_ALIGNMENT);
@@ -170,6 +182,35 @@ final class PassagesTab extends JPanel {
             }
         });
         return row;
+    }
+
+    /**
+     * Wählt den Absatz mit dieser Passage-ID (Sprung per ID, #452) und hebt ihn hervor; ein vorher gewählter verliert
+     * die Hervorhebung.
+     *
+     * @return der Absatz oder {@code null}, wenn der Reiter ihn nicht zeigt
+     */
+    Passage select(String passageId) {
+        if (selected >= 0) {
+            rows.get(selected).setBorder(border(false));
+            selected = -1;
+        }
+        for (int i = 0; i < shown.size(); i++) {
+            if (shown.get(i).id() != null && shown.get(i).id().equals(passageId)) {
+                selected = i;
+                JPanel row = rows.get(i);
+                row.setBorder(border(true));
+                row.scrollRectToVisible(new java.awt.Rectangle(0, 0, row.getWidth(), row.getHeight()));
+                return shown.get(i);
+            }
+        }
+        return null;
+    }
+
+    /** Gleich groß gewählt und nicht gewählt, damit die Liste beim Wählen nicht springt. */
+    private static javax.swing.border.Border border(boolean selected) {
+        return BorderFactory.createCompoundBorder(selected ? BorderFactory.createLineBorder(Comic.BLUE, 1, true)
+                : BorderFactory.createEmptyBorder(1, 1, 1, 1), BorderFactory.createEmptyBorder(7, 1, 7, 1));
     }
 
     static String hint(State state, int count) {
@@ -199,6 +240,11 @@ final class PassagesTab extends JPanel {
 
     String hint() {
         return hint.getText();
+    }
+
+    /** Nummer (ab 0) des gewählten Absatzes oder -1. */
+    int selectedIndex() {
+        return selected;
     }
 
     /** Klickt den Absatz {@code index} (ab 0) an. */

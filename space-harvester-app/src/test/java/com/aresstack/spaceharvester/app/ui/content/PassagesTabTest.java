@@ -21,13 +21,13 @@ class PassagesTabTest {
             tab.onJump(jumped::add);
             seen.add(tab.stateLabel());
             tab.show(PassagesTab.State.CURRENT, List.of(
-                    new PassagesTab.Passage("Architektur und Komponenten", "Die Systemarchitektur …", 0, 120),
-                    new PassagesTab.Passage("Authentifizierung und Berechtigungen", null, 120, 300)), false);
+                    new PassagesTab.Passage("p0", "Architektur und Komponenten", "Die Systemarchitektur …", 0, 120),
+                    new PassagesTab.Passage("p1", "Authentifizierung und Berechtigungen", null, 120, 300)), false);
             seen.add(tab.stateLabel());
             seen.add(tab.mode());
             seen.addAll(tab.titles());
             tab.click(1);
-            tab.show(PassagesTab.State.CURRENT, List.of(new PassagesTab.Passage("Einleitung", null, 0, 9)), true);
+            tab.show(PassagesTab.State.CURRENT, List.of(new PassagesTab.Passage("p0", "Einleitung", null, 0, 9)), true);
             seen.add(tab.mode());
             tab.show(PassagesTab.State.STALE, List.of(), false);
             seen.add(String.valueOf(tab.titles().size()));
@@ -39,9 +39,28 @@ class PassagesTabTest {
     }
 
     @Test
+    void aPassageIsSelectedByItsIdAndNewPassagesDropTheSelection() throws Exception {
+        List<Object> seen = new ArrayList<>();
+        SwingUtilities.invokeAndWait(() -> {
+            PassagesTab tab = new PassagesTab();
+            tab.show(PassagesTab.State.CURRENT, List.of(new PassagesTab.Passage("p0", "Einleitung", null, 0, 9),
+                    new PassagesTab.Passage("p1", "Betrieb", null, 9, 20)), false);
+            seen.add(tab.select("p1"));
+            seen.add(tab.selectedIndex());
+            seen.add(String.valueOf(tab.select("unbekannt")));
+            seen.add(tab.selectedIndex());
+            tab.select("p0");
+            tab.show(PassagesTab.State.CURRENT, List.of(new PassagesTab.Passage("p0", "Einleitung", null, 0, 9)),
+                    false);
+            seen.add(tab.selectedIndex());
+        });
+        assertThat(seen).containsExactly(new PassagesTab.Passage("p1", "Betrieb", null, 9, 20), 1, "null", -1, -1);
+    }
+
+    @Test
     void thePreviewIsTheTextAfterTheTopicLineShortened() {
         String text = "Architektur und Komponenten. " + "Die Bausteine sprechen über REST. ".repeat(10);
-        PagePassages.Passage passage = new PagePassages.Passage(0, 0, text.length(), "Architektur und Komponenten.",
+        PagePassages.Passage passage = new PagePassages.Passage("p0", 0, 0, text.length(), "Architektur und Komponenten.",
                 text, null, 0, 11, null, null, null);
         String preview = PassagesTab.preview(passage);
         assertThat(preview).startsWith("Die Bausteine sprechen über REST.").endsWith(" …");

@@ -21,7 +21,13 @@ import com.aresstack.spaceharvester.application.jobs.JobStillRunningException;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageLookup;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
@@ -141,6 +147,26 @@ public final class Workspace {
     public com.aresstack.spaceharvester.application.passages.DocumentNavigationView documentNavigation(
             String sourceId, String pageId) {
         return harvester.documentNavigation().page(caller, sourceId, pageId);
+    }
+
+    /**
+     * Löst eine stabile Passage-ID auf ({@code GET /api/v1/passages?id=}, #452): der Absatz mit je einem Nachbarn oder,
+     * wenn es ihn nicht mehr gibt, alle aktuellen Absätze und der Grund ({@link PassageLookup#match()}). Wie im Dienst
+     * antworten eine nicht sichtbare Seite und eine unbekannte Quelle gleich ({@link CacheMissException}), damit eine ID
+     * nicht verrät, ob es die Seite gibt.
+     *
+     * @throws InvalidQueryException wenn {@code passageId} keine Passage-ID ist
+     */
+    public PassageLookup passage(String passageId) {
+        if (!PassageId.looksLike(passageId)) {
+            throw new InvalidQueryException("Keine Passage-ID");
+        }
+        PassageId requested = PassageId.parse(passageId);
+        try {
+            return harvester.passages().resolve(caller, passageId);
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            throw new CacheMissException(requested.sourceId(), "Seite nicht vorhanden oder nicht sichtbar");
+        }
     }
 
     /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
