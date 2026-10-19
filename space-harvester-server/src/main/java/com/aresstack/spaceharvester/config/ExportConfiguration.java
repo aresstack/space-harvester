@@ -69,10 +69,13 @@ class ExportConfiguration {
     /** Analyse-Export (#359): liest die Anreicherungen nur; ohne Anreicherungen eine Datei ohne Abschnitte. */
     @Bean
     AnalysisConverter analysisConverter(ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
-                                        FactEditStore edits) {
+                                        FactEditStore edits, ObjectProvider<Assets> assets) {
         Enrichments available = enrichments.getIfAvailable();
+        // Bildbeschreibungen über die exportierten Bytes, auch einzeln beschriebene Bilder.
         return new AnalysisConverter(available == null ? PageAnalyses.NONE
-                : new EnrichmentAnalyses(available, FactEditConfiguration.facts(available, store, edits)));
+                : new EnrichmentAnalyses(available, FactEditConfiguration.facts(available, store, edits),
+                        sha256 -> Optional.ofNullable(assets.getIfAvailable())
+                                .flatMap(found -> found.storedDescription(sha256))));
     }
 
     @Bean
