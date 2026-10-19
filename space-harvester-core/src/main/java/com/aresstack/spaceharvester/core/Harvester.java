@@ -352,13 +352,7 @@ public final class Harvester implements AutoCloseable {
                 processors.add(embedding);
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
-<<<<<<< HEAD
             processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
-=======
-            TextSegmentation sentenceRules = KnowledgeTextSegmentation.defaults();
-            processors.add(new PassageProcessor(
-                    OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(sentenceRules)), sentenceRules,
-                    embedding));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
             AiServiceSettings startAi = builder.ai;
@@ -366,7 +360,6 @@ public final class Harvester implements AutoCloseable {
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);
             processors.add(new ImageProcessor(() -> describer));
->>>>>>> origin/main
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
