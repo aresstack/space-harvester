@@ -45,12 +45,14 @@ class ApiRouteCoverageTest {
     // Der regelmäßige Abgleich (ADR 0014) zeigt nur Spaces mit sync-Freigabe: 200 mit leerer Liste.
     // Die progressive Suche (ADR 0017) ist ebenso global; mit wait=true 200 ohne Treffer.
     private static final String PROGRESSIVE = "/api/v1/search/progressive";
+    // Begriffe und ihre Fundstellen (ADR 0019) sind global wie die Suche: 200 ohne Einträge.
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     // Das Suchlauf-Protokoll (#182) zeigt nur eigene Läufe, Fakten (#182) nur lesbarer Seiten: 200 mit leerer Liste.
     private static final String FACTS = "/api/v1/facts";
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
-            "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS);
+            "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS, "/api/v1/terms",
+            "/api/v1/terms/occurrences");
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {

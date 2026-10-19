@@ -13,6 +13,8 @@ import com.aresstack.spaceharvester.application.facts.FactTypes;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndexContract;
+import com.aresstack.spaceharvester.application.terms.TermIndex;
+import com.aresstack.spaceharvester.application.terms.TermIndexContract;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -76,6 +78,33 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
 
             assertThat(store.nearest("wiki", VERSION, new float[] {1, 0, 0}, 1))
                     .extracting(EmbeddingIndex.ChunkHit::page).containsExactly(NIGHT);
+        }
+    }
+
+    @Nested
+    class AsTermIndex extends TermIndexContract {
+
+        @Override
+        protected EnrichmentStore store() {
+            return store;
+        }
+
+        @Override
+        protected TermIndex index() {
+            return store;
+        }
+
+        @Test
+        void termsSurviveReopeningAndLeaveWithTheirSource() {
+            store.save(terms(A1, "1", payload(term("Beleg", "noun", null, 0, 5))));
+            store.save(terms(B1, "1", payload(term("Beleg", "noun", null, 0, 5))));
+            store.close();
+
+            store = LuceneEnrichmentStore.open(directory);
+            store.removeSource("wiki-a");
+
+            assertThat(store.postings(new TermIndex.Filter(BOTH, null, null, null, "1"), null, false, 10))
+                    .extracting(posting -> posting.page()).containsExactly(B1);
         }
     }
 

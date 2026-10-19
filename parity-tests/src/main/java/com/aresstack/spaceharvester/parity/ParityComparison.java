@@ -285,6 +285,52 @@ public final class ParityComparison {
         return findings;
     }
 
+    /**
+     * Akronym-Fakten (#182): je Datei die Kurzformen ({@code facts.<datei>.candidates}) und Ausschreibungen
+     * ({@code facts.<datei>.definitions}, {@code KURZ=lang}), {@code -} ohne Fakten. Fehlt dem Core ein Eintrag des
+     * Maßstabs, ist das eine Lücke; hat er mehr, steht es als „Core mehr“ im Bericht.
+     */
+    public static List<Finding> facts(Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String key = entry.getKey();
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(key, "fehlt");
+            Set<String> wanted = expected.equals("-") ? Set.of() : items(expected);
+            Set<String> got = actual.equals("-") || actual.equals("fehlt") ? Set.of() : items(actual);
+            Verdict verdict = !core.containsKey(key) || !got.containsAll(wanted) ? Verdict.CORE_WENIGER
+                    : got.size() > wanted.size() ? Verdict.CORE_MEHR : Verdict.GLEICH;
+            String file = key.substring("facts.".length(), key.lastIndexOf('.'));
+            String title = (key.endsWith(".definitions") ? "Ausschreibungen in " : "Akronyme in ") + file;
+            findings.add(new Finding("fakten", key.substring("facts.".length()), title, expected, actual, verdict,
+                    verdict == Verdict.CORE_WENIGER ? "im Core weniger oder nicht gemessen" : ""));
+        }
+        return findings;
+    }
+
+    /**
+     * Suchlauf-Protokoll (#182) der Live-Suche: Suchtext, Zahl der gefragten und der ausgefallenen Quellen und der
+     * erhaltenen Kandidaten. Jede Abweichung ist eine Lücke, denn ein Protokoll soll zeigen, was die Suche bekam.
+     */
+    public static List<Finding> searchRuns(Map<String, String> eac, Map<String, String> core) {
+        List<Finding> findings = new ArrayList<>();
+        for (Map.Entry<String, String> entry : eac.entrySet()) {
+            String expected = entry.getValue();
+            String actual = core.getOrDefault(entry.getKey(), "fehlt");
+            boolean same = expected.equals(actual);
+            findings.add(new Finding("suchlauf", entry.getKey().substring("run.".length()),
+                    RUNS.getOrDefault(entry.getKey(), entry.getKey()), expected, actual,
+                    same ? Verdict.GLEICH : Verdict.CORE_WENIGER, same ? "" : "anderes Protokoll im Core"));
+        }
+        return findings;
+    }
+
+    private static final Map<String, String> RUNS = Map.of(
+            "run.live.query", "Suchtext im Protokoll",
+            "run.live.sources", "Gefragte Quellen",
+            "run.live.failures", "Ausgefallene Quellen",
+            "run.live.candidates", "Erhaltene Kandidaten");
+
     private static Finding navigationLists(String format, String check, String title, Map<String, String> eac,
                                            Map<String, String> core, String suffix, boolean subset) {
         List<String> differing = new ArrayList<>();

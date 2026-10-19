@@ -10,6 +10,14 @@ import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingListener;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingReport;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeDocumentReader;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgePrefetchService;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.SearchDrivenIndexingUseCase;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.SourceCalls;
+import com.aresstack.enterpriseai.astu.acropolis.passage.SentenceSegmenter;
+import com.aresstack.enterpriseai.astu.acropolis.textmining.AcronymExtractor;
+import com.aresstack.enterpriseai.astu.acropolis.textmining.AcronymFindings;
+import com.aresstack.enterpriseai.astu.acropolis.textmining.AcronymSettings;
+import com.aresstack.enterpriseai.astu.acropolis.textmining.TextFinding;
+import com.aresstack.enterpriseai.searchrun.api.KnowledgeSearchRun;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.SearchKnowledgeSourcesUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.SourceSearchOutcome;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeBookmarkIds;
@@ -21,6 +29,7 @@ import com.aresstack.enterpriseai.astu.embedding.EmbeddingModelIdentity;
 import com.aresstack.enterpriseai.astu.embedding.EmbeddingVector;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunker;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunkingPolicy;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
@@ -116,7 +125,78 @@ public final class EacParityExport {
         navigation(source, new File(out, "navigation.properties"));
         management(confluence, none, new File(out, "management.properties"));
         addresses(source, new File(out, "addresses.properties"));
-        search(source, new File(out, "search.properties"));
+        search(source, new File(out, "search.properties"), new File(out, "search-runs.properties"));
+        facts(new File(out, "facts.properties"));
+    }
+
+    /**
+     * Akronym-Fakten (#182) wie {@code DocumentAcronymsUseCase} des Enterprise AI Client: je Datei aus
+     * {@link ParitySpace#FILES} der Text der Dateiquelle, {@link AcronymExtractor} mit den Standardregeln und dem
+     * regelbasierten Satzsplitter, daraus {@link AcronymFindings}. Je Datei die Kurzformen der
+     * {@code ACRONYM_CANDIDATE} und die Ausschreibungen der {@code ACRONYM_DEFINITION} als {@code KURZ=lang},
+     * Kurzform groß, Ausschreibung klein, sortiert; {@code -} ohne Fakten.
+     */
+    private static void facts(File target) throws Exception {
+        Path files = Files.createDirectories(Files.createTempDirectory("parity-facts").resolve("files"));
+        for (String[] file : ParitySpace.FILES) {
+            Files.write(files.resolve(file[0]), file[1].getBytes(StandardCharsets.UTF_8));
+        }
+        LocalFilesKnowledgeSource local = new LocalFilesKnowledgeSource(SourceAddress.of("docs"), files,
+                DocumentExtraction.detector(), DocumentExtraction.registry(), 20L * 1024 * 1024);
+        AcronymExtractor extractor = new AcronymExtractor(SentenceSegmenter.splitter());
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            List<KnowledgeResource> resources = local.discover(
+                    SourceScope.builder().startPoints(".").maxDepth(20).maxResources(5000).build());
+            TreeSet<String> names = new TreeSet<String>();
+            for (KnowledgeResource resource : resources) {
+                String id = resource.id().value();
+                String name = id.substring(id.lastIndexOf('/') + 1);
+                if (!names.add(name)) {
+                    continue;
+                }
+                String text = local.load(resource.id()).text();
+                TreeSet<String> candidates = new TreeSet<String>();
+                TreeSet<String> definitions = new TreeSet<String>();
+                for (TextFinding finding : AcronymFindings.of(extractor.analyze(text,
+                        AcronymSettings.defaults()), text)) {
+                    String shortForm = String.valueOf(finding.fields().get("shortForm")).toUpperCase(Locale.ROOT);
+                    if (AcronymFindings.ACRONYM_CANDIDATE.equals(finding.type())) {
+                        candidates.add(shortForm);
+                    } else if (AcronymFindings.ACRONYM_DEFINITION.equals(finding.type())) {
+                        definitions.add(shortForm + "=" + String.valueOf(finding.fields().get("longForm"))
+                                .trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT));
+                    }
+                }
+                out.println("facts." + name + ".candidates="
+                        + (candidates.isEmpty() ? "-" : join(new ArrayList<String>(candidates))));
+                out.println("facts." + name + ".definitions="
+                        + (definitions.isEmpty() ? "-" : join(new ArrayList<String>(definitions))));
+            }
+        } finally {
+            out.close();
+        }
+    }
+
+    /**
+     * Suchlauf-Protokoll (#182) wie die Suchleiste des Enterprise AI Client: {@link SearchDrivenIndexingUseCase}
+     * baut je Suche einen {@link KnowledgeSearchRun}; hier die Live-Suche in Confluence. Suchtext, gefragte Quellen,
+     * ausgefallene Quellen und die Zahl der erhaltenen Kandidaten (jede Seite einmal).
+     */
+    private static void searchRun(ConfluenceKnowledgeSource confluence, KnowledgePrefetchService prefetch,
+                                  File target) throws Exception {
+        KnowledgeSearchRun run = new SearchDrivenIndexingUseCase(prefetch, SourceCalls.direct(), null)
+                .search("parity", Collections.<KnowledgeSourcePort>singletonList(confluence),
+                        ParityConfluence.LIVE_SEARCH, 10).run();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            out.println("run.live.query=" + run.query());
+            out.println("run.live.sources=" + run.sources().size());
+            out.println("run.live.failures=" + run.failures().size());
+            out.println("run.live.candidates=" + run.candidates().size());
+        } finally {
+            out.close();
+        }
     }
 
     /**
@@ -124,9 +204,10 @@ public final class EacParityExport {
      * {@code withIndexedHits}. Eine Dateiquelle ohne eigene Suche wird erst indexiert und dann im Wissensindex gesucht
      * (Index-Rückfall); je Suche aus {@link ParitySpace#SEARCHES} die gefundenen Dateien und ob jeder Auszug den
      * Suchbegriff zeigt. Danach die Live-Suche in Confluence und das Vorladen ihrer Treffer über den
-     * {@link KnowledgePrefetchService} in den Rohindex, wie nach jeder Suche in der Suchleiste.
+     * {@link KnowledgePrefetchService} in den Rohindex, wie nach jeder Suche in der Suchleiste. Zuletzt der Suchlauf
+     * derselben Live-Suche ({@code runs}).
      */
-    private static void search(ConfluenceKnowledgeSource confluence, File target) throws Exception {
+    private static void search(ConfluenceKnowledgeSource confluence, File target, File runs) throws Exception {
         Path work = Files.createTempDirectory("parity-search");
         Path files = Files.createDirectories(work.resolve("files"));
         for (String[] file : ParitySpace.FILES) {
@@ -213,6 +294,7 @@ public final class EacParityExport {
                         FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
                 out.println("prefetch." + page + "=" + (raw.get(id).isPresent() ? "ja" : "nein"));
             }
+            searchRun(confluence, prefetch, runs);
         } finally {
             out.close();
             if (prefetch != null) {

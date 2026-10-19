@@ -29,12 +29,18 @@ public final class ParitySpace {
             {"foreign-host", "https://anderes.example.org/wiki/display/PARITY/Architektur"},
     };
 
-    /** Dateien einer Quelle ohne eigene Suche (#180): Name und Inhalt. */
+    /**
+     * Dateien einer Quelle ohne eigene Suche (#180): Name und Inhalt. {@code glossar.md} trägt Akronyme mit und ohne
+     * Ausschreibung für den Vergleich der Fakten (#182).
+     */
     public static final String[][] FILES = {
             {"betrieb.md", "# Betrieb\n\nDer Nachtlauf startet um zwei Uhr.\n\nDanach läuft die Sicherung.\n"},
             {"notfall.md", "# Notfall\n\nBei Störungen im Nachtlauf hilft die Rufbereitschaft.\n"},
             {"urlaub.txt", "Urlaubsplanung für das Team im Sommer."},
             {"kantine.txt", "Die Kantine öffnet um elf Uhr."},
+            {"glossar.md", "# Glossar\n\nDie Schnittstelle Application Programming Interface (API) liefert Daten.\n\n"
+                    + "Das LAN (Local Area Network) verbindet die Rechner.\n\n"
+                    + "Die Zentrale Datenverarbeitung (ZDV) prüft das LAN und die API täglich.\n"},
     };
 
     /** Suchen über {@link #FILES} (#180): Name und Suchbegriff. */
