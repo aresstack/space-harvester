@@ -201,6 +201,17 @@ final class PassagesTab extends JPanel {
         return hint.getText();
     }
 
+    /** Die Zeile des Absatzes {@code index} (ab 0). */
+    java.awt.Component rowForTest(int index) {
+        int seen = -1;
+        for (java.awt.Component component : list.getComponents()) {
+            if (component instanceof JPanel row && ++seen == index) {
+                return row;
+            }
+        }
+        return null;
+    }
+
     /** Klickt den Absatz {@code index} (ab 0) an. */
     void click(int index) {
         int seen = -1;

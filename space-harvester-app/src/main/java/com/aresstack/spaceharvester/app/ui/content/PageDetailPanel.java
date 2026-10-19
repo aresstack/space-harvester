@@ -459,8 +459,21 @@ public final class PageDetailPanel extends JPanel {
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
         acronymHint.setText(document.hint(live));
-        recomputeReader.setVisible(document.text() != null && !live
-                && document.acronyms().state() != PageAcronyms.State.CURRENT);
+        recomputeReader.setVisible(recomputeOffered(document, live));
+    }
+
+    /**
+     * Ob „Analyse neu berechnen“ unter Text erscheint: wenn Akronyme oder Absätze nicht zum angezeigten Text passen,
+     * denn auf diesen Knopf verweisen beide Hinweise.
+     */
+    private static boolean recomputeOffered(ReaderDocument document, boolean live) {
+        return document.text() != null && !live && recomputeOffered(document.acronyms().state(),
+                document.passages() == null ? null : document.passages().state());
+    }
+
+    static boolean recomputeOffered(PageAcronyms.State acronyms, PagePassages.State passages) {
+        return acronyms != PageAcronyms.State.CURRENT
+                || passages == PagePassages.State.STALE || passages == PagePassages.State.FAILED;
     }
 
     /** Baut den Lesetext mit den Akronymen der Seite {@code sourceId}/{@code pageId}; außerhalb des EDT. */
