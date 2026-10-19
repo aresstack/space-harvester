@@ -124,7 +124,7 @@ Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
 - **Aufbau:** `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`, z. B.
   `confluence:47110815@39950a2c…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 des angezeigten Textes,
   `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
-  über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `structure`). Gelesen wird von hinten,
+  über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `versionTag("structure")`). Gelesen wird von hinten,
   die Quellen-ID endet am ersten `:`; Seiten-IDs dürfen `@`, `#`, `:` und `/` enthalten.
 - **Nachschlagen:** `GET /api/v1/passages?id=` antwortet wie `KnowledgeResourceReader` mit `match`:
   `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: der Text hat sich geändert, es folgen
