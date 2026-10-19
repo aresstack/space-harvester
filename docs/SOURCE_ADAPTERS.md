@@ -247,9 +247,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
-   über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
-   aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
-   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`KnowledgeSourceProviderAdapter.connected`, eine Partition
+   über die Proxy-Route je Ziel; Anmeldung über `auth.type pat` (`token`) oder `basic` (Benutzer, Token als Passwort)
+   unter `source:<id>`, ohne Geheimnis vom Anbieter des einbettenden Programms (#188), oder bei `auth.type none` über
+   einen eigenen Verweis `options.credentialRef`; aufgelöst je Abruf; Server-CAs über `trust-bundle`, mTLS über
+   `client-certificate`). Ebenfalls registriert über `EacSourceAdapters` (`KnowledgeSourceProviderAdapter.connected`, eine Partition
    je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
    `port`, `startPoints`, anonym ohne Anmeldung) und `jes` (Spool, Anmeldung Pflicht), `source-ndv` als `ndv`
    (`host`, `startPoints`, Anmeldung Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
@@ -287,7 +288,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `basic` erfüllt die Pflichtangabe von JES und NDV; `credentialRef` neben `basic`, Zertifikate bei FTP/NDV und
   `base-url` verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
-  `credentialRef` wird abgelehnt.
+  `credentialRef` wird erst beim Abruf aufgelöst. `GitSourceAdapterTest`: `pat` und `basic` über `auth`, unvollständige
+  oder gemischte Angaben ohne Werte in der Meldung, kein Verweis auf `source:…`.
 - `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
   durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
 - `ParityFilesTest`: der Paritätsordner `ParityFiles` (Test-Fixtures des Core, Paket der Ordner-Quelle, Java 8, #193)

@@ -172,7 +172,9 @@ class HarvesterEacSourcesTest {
                 new SourceSettingsConfig("trust", "ndv", "NDV", null, new Auth(AuthType.BASIC, "U", "P", null),
                         Map.of("host", "ndv.example.org"), null, "-----BEGIN CERTIFICATE-----"),
                 new SourceSettingsConfig("url", "sharepoint", "Team", java.net.URI.create("https://x.example.org"),
-                        null, Map.of("siteUrl", "https://sharepoint.example.org/sites/team"))));
+                        null, Map.of("siteUrl", "https://sharepoint.example.org/sites/team")),
+                new SourceSettingsConfig("borrow", "jes", "JES", null, null,
+                        Map.of("host", "mvs.example.org", "credentialRef", "source:host-ftp"))));
         Harvester.Builder builder = Harvester.builder().dataDirectory(data);
         configs.forEach(builder::source);
         assertThatThrownBy(builder::build)
@@ -182,7 +184,9 @@ class HarvesterEacSourcesTest {
                                 "sources[1] (id=mtls): client-certificate passt nicht zu type ftp",
                                 "sources[2] (id=trust): trust-bundle passt nicht zu type ndv",
                                 "sources[3] (id=url): base-url passt nicht zu type sharepoint; die Adresse steht unter "
-                                        + "options"));
+                                        + "options",
+                                "sources[4] (id=borrow): options.credentialRef darf nicht auf source:… zeigen; dafür "
+                                        + "gibt es auth"));
     }
 
     /** Antwortet wie ein FTP-Server bis zur Anmeldung und lehnt sie ab; merkt sich USER und PASS. */

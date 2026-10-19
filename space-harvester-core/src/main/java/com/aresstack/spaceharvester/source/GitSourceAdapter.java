@@ -8,17 +8,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtrac
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentials;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvider;
-import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import java.nio.file.Path;
-import java.security.GeneralSecurityException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import java.util.function.Function;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 
 /**
  * Quellentyp {@code git}: ein Branch eines Git-Repositorys über {@code GitSourceProvider} aus
@@ -31,11 +24,13 @@ import javax.net.ssl.X509TrustManager;
  * wie die übrigen Quellen; PDF- und Office-Dateien im Repository liest dieselbe Extraktion wie bei lokalen Dateien
  * ({@link DocumentExtraction}).
  *
- * <p>Anmeldung über {@code options.credentialRef} wie im Enterprise AI Client ({@code SecretBackedGitCredentialsProvider},
- * #188): Benutzer und Lese-Token werden erst beim Abruf über den {@code SecretProvider} des Katalogs aufgelöst
- * (Konfiguration, sonst der Anbieter des einbettenden Programms), nie gespeichert oder protokolliert; der Adapter löscht
- * sie nach dem Abruf. Ein Eintrag ohne Benutzer ist erlaubt (Azure Repos, GitHub werten nur das Token aus). Eigene
- * Server-CAs kommen aus dem {@code trust-bundle} der Quelle, sonst gilt das Standardvertrauen des Programms.
+ * <p>Anmeldung wie im Enterprise AI Client ({@code SecretBackedGitCredentialsProvider}, #188, ADR 0022):
+ * {@code auth.type pat} mit {@code token} oder {@code basic} mit Benutzer und Token als Passwort; beides liegt unter
+ * {@code source:<id>}, fehlt das Geheimnis, kommt es vom Anbieter des einbettenden Programms. Ein eigener Verweis
+ * {@code options.credentialRef} geht bei {@code auth.type none} unverändert an diesen Anbieter. Aufgelöst wird erst
+ * beim Abruf, nie gespeichert oder protokolliert; der Adapter löscht das Material danach. Ein Eintrag ohne Benutzer ist
+ * erlaubt (Azure Repos, GitHub werten nur das Token aus). TLS je Quelle: Server-CAs aus {@code trust-bundle}, sonst
+ * das Standardvertrauen des Programms, Client-Zertifikat aus {@code client-certificate} (mTLS).
  */
 public final class GitSourceAdapter implements SourceAdapter {
 
@@ -60,32 +55,29 @@ public final class GitSourceAdapter implements SourceAdapter {
 
     @Override
     public String addressOption() {
-        return adapter(null, null, null).addressOption();
+        return adapter().addressOption();
     }
 
     @Override
     public List<String> check(SourceSettingsConfig config) {
-        return adapter(null, null, null).check(config);
+        return adapter().check(config);
+    }
+
+    @Override
+    public List<String> check(SourceSettingsConfig config, boolean externalSecrets) {
+        return adapter().check(config, externalSecrets);
     }
 
     @Override
     public OpenedSource open(SourceSettingsConfig config, Context context) {
-        X509TrustManager trust;
-        try {
-            trust = config.trustBundle() == null ? context.trustBundles().defaultTrust()
-                    : context.trustBundles().trustManager(config.trustBundle());
-        } catch (IllegalArgumentException e) {
-            throw new InvalidSourceConfigurationException(List.of("trust-bundle: " + e.getMessage()));
-        }
-        return adapter(context.secrets(), context.routes(), socketFactory(trust)).open(config, context);
+        return adapter().open(config, context);
     }
 
-    private KnowledgeSourceProviderAdapter adapter(SecretProvider secrets, HttpRoutePort routes,
-                                                   SSLSocketFactory tls) {
-        Function<SecretRef, GitCredentialsProvider> credentials = secrets == null ? null
-                : ref -> credentials(secrets, ref);
-        return new KnowledgeSourceProviderAdapter(new GitSourceProvider(cloneDirectory, credentials, routes, tls,
-                DocumentExtraction.detector(), DocumentExtraction.registry()));
+    private KnowledgeSourceProviderAdapter adapter() {
+        return KnowledgeSourceProviderAdapter.connected(connection -> new GitSourceProvider(cloneDirectory,
+                        ref -> credentials(connection.secrets(), ref), connection.routes(), connection.tls(),
+                        DocumentExtraction.detector(), DocumentExtraction.registry()), "credentialRef", null)
+                .named(displayName()).withCredentialRefPassThrough().acceptingToken();
     }
 
     /** Wie {@code SecretBackedGitCredentialsProvider} im Enterprise AI Client: je Abruf frisch, das Material gelöscht. */
@@ -104,18 +96,5 @@ public final class GitSourceAdapter implements SourceAdapter {
                 }
             }
         };
-    }
-
-    private static SSLSocketFactory socketFactory(X509TrustManager trust) {
-        if (trust == null) {
-            return null;
-        }
-        try {
-            SSLContext context = SSLContext.getInstance("TLS");
-            context.init(null, new TrustManager[] {trust}, null);
-            return context.getSocketFactory();
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("TLS für Git nicht einrichtbar", e);
-        }
     }
 }
