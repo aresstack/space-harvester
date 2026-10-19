@@ -752,6 +752,8 @@ public final class ActivitiesView implements View {
             case "unavailable" -> "Quelle nicht erreichbar";
             case "not-collected" -> "Bilder noch nicht beschafft";
             case "render-failed" -> "Darstellung fehlgeschlagen";
+            case "not-rendered" -> "von der Quelle nicht dargestellt";
+            case "view-count-mismatch" -> "Darstellung der Quelle unvollständig";
             default -> reason;
         };
     }
