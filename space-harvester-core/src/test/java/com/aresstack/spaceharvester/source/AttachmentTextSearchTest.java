@@ -9,6 +9,11 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
@@ -100,6 +105,32 @@ class AttachmentTextSearchTest {
         assertThat(byName).extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.ATTACHMENT);
         assertThat(page).extracting(KeywordSearch.Hit::matchedIn).containsExactly(KeywordSearch.MatchedIn.PAGE);
         assertThat(page.getFirst().attachment()).isNull();
+    }
+
+    @Test
+    void aSnippetFromAPassageCarriesItsPassageIdOnlyWithTheContentGrant() {
+        assets();
+        String text = "Einleitung ohne Bezug.\nDie Wartung beginnt am Samstag.";
+        index.put(new PageTextIndex.Entry(new PageKey("wiki", "101"), "DEV", "Planung", text, "sha256:p"));
+        String payload = "{\"mode\":\"structure\",\"reason\":\"no-model\",\"model\":null,\"segmentation\":\"s\","
+                + "\"sentences\":2,\"textSha256\":\"" + PassagePayload.textSha256(text) + "\",\"passages\":["
+                + "{\"start\":0,\"end\":22,\"firstSentence\":0,\"sentences\":1,\"section\":null,"
+                + "\"kind\":\"paragraph\",\"boundary\":\"structure\",\"similarity\":null},"
+                + "{\"start\":23,\"end\":54,\"firstSentence\":1,\"sentences\":1,\"section\":null,"
+                + "\"kind\":\"paragraph\",\"boundary\":\"structure\",\"similarity\":null}]}";
+        Enrichment passages = new Enrichment(new PageKey("wiki", "101"), PassageProcessor.ID, "1", "sha256:i", "1",
+                Enrichment.Status.OK, payload, List.of(), null, NOW);
+        PassageSnippets snippets = new PassageSnippets(index, key -> List.of(passages));
+
+        KeywordSearch.Hit hit = new KeywordSearch(catalog(), new AccessGuard(allow()), snippets, null)
+                .search(APP, KeywordSearch.Query.of("Wartung"), null, 10).hits().getFirst();
+
+        assertThat(hit.snippet()).isEqualTo("Die Wartung beginnt am Samstag.");
+        assertThat(hit.passageId()).isEqualTo(PassageId.of("wiki", "101",
+                PassageId.captureOf(PassagePayload.textSha256(text)), 1, PassageId.versionTag("s"),
+                PassageId.versionTag("structure")).value());
+        assertThat(new KeywordSearch(catalog(), new AccessGuard(deny("101", AccessKind.CONTENT)), snippets, null)
+                .search(APP, KeywordSearch.Query.of("Wartung"), null, 10).hits()).isEmpty();
     }
 
     @Test

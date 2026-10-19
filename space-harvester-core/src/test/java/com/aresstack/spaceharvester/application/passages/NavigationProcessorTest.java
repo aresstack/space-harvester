@@ -82,6 +82,33 @@ class NavigationProcessorTest {
     }
 
     @Test
+    void topicSectionsNameThePassageIdOfTheirFirstPassage() {
+        storeEmbeddings();
+        EnrichmentOutput output = processor.process(KEY, text);
+        Enrichment navigation = enrichment(output);
+        PassageProcessor passages = new PassageProcessor(SENTENCE_MODEL, KnowledgeTextSegmentation.defaults(),
+                embedding);
+        EnrichmentOutput segmented = passages.process(KEY, text);
+        Enrichment passageResult = new Enrichment(KEY, PassageProcessor.ID, segmented.version() != null
+                ? segmented.version() : passages.version(), text.inputSha256(), "1", Enrichment.Status.OK,
+                segmented.payloadJson(), segmented.warnings(), null, Instant.EPOCH);
+        List<Enrichments.View> views = List.of(new Enrichments.View(navigation, Enrichment.Freshness.CURRENT),
+                new Enrichments.View(passageResult, Enrichment.Freshness.CURRENT));
+
+        DocumentNavigationView view = DocumentNavigationView.read(KEY, views, text, builder);
+        List<PagePassages.Passage> all = PagePassages.read(KEY, views, text).passages();
+
+        List<NavigationSection> topics = view.flatten().stream()
+                .filter(section -> section.origin() == NavigationSection.Origin.TOPIC).toList();
+        assertThat(topics).isNotEmpty().allSatisfy(topic -> assertThat(topic.passageId())
+                .isEqualTo(all.stream().filter(passage -> passage.start() == topic.start()).findFirst()
+                        .orElseThrow().id()));
+        assertThat(view.flatten()).filteredOn(section -> section.origin() == NavigationSection.Origin.HEADING)
+                .allSatisfy(heading -> assertThat(heading.passageId()).isNull());
+        assertThat(read(output).flatten()).allSatisfy(section -> assertThat(section.passageId()).isNull());
+    }
+
+    @Test
     void withoutEmbeddingsForThisTextTheHeadingsStayAndItIsRetried() {
         DocumentNavigationView view = read(processor.process(KEY, text));
 

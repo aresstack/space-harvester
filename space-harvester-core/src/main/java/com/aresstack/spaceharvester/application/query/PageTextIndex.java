@@ -123,12 +123,18 @@ public interface PageTextIndex {
      * @param snippet         Textfenster um die erste Fundstelle als Klartext, leer ohne Fundstelle im Text
      * @param attachmentId    der Anhang der Seite, in dessen Text der Treffer liegt, {@code null} für den Text der Seite
      * @param attachmentTitle Dateiname dieses Anhangs oder {@code null}
+     * @param passageId       die Passage-ID des Absatzes, aus dem der Auszug stammt (EAC-Lücke 5), oder {@code null}
      */
     record Match(String sourceId, String pageId, String spaceKey, String title, String snippet, String attachmentId,
-                 String attachmentTitle) {
+                 String attachmentTitle, String passageId) {
 
         public Match(String sourceId, String pageId, String spaceKey, String title, String snippet) {
             this(sourceId, pageId, spaceKey, title, snippet, null, null);
+        }
+
+        public Match(String sourceId, String pageId, String spaceKey, String title, String snippet, String attachmentId,
+                     String attachmentTitle) {
+            this(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle, null);
         }
 
         /**
@@ -136,7 +142,12 @@ public interface PageTextIndex {
          * Absätzen) ersetzen den Auszug nur hierüber, damit ein Anhangstreffer nicht zum Seitentreffer wird.
          */
         public Match withSnippet(String snippet) {
-            return new Match(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle);
+            return withSnippet(snippet, null);
+        }
+
+        /** Wie {@link #withSnippet(String)}, mit der Passage-ID des Absatzes, aus dem der neue Auszug stammt. */
+        public Match withSnippet(String snippet, String passageId) {
+            return new Match(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle, passageId);
         }
 
         /** Ob der Treffer im Text eines Anhangs liegt. */

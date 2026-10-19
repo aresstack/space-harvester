@@ -5,7 +5,9 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -103,9 +105,15 @@ public record DocumentNavigationView(PagePassages.State state, DocumentNavigatio
         } catch (IllegalArgumentException e) {
             return headings(PagePassages.State.FAILED, title, text, builder);
         }
+        // Passage-IDs aus den Absätzen desselben Textes, beim Lesen berechnet wie bei …/passages.
+        Map<Integer, String> passageAt = new HashMap<>();
+        for (PagePassages.Passage passage : PagePassages.read(key, views, text).passages()) {
+            passageAt.putIfAbsent(passage.start(), passage.id());
+        }
         return new DocumentNavigationView(view.freshness() == Enrichment.Freshness.CURRENT
                 ? PagePassages.State.CURRENT : PagePassages.State.STALE, navigation.analysis(), navigation.reason(),
-                navigation.chapters(), title, text.inputSha256(), PassagePayload.textSha256(text.text()));
+                navigation.chapters().stream().map(chapter -> chapter.withPassageIds(passageAt)).toList(), title,
+                text.inputSha256(), PassagePayload.textSha256(text.text()));
     }
 
     private static DocumentNavigationView headings(PagePassages.State state, String title, PageText text,

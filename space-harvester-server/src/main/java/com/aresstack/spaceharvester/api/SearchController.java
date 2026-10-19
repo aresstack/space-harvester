@@ -342,6 +342,8 @@ public class SearchController {
      * @param matchedIn  Trefferart: {@code page} oder {@code attachment}, wenn die Fundstelle im Text eines Anhangs der
      *                   Seite liegt; der Treffer ist immer die Seite und gilt mit ihren Rechten
      * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
+     * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt, wie {@code passage:} an den Treffern im
+     *                   Enterprise AI Client (auflösbar über {@code GET /api/v1/passages?id=}), sonst {@code null}
      */
     public record KeywordHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                      String title, String snippet,
@@ -349,12 +351,13 @@ public class SearchController {
                                      @Schema(nullable = true) Instant modifiedAt,
                                      @Schema(nullable = true) String parentPageId,
                                      @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
-                                     @Schema(nullable = true) AttachmentMatchResponse attachment) {
+                                     @Schema(nullable = true) AttachmentMatchResponse attachment,
+                                     @Schema(nullable = true) String passageId) {
 
         static KeywordHitResponse of(KeywordSearch.Hit hit) {
             return new KeywordHitResponse(hit.sourceId(), hit.pageId(), hit.spaceKey(), hit.title(), hit.snippet(),
                     hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(), matchKind(hit),
-                    AttachmentMatchResponse.of(hit.attachment()));
+                    AttachmentMatchResponse.of(hit.attachment()), hit.passageId());
         }
     }
 
