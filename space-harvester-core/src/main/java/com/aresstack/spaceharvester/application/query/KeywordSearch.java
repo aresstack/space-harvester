@@ -67,7 +67,9 @@ import java.util.regex.Pattern;
  *       erreichbaren Quellen des Umfangs, auch solcher ohne eigene Suche (lokale Dateien, #180). Nur von hier kommen
  *       Treffer; Ergebnislisten werden nicht zusammengeführt. Jeder Treffer braucht {@link AccessKind#METADATA} und
  *       {@link AccessKind#CONTENT}, weil Fundstelle und Auszug aus dem Inhalt stammen, und wird live geprüft, wenn er
- *       nicht eben erst gefunden wurde.</li>
+ *       nicht eben erst gefunden wurde. Liegt die Fundstelle im Text eines Anhangs (#183), ist der Treffer die Seite
+ *       mit {@link Hit#matchedIn()} {@link MatchedIn#ATTACHMENT} und dem Anhang; geprüft wird wie jede Seite, ein
+ *       Anhang wird nie ohne seine lesbare Seite sichtbar.</li>
  * </ol>
  *
  * <p>Der Space-Filter gilt in beiden Suchen. Nicht freigegebene Seiten erscheinen nirgends, auch nicht als Titel,
@@ -485,7 +487,7 @@ public class KeywordSearch {
             for (Map.Entry<String, List<SourceSearchMatch>> entry : pending.entrySet()) {
                 int index = taken.get(entry.getKey());
                 if (index < entry.getValue().size() && candidates.size() < limit) {
-                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null));
+                    candidates.add(new Candidate(entry.getKey(), entry.getValue().get(index), false, null, null));
                     taken.put(entry.getKey(), index + 1);
                     added = true;
                 }
@@ -593,7 +595,8 @@ public class KeywordSearch {
                                         m.parentPageId()))
                                 .orElse(null);
                     }
-                    fromCache.add(new Candidate(match.sourceId(), hit, true, seen));
+                    fromCache.add(new Candidate(match.sourceId(), hit, true, seen, match.inAttachment()
+                            ? new AttachmentMatch(match.attachmentId(), match.attachmentTitle()) : null));
                 }
             } catch (RuntimeException e) {
                 LOG.log(System.Logger.Level.INFO, "Volltextindex nicht lesbar ({0})", e.getClass().getName());
@@ -781,11 +784,12 @@ public class KeywordSearch {
                 return Optional.empty();
             }
             // Steht das Wort nur im Titel, hat der Cache kein Textfenster; dann bleibt der Auszug der Quelle.
-            String snippet = candidate.match().snippet() == null || candidate.match().snippet().isEmpty()
-                    ? known.snippet() : candidate.match().snippet();
+            // Ein Anhangstreffer behält den Auszug aus dem Anhang, auch einen leeren (Wort nur im Dateinamen).
+            String snippet = candidate.attachment() == null && (candidate.match().snippet() == null
+                    || candidate.match().snippet().isEmpty()) ? known.snippet() : candidate.match().snippet();
             return Optional.of(new Hit(known.sourceId(), known.pageId(), known.spaceKey(), known.title(), snippet,
                     known.url(), known.version(), known.modifiedAt(),
-                    known.parentPageId()));
+                    known.parentPageId(), candidate.attachment()));
         }
         PageMetadata metadata;
         HarvestSource source = catalog.find(candidate.sourceId()).orElse(null);
@@ -823,7 +827,7 @@ public class KeywordSearch {
                 metadata.url() != null ? metadata.url() : match.url(),
                 metadata.version() != null ? metadata.version() : match.version(),
                 metadata.modifiedAt() != null ? metadata.modifiedAt() : match.modifiedAt(),
-                metadata.parentPageId()));
+                metadata.parentPageId(), candidate.attachment()));
     }
 
     /**
@@ -932,8 +936,12 @@ public class KeywordSearch {
     private record LiveSearch(HarvestSource source, int offset, int wanted, int state) {
     }
 
-    /** @param known eben live geprüfter Treffer derselben Seite oder {@code null} */
-    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known) {
+    /**
+     * @param known      eben live geprüfter Treffer derselben Seite oder {@code null}
+     * @param attachment der Anhang der Seite, in dem der Volltextindex fand, oder {@code null}
+     */
+    private record Candidate(String sourceId, SourceSearchMatch match, boolean indexed, Hit known,
+                             AttachmentMatch attachment) {
     }
 
     /**
@@ -1137,12 +1145,46 @@ public class KeywordSearch {
     }
 
     /**
-     * Ein Treffer; Kopfdaten live von der Quelle, Auszug aus dem Cache (ohne Cache aus der Suche der Quelle).
+     * Ein Treffer, immer eine Seite; Kopfdaten live von der Quelle, Auszug aus dem Cache (ohne Cache aus der Suche der
+     * Quelle).
      *
-     * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
+     * @param snippet    Textauszug als Klartext, leer, wenn es keinen gibt; bei einem Anhangstreffer aus dem Anhang
+     * @param attachment der Anhang der Seite, in dessen Text der Volltextindex fand (#183), oder {@code null}, wenn die
+     *                   Seite selbst passt
      */
     public record Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
-                      String version, Instant modifiedAt, String parentPageId) {
+                      String version, Instant modifiedAt, String parentPageId, AttachmentMatch attachment) {
+
+        public Hit(String sourceId, String pageId, String spaceKey, String title, String snippet, URI url,
+                   String version, Instant modifiedAt, String parentPageId) {
+            this(sourceId, pageId, spaceKey, title, snippet, url, version, modifiedAt, parentPageId, null);
+        }
+
+        /** Wo der Treffer liegt: in der Seite oder in einem ihrer Anhänge. */
+        public MatchedIn matchedIn() {
+            return attachment == null ? MatchedIn.PAGE : MatchedIn.ATTACHMENT;
+        }
+    }
+
+    /** Trefferart: wo die Fundstelle liegt. */
+    public enum MatchedIn {
+        /** Titel oder Text der Seite (oder die Suche der Quelle). */
+        PAGE,
+        /** Text eines Anhangs der Seite (#183). */
+        ATTACHMENT
+    }
+
+    /**
+     * Der Anhang eines Anhangstreffers. Sichtbar nur mit der Seite, deren Rechte er trägt.
+     *
+     * @param title Dateiname
+     */
+    public record AttachmentMatch(String attachmentId, String title) {
+
+        public AttachmentMatch {
+            Objects.requireNonNull(attachmentId, "attachmentId");
+            title = title == null ? "" : title;
+        }
     }
 
     /**
