@@ -946,6 +946,10 @@ public final class PageDetailPanel extends JPanel {
                 attachment.fileName());
     }
 
+    /** Grund im Anhang-Viewer, solange die Quelle einen Einmalcode verlangt; danach lädt die Seite neu. */
+    static final String SIGN_IN_PENDING = "Die Quelle verlangt einen Einmalcode. Bitte oben eingeben, danach lädt "
+            + "die Seite neu.";
+
     /** Holt Originaldatei und Vorschau über den Workspace, abseits des EDT; Fehler als lesbarer Grund. */
     private static ReaderAttachmentLoader attachmentLoader(AppRuntime runtime, String source, String id,
                                                            boolean previews) {
@@ -969,6 +973,9 @@ public final class PageDetailPanel extends JPanel {
     }
 
     private static String reason(Throwable error) {
+        if (error instanceof com.aresstack.spaceharvester.application.signin.SignInPendingException) {
+            return SIGN_IN_PENDING;
+        }
         Problems.Problem problem = Problems.describe(error);
         return problem.message() == null ? problem.title() : problem.title() + ": " + problem.message();
     }

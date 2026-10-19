@@ -93,6 +93,22 @@ class ReadingPaneTest {
         assertThat(prepared.note()).contains("1 Bild", "2 nicht darstellbar");
     }
 
+    /** Verlangt die Quelle einen Einmalcode, nennt der Platzhalter ihn statt „Bild fehlt“ (wie im EAC). */
+    @Test
+    void anImageWaitingForAOneTimeCodeSaysSo() {
+        HarvestSource.ViewImage locked = new HarvestSource.ViewImage("/download/attachments/42/plan.png", "plan.png",
+                "att3", "image/png", "1");
+        ReadingView view = available("<p><img src=\"/download/attachments/42/plan.png\"></p>", List.of(locked));
+
+        ReadingPane.Prepared prepared = ReadingPane.prepare(view, image -> {
+            throw new com.aresstack.spaceharvester.application.signin.SignInPendingException("wiki", "req-1", null);
+        }, source -> null);
+
+        assertThat(prepared.missing()).isEqualTo(1);
+        assertThat(prepared.html()).contains("[" + ReadingPane.SIGN_IN_PENDING + "plan.png]")
+                .doesNotContain("Bild fehlt");
+    }
+
     @Test
     void mermaidComesFromTheCoreOrIsMarked() throws IOException {
         ReadingView view = available("<div class=\"mermaid\">graph TD; A--&gt;B;</div>"

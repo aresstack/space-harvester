@@ -235,7 +235,8 @@ public final class Workspace {
         }
         access.require(caller, ResourceScope.page(header.key().sourceId(), header.metadata().partitionKey(),
                 header.key().pageId()), AccessKind.CONTENT);
-        return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
+        return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image,
+                Harvester.OWNER);
     }
 
     /** Der Stand der Hintergrundbefüllung (ADR 0016, {@code Harvester.acquisitionStatus}); nicht auf dem EDT. */
@@ -729,7 +730,7 @@ public final class Workspace {
     public Assets.AssetContent assetContent(String sourceId, String pageId, String attachmentId) {
         PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return harvester.assets().content(list, attachmentId, mayStore);
+        return harvester.assets().content(list, attachmentId, mayStore, Harvester.OWNER);
     }
 
     /**
@@ -740,7 +741,7 @@ public final class Workspace {
     public Assets.AssetContent assetPreview(String sourceId, String pageId, String attachmentId) {
         PageAttachmentList list = visibleAttachments(sourceId, pageId, AccessKind.CONTENT);
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        return harvester.assets().preview(list, attachmentId, null, mayStore);
+        return harvester.assets().preview(list, attachmentId, null, mayStore, Harvester.OWNER);
     }
 
     /** Ob die Quelle Vorschauen von Anhängen erzeugt ({@code SourceCapability.ATTACHMENT_PREVIEWS}). */
