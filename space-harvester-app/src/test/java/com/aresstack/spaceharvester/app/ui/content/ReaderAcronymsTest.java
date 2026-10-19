@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
+import com.aresstack.spaceharvester.app.ui.Relation;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
@@ -174,6 +175,13 @@ class ReaderAcronymsTest {
             panel.tabs().select("Text");
             return null;
         });
+
+        // Beziehungen (#120): Vorschläge der Akronym-Regel stehen im Reiter „Begriffe“ genau dieser Seite.
+        assertThat(workspace.proposeAcronymRelations("wiki").added()).isPositive();
+        ReaderDocument related = open(panel, "wiki", "200", false);
+        assertThat(related.relations()).extracting(Relation::line)
+                .contains("API · Abkürzung für · Application Programming Interface (Vorgeschlagen, Regel)");
+        assertThat(onEdt(() -> panel.terms().counts().get(2))).isEqualTo(String.valueOf(related.relations().size()));
 
         // Gleiche Seiten-ID, gleiches Akronym, andere Quelle: eigene Ausschreibung, nichts aus „wiki“
         ReaderDocument foreign = open(panel, "zweites", "200", false);

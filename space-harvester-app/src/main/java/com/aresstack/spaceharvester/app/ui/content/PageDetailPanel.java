@@ -76,6 +76,8 @@ import java.util.function.Consumer;
  */
 public final class PageDetailPanel extends JPanel {
 
+    private static final System.Logger LOG = System.getLogger(PageDetailPanel.class.getName());
+
     private static final String READ = "Text";
     private static final String READING = "Leseansicht";
     private java.util.function.BiConsumer<String, String> pageShown = (source, space) -> { };
@@ -374,7 +376,9 @@ public final class PageDetailPanel extends JPanel {
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
             PageText text = project(delivered.snapshot());
-            return new Loaded(delivered, enrichments, document(sourceId, pageId, enrichments, text, font),
+            ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
+            relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
+            return new Loaded(delivered, enrichments, document,
                     Payloads.display(delivered.snapshot().payload()),
                     Payloads.storage(delivered.snapshot().payload()).orElse(null), refresh);
         }, loaded -> {
@@ -500,6 +504,7 @@ public final class PageDetailPanel extends JPanel {
         shown = document;
         terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
         passages.show(document == null ? null : document.passages());
+        terms.showRelations(document == null ? null : document.relations());
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");
@@ -519,6 +524,21 @@ public final class PageDetailPanel extends JPanel {
         PageKey key = new PageKey(sourceId, pageId);
         return ReaderDocument.build(text, PageAcronyms.read(key, views, text), PageTerms.read(key, views, text), font)
                 .withPassages(PagePassages.read(key, views, text));
+    }
+
+    /** Hängt die Beziehungen der Begriffe dieser Seite an; ohne Begriffe oder Rechte bleibt es bei „nicht abgefragt“. */
+    private static void relations(AppRuntime runtime, ReaderDocument document, String sourceId, String spaceKey) {
+        java.util.Set<String> normalized = document.normalizedTerms();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        try {
+            document.withRelations(runtime.workspace().termRelationsFor(normalized, sourceId, spaceKey).stream()
+                    .map(com.aresstack.spaceharvester.app.ui.Relation::of).toList());
+        } catch (RuntimeException e) {
+            // Beziehungen sind eine Zugabe; ohne sie zeigt der Reiter „Begriffe“ den Rest unverändert.
+            LOG.log(System.Logger.Level.DEBUG, "Beziehungen nicht lesbar: {0}", e.getMessage());
+        }
     }
 
     private String acronymTooltip(Point point) {
@@ -1023,7 +1043,9 @@ public final class PageDetailPanel extends JPanel {
             Enrichments.Run run = runtime.workspace().recomputeEnrichments(source, id, null);
             DeliveredPage cached = runtime.workspace().page(source, id, false);
             List<Enrichments.View> updated = runtime.workspace().enrichments(cached);
-            return new Recomputed(run, updated, document(source, id, updated, text, font));
+            ReaderDocument document = document(source, id, updated, text, font);
+            relations(runtime, document, source, cached.header().metadata().partitionKey());
+            return new Recomputed(run, updated, document);
         }, result -> {
             if (current != request) {
                 return;

@@ -27,7 +27,10 @@ import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelation;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.query.PageListing;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
@@ -115,6 +118,44 @@ public final class Workspace {
     /** Ein Stapel des Begriffsverzeichnisses über alle sichtbaren Seiten ({@code TermQueries.terms}, #119). */
     public TermQueries.TermList terms(TermQueries.TermSearch search) {
         return harvester.terms().terms(caller, search);
+    }
+
+    /**
+     * Beziehungen zwischen Begriffen ({@code GET /api/v1/term-relations}, #120); {@code status} {@code null} heißt
+     * vorgeschlagene und bestätigte, wie im Dienst.
+     */
+    public TermRelations.RelationList termRelations(String term, ReviewStatus status, int limit) {
+        return harvester.termRelations().relations(caller, new TermRelations.RelationSearch(term, null, status, null,
+                null, limit, null));
+    }
+
+    /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
+    public List<TermRelation> termRelationsFor(java.util.Collection<String> normalized, String sourceId,
+                                               String spaceKey) {
+        return harvester.termRelations().forTerms(caller, normalized, sourceId, spaceKey);
+    }
+
+    /**
+     * Vorschläge aus den Ausschreibungen der Akronyme einer Quelle ({@code POST …/rules/acronyms?sourceId=}); die App
+     * bietet dafür keinen Knopf an, die Vorschläge stehen nur in der Liste.
+     */
+    public TermRelations.ProposalRun proposeAcronymRelations(String sourceId) {
+        return harvester.acronymRelationRule().run(caller, sourceId);
+    }
+
+    /** Bestätigen ({@code POST …/{id}/confirm?revision=}); wirft bei fremdem Stand {@code RelationConflictException}. */
+    public TermRelation confirmRelation(String id, long revision) {
+        return harvester.termRelations().confirm(caller, id, revision);
+    }
+
+    /** Ablehnen ({@code POST …/{id}/reject?revision=}): bleibt als abgelehnt stehen und kommt nicht wieder. */
+    public TermRelation rejectRelation(String id, long revision) {
+        return harvester.termRelations().reject(caller, id, revision);
+    }
+
+    /** Entfernen ({@code DELETE …/{id}?revision=}): eine manuelle löscht der Core, jede andere lehnt er ab. */
+    public Optional<TermRelation> removeRelation(String id, long revision) {
+        return harvester.termRelations().remove(caller, id, revision);
     }
 
     /** Ein Stapel Seitenmetadaten eines Space, live ({@code …/spaces/{key}/pages/metadata}). */

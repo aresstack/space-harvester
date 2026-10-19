@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.application.terms.TermRelation;
 import java.util.Objects;
 
 /**
@@ -17,6 +18,12 @@ public record Relation(String id, String fromTerm, String type, String toTerm, S
         Objects.requireNonNull(id, "id");
         Objects.requireNonNull(fromTerm, "fromTerm");
         Objects.requireNonNull(toTerm, "toTerm");
+    }
+
+    /** Die Beziehung des Core in Worten der Oberfläche. */
+    public static Relation of(TermRelation relation) {
+        return new Relation(relation.id(), relation.fromTerm(), relation.type().name(), relation.toTerm(),
+                relation.status().name(), relation.origin().name(), relation.revision());
     }
 
     /** „Abkürzung für“, „Synonym“, „Schreibvariante“, „Verwandt mit“; Unbekanntes bleibt, wie es kommt. */

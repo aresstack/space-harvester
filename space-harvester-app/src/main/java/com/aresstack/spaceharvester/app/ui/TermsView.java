@@ -13,6 +13,8 @@ import javax.swing.table.DefaultTableCellRenderer;
 import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.RelationConflictException;
+import com.aresstack.spaceharvester.application.terms.ReviewStatus;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 
 import java.awt.BorderLayout;
@@ -27,7 +29,7 @@ import java.util.function.Consumer;
  * Reitern Akronyme, Bezeichner, Beziehungen und Fachglossar in dieser Reihenfolge. Akronyme, Bezeichner und
  * Beziehungen zeigen je ein Verzeichnis über alle berechtigten, aktuell indexierten Seiten mit Suchfeld. Akronyme und
  * Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des EDT abgefragt, sobald
- * der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld; Beziehungen folgen mit #120. Für das Fachglossar gibt
+ * der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld, ebenso die Beziehungen (#120). Für das Fachglossar gibt
  * es noch keinen Unterbau. Nur auf dem EDT.
  */
 public final class TermsView implements View {
@@ -67,6 +69,7 @@ public final class TermsView implements View {
     private final AppContext context;
     private int acronymRequest;
     private int identifierRequest;
+    private int relationRequest;
 
     /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
     public TermsView(AppContext context) {
@@ -98,6 +101,8 @@ public final class TermsView implements View {
         if (context != null) {
             acronyms.onSearch(q -> loadAcronyms());
             identifiers.onSearch(q -> loadIdentifiers());
+            relations.onSearch(q -> loadRelations(null));
+            onReview = this::reviewInCore;
         }
     }
 
@@ -106,7 +111,62 @@ public final class TermsView implements View {
         if (context != null) {
             loadAcronyms();
             loadIdentifiers();
+            loadRelations(null);
         }
+    }
+
+    static final String NO_RELATIONS = "Noch keine Beziehungen. Vorschläge entstehen aus den Akronymen der Seiten; "
+            + "bestätigte gelten für die Suche.";
+    static final String CONFLICT = "Die Beziehung wurde inzwischen geändert; die Liste ist neu geladen.";
+
+    /**
+     * Vorgeschlagene und bestätigte Beziehungen, danach die abgelehnten (sie bleiben sichtbar und kommen nicht wieder),
+     * je nach Begriff gefiltert wie im Dienst.
+     */
+    private void loadRelations(String notice) {
+        if (context.runtime() == null) {
+            relations.show(List.of(), NO_RUNTIME);
+            return;
+        }
+        int request = ++relationRequest;
+        String q = relations.query();
+        String term = q.isEmpty() ? null : q;
+        AppRuntime runtime = context.runtime();
+        Background.run(() -> {
+            List<Relation> all = new ArrayList<>();
+            runtime.workspace().termRelations(term, null, LIMIT).relations().forEach(r -> all.add(Relation.of(r)));
+            runtime.workspace().termRelations(term, ReviewStatus.REJECTED, LIMIT).relations()
+                    .forEach(r -> all.add(Relation.of(r)));
+            return all;
+        }, found -> {
+            if (request == relationRequest) {
+                showRelations(found, q.isEmpty() ? NO_RELATIONS : NO_MATCH);
+                if (notice != null) {
+                    relations.message(notice);
+                }
+            }
+        }, failure -> {
+            if (request == relationRequest) {
+                showRelations(List.of(), "Beziehungen nicht lesbar: " + failure.getMessage());
+            }
+        });
+    }
+
+    /** Bestätigen, Ablehnen oder Entfernen mit dem gezeigten Stand; der Core prüft Rechte und Revision. */
+    private void reviewInCore(String action, Relation relation) {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null) {
+            return;
+        }
+        Background.run(() -> {
+            switch (action) {
+                case CONFIRM -> runtime.workspace().confirmRelation(relation.id(), relation.revision());
+                case REJECT -> runtime.workspace().rejectRelation(relation.id(), relation.revision());
+                default -> runtime.workspace().removeRelation(relation.id(), relation.revision());
+            }
+            return relation;
+        }, done -> loadRelations(null), failure -> loadRelations(failure instanceof RelationConflictException
+                ? CONFLICT : action + " nicht möglich: " + failure.getMessage()));
     }
 
     /** Zeigt Beziehungen; {@code hint} steht da, solange es keine gibt. */
@@ -337,6 +397,11 @@ public final class TermsView implements View {
 
         String hint() {
             return hint.getText();
+        }
+
+        /** Eine Meldung unter der Tabelle, etwa nach einer abgelehnten Änderung. */
+        void message(String text) {
+            hint.setText(text);
         }
     }
 
