@@ -131,12 +131,24 @@ public final class StorageParser {
      * Anzeigenamen der Benutzererwähnungen wie im Enterprise AI Client, der den Linktext der Lese-Ansicht übernimmt.
      * Zuordnung über {@code ri:username} bzw. {@code ri:account-id} zu {@code data-username} bzw.
      * {@code data-account-id}; sonst (etwa nur {@code ri:userkey}) über die Reihenfolge, aber nur wenn Storage und Ansicht
-     * gleich viele Erwähnungen haben. Erwähnungen in eingebundenen Inhalten zählen nicht mit.
+     * gleich viele Erwähnungen haben. Erwähnungen in eingebundenen Inhalten und Unsichtbares zählen nicht mit.
      */
+    /** Kennung einer Erwähnung ohne Anzeigenamen: Benutzername, sonst Benutzerschlüssel, sonst Account-ID. */
+    private static String userId(Element user) {
+        for (String attribute : List.of("ri:username", "ri:userkey", "ri:account-id")) {
+            if (!user.attr(attribute).isEmpty()) {
+                return user.attr(attribute);
+            }
+        }
+        return "";
+    }
+
     private static Map<Element, String> mentions(Element storage, String view) {
         List<Element> shown = new ArrayList<>();
         Map<String, String> byName = new HashMap<>();
-        for (Element mention : Jsoup.parse(view).body().select("a.user-mention")) {
+        Element body = Jsoup.parse(view).body();
+        body.select("script, style, noscript, .hidden, [hidden], [style~=(?i)display\\s*:\\s*none]").remove();
+        for (Element mention : body.select("a.user-mention")) {
             boolean included = false;
             for (Element parent = mention.parent(); parent != null && !included; parent = parent.parent()) {
                 included = RENDERED_MACROS.contains(parent.attr("data-macro-name").toLowerCase(Locale.ROOT));
@@ -540,8 +552,7 @@ public final class StorageParser {
             label = label.isEmpty() ? url.attr("ri:value") : label;
         } else if (user != null && label.isEmpty()) {
             String name = mentions.get(link);
-            label = name != null ? name
-                    : "@" + (user.hasAttr("ri:username") ? user.attr("ri:username") : user.attr("ri:userkey"));
+            label = name != null ? name : "@" + userId(user);
         }
         if (!link.attr("ac:anchor").isEmpty() && target == null && page == null) {
             label = label.isEmpty() ? link.attr("ac:anchor") : label;

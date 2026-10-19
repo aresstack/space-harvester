@@ -215,4 +215,29 @@ class ExportIncludesTest {
         assertThat(text(new MarkdownConverter(), input(storage, available(view))))
                 .contains("@8a7f0c1d").doesNotContain("Anna Schmidt", "Bernd Wagner");
     }
+
+    /**
+     * Zuordnung über die Account-ID; Erwähnungen in eingebundenen und unsichtbaren Inhalten zählen nicht; ein eigener
+     * Linktext geht vor; ohne Namen bleibt die Account-ID statt eines leeren „@“.
+     */
+    @Test
+    void mentionsMatchTheAccountIdAndIgnoreIncludedOrHiddenNames() throws Exception {
+        String storage = "<p><ac:link><ri:user ri:account-id=\"557058:aa\" /></ac:link> "
+                + "<ac:link><ri:user ri:userkey=\"k1\" /></ac:link> "
+                + "<ac:link><ri:user ri:account-id=\"557058:cc\" /><ac:plain-text-link-body>"
+                + "<![CDATA[Team Lead]]></ac:plain-text-link-body></ac:link></p>";
+        String view = "<p><a class=\"user-mention\" data-account-id=\"557058:aa\">Anna Schmidt</a> "
+                + "<span class=\"hidden\"><a class=\"user-mention\" data-username=\"h\">Versteckt</a></span> "
+                + "<span style=\"display: none\"><a class=\"user-mention\">Auch versteckt</a></span> "
+                + "<a class=\"user-mention\" data-username=\"k\">Klaus Kern</a> "
+                + "<a class=\"user-mention\" data-account-id=\"557058:cc\">Carla Conrad</a></p>"
+                + "<div data-macro-name=\"include\"><a class=\"user-mention\">Eingebunden</a></div>";
+        String text = text(new MarkdownConverter(), input(storage, available(view)));
+        assertThat(text).contains("Anna Schmidt", "Klaus Kern", "Team Lead")
+                .doesNotContain("Versteckt", "Eingebunden", "Carla Conrad", "557058");
+
+        String alone = text(new MarkdownConverter(), input(
+                "<p><ac:link><ri:user ri:account-id=\"557058:aa\" /></ac:link></p>", Optional.empty()));
+        assertThat(alone).contains("@557058:aa");
+    }
 }
