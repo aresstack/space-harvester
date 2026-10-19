@@ -89,8 +89,9 @@ entsteht die Datei erst beim Klick.
 - **Fakten** (#182) sind die aus den Ergebnissen abgeleiteten `MetadataFact`s der Seite mit Herkunft
   (`processorId`, `processorVersion`, `inputSha256`, `revision`), dazu manuelle (`origin` `MANUAL`, `processorId`
   `manual`) und der Prüfstatus `review` wie im Faktenblatt. Sie kommen aus dem heutigen Faktenspeicher; `state` sagt
-  wie bei den Abschnitten, ob ein Fakt zur exportierten Version gehört (`CURRENT`: gleicher `inputSha256`) oder aus
-  einer anderen Fassung stammt (`STALE`, etwa nach einem neueren Abgleich).
+  wie bei den Abschnitten, ob ein Fakt zur exportierten Version gehört (`CURRENT`) oder nicht (`STALE`, etwa nach
+  einem neueren Abgleich oder einer neuen Prozessorversion): automatische Fakten bei gleichem `inputSha256` und
+  `CURRENT`-Abschnitt ihres Prozessors, manuelle bei gleichem `inputSha256`.
 - Die Lese-Ansicht (`reading-view`) ist keine Analyse und fehlt; Suchläufe und Begriffsbeziehungen sind nicht
   seitenbezogen und gehören nicht in diese Datei.
 - Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher

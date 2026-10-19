@@ -5,9 +5,13 @@ import com.aresstack.spaceharvester.application.convert.ExportConverter;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses.PageAnalysis;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses.Section;
+import com.aresstack.spaceharvester.application.convert.PageAnalyses.State;
+import com.aresstack.spaceharvester.application.facts.FactOrigin;
 import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
@@ -36,7 +40,9 @@ import tools.jackson.databind.json.JsonMapper;
  * unverändert aus der Ablage. Nichts wird nachgerechnet. Fakten mit {@code origin} {@code AUTOMATIC} oder
  * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}). Die Fakten
  * kommen wie die Abschnitte aus dem heutigen Speicher; ihr {@code state} sagt, ob sie zur exportierten Version gehören
- * ({@code CURRENT}: gleicher {@code inputSha256}) oder aus einer anderen stammen ({@code STALE}).
+ * ({@code CURRENT}) oder nicht ({@code STALE}): Ein automatischer Fakt ist {@code CURRENT} bei gleichem
+ * {@code inputSha256} und {@code CURRENT}-Abschnitt seines Prozessors (also auch mit der aktuellen Prozessorversion),
+ * ein manueller bei gleichem {@code inputSha256}.
  */
 public final class AnalysisConverter implements ExportConverter {
 
@@ -113,8 +119,10 @@ public final class AnalysisConverter implements ExportConverter {
                 generator.writeEndObject();
                 generator.writeName("facts");
                 generator.writeStartArray();
+                Map<String, State> states = new HashMap<>();
+                analysis.sections().forEach(section -> states.put(section.processorId(), section.state()));
                 for (MetadataFact fact : analysis.facts()) {
-                    fact(generator, fact, analysis.inputSha256());
+                    fact(generator, fact, current(fact, analysis.inputSha256(), states));
                 }
                 generator.writeEndArray();
                 generator.writeEndObject();
@@ -144,16 +152,25 @@ public final class AnalysisConverter implements ExportConverter {
         generator.writeEndObject();
     }
 
-    /** @param pageInput Eingabe-Hash der exportierten Version, gegen den der {@code state} des Fakts bestimmt ist */
-    private void fact(JsonGenerator generator, MetadataFact fact, String pageInput) {
+    /**
+     * Ob ein Fakt zur exportierten Version gehört: gleicher Eingabe-Hash und, für automatische Fakten, ein aktueller
+     * Abschnitt seines Prozessors (wie {@code PageFacts}); ein manueller Fakt hängt an keiner Prozessorversion.
+     */
+    private static boolean current(MetadataFact fact, String pageInput, Map<String, State> states) {
+        if (pageInput == null || !pageInput.equals(fact.provenance().inputSha256())) {
+            return false;
+        }
+        return fact.origin() == FactOrigin.MANUAL || states.get(fact.provenance().processorId()) == State.CURRENT;
+    }
+
+    private void fact(JsonGenerator generator, MetadataFact fact, boolean current) {
         generator.writeStartObject();
         generator.writeStringProperty("id", fact.id());
         generator.writeStringProperty("type", fact.type());
         generator.writeStringProperty("role", fact.role());
         generator.writeStringProperty("origin", fact.origin().name());
         generator.writeStringProperty("review", fact.review().name());
-        generator.writeStringProperty("state", pageInput != null && pageInput.equals(fact.provenance().inputSha256())
-                ? "CURRENT" : "STALE");
+        generator.writeStringProperty("state", current ? "CURRENT" : "STALE");
         generator.writeStringProperty("processorId", fact.provenance().processorId());
         generator.writeStringProperty("processorVersion", fact.provenance().processorVersion());
         generator.writeStringProperty("inputSha256", fact.provenance().inputSha256());
