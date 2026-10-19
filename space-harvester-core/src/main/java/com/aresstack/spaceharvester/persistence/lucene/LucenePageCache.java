@@ -18,8 +18,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -83,6 +85,7 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
     public static final int DEFAULT_MAX_PAYLOAD_BYTES = 20 * 1024 * 1024;
     /** Obergrenze einer Seite in Listenabfragen. */
     public static final int MAX_PAGE_SIZE = 1000;
+    private static final int SNAPSHOT_BATCH = 500;
 
     private final Path path;
     private final Directory directory;
@@ -391,6 +394,61 @@ public final class LucenePageCache implements SnapshotRepository, AutoCloseable 
                     BooleanClause.Occur.FILTER);
         }
         return headers(query.build(), limit);
+    }
+
+    /**
+     * Seiten einer Quelle über alle Spaces nach ihren aktuellen Kopfdaten, nach Seiten-ID aufsteigend, ohne Payload;
+     * etwa um nach einem Wechsel der KI-Freigabe alle Seiten neu anzureichern (ADR 0015).
+     *
+     * @param afterPageId nur Seiten mit größerer Seiten-ID (Fortsetzung einer vorigen Liste) oder {@code null}
+     * @param limit       höchstens so viele Einträge, 1 bis {@link #MAX_PAGE_SIZE}
+     */
+    public List<CachedPageHeader> sourcePages(String sourceId, String afterPageId, int limit) {
+        BooleanQuery.Builder query = pages(sourceId);
+        if (afterPageId != null) {
+            query.add(TermRangeQuery.newStringRange(PageCacheSchema.PAGE_ID, afterPageId, null, false, false),
+                    BooleanClause.Occur.FILTER);
+        }
+        return headers(query.build(), limit);
+    }
+
+    /**
+     * Die gespeicherten Snapshots einer Quelle über alle Spaces nach Seiten-ID, je {@value #SNAPSHOT_BATCH} Kopfdaten
+     * gelesen; Seiten nur mit Kopfdaten fehlen. Jeder Snapshot wird erst beim Weiterlesen geholt.
+     */
+    public Iterator<PageSnapshot> snapshots(String sourceId) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        return new Iterator<>() {
+            private List<CachedPageHeader> batch = sourcePages(sourceId, null, SNAPSHOT_BATCH);
+            private int position;
+            private PageSnapshot next;
+
+            @Override
+            public boolean hasNext() {
+                while (next == null) {
+                    if (position == batch.size()) {
+                        if (batch.size() < SNAPSHOT_BATCH) {
+                            return false;
+                        }
+                        batch = sourcePages(sourceId, batch.getLast().header().key().pageId(), SNAPSHOT_BATCH);
+                        position = 0;
+                        continue;
+                    }
+                    next = find(batch.get(position++).header().key()).orElse(null);
+                }
+                return true;
+            }
+
+            @Override
+            public PageSnapshot next() {
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                PageSnapshot found = next;
+                next = null;
+                return found;
+            }
+        };
     }
 
     /**

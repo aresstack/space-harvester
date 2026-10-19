@@ -177,6 +177,20 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
                 + segmentation.id() + (passages == null ? "" : "+passages:" + passages.fingerprint());
     }
 
+    /**
+     * Prüft die Freigabe der Quelle erst hier, beim Rechnen: Eine Berechnung, die vor dem Entzug eingereiht wurde,
+     * schickt danach nichts mehr an den Dienst (ADR 0015).
+     *
+     * @throws IllegalStateException wenn Inhalte der Quelle nicht an den Dienst gehen dürfen
+     */
+    @Override
+    public EnrichmentOutput process(PageKey key, PageText text) {
+        if (!sources.test(key.sourceId())) {
+            throw new IllegalStateException("Quelle nicht für den KI-Dienst freigegeben");
+        }
+        return process(text);
+    }
+
     @Override
     public EnrichmentOutput process(PageText text) {
         // Ein Modell für den ganzen Lauf, auch wenn es währenddessen gewechselt wird.

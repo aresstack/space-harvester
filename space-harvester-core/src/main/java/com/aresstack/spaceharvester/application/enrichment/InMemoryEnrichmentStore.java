@@ -46,6 +46,14 @@ public final class InMemoryEnrichmentStore implements EnrichmentStore, Embedding
     }
 
     @Override
+    public synchronized void remove(PageKey key, String processorId) {
+        TreeMap<String, Enrichment> found = results.get(Objects.requireNonNull(key, "key"));
+        if (found != null) {
+            found.remove(processorId);
+        }
+    }
+
+    @Override
     public synchronized List<MetadataFact> factsOf(PageKey key) {
         TreeMap<String, Enrichment> found = results.get(Objects.requireNonNull(key, "key"));
         if (found == null) {
