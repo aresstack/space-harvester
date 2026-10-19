@@ -90,18 +90,21 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
    Berechnung an.
 
 6. **Benennung über das Chat-Modell** wie im Client: Die unveränderte `ChatSectionLabeler` (Kopie in
-   `enterprise-ai-sources`) bekommt über den vorhandenen Chat-Port mit dem Titel der Seite je 40 Themenabschnitte
-   eine Anfrage mit höchstens 700 Zeichen je Abschnitt und liefert Bezeichnungen aus zwei bis fünf Wörtern; ohne Chat-Modell bleibt
-   der erste Satz. Nur in der Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer
-   Anfrage; eigene Frist (60 s) und höchstens zwei Benennungen zugleich; nur für Quellen in
-   `external-processing-sources`. Antwortet das Modell nicht, bleiben die Bezeichnungen der Analyse mit
-   `reason=model-unavailable`, und der nächste Lauf versucht es wieder. Nach einem Fehler gehen die übrigen Pakete
-   der Seite nicht mehr ans Netz, und fünf Minuten lang benennt keine Seite (gleiches Modell, gleicher Dienst): Die
-   Hintergrund-Warteschlange, die Navigation und Embeddings teilen, wartet so höchstens eine Frist je Pause.
-   Die Verfahrensversion enthält Modell und einen Fingerabdruck der Dienstadresse; ein Wechsel berechnet neu. Bezeichnungen und Texte sind Inhalt und werden
-   nie geloggt, auch nicht die Antwort bei einem Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist
-   interne Verarbeitung wie progressive Suche (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die
-   EAC-Kopie ChatSectionLabeler ist Paritätspflicht.
+   `enterprise-ai-sources`) bekommt über den vorhandenen Chat-Port mit dem Titel der Seite (nur auf diesem Weg, also
+   nur für freigegebene Quellen, nie geloggt) je 40 Themenabschnitte eine Anfrage mit höchstens 700 Zeichen je
+   Abschnitt und liefert Bezeichnungen aus zwei bis fünf Wörtern; ohne Chat-Modell bleibt der erste Satz. Nur in der
+   Anreicherung (Prozessor `navigation`, im Hintergrund nach den Embeddings), nie bei einer Anfrage; eigene Frist (60
+   s) und höchstens zwei Benennungen zugleich; nur für Quellen in `external-processing-sources`. Antwortet das Modell
+   nicht, bleiben die Bezeichnungen der Analyse mit `reason=model-unavailable`, und der nächste Lauf versucht es
+   wieder. Nach einem Fehler gehen die übrigen Pakete der Seite nicht mehr ans Netz, und fünf Minuten lang benennt
+   keine Seite (gleiches Modell, gleicher Dienst): Die Hintergrund-Warteschlange, die Navigation und Embeddings
+   teilen, wartet so höchstens eine Frist je Pause. Die Verfahrensversion enthält Modell und einen Fingerabdruck der
+   Dienstadresse; ein Wechsel berechnet neu. Abweichung: Der Titel gehört nicht zum Eingabe-Hash des Textes (sonst
+   veralteten alle Prozessoren); ändert sich nur der Titel, bleiben die Bezeichnungen bis zur nächsten Text- oder
+   Versionsänderung. Bezeichnungen und Texte sind Inhalt und werden nie geloggt, auch nicht die Antwort bei einem
+   Lesefehler. Zur Frage „kein KI-Chat im Core“: Entschieden, das ist interne Verarbeitung wie progressive Suche
+   (#337) und Bildbeschreibung (#362), kein Chat-Angebot an Benutzer; die EAC-Kopie ChatSectionLabeler ist
+   Paritätspflicht.
 
 ## Abweichungen vom Client
 
