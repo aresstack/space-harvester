@@ -45,7 +45,7 @@ und `space-harvester.network.*`.
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
-| `space-harvester.search.semantic` | `false` | semantische Suche erlaubt (wirkt nur mit Embedding-Modell) |
+| `space-harvester.search.semantic` | `false` | Voreinstellung des Hakens „semantisch“ für Clients (wirkt nur mit Embedding-Modell); die Relevanzsuche selbst folgt dem Embedding-Modell |
 | `space-harvester.search.rerank` | `true` | Treffer über das Rerank-Modell umordnen, wenn eines eingestellt ist |
 | `space-harvester.search.prefetch-hits` | `true` | Treffer der nativen Quellensuche zuerst in den Cache laden |
 
@@ -82,7 +82,12 @@ und `space-harvester.network.*`.
   Schlagwortsuche, `before-search` je Quelle bei jeder Suche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
   schaltet ab und lässt sich auch erstmals einschalten, ohne Neustart: Die Kette (Prozessor, Hintergrund,
   Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Ebenso der Zeitplan der
-  Bestandsinventur (`sync.spaces` mit `inventory-interval` je Quelle). Noch nicht live im Server: `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
+  Bestandsinventur (`sync.spaces` mit `inventory-interval` je Quelle). Das Chat-Modell (`ai.chat-model`) gilt für Suchvarianten, Akronymauflösung,
+  Benennung der Themenabschnitte und Satzanalyse beim nächsten Aufruf, auch erstmals eingeschaltet. Ob
+  `sort=relevance` antwortet, folgt dem Embedding-Modell; `search.semantic` ist nur die Voreinstellung des Hakens für
+  Clients (in `GET /api/v1/configuration` als `semanticSearch` mit Modell) und schaltet nichts ab. Die Bean
+  `AiServiceSettings` aus den Properties prüft nur beim Start, dass Modelle ihre Adresse haben. Nur beim Start: siehe
+  die Tabelle unten (`cache.directory`, `term-relations.directory`).
 
 ## Suchlauf-Protokoll und Fakten (#182)
 
