@@ -47,8 +47,8 @@ public final class SyncBeforeSearch {
     }
 
     /**
-     * Startet das Nachholen für die Quellen aus {@code sourceIds}, deren Regel es verlangt; kehrt sofort zurück und
-     * wirft nicht.
+     * Startet das Nachholen für die Quellen aus {@code sourceIds}, deren Regel es verlangt, in einem eigenen Thread;
+     * kehrt sofort zurück und wirft nicht.
      */
     public void searching(Set<String> sourceIds) {
         try {
@@ -66,12 +66,25 @@ public final class SyncBeforeSearch {
             if (due.isEmpty()) {
                 return;
             }
+            // Auch das Einreihen über alle bestätigten Spaces läuft nicht im Such-Thread: Die Suche beginnt sofort.
+            // Ein eigener virtueller Thread je Nachholen genügt, es kommt je Quelle höchstens alle MIN_GAP vor.
+            Thread.ofVirtual().name("sync-before-search").start(() -> catchUp(current, due));
+        } catch (RuntimeException e) {
+            failed(e);
+        }
+    }
+
+    private void catchUp(HarvesterConfiguration current, Set<String> due) {
+        try {
             syncs.catchUpAll(owner, sourceId -> due.contains(sourceId) ? current.syncFor(sourceId).mode() : null);
         } catch (RuntimeException e) {
-            // Die Suche läuft ohne Nachholen weiter; keine Quellen- oder Suchangaben im Protokoll.
-            LOG.log(System.Logger.Level.WARNING, "Nachholen vor der Suche nicht gestartet ({0})",
-                    e.getClass().getName());
+            failed(e);
         }
+    }
+
+    private static void failed(RuntimeException e) {
+        // Die Suche läuft ohne Nachholen weiter; keine Quellen- oder Suchangaben im Protokoll.
+        LOG.log(System.Logger.Level.WARNING, "Nachholen vor der Suche nicht gestartet ({0})", e.getClass().getName());
     }
 
     /** Ob die Quelle jetzt dran ist; merkt sich den Zeitpunkt, damit parallele Suchen nicht doppelt nachholen. */
