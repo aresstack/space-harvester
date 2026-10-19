@@ -110,6 +110,21 @@ class SourcesApiTest {
     }
 
     @Test
+    void listsTheKnownSourceTypesWithDisplayNames() throws Exception {
+        HttpResponse<String> response = get("/api/v1/sources/types");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body())
+                .contains("{\"id\":\"confluence\",\"displayName\":\"Confluence\",\"needsCredentials\":false}")
+                .contains("{\"id\":\"files\",\"displayName\":\"Ordner\",\"needsCredentials\":false}")
+                .contains("{\"id\":\"ftp\",\"displayName\":\"FTP\",\"needsCredentials\":false}")
+                .contains("{\"id\":\"jes\",\"displayName\":\"JES\",\"needsCredentials\":true}")
+                .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false}")
+                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true}")
+                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false}");
+    }
+
+    @Test
     void listsAllSpacesOfASourceWithBasicAuth() throws Exception {
         HttpResponse<String> response = get("/api/v1/sources/basic-wiki/spaces");
 

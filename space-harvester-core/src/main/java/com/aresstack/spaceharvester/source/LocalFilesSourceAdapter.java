@@ -64,6 +64,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public String displayName() {
+        return "Ordner";
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
         List<String> problems = new ArrayList<>();
         if (config.baseUrl() != null) {

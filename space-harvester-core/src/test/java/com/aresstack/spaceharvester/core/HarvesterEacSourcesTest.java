@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Die Quellen des Enterprise AI Client ohne eigenen Ordner (#187) sind als Typen {@code ftp}, {@code jes}, {@code ndv}
- * und {@code sharepoint} registriert: gültige Einstellungen öffnen je eine Partition ohne Verbindung, die Prüfung des
+ * {@code sharepoint}, {@code betaview} und {@code outlook} registriert: gültige Einstellungen öffnen je eine Partition ohne Verbindung, die Prüfung des
  * Upstream-Typs meldet ihre Probleme beim Start.
  */
 class HarvesterEacSourcesTest {
@@ -24,7 +25,19 @@ class HarvesterEacSourcesTest {
 
     @Test
     void theCopiedSourceTypesAreKnownWithoutOwnRegistration() {
-        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint");
+        assertThat(ConfiguredSourceCatalog.TYPES).contains("ftp", "jes", "ndv", "sharepoint", "betaview", "outlook");
+    }
+
+    @Test
+    void theHarvesterListsItsSourceTypesWithDisplayNames() {
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            assertThat(harvester.sourceTypes()).containsExactly(
+                    new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
+                    new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
+                    new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
+                    new SourceType("betaview", "BetaView", true), new SourceType("outlook", "Outlook", false),
+                    new SourceType("git", "Git-Repository", false));
+        }
     }
 
     @Test
@@ -38,8 +51,13 @@ class HarvesterEacSourcesTest {
                         Map.of("host", "ndv.example.org", "credentialRef", "keepass:ndv", "startPoints", "MYLIB")))
                 .source(new SourceSettingsConfig("team", "sharepoint", "Team", null, null,
                         Map.of("siteUrl", "https://sharepoint.example.org/sites/team")))
+                .source(new SourceSettingsConfig("reports", "betaview", "Reports", null, null,
+                        Map.of("baseUrl", "https://betaview.example.org/betaview/", "credentialRef", "keepass:bv",
+                                "favoriteId", "F1")))
+                .source(new SourceSettingsConfig("mail", "outlook", "Mail", null, null,
+                        Map.of("mailbox", data.toString())))
                 .dataDirectory(data).build()) {
-            for (String id : new String[] {"host-ftp", "host-jes", "natural", "team"}) {
+            for (String id : new String[] {"host-ftp", "host-jes", "natural", "team", "reports", "mail"}) {
                 assertThat(harvester.sources().partitions(id)).extracting(Partition::key).containsExactly(id);
             }
         }

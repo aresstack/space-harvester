@@ -23,6 +23,8 @@ space-harvester:
     directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/exports
   assets:
     directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/assets
+  term-relations:
+    directory: ${SPACE_HARVESTER_DEMO_DATA:build/demo}/term-relations
   security:
     clients:
       - id: demo-client

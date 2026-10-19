@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
@@ -40,11 +41,12 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
 
     /**
      * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und die Kopien aus dem Enterprise AI Client
-     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint).
+     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint, betaview, outlook).
      */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
             new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
-            EacSourceAdapters.sharePoint());
+            EacSourceAdapters.sharePoint(), EacSourceAdapters.betaView(),
+            EacSourceAdapters.outlook());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
     public static final Set<String> TYPES = DEFAULT_ADAPTERS.stream().map(SourceAdapter::type)
@@ -263,6 +265,13 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return active(sourceId).map(Opened::source);
+    }
+
+    @Override
+    public List<SourceType> types() {
+        return adapters.values().stream()
+                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials()))
+                .toList();
     }
 
     private Optional<Opened> active(String sourceId) {
