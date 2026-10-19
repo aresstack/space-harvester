@@ -150,6 +150,45 @@ class EnrichmentApiTest {
     }
 
     @Test
+    void aPassageIsReadBackByItsStableId() throws Exception {
+        publish("510", "<h1>Handbuch</h1><p>Erster Absatz.</p><p>Zweiter Absatz.</p><p>Dritter Absatz.</p>");
+        HttpResponse<String> response = get("/api/v1/sources/wiki/pages/510/passages");
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode passages = json.readTree(response.body()).get("passages");
+        assertThat(passages.size()).isPositive();
+        String id = passages.get(0).get("id").asString();
+        assertThat(id).startsWith("wiki:510@").contains("#p0@");
+
+        HttpResponse<String> lookup = get("/api/v1/passages?id="
+                + java.net.URLEncoder.encode(id, java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(lookup.statusCode()).isEqualTo(200);
+        JsonNode found = json.readTree(lookup.body());
+        assertThat(found.get("match").asString()).isEqualTo("found");
+        assertThat(found.get("sourceId").asString()).isEqualTo("wiki");
+        assertThat(found.get("pageId").asString()).isEqualTo("510");
+        assertThat(found.get("passages").get(0).get("id").asString()).isEqualTo(id);
+        assertThat(found.get("passages").size()).isEqualTo(Math.min(2, passages.size()));
+
+        String older = id.replaceFirst("@[0-9a-f]{64}#", "@" + "0".repeat(64) + "#");
+        JsonNode moved = json.readTree(get("/api/v1/passages?id="
+                + java.net.URLEncoder.encode(older, java.nio.charset.StandardCharsets.UTF_8)).body());
+        assertThat(moved.get("match").asString()).isEqualTo("older-version");
+        assertThat(moved.get("passages").size()).isEqualTo(passages.size());
+
+        assertProblem(get("/api/v1/passages?id=wiki%3A510"), 400, "invalid-request");
+        assertProblem(get("/api/v1/passages?id=" + java.net.URLEncoder.encode(
+                id.replace("wiki:510@", "wiki:unbekannt@"), java.nio.charset.StandardCharsets.UTF_8)), 404, "cache-miss");
+        assertProblem(get("/api/v1/passages?id=" + java.net.URLEncoder.encode(id.replace("wiki:510@", "nope:510@"),
+                java.nio.charset.StandardCharsets.UTF_8)), 404, "cache-miss");
+        // Ohne content-Freigabe wie eine unbekannte Seite: keine 403, die das Bestehen verriete.
+        HttpResponse<String> hidden = http.send(HttpRequest.newBuilder(uri("/api/v1/passages?id="
+                        + java.net.URLEncoder.encode(id, java.nio.charset.StandardCharsets.UTF_8)))
+                .header("Authorization", "Bearer " + METADATA_TOKEN).build(), HttpResponse.BodyHandlers.ofString());
+        assertProblem(hidden, 404, "cache-miss");
+        assertThat(hidden.body()).doesNotContain("Absatz");
+    }
+
+    @Test
     void oneProcessorCanBeRecomputedAloneAndUnknownOnesAreRefused() throws Exception {
         publish("502", "<p>Ein Text.</p>");
 

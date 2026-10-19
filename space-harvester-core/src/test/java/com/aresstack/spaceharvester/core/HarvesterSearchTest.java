@@ -8,6 +8,10 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.SearchSettings;
+import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
@@ -118,6 +122,23 @@ class HarvesterSearchTest {
 
             assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
                     50).hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("200");
+        }
+    }
+
+    @Test
+    void loadingTheFoundPagesFollowsTheConfigurationAtRuntime() {
+        HarvesterConfiguration off = HarvesterConfiguration.DEFAULT.withSearch(
+                new SearchSettings(false, true, false, CacheFreshness.DEFAULT));
+        ConfigurationManager manager = new ConfigurationManager(off);
+        try (Harvester harvester = harvester(Harvester.builder().configuration(manager))) {
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).isEmpty();
+
+            // ADR 0015: search.prefetch-hits wirkt für den nächsten Stapel, ohne den Harvester neu zu bauen.
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
+
+            assertThat(harvester.keywordSearch().search(harvester.caller(), KeywordSearch.Query.of("Nachtlauf"), null,
+                    50).hits()).extracting(KeywordSearch.Hit::pageId).containsExactlyInAnyOrder("102", "200");
         }
     }
 

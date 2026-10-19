@@ -84,8 +84,11 @@ public class FactController {
             @Parameter(description = "Nur dieser Typ", schema = @Schema(allowableValues = {
                     FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION, FactTypes.MENTION,
                     FactTypes.PROPERTY, FactTypes.EVENT, FactTypes.RELATION}))
-            @RequestParam(required = false) String type) {
-        PageFacts.Sheet sheet = facts.factsOf(caller, sourceId, pageId, type(type));
+            @RequestParam(required = false) String type,
+            @Parameter(description = "Nur Fakten dieses Prozessors, etwa entities, statements oder manual (MENTION "
+                    + "entsteht aus entities und, eingeschaltet, aus statements)", example = "statements")
+            @RequestParam(required = false) String processor) {
+        PageFacts.Sheet sheet = facts.factsOf(caller, sourceId, pageId, type(type), blankToNull(processor));
         return new SheetResponse(sheet.sourceId(), sheet.pageId(), sheet.spaceKey(), sheet.facts().stream()
                 .map(entry -> FactResponse.of(entry.fact(), entry.freshness().name().toLowerCase(Locale.ROOT),
                         entry.revision(), json))
@@ -123,7 +126,10 @@ public class FactController {
             @RequestParam(required = false) List<String> spaceKey,
             @Parameter(description = "nextCursor der vorigen Antwort") @RequestParam(required = false) String cursor,
             @Parameter(description = "Größe des Stapels, 1 bis " + PageFacts.MAX_LIMIT)
-            @RequestParam(defaultValue = "50") int limit) {
+            @RequestParam(defaultValue = "50") int limit,
+            @Parameter(description = "Nur Fakten dieses Prozessors, etwa entities, statements oder manual",
+                    example = "statements")
+            @RequestParam(required = false) String processor) {
         List<ArgumentCondition> conditions = new ArrayList<>();
         for (String condition : argument == null ? List.<String>of() : argument) {
             try {
@@ -134,7 +140,7 @@ public class FactController {
         }
         PageFacts.Results results = facts.search(caller, new PageFacts.Search(type(type), conditions, sourceId,
                 Set.copyOf(sourceIds == null ? List.of() : sourceIds),
-                Set.copyOf(spaceKey == null ? List.of() : spaceKey)), cursor, limit);
+                Set.copyOf(spaceKey == null ? List.of() : spaceKey)), blankToNull(processor), cursor, limit);
         return new FactsResponse(results.facts().stream().map(fact -> FactResponse.of(fact, null,
                 edits.revision(fact.id()), json)).toList(), results.nextCursor());
     }
@@ -232,6 +238,10 @@ public class FactController {
                                    @PathVariable String pageId, @PathVariable String factId) {
         return new HistoryResponse(factId, edits.history(caller, sourceId, pageId, factId).stream()
                 .map(HistoryEntry::of).toList());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 
     private static String type(String type) {

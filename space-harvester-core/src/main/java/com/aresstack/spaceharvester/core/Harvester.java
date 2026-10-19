@@ -41,6 +41,8 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
 import com.aresstack.spaceharvester.application.export.EnrichmentAnalyses;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
@@ -150,6 +152,7 @@ import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
@@ -364,7 +367,8 @@ public final class Harvester implements AutoCloseable {
                         sentenceRules)));
             }
             this.embeddingModel = model;
-            if (embedding != null) {
+            if (embedding != null || builder.statements.enabled()) {
+                // Auch die Satzanalyse (#108) rechnet über das Netz: nie im Abgleich selbst.
                 ExecutorService started = Enrichments.background(1000);
                 background = started;
                 opened.add(() -> {
@@ -393,22 +397,51 @@ public final class Harvester implements AutoCloseable {
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);
             processors.add(new ImageProcessor(() -> describer));
+            Predicate<String> statementsReleased = null;
+            StatementProcessor statementProcessor = null;
+            if (builder.statements.enabled()) {
+                // #108: Satzanalyse über das Chat-Modell (ai.chat-model) der wirksamen Konfiguration, zusätzlich zu
+                // entities/activities/relations, im Hintergrund und nur für Quellen in external-processing-sources.
+                StatementSettings statementSettings = builder.statements;
+                StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
+                        catalog, trustBundles, builder.userAgent);
+                statementsReleased = chats.mayProcessExternally();
+                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased);
+                processors.add(statementProcessor);
+            }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
-            // Cache neu; images rechnet nur auf Abruf und prüft die Freigabe dann selbst. Schließt vor dem Hintergrund.
-            if (model != null) {
+            // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
+            // selbst. Schließt vor dem Hintergrund.
+            if (model != null || statementsReleased != null) {
+                List<String> releaseDependent = new ArrayList<>();
+                if (model != null) {
+                    releaseDependent.addAll(List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                }
+                if (statementsReleased != null) {
+                    releaseDependent.add(StatementProcessor.ID);
+                }
+                // Ohne Embedding-Modell tauscht die Generation nicht, covers bliebe beim alten Stand; die Satzanalyse
+                // fragt die Freigabe darum selbst.
+                EmbeddingProcessor embeddings = model != null ? embedding : null;
+                Predicate<String> statementsFollow = statementsReleased;
+                Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
+                        || statementsFollow != null && statementsFollow.test(sourceId);
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
-                        cache::snapshots, embedding::covers,
-                        List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                        cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
                 // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
-                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten.
+                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
+                // Chat-Modell.
+                StatementProcessor statementsOnStart = statementProcessor;
                 recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
-                        embedding::available, PassagePayload.REASON_NOT_APPROVED);
+                        () -> embeddings != null && embeddings.available()
+                                || statementsOnStart != null && statementsOnStart.available(),
+                        PassagePayload.REASON_NOT_APPROVED);
                 this.releaseRecomputation = recomputation;
             } else {
                 this.releaseRecomputation = null;
@@ -483,7 +516,10 @@ public final class Harvester implements AutoCloseable {
             opened.add(scheduler);
             this.acquisition = scheduler;
             SearchHitPrefetch prefetch = null;
-            if (builder.prefetchSearchHits) {
+            // ADR 0015: Folgt das Vorabladen der Konfiguration, gibt es den Lader immer; ob ein Stapel lädt, liest die
+            // Suche je Stapel aus search.prefetch-hits.
+            boolean prefetchFollows = manager != null && !builder.prefetchSearchHitsFixed;
+            if (builder.prefetchSearchHits || prefetchFollows) {
                 // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
                         key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
@@ -514,7 +550,8 @@ public final class Harvester implements AutoCloseable {
             }
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
-                    excerpts, builder.selection(), runLog, findings);
+                    excerpts, builder.selection(), runLog, findings,
+                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1455,6 +1492,7 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
+        private boolean prefetchSearchHitsFixed;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
         private boolean excerptRanking = true;
         private boolean searchRuns = true;
@@ -1481,6 +1519,7 @@ public final class Harvester implements AutoCloseable {
         private boolean changeEvents;
         private final Map<String, char[]> webhookSecrets = new HashMap<>();
         private ImageDescriber imageDescriber;
+        private StatementSettings statements = StatementSettings.DEFAULT;
         private AiServiceSettings ai = AiServiceSettings.NONE;
         private int maxChunkChars = 0;
         private int chunkTokens = KnowledgeTextSegmentation.DEFAULT_MAX_TOKENS;
@@ -1533,6 +1572,7 @@ public final class Harvester implements AutoCloseable {
             this.cacheFreshness = current.search().cacheFreshness();
             this.withheldRetention = current.sync().withheldRetention();
             this.prefetchSearchHits = current.search().prefetchHits();
+            this.prefetchSearchHitsFixed = false;
             this.aiFixed = false;
             this.freshnessFixed = false;
             this.retentionFixed = false;
@@ -1705,6 +1745,17 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
+         * Satzanalyse über das Chat-Modell (Prozessor {@code statements}, #108); Standard aus
+         * ({@link StatementSettings#DEFAULT}). Eingeschaltet schickt sie Absätze der Seiten an {@code ai.chat-model},
+         * aber nur aus Quellen in {@code external-processing-sources}, im Hintergrund der Anreicherungen; ohne
+         * Chat-Modell wird der Prozessor übersprungen. Wirkt beim Bauen; das Chat-Modell folgt der Konfiguration.
+         */
+        public Builder statements(StatementSettings statements) {
+            this.statements = Objects.requireNonNull(statements, "statements");
+            return this;
+        }
+
+        /**
          * Der externe KI-Dienst (ADR 0011); ohne Embedding-Modell gibt es keine semantische Suche
          * ({@code sort=relevance} antwortet mit {@code semantic-search-unavailable}).
          */
@@ -1831,10 +1882,12 @@ public final class Harvester implements AutoCloseable {
 
         /**
          * Ob die Schlagwortsuche gefundene Seiten in den Cache lädt, bevor sie dort sucht (ADR 0013); Standard
-         * {@code true}. Ohne findet sie nur, was schon im Cache liegt.
+         * {@code true}. Ohne findet sie nur, was schon im Cache liegt. Mit {@link #configuration} folgt sie
+         * {@code search.prefetch-hits}, bis dieser Aufruf sie danach fest einstellt.
          */
         public Builder prefetchSearchHits(boolean prefetchSearchHits) {
             this.prefetchSearchHits = prefetchSearchHits;
+            this.prefetchSearchHitsFixed = configuration != null;
             return this;
         }
 

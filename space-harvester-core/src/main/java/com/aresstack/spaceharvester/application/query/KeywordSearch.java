@@ -37,6 +37,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.TreeSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -131,6 +132,7 @@ public class KeywordSearch {
     private final AccessGuard access;
     private final PageTextIndex texts;
     private final Prefetch prefetch;
+    private final BooleanSupplier prefetching;
     private final int maxQueries;
     private final ExcerptPriority excerpts;
     private final CandidateSelectionStrategy selection;
@@ -207,6 +209,17 @@ public class KeywordSearch {
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, () -> true);
+    }
+
+    /**
+     * @param prefetching ob ein Stapel jetzt lädt (ADR 0015: {@code search.prefetch-hits} zur Laufzeit); ohne
+     *                    {@code prefetch} lädt nie einer. Stand und Abbruch schon ladender Stapel bleiben erreichbar.
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching) {
+        this.prefetching = Objects.requireNonNull(prefetching, "prefetching");
         this.findings = Objects.requireNonNull(findings, "findings");
         this.selection = Objects.requireNonNull(selection, "selection");
         this.runs = Objects.requireNonNull(runs, "runs");
@@ -525,12 +538,13 @@ public class KeywordSearch {
         List<Hit> found = discovered.hits();
         ExcerptPriority.Priority priority = excerpts.prioritize(query.text(), found);
         List<Hit> ranked = priority.apply(found);
-        List<Hit> toLoad = new ArrayList<>(prefetch == null ? List.of() : select(found, ranked, priority.ranked()));
+        boolean loads = prefetch != null && prefetching.getAsBoolean();
+        List<Hit> toLoad = new ArrayList<>(loads ? select(found, ranked, priority.ranked()) : List.of());
         if (!finalListOnly) {
             // Für Endnutzer sind die Funde ungeprüft: keine Zahl, auch nicht im Protokoll.
             tally.discovered = OptionalInt.of(found.size());
         }
-        if (position != null) {
+        if (loads && position != null) {
             Set<PageKey> seen = new HashSet<>();
             toLoad.forEach(hit -> seen.add(new PageKey(hit.sourceId(), hit.pageId())));
             for (Hit hit : position.pending()) {
@@ -542,7 +556,7 @@ public class KeywordSearch {
         }
         List<Hit> stillLoading = List.of();
         Progress progress = null;
-        if (prefetch != null && !toLoad.isEmpty()) {
+        if (loads && !toLoad.isEmpty()) {
             try {
                 Prefetch.Fill fill = prefetch.prefetch(caller, toLoad);
                 stillLoading = fill.pending().size() > MAX_LIMIT ? fill.pending().subList(0, MAX_LIMIT)

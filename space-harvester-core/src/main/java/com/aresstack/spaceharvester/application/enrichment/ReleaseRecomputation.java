@@ -26,7 +26,7 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * Rechnet nach einem Wechsel der Freigabe {@code ai.external-processing-sources} (ADR 0015) die Seiten einer Quelle im
  * Cache für die Prozessoren neu, deren Ergebnis an der Freigabe hängt (im Kern {@code embedding}, {@code passages},
- * {@code navigation}; {@code images} rechnet nur auf Abruf und prüft die Freigabe dann selbst). Die Version bleibt
+ * {@code navigation}, eingeschaltet {@code statements}; {@code images} rechnet nur auf Abruf und prüft die Freigabe dann selbst). Die Version bleibt
  * dieselbe, deshalb erzwungen über {@link Enrichments#recomputeInBackground}, gedrosselt im vorhandenen Hintergrund und
  * ohne neuen Abruf von der Quelle:
  *
@@ -94,10 +94,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
 
     /**
      * Quellen, deren Freigabe wechselt: {@code true} neu freigegeben, {@code false} entzogen; leer, wenn weder vorher
-     * noch nachher ein Embedding-Modell eingestellt ist.
+     * noch nachher ein Embedding- oder Chat-Modell (Satzanalyse {@code statements}, #108) eingestellt ist.
      */
     static Map<String, Boolean> changes(AiServiceSettings before, AiServiceSettings after) {
-        if (!before.embeddings() && !after.embeddings()
+        if (!usesService(before) && !usesService(after)
                 || before.externalProcessingSources().equals(after.externalProcessingSources())) {
             return Map.of();
         }
@@ -107,6 +107,10 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         before.externalProcessingSources().stream().filter(sourceId -> !after.mayProcessExternally(sourceId))
                 .forEach(sourceId -> changed.put(sourceId, false));
         return changed;
+    }
+
+    private static boolean usesService(AiServiceSettings settings) {
+        return settings.embeddings() || settings.chat();
     }
 
     /** Reiht einen Lauf für die Quelle ein; schließt der Dienst schon, gilt die Freigabe beim nächsten Abruf. */

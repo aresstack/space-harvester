@@ -81,7 +81,8 @@ public final class ChatNavigationLabeler implements NavigationLabelModel {
         return ID + ":" + current.chatModel() + "@" + fingerprint(String.valueOf(current.baseUrl()));
     }
 
-    private static String fingerprint(String value) {
+    /** Die ersten 6 Byte von SHA-256 als Hex; auch für die Satzanalyse ({@code RemoteAi#statementChat}). */
+    static String fingerprint(String value) {
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(hash, 0, 6);

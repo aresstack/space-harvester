@@ -16,6 +16,9 @@ import java.util.Objects;
  */
 public final class PassageQueries {
 
+    /** Nachbarn je Seite eines gefundenen Absatzes, wie {@code KnowledgeResourceReader.NEIGHBOURS} im Client. */
+    static final int NEIGHBOURS = 1;
+
     private final PageQueries pages;
     private final Enrichments enrichments;
     private final PageTextProjector projector;
@@ -46,6 +49,20 @@ public final class PassageQueries {
         }
         enrichments.flush();
         return PagePassages.read(page.snapshot().key(), enrichments.view(page.snapshot()), text);
+    }
+
+    /**
+     * Löst eine Passage-ID auf ({@link PassageId}), wie {@code KnowledgeResourceReader} im Enterprise AI Client: Gibt
+     * es den Absatz im aktuellen Ergebnis, kommt er mit je {@value #NEIGHBOURS} Nachbarn; sonst kommen alle aktuellen
+     * Absätze und {@link PassageLookup.Match} sagt warum. Rechte und Nachziehen wie {@link #page}.
+     *
+     * @throws IllegalArgumentException wenn {@code passageId} keine Passage-ID ist
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException wie {@link PageQueries#page}
+     * @throws com.aresstack.spaceharvester.application.query.CacheMissException     wie {@link PageQueries#page}
+     */
+    public PassageLookup resolve(AccessContext caller, String passageId) {
+        PassageId requested = PassageId.parse(passageId);
+        return PassageLookup.of(requested, page(caller, requested.sourceId(), requested.pageId()), NEIGHBOURS);
     }
 
     private PageText text(DeliveredPage page) {

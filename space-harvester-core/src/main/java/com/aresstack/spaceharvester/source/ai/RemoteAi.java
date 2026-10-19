@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.ai.AiServiceException;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementChat;
 import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
@@ -248,6 +249,53 @@ public final class RemoteAi {
         String model = settings.chatModel();
         List<String> labels = new ChatSectionLabeler(port, () -> model).labels(documentTitle, sectionTexts);
         return new NavigationLabelModel.Labels(labels, !failed.get());
+    }
+
+    /**
+     * Das Chat-Modell der Satzanalyse ({@code POST /chat/completions}, Prozessor {@code statements}, #108) über den
+     * unveränderten {@code OpenAiCompatibleChatAdapter}, wie {@code ChatStatementExtractor} im Enterprise AI Client:
+     * nur das Modell gesetzt, keine Token-Grenze, keine Sampling-Optionen. Hier geht Seitentext an den Dienst; das
+     * dürfen nur Quellen in {@code external-processing-sources}, was der Prozessor je Seite prüft. Scheitert ein
+     * Aufruf, meldet das Modell {@link AiServiceException} ohne Nachrichten, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public StatementChat statementChat() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
+        String model = settings.chatModel();
+        String endpoint = ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
+        ChatOptions options = ChatOptions.builder().model(model).build();
+        return new StatementChat() {
+            @Override
+            public String model() {
+                return model;
+            }
+
+            @Override
+            public String endpoint() {
+                return endpoint;
+            }
+
+            @Override
+            public String complete(List<Message> messages) {
+                List<ChatMessage> request = new ArrayList<>(messages.size());
+                for (Message message : messages) {
+                    request.add(switch (message.role()) {
+                        case SYSTEM -> ChatMessage.system(message.content());
+                        case USER -> ChatMessage.user(message.content());
+                        case ASSISTANT -> ChatMessage.assistant(message.content());
+                    });
+                }
+                try {
+                    return adapter.complete(new ChatRequest(request, options)).content();
+                } catch (ChatCompletionException e) {
+                    throw chatFailure(e);
+                }
+            }
+        };
     }
 
     /**

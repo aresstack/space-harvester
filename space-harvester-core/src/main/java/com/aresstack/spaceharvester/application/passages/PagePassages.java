@@ -52,6 +52,8 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
     /**
      * Ein Absatz.
      *
+     * @param id            stabile Adresse ({@link PassageId}): Seite, Fassung des Textes, Position und die Versionen
+     *                      von Zerlegung und Modell, mit denen das Ergebnis entstand
      * @param index         Nummer in der Seite, ab 0
      * @param start         erstes Zeichen im Text (UTF-16)
      * @param end           Ende, exklusiv
@@ -65,7 +67,7 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
      * @param boundary      warum der Absatz hier beginnt
      * @param similarity    bei {@code topic} die gemessene Ähnlichkeit der Satzfenster, sonst {@code null}
      */
-    public record Passage(int index, int start, int end, String title, String text, String section,
+    public record Passage(String id, int index, int start, int end, String title, String text, String section,
                           int firstSentence, int sentences, PassageSegmentation.Kind kind,
                           PassageSegmentation.Boundary boundary, Double similarity) {
     }
@@ -103,6 +105,9 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
             return empty(State.FAILED, result);
         }
         String content = text.text();
+        String capture = PassageId.captureOf(PassagePayload.textSha256(content));
+        String segmentation = PassageId.versionTag(parsed.segmentation());
+        String model = PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model());
         List<Passage> passages = new ArrayList<>(parsed.passages().size());
         for (PassageSegmentation.Passage passage : parsed.passages()) {
             // Eine Stelle außerhalb des Textes wäre ein Fehler des Ergebnisses; sie wird nie gezeigt.
@@ -110,7 +115,9 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
                 continue;
             }
             String wording = content.substring(passage.start(), passage.end());
-            passages.add(new Passage(passages.size(), passage.start(), passage.end(), title(wording), wording,
+            int index = passages.size();
+            passages.add(new Passage(PassageId.of(key.sourceId(), key.pageId(), capture, index, segmentation, model)
+                    .value(), index, passage.start(), passage.end(), title(wording), wording,
                     passage.section(), passage.firstSentence(), passage.sentences(), passage.kind(),
                     passage.boundary(), passage.similarity()));
         }
