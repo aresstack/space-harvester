@@ -29,9 +29,13 @@ import java.util.TreeSet;
  *   <li>Alle Dateien tragen dieselbe Zeit {@code 1. Okt. 2026}; die Antworten sind in jedem Lauf gleich.</li>
  * </ul>
  *
- * <p>Der Server versteht nur, was die FTP-Quelle im Unix-Modus braucht: {@code USER}, {@code PASS}, {@code SYST},
+ * <p>Für die JES-Quelle schaltet {@code SITE FILETYPE=JES} die Sitzung auf Jobs um: {@code LIST} und {@code NLST}
+ * liefern die Jobs aus {@link #JOB_IDS} zu {@code JESOWNER} und {@code JESJOBNAME} (mit {@code *}) in der Form von
+ * {@code JESINTERFACELEVEL=2}, {@code RETR <Job-ID>.x} die Ausgabe mit Jobkarte und Satz aus {@link #JOB_SENTENCES}.
+ *
+ * <p>Der Server versteht nur, was die FTP- und die JES-Quelle brauchen: {@code USER}, {@code PASS}, {@code SYST},
  * {@code PASV}, {@code TYPE}, {@code STRU}, {@code MODE}, {@code LIST}, {@code NLST}, {@code RETR}, {@code PWD},
- * {@code CWD}, {@code NOOP}, {@code QUIT}. Java 8, ohne weitere Bibliotheken.
+ * {@code CWD}, {@code SITE}, {@code NOOP}, {@code QUIT}. Java 8, ohne weitere Bibliotheken.
  */
 public final class ParityFtp implements AutoCloseable {
 
@@ -47,6 +51,14 @@ public final class ParityFtp implements AutoCloseable {
     public static final String SEARCH_HIT = "/parity/docs/betrieb/nacht/ablauf.txt";
     /** Inhalt je Pfad, in der Reihenfolge von {@link #DOCUMENTS}. */
     public static final Map<String, String> FILES;
+
+    /** Besitzer aller Jobs; die JES-Quelle filtert ohne {@code owner} nach dem angemeldeten Benutzer. */
+    public static final String JOB_OWNER = "PARITAET";
+    public static final String[] JOB_IDS = {"JOB00001", "JOB00002", "JOB00003"};
+    public static final String[] JOB_NAMES = {"ZAUF01", "ZAUF02", "NACHT03"};
+    public static final String[] JOB_SENTENCES = {"Satz Alpha im ersten Job.", "Satz Bravo im zweiten Job.",
+            "Satz Charlie zum Nachtlauf im dritten Job."};
+    public static final String JOB_SEARCH_HIT = "JOB00003";
 
     private static final Charset ENCODING = Charset.forName("ISO-8859-1");
     private static final String TIME = "Oct 01  2026";
@@ -109,6 +121,9 @@ public final class ParityFtp implements AutoCloseable {
     private void serve(Socket client) {
         ServerSocket passive = null;
         String cwd = "/";
+        boolean jes = false;
+        String jobOwner = "*";
+        String jobName = "*";
         try (Socket socket = client;
              BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream(), ENCODING));
              Writer out = new OutputStreamWriter(socket.getOutputStream(), ENCODING)) {
@@ -144,6 +159,39 @@ public final class ParityFtp implements AutoCloseable {
                     passive = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
                     int p = passive.getLocalPort();
                     reply(out, "227 Entering Passive Mode (127,0,0,1," + (p >> 8) + "," + (p & 0xff) + ")");
+                } else if ("SITE".equals(command)) {
+                    String setting = argument.toUpperCase(Locale.ROOT);
+                    if (setting.startsWith("FILETYPE=")) {
+                        jes = "FILETYPE=JES".equals(setting);
+                    } else if (setting.startsWith("JESOWNER=")) {
+                        jobOwner = setting.substring("JESOWNER=".length());
+                    } else if (setting.startsWith("JESJOBNAME=")) {
+                        jobName = setting.substring("JESJOBNAME=".length());
+                    }
+                    reply(out, "200 SITE OK");
+                } else if (jes && ("LIST".equals(command) || "NLST".equals(command))) {
+                    StringBuilder body = new StringBuilder();
+                    if ("LIST".equals(command)) {
+                        body.append("JOBNAME  JOBID    OWNER    STATUS CLASS\r\n");
+                    }
+                    for (int i = 0; i < JOB_IDS.length; i++) {
+                        if (matches(jobOwner, JOB_OWNER) && matches(jobName, JOB_NAMES[i])) {
+                            body.append(String.format("%-8s %s %-8s OUTPUT A        RC=0000 1 spool files\r\n",
+                                    JOB_NAMES[i], JOB_IDS[i], JOB_OWNER));
+                        }
+                    }
+                    transfer(out, passive, body.toString().getBytes(ENCODING));
+                    passive = null;
+                } else if (jes && "RETR".equals(command)) {
+                    int job = job(argument);
+                    if (job < 0) {
+                        reply(out, "550 Kein Job");
+                        continue;
+                    }
+                    String output = "//" + JOB_NAMES[job] + " JOB (ACCT),'PARITAET',CLASS=A\r\n"
+                            + "//STEP1    EXEC PGM=IEFBR14\r\n" + JOB_SENTENCES[job] + "\r\n";
+                    transfer(out, passive, output.getBytes(ENCODING));
+                    passive = null;
                 } else if ("LIST".equals(command) || "NLST".equals(command)) {
                     String target = absolute(cwd, stripOptions(argument));
                     List<String> lines = "LIST".equals(command) ? list(target) : names(target);
@@ -202,6 +250,22 @@ public final class ParityFtp implements AutoCloseable {
     private static void reply(Writer out, String line) throws IOException {
         out.write(line + "\r\n");
         out.flush();
+    }
+
+    /** {@code *} passt auf alles, sonst Vergleich ohne Groß- und Kleinschreibung mit {@code *} als Platzhalter. */
+    private static boolean matches(String filter, String value) {
+        String pattern = "\\Q" + filter.toUpperCase(Locale.ROOT).replace("*", "\\E.*\\Q") + "\\E";
+        return value.toUpperCase(Locale.ROOT).matches(pattern);
+    }
+
+    /** Index des Jobs zu {@code <Job-ID>.x}, sonst {@code -1}. */
+    private static int job(String file) {
+        for (int i = 0; i < JOB_IDS.length; i++) {
+            if ((JOB_IDS[i] + ".x").equalsIgnoreCase(file)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static String stripOptions(String argument) {
