@@ -96,8 +96,14 @@ public final class ChatStatementExtractor implements StatementExtractor {
 
     @Override
     public String version() {
-        String selected = model(chat.get());
-        return "chat-json/" + PROMPT_VERSION + "/" + (selected == null ? "" : selected);
+        StatementChat current = chat.get();
+        String selected = model(current);
+        if (selected == null) {
+            return "chat-json/" + PROMPT_VERSION + "/";
+        }
+        String endpoint = current.endpoint();
+        return "chat-json/" + PROMPT_VERSION + "/" + selected
+                + (endpoint == null || endpoint.isBlank() ? "" : "@" + endpoint.strip());
     }
 
     @Override

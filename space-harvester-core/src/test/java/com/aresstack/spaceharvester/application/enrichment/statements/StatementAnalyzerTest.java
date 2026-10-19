@@ -252,6 +252,29 @@ class StatementAnalyzerTest {
     }
 
     @Test
+    void versionChangesWithTheServiceButNeverNamesItsAddress() {
+        StatementChat elsewhere = new StatementChat() {
+            @Override
+            public String model() {
+                return "test-model";
+            }
+
+            @Override
+            public String endpoint() {
+                return "a1b2c3d4e5f6";
+            }
+
+            @Override
+            public String complete(List<Message> messages) {
+                throw new IllegalStateException("nicht gebraucht");
+            }
+        };
+        ChatStatementExtractor here = new ChatStatementExtractor(FakeStatementChat::new);
+        ChatStatementExtractor there = new ChatStatementExtractor(() -> elsewhere);
+        assertThat(there.version()).isNotEqualTo(here.version()).endsWith("/test-model@a1b2c3d4e5f6");
+    }
+
+    @Test
     void withoutModelTheExtractorIsUnavailableAndSendsNothing() {
         ChatStatementExtractor extractor = new ChatStatementExtractor(() -> null);
         assertThat(extractor.isAvailable()).isFalse();

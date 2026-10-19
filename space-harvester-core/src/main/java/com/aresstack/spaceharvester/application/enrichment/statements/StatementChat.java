@@ -15,6 +15,14 @@ public interface StatementChat {
     String model();
 
     /**
+     * Kennzeichen des Dienstes, etwa ein Hash der Basis-URL, nie die Adresse selbst; Teil der Prozessorversion, damit
+     * Ergebnisse eines anderen Dienstes mit gleichem Modellnamen nicht aktuell bleiben. Leer, wenn es keins gibt.
+     */
+    default String endpoint() {
+        return "";
+    }
+
+    /**
      * Ohne Token-Grenze und ohne Sampling-Optionen, wie im Enterprise AI Client (Reasoning-Modelle zählen ihr Denken
      * gegen eine Grenze); nur das Modell ist gesetzt.
      *

@@ -235,11 +235,17 @@ public final class RemoteAi {
         }
         OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig());
         String model = settings.chatModel();
+        String endpoint = ChatNavigationLabeler.fingerprint(String.valueOf(settings.baseUrl()));
         ChatOptions options = ChatOptions.builder().model(model).build();
         return new StatementChat() {
             @Override
             public String model() {
                 return model;
+            }
+
+            @Override
+            public String endpoint() {
+                return endpoint;
             }
 
             @Override
