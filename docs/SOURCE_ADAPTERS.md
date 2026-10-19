@@ -18,7 +18,7 @@ gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
 Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
 `id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
+`needsCredentials`, ob der Typ Zugangsdaten verlangt (`auth.type basic` oder ein eigener `options.credentialRef`, #188). Eigene Adapter geben ihren Namen
 über `SourceAdapter.displayName()` an.
 
 ## Vertrag
@@ -228,16 +228,20 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
    über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
    aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
-   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
-   Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
-   `startPoints`, anonym ohne `credentialRef`) und `jes` (Spool, `credentialRef` Pflicht), `source-ndv` als `ndv`
-   (`host`, `startPoints`, `credentialRef` Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
-   Proxy-Route je Ziel, ohne `credentialRef` mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
-   (Listen und Reports eines Favoriten: `baseUrl`, `credentialRef`, `favoriteId` Pflicht, über die Proxy-Route je
+   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`KnowledgeSourceProviderAdapter.connected`, eine Partition
+   je Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
+   `port`, `startPoints`, anonym ohne Anmeldung) und `jes` (Spool, Anmeldung Pflicht), `source-ndv` als `ndv`
+   (`host`, `startPoints`, Anmeldung Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
+   Proxy-Route je Ziel, ohne Anmeldung mit der Windows-Anmeldung des JDK) sowie `source-betaview` als `betaview`
+   (Listen und Reports eines Favoriten: `baseUrl`, `favoriteId` und Anmeldung Pflicht, über die Proxy-Route je
    Ziel) und `source-outlook` als `outlook` (lokale Postfachdateien .pst/.ost: `mailbox` Pflicht, `startPoints`,
-   `maxDepth`, `maxResources`; ohne Zugangsdaten). `credentialRef` löst der
-   `SecretProvider` des Katalogs auf, also der Anbieter des einbettenden Programms (#188); `auth`, `base-url` und eigene
-   Zertifikate gibt es auf diesem Weg nicht.
+   `maxDepth`, `maxResources`; ohne Zugangsdaten). Anmeldung ([ADR 0022](adr/0022-erweiterbarer-builder-und-secretprovider.md)):
+   `auth.type basic` mit `username` und `password` setzt `credentialRef` auf `source:<id>`; ohne `password` fragt der
+   Katalog den `SourceSecrets` des Programms (`Harvester.builder().secretProvider`) nach `source:<id>`. Ein eigener
+   Verweis `options.credentialRef` (etwa `keepass:jes`) geht bei `auth.type none` unverändert an diesen Anbieter;
+   zusammen mit `basic` ist er ein Fehler. SharePoint und BetaView nehmen `trust-bundle` und `client-certificate`
+   (mTLS); FTP, JES und NDV kennen upstream kein TLS, dort sind beide Angaben ein Fehler. `base-url` gibt es auf
+   diesem Weg nicht.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter` (mit Netz über `connected`, wie `MediaWikiSources`).
    `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
@@ -257,6 +261,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   Prüfung der Einstellungen.
 - `MediaWikiNetworkTest`: PAC-Route je Ziel (Proxy, DIRECT), fehlendes PAC ohne Direktverbindung, mTLS mit
   `trust-bundle` auch durch den Proxy-Tunnel, unbrauchbare Zertifikate verhindern den Start.
+- `HarvesterEacSourcesTest`: die Kopien öffnen je eine Partition; Anmeldung an einem Fake-FTP-Server mit `auth`
+  aus der Konfiguration, mit Passwort vom Anbieter des Programms (`source:<id>`) und mit eigenem `credentialRef`;
+  `basic` erfüllt die Pflichtangabe von JES und NDV; `credentialRef` neben `basic`, Zertifikate bei FTP/NDV und
+  `base-url` verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
 - `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
