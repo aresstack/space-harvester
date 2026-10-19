@@ -15,11 +15,15 @@ import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -66,6 +70,8 @@ public class AcronymResolution {
     static final int MAX_EXPANSIONS = 3;
     static final int MAX_EXPANSION_CHARS = 120;
     static final int MAX_ANSWER_CHARS = 128 * 1024;
+    /** Fassung von Anweisung und Prüfung; eine neue macht den Ergebnis-Cache wirkungslos. */
+    static final String PROMPT_VERSION = "acronym-resolution-v1";
 
     private static final System.Logger LOG = System.getLogger(AcronymResolution.class.getName());
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -95,6 +101,7 @@ public class AcronymResolution {
     private final Function<PageKey, Optional<PageText>> texts;
     private final TermRelations relations;
     private final AcronymExpansionModel model;
+    private final ResolutionCache cache;
     private final Jobs jobs;
     private final String processorVersion;
     private final Clock clock;
@@ -107,6 +114,17 @@ public class AcronymResolution {
                              Function<PageKey, Optional<PageHeader>> headers,
                              Function<PageKey, Optional<PageText>> texts, TermRelations relations,
                              AcronymExpansionModel model, Jobs jobs, String processorVersion, Clock clock) {
+        this(catalog, index, access, headers, texts, relations, model, ResolutionCache.inMemory(), jobs,
+                processorVersion, clock);
+    }
+
+    /** @param cache was schon gefragt wurde; ein unveränderter Stand geht nicht noch einmal an das Modell */
+    public AcronymResolution(SourceCatalog catalog, TermIndex index, AccessGuard access,
+                             Function<PageKey, Optional<PageHeader>> headers,
+                             Function<PageKey, Optional<PageText>> texts, TermRelations relations,
+                             AcronymExpansionModel model, ResolutionCache cache, Jobs jobs, String processorVersion,
+                             Clock clock) {
+        this.cache = Objects.requireNonNull(cache, "cache");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
         this.index = Objects.requireNonNull(index, "index");
         this.access = Objects.requireNonNull(access, "access");
@@ -167,11 +185,34 @@ public class AcronymResolution {
             asked = new ArrayList<>(asked.subList(0, MAX_ACRONYMS));
         }
         asked.removeIf(acronym -> acronym.snippets.isEmpty());
+        RelationScope scope = new RelationScope(sourceId, null);
+        Map<String, TermRelation> earlier = new HashMap<>();
+        relations.automatic(RelationOrigin.AI, scope).forEach(relation -> earlier.put(relation.id(), relation));
+        // Unveränderter Stand: dieselben Beziehungen wie beim letzten Mal, ohne Anfrage.
+        List<TermRelations.Proposal> proposals = new ArrayList<>();
+        Map<String, List<String>> answered = new HashMap<>();
+        int reused = 0;
+        for (var iterator = asked.iterator(); iterator.hasNext(); ) {
+            Acronym acronym = iterator.next();
+            acronym.fingerprint = fingerprint(version, acronym);
+            Optional<List<String>> known = cache.find(acronym.fingerprint);
+            if (known.isPresent()) {
+                for (String id : known.get()) {
+                    TermRelation relation = earlier.get(id);
+                    if (relation != null) {
+                        proposals.add(new TermRelations.Proposal(relation.fromTerm(), relation.toTerm(),
+                                relation.type(), relation.evidence()));
+                    }
+                }
+                answered.put(acronym.fingerprint, known.get());
+                iterator.remove();
+                reused++;
+            }
+        }
         if (context != null) {
             context.discovered(asked.size());
         }
         phase(context, PHASE + ": Modell");
-        List<TermRelations.Proposal> proposals = new ArrayList<>();
         int rejected = 0;
         for (int from = 0; from < asked.size(); from += BATCH) {
             if (context != null) {
@@ -193,14 +234,23 @@ public class AcronymResolution {
             }
             Accepted accepted = accept(answer, batch);
             proposals.addAll(accepted.proposals);
+            for (Acronym acronym : batch) {
+                List<String> ids = new ArrayList<>();
+                for (TermRelations.Proposal proposal : accepted.proposals) {
+                    if (TermText.normalize(proposal.fromTerm()).equals(acronym.normalized)) {
+                        ids.add(TermRelation.idOf(TermRelation.key(proposal.fromTerm(), proposal.toTerm(),
+                                proposal.type(), scope)));
+                    }
+                }
+                answered.put(acronym.fingerprint, List.copyOf(ids));
+            }
             rejected += accepted.rejected;
             if (context != null) {
                 context.processed(batch.size());
             }
         }
         // Akronyme über dem Budget behalten ihre Vorschläge: unverändert genannt, schreibt der Abgleich nichts.
-        RelationScope scope = new RelationScope(sourceId, null);
-        for (TermRelation relation : relations.automatic(RelationOrigin.AI, scope)) {
+        for (TermRelation relation : earlier.values()) {
             if (skipped.contains(TermText.normalize(relation.fromTerm()))) {
                 proposals.add(new TermRelations.Proposal(relation.fromTerm(), relation.toTerm(), relation.type(),
                         relation.evidence()));
@@ -212,12 +262,14 @@ public class AcronymResolution {
         phase(context, PHASE + ": Abgleich");
         TermRelations.ProposalRun run = relations.propose(ACTOR, RelationOrigin.AI, scope,
                 version + "@" + clock.instant(), proposals);
+        // Erst nach dem Abgleich: Ein abgebrochener Lauf hinterlässt keinen Cache ohne Beziehungen.
+        cache.replace(sourceId, answered);
         if (context != null) {
             context.written(run.added() + run.updated());
         }
-        LOG.log(System.Logger.Level.INFO, "KI-Akronymauflösung in {0}: {1} Akronyme gefragt, {2} neu, {3} geändert, "
-                        + "{4} entfallen, {5} unterdrückt, {6} Antworten verworfen", sourceId, asked.size(),
-                run.added(), run.updated(), run.withdrawn(), run.suppressed(), rejected);
+        LOG.log(System.Logger.Level.INFO, "KI-Akronymauflösung in {0}: {1} Akronyme gefragt, {2} unverändert, {3} neu, "
+                        + "{4} geändert, {5} entfallen, {6} unterdrückt, {7} Antworten verworfen", sourceId, asked.size(),
+                reused, run.added(), run.updated(), run.withdrawn(), run.suppressed(), rejected);
         return run;
     }
 
@@ -274,6 +326,23 @@ public class AcronymResolution {
             from = batch.get(batch.size() - 1).sortKey();
         }
         return acronyms;
+    }
+
+    /** SHA-256 über Verfahren, Modell, Akronym und die Lage der Fundstellen samt Texthash; nie geloggt. */
+    static String fingerprint(String version, Acronym acronym) {
+        StringBuilder input = new StringBuilder(PROMPT_VERSION).append('\u0000').append(version).append('\u0000')
+                .append(acronym.normalized);
+        for (Found found : acronym.snippets) {
+            RelationEvidence evidence = found.evidence();
+            input.append('\u0000').append(evidence.pageId()).append(':').append(evidence.start()).append(':')
+                    .append(evidence.end()).append(':').append(evidence.inputSha256());
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(input.toString().getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private Optional<PageText> text(PageKey key) {
@@ -388,6 +457,7 @@ public class AcronymResolution {
         final String term;
         final Set<String> pages = new HashSet<>();
         final List<Found> snippets = new ArrayList<>();
+        String fingerprint;
 
         Acronym(String normalized, String term) {
             this.normalized = normalized;

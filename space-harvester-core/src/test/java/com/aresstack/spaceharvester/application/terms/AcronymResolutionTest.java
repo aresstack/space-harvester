@@ -214,9 +214,26 @@ class AcronymResolutionTest {
     }
 
     @Test
+    void anUnchangedStateIsNotAskedAgainButAChangedTextIs() {
+        answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
+        resolution.run("wiki", null);
+
+        assertThat(resolution.run("wiki", null)).isEqualTo(new TermRelations.ProposalRun(0, 0, 0, 0, 0));
+        assertThat(inputs).hasSize(1);
+        assertThat(proposals("rsl")).hasSize(1);
+
+        cached("1", "Neu: Der RSL ist der Rückmeldeschlüssel der Fachabteilung.");
+        resolution.run("wiki", null);
+        assertThat(inputs).hasSize(2);
+        assertThat(proposals("rsl").get(0).evidence()).extracting(RelationEvidence::pageId)
+                .containsExactlyInAnyOrder("1", "2");
+    }
+
+    @Test
     void aFailingModelLeavesTheLastStateAndNamesNoText() {
         answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
         resolution.run("wiki", null);
+        cached("1", "Geändert: Jede Meldung trägt den RSL.");
         answers = (instructions, input) -> {
             throw new IllegalStateException("Dienst weg");
         };
