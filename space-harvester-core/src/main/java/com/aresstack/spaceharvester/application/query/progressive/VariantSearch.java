@@ -31,12 +31,14 @@ public interface VariantSearch {
     }
 
     /**
-     * Prüft vor dem Start einer Suche, ob diese Suche gerade möglich ist; die semantische etwa nur mit Embedding-Modell.
-     * Es gibt keinen stillen Rückfall auf eine andere Suche (ADR 0011).
+     * Prüft vor dem Start einer Suche, ob diese Suche für den Aufrufer gerade möglich ist; die semantische etwa nur mit
+     * Embedding-Modell. Zuerst die Rechte am Umfang der Anfrage, dann die Verfügbarkeit: Wer eine genannte Quelle nicht
+     * sehen darf, erfährt nicht, ob ein Modell eingerichtet ist. Es gibt keinen stillen Rückfall auf eine andere Suche
+     * (ADR 0011).
      *
      * @throws RuntimeException wenn nicht, mit einer Meldung ohne Suchtext
      */
-    default void requireAvailable() {
+    default void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
     }
 
     /** Bricht das Laden eines Stapels ab ({@link KeywordSearch#cancel(String)}). */

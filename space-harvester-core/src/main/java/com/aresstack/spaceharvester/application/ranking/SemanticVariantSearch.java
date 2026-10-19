@@ -26,7 +26,7 @@ import java.util.Objects;
  * Kosinusähnlichkeit zur ursprünglichen Anfrage, so sind die Treffer aller Varianten ohne Fusion vergleichbar.
  *
  * <p>Vorläufige Treffer aus der Suche der Quellen gibt es hier nicht, alles kommt aus dem Cache. Ausgeschlossene Spaces
- * fallen weg. Der Auszug ist der Lesetext um das ähnlichste Stück aus dem Volltextindex des Caches; die Seite hat
+ * werden weder geladen noch Kandidaten. Der Auszug ist der Lesetext um das ähnlichste Stück aus dem Volltextindex des Caches; die Seite hat
  * {@code content}-Freigabe, sonst wäre sie kein Kandidat der Vektorsuche.
  */
 public final class SemanticVariantSearch implements VariantSearch {
@@ -63,10 +63,10 @@ public final class SemanticVariantSearch implements VariantSearch {
      */
     @Override
     public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
-        PageSearchQuery scope = new PageSearchQuery(variant.sourceId(), variant.sourceIds(), variant.spaceKeys(),
-                List.of(), null, null, null, null, null, SearchSort.TITLE);
+        PageSearchQuery scope = scope(variant);
+        // Ausgeschlossene Spaces laden nicht und sind keine Kandidaten: Erlaubte Treffer füllen das Limit.
         RelevanceSearch.RelevanceResults found = relevance.search(caller, scope, original, variant.text(),
-                Math.min(limit, Reranking.MAX_WINDOW));
+                variant.excludedSpaceKeys(), Math.min(limit, Reranking.MAX_WINDOW));
         List<KeywordSearch.Hit> hits = new ArrayList<>(found.hits().size());
         Map<PageKey, Double> scores = new HashMap<>();
         for (RelevanceSearch.RankedHit ranked : found.hits()) {
@@ -87,12 +87,20 @@ public final class SemanticVariantSearch implements VariantSearch {
                 scores);
     }
 
-    /** @throws SemanticSearchUnavailableException ohne Embedding-Dienst; kein stiller Rückfall (ADR 0011) */
+    /**
+     * Fail-closed wie die Relevanz-API: zuerst die Rechte am Umfang, dann der Embedding-Dienst.
+     *
+     * @throws com.aresstack.spaceharvester.application.access.AccessDeniedException ohne Recht am genannten Umfang
+     * @throws SemanticSearchUnavailableException ohne Embedding-Dienst; kein stiller Rückfall (ADR 0011)
+     */
     @Override
-    public void requireAvailable() {
-        if (!relevance.semantic()) {
-            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
-        }
+    public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
+        relevance.requireAvailable(caller, scope(query));
+    }
+
+    private static PageSearchQuery scope(KeywordSearch.Query query) {
+        return new PageSearchQuery(query.sourceId(), query.sourceIds(), query.spaceKeys(), List.of(), null, null,
+                null, null, null, SearchSort.TITLE);
     }
 
     /**

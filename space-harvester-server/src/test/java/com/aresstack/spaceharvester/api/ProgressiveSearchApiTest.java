@@ -105,7 +105,7 @@ class ProgressiveSearchApiTest {
                 }
 
                 @Override
-                public void requireAvailable() {
+                public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
                     if (!semanticAvailable) {
                         throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
                     }

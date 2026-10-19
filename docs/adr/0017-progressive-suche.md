@@ -142,11 +142,15 @@ progressive Suche, aber jede Suchanfrage lief über die Schlagwortsuche (BM25), 
   Cross-Encoder bewertet nicht, damit keine Werte verschiedener Skalen gemischt werden. `minScore` gilt für diese
   Ähnlichkeit, das Qualitätsziel ist also auch ohne Rerank-Modell erreichbar. Innerhalb einer Suchanfrage ordnet ein
   eingestellter Cross-Encoder wie bisher nur das Fenster der `RelevanceSearch`.
-- Vorläufige Treffer der Quellen (`found`) gibt es semantisch nicht; ausgeschlossene Spaces fallen weg. Was der
+- Vorläufige Treffer der Quellen (`found`) gibt es semantisch nicht. Ausgeschlossene Spaces (`excludeSpaceKeys`)
+  lädt schon die Vorbereitung nicht, und sie sind keine Kandidaten der Vektorsuche; erst danach wird auf das Limit
+  gekürzt, sodass erlaubte Treffer es füllen. Was der
   Aufrufer nicht lesen darf, erscheint weder als Treffer noch als Wert. Der Auszug ist das ähnlichste Stück des
   Lesetexts im Cache.
 - **Kein stiller Rückfall** (ADR 0011): `searchAsync` mit `SEMANTIC` ohne Embedding-Modell wirft
-  `SemanticSearchUnavailableException`, bevor etwas gesucht wird. Fällt der Dienst unterwegs aus, scheitern die
+  `SemanticSearchUnavailableException`, bevor etwas gesucht wird. Vorher prüft `VariantSearch.requireAvailable` die
+  Rechte am genannten Umfang (fail-closed wie `sort=relevance`): Wer eine genannte Quelle nicht sehen darf, bekommt
+  `AccessDeniedException` und erfährt nicht, ob ein Modell eingerichtet ist. Fällt der Dienst unterwegs aus, scheitern die
   Suchanfragen; scheitern alle, endet die Suche mit `FAILED`.
 - **`Harvester.searchProfile()`** ist das Profil des Hakens: `SEMANTIC`, sobald die wirksame Konfiguration ein
   Embedding-Modell hat, sonst `KEYWORD`, wie `expansion` ohne Chat-Modell `RULES` meldet. Der Haken der App wird so

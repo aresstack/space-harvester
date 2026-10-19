@@ -8,6 +8,7 @@ import static org.assertj.core.api.Assertions.within;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
@@ -17,6 +18,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
@@ -72,6 +74,7 @@ class SemanticVariantSearchTest {
     private final InMemoryEnrichmentStore store = new InMemoryEnrichmentStore();
     private final List<String> embeddedQueries = Collections.synchronizedList(new ArrayList<>());
     private final List<String> discovered = Collections.synchronizedList(new ArrayList<>());
+    private final List<Set<String>> excludedOnDiscovery = Collections.synchronizedList(new ArrayList<>());
     private final EmbeddingProcessor processor = new EmbeddingProcessor(new EmbeddingProvider() {
         @Override
         public String modelId() {
@@ -158,16 +161,49 @@ class SemanticVariantSearchTest {
                 null);
         SemanticVariantSearch search = new SemanticVariantSearch(withoutModel, null);
 
-        assertThatThrownBy(search::requireAvailable).isInstanceOf(SemanticSearchUnavailableException.class);
+        assertThatThrownBy(() -> search.requireAvailable(CALLER, query("Betrieb", Set.of())))
+                .isInstanceOf(SemanticSearchUnavailableException.class);
         assertThatThrownBy(() -> search.run(CALLER, query("Betrieb", Set.of()), ORIGINAL, 10))
                 .isInstanceOf(SemanticSearchUnavailableException.class).hasMessageNotContaining("Betrieb");
-        search(ALLOW_ALL).requireAvailable();
+        search(ALLOW_ALL).requireAvailable(CALLER, query("Betrieb", Set.of()));
+    }
+
+    @Test
+    void withoutAccessToTheNamedSourceTheCallerNeverLearnsWhetherAModelExists() {
+        AccessPolicy noSource = (context, scope, kind) -> scope.isSource() ? AccessDecision.DENY
+                : AccessDecision.ALLOW;
+        RelevanceSearch withoutModel = new RelevanceSearch(CATALOG, index, new AccessGuard(noSource), store, store,
+                null);
+
+        // Fail-closed wie die Relevanz-API: dieselbe Ablehnung mit und ohne Modell.
+        assertThatThrownBy(() -> new SemanticVariantSearch(withoutModel, null).requireAvailable(CALLER,
+                query("Betrieb", Set.of()))).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> search(noSource).requireAvailable(CALLER, query("Betrieb", Set.of())))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void anExcludedTopHitLeavesRoomForAnAllowedOneAndIsNeverLoaded() {
+        VariantSearch.Outcome outcome = search(ALLOW_ALL).run(CALLER, query("Betrieb", Set.of("OPS")), ORIGINAL, 1);
+
+        // 21 (OPS) wäre der ähnlichste; erst gefiltert, dann gekürzt.
+        assertThat(outcome.results().hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("11");
+        assertThat(excludedOnDiscovery).containsExactly(Set.of("OPS"));
     }
 
     private SemanticVariantSearch search(AccessPolicy policy) {
-        RelevanceSearch.Preparation preparation = (caller, query, text) -> {
-            discovered.add(text);
-            return 0;
+        RelevanceSearch.Preparation preparation = new RelevanceSearch.Preparation() {
+            @Override
+            public int prepare(AccessContext caller, PageSearchQuery query, String text) {
+                throw new AssertionError("ohne Ausschlüsse vorbereitet");
+            }
+
+            @Override
+            public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excluded) {
+                discovered.add(text);
+                excludedOnDiscovery.add(excluded);
+                return 0;
+            }
         };
         RelevanceSearch relevance = new RelevanceSearch(CATALOG, index, new AccessGuard(policy), store, store,
                 processor, null, SearchReranker.NONE, texts(), preparation);

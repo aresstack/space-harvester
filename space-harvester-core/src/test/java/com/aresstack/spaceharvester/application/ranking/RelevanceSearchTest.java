@@ -294,7 +294,7 @@ class RelevanceSearchTest {
                 .isInstanceOf(InvalidQueryException.class);
         assertThatThrownBy(() -> search.search(CALLER, query(null), "Betrieb", Reranking.MAX_WINDOW + 1))
                 .isInstanceOf(InvalidQueryException.class);
-        assertThatThrownBy(() -> search.search(CALLER, query(null), "Betrieb", "x".repeat(501), 10))
+        assertThatThrownBy(() -> search.search(CALLER, query(null), "Betrieb", "x".repeat(501), Set.of(), 10))
                 .isInstanceOf(InvalidQueryException.class);
     }
 

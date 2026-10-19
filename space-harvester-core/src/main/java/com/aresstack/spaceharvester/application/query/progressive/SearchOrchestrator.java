@@ -106,7 +106,7 @@ public final class SearchOrchestrator implements AutoCloseable {
      *
      * @throws IllegalArgumentException mit {@link SearchProfile.Ranking#SEMANTIC}, wenn keine semantische Suche
      *                                  verdrahtet ist
-     * @throws RuntimeException         aus {@link VariantSearch#requireAvailable()}, wenn die gewählte Suche gerade
+     * @throws RuntimeException         aus {@link VariantSearch#requireAvailable}, nach den Rechten am Umfang, wenn die gewählte Suche gerade
      *                                  nicht möglich ist, etwa ohne Embedding-Modell; nie ein stiller Rückfall
      */
     public ProgressiveSearch searchAsync(AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
@@ -119,8 +119,8 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             chosen = semantic;
         }
-        chosen.requireAvailable();
-        Run run = new Run(chosen, caller, Objects.requireNonNull(query, "query"), profile,
+        chosen.requireAvailable(caller, Objects.requireNonNull(query, "query"));
+        Run run = new Run(chosen, caller, query, profile,
                 Objects.requireNonNull(quality, "quality"), listener == null ? ProgressiveSearchListener.NONE
                 : listener);
         active.add(run);

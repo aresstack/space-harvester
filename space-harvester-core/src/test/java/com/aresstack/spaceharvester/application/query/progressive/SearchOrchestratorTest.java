@@ -455,7 +455,7 @@ class SearchOrchestratorTest {
             }
 
             @Override
-            public void requireAvailable() {
+            public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
                 throw new IllegalStateException("Kein Embedding-Dienst eingerichtet");
             }
         };
