@@ -93,7 +93,11 @@ steht im DEBUG-Log des Pakets `com.aresstack.spaceharvester`.
 - Die Gültigkeit wird beim Start geprüft. Ein laufender Dienst erkennt ein inzwischen abgelaufenes Zertifikat erst
   am abgelehnten Handshake; Ablaufdaten deshalb überwachen und rechtzeitig erneuern.
 - Rotation: neue PKCS#12-Datei bereitstellen (gleicher oder neuer Alias, Konfiguration ggf. anpassen) bzw. das neue
-  Zertifikat in den Windows-Speicher des Dienstkontos importieren, dann den Dienst neu starten.
+  Zertifikat in den Windows-Speicher des Dienstkontos importieren, dann den Dienst neu starten oder geänderte
+  Netzwerkeinstellungen (`network.proxy.*`, `network.tls.*`) aktivieren: Dann öffnet der Dienst die Quellen neu und
+  liest PKCS#12-Datei, Windows-Speicher und Trust-Bundle-Dateien erneut, ohne Neustart. Eine Quelle, deren Zertifikat
+  sich dabei nicht laden lässt, behält ihre bisherige Verbindung. Einen Datei-Watcher gibt es nicht: Eine nur
+  ausgetauschte Datei wirkt erst mit diesem Schritt oder dem nächsten Start.
 
 ## Live-Test gegen Confluence Data Center
 

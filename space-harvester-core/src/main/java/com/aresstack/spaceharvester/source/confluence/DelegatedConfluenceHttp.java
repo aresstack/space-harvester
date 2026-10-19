@@ -82,6 +82,11 @@ public final class DelegatedConfluenceHttp implements AutoCloseable {
         transport.close();
     }
 
+    /** Wie {@link #close()}, aber laufende Aufrufe mit dem Token des Nutzers enden noch normal. */
+    public void closeGracefully() {
+        transport.closeGracefully();
+    }
+
     @Override
     public String toString() {
         return "DelegatedConfluenceHttp[" + base + "]";

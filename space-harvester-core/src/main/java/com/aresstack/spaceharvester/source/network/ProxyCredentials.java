@@ -11,14 +11,16 @@ import org.slf4j.LoggerFactory;
  * Benutzer und Passwort für die Anmeldung am Proxy (#189), je Verbindungsaufbau neu gelesen: aus
  * {@link ProxySettings#authentication()} oder, wenn dort kein Passwort steht, vom Anbieter des Programms
  * ({@link SourceSecrets}, Verweis {@value ProxySettings#SECRET_REF}). Kein Feld hält das Passwort des Anbieters;
- * Protokoll und Meldungen nennen nie Benutzer oder Passwort.
+ * Protokoll und Meldungen nennen nie Benutzer oder Passwort. Eine mit {@link #reconfigurable} gebaute Instanz stellt
+ * {@link #reconfigure} zur Laufzeit um (ADR 0015); wer sie hält, liest beim nächsten Verbindungsaufbau die neue
+ * Anmeldung.
  */
 public final class ProxyCredentials {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProxyCredentials.class);
     private static final ProxyCredentials NONE = new ProxyCredentials(null, null);
 
-    private final ProxySettings.Authentication authentication;
+    private volatile ProxySettings.Authentication authentication;
     private final SourceSecrets provider;
 
     private ProxyCredentials(ProxySettings.Authentication authentication, SourceSecrets provider) {
@@ -39,6 +41,28 @@ public final class ProxyCredentials {
         return authentication == null ? NONE : new ProxyCredentials(authentication, provider);
     }
 
+    /**
+     * Wie {@link #of}, aber immer eine eigene Instanz, auch ohne Anmeldung, damit {@link #reconfigure} sie später
+     * einrichten kann.
+     */
+    public static ProxyCredentials reconfigurable(ProxySettings.Authentication authentication,
+                                                  SourceSecrets provider) {
+        return new ProxyCredentials(authentication, provider);
+    }
+
+    /**
+     * Ersetzt die Anmeldung aus den Einstellungen; der Anbieter bleibt.
+     *
+     * @param authentication die neue Anmeldung; {@code null} ohne
+     * @throws IllegalStateException für {@link #none()}
+     */
+    public void reconfigure(ProxySettings.Authentication authentication) {
+        if (this == NONE) {
+            throw new IllegalStateException("ProxyCredentials.none() lässt sich nicht umstellen");
+        }
+        this.authentication = authentication;
+    }
+
     /** Ob überhaupt eine Anmeldung am Proxy eingerichtet ist. */
     public boolean configured() {
         return authentication != null;
@@ -49,6 +73,7 @@ public final class ProxyCredentials {
      * Proxy antwortet dann mit 407). Der Aufrufer löscht das Passwort nach Gebrauch.
      */
     public Optional<PasswordAuthentication> get() {
+        ProxySettings.Authentication authentication = this.authentication;
         if (authentication == null) {
             return Optional.empty();
         }
