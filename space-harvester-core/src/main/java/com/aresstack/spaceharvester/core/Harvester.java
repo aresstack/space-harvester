@@ -142,6 +142,7 @@ import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
 import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
@@ -362,11 +363,15 @@ public final class Harvester implements AutoCloseable {
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
             processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
             // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften (ADR 0020).
+            // Themenabschnitte benennt das Chat-Modell der wirksamen Konfiguration (ChatSectionLabeler), nur für
+            // freigegebene Quellen und nur in der Anreicherung.
+            AiServiceSettings startAi = builder.ai;
             DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
-            processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find));
+            processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find,
+                    new ChatNavigationLabeler(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                            builder.userAgent)));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
-            AiServiceSettings startAi = builder.ai;
             ImageDescriber describer = builder.imageDescriber != null ? builder.imageDescriber
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);

@@ -32,6 +32,7 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     private final DocumentNavigationBuilder builder;
     private final EmbeddingProcessor embedding;
     private final Function<PageKey, List<Enrichment>> stored;
+    private final NavigationLabelModel labels;
 
     /**
      * @param embedding der Prozessor {@code embedding} oder {@code null} ohne Modell
@@ -39,9 +40,19 @@ public final class NavigationProcessor implements EnrichmentProcessor {
      */
     public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
                                Function<PageKey, List<Enrichment>> stored) {
+        this(builder, embedding, stored, null);
+    }
+
+    /**
+     * @param labels benennt Themenabschnitte über das Chat-Modell ({@code ChatSectionLabeler} im Client) oder
+     *               {@code null}: Bezeichnungen aus der Analyse
+     */
+    public NavigationProcessor(DocumentNavigationBuilder builder, EmbeddingProcessor embedding,
+                               Function<PageKey, List<Enrichment>> stored, NavigationLabelModel labels) {
         this.builder = Objects.requireNonNull(builder, "builder");
         this.embedding = embedding;
         this.stored = Objects.requireNonNull(stored, "stored");
+        this.labels = labels;
     }
 
     @Override
@@ -52,7 +63,9 @@ public final class NavigationProcessor implements EnrichmentProcessor {
     @Override
     public String version() {
         return FORMAT + "+" + builder.fingerprint() + "+"
-                + (embedding == null || !embedding.available() ? "no-model" : "embedding=" + embedding.version());
+                + (embedding == null || !embedding.available() ? "no-model" : "embedding=" + embedding.version())
+                // Ein anderes Chat-Modell benennt anders: die Navigation wird neu berechnet.
+                + (labels != null && labels.available() ? "+labels=" + labels.version() : "");
     }
 
     /**
@@ -89,8 +102,27 @@ public final class NavigationProcessor implements EnrichmentProcessor {
         for (EmbeddingPayload.Chunk chunk : EmbeddingPayload.parse(vectors.payloadJson()).chunks()) {
             passages.add(new DocumentNavigationBuilder.Passage(chunk.charStart(), chunk.charEnd(), chunk.vector()));
         }
-        return new EnrichmentOutput(NavigationPayload.write(builder.build(null, text, passages, null)), List.of(),
-                version);
+        boolean[] incomplete = {false};
+        SectionLabeler labeler = labels == null || !labels.available() || !labels.mayLabel(key.sourceId()) ? null
+                : (title, texts) -> {
+                    try {
+                        NavigationLabelModel.Labels named = labels.labels(title, texts);
+                        incomplete[0] = !named.complete();
+                        return named.labels();
+                    } catch (RuntimeException e) {
+                        // Nie Text oder Antwort weitergeben: die Bezeichnungen der Analyse bleiben.
+                        incomplete[0] = true;
+                        throw e;
+                    }
+                };
+        DocumentNavigationBuilder.Navigation navigation = builder.build(null, text, passages, labeler);
+        if (incomplete[0]) {
+            // Chat-Modell nicht erreichbar: Bezeichnungen der Analyse mit Grund, beim nächsten Lauf erneut.
+            return new EnrichmentOutput(NavigationPayload.write(new DocumentNavigationBuilder.Navigation(
+                    navigation.analysis(), NavigationPayload.REASON_MODEL_UNAVAILABLE, navigation.chapters())),
+                    List.of(), version + "+pending");
+        }
+        return new EnrichmentOutput(NavigationPayload.write(navigation), List.of(), version);
     }
 
     private EnrichmentOutput headings(PageText text, String reason, String version) {
