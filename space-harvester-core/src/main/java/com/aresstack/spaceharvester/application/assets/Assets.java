@@ -3,12 +3,16 @@ package com.aresstack.spaceharvester.application.assets;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.signin.SignInPendingException;
+import com.aresstack.spaceharvester.application.signin.SignInRequest;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.sources.AttachmentFile;
 import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
 import com.aresstack.spaceharvester.application.sources.AttachmentTooLargeException;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
+import com.aresstack.spaceharvester.application.sources.SignInRequiredException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
@@ -58,6 +62,7 @@ public class Assets {
     private final DocumentText documents;
     private final PageTextIndex texts;
     private final LargeFileGate gate;
+    private final SignInRequests signIns;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
@@ -103,7 +108,22 @@ public class Assets {
      */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
                   DocumentText documents, PageTextIndex texts, LargeFileGate gate) {
+        this(catalog, store, maxBytes, clock, describer, documents, texts, gate, null);
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     * @param gate      Schranke für große Dateien, gemeinsam für alle speicherintensiven Wege dieser Instanz
+     * @param signIns   Anmeldeanforderungen für Lesen auf Abruf (ADR 0018) oder {@code null}: dann bleibt ein
+     *                  verlangter Einmalcode „keine Berechtigung“
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts, LargeFileGate gate, SignInRequests signIns) {
         this.gate = Objects.requireNonNull(gate, "gate");
+        this.signIns = signIns;
         this.texts = texts;
         this.describer = describer;
         this.documents = documents;
@@ -228,6 +248,60 @@ public class Assets {
     private AssetContent read(Asset asset) {
         try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
             return new AssetContent(asset, store.read(asset));
+        }
+    }
+
+    /**
+     * Wie {@link #content(PageAttachmentList, String, boolean)} für Lesen auf Abruf durch {@code owner} (ADR 0018):
+     * verlangt die Quelle einen Einmalcode, legt dies die Anforderung an ({@link SignInRequests#open}) und wirft
+     * {@link SignInPendingException}, statt den Code still abzufragen. Der Aufrufer hat die Seite vorher auf
+     * Leserechte geprüft; ohne Oberfläche oder mit {@code owner == null} gilt das Verhalten ohne Anmeldung.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent content(PageAttachmentList list, String attachmentId, boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> content(list, attachmentId, mayStore));
+    }
+
+    /**
+     * Wie {@link #preview(PageAttachmentList, String, AttachmentPreview, boolean)} für Lesen auf Abruf durch
+     * {@code owner}; Einmalcode wie bei {@link #content(PageAttachmentList, String, boolean, String)}.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent preview(PageAttachmentList list, String attachmentId, AttachmentPreview preview,
+                                boolean mayStore, String owner) {
+        return unlocking(list.sourceId(), owner, () -> preview(list, attachmentId, preview, mayStore));
+    }
+
+    /**
+     * Wie {@link #viewImage(String, String, String, HarvestSource.ViewImage)} für Lesen auf Abruf durch
+     * {@code owner}; Einmalcode wie bei {@link #content(PageAttachmentList, String, boolean, String)}.
+     *
+     * @throws SignInPendingException wenn die Quelle einen Einmalcode verlangt und die Anforderung offen ist
+     */
+    public AssetContent viewImage(String sourceId, String pageId, String pageVersion, HarvestSource.ViewImage image,
+                                  String owner) {
+        return unlocking(sourceId, owner, () -> viewImage(sourceId, pageId, pageVersion, image));
+    }
+
+    /**
+     * Liest; verlangt die Quelle einen Einmalcode, wird einmal neu gelesen, falls die Quelle inzwischen freigeschaltet
+     * ist, sonst die Anforderung angelegt. Code und Token sieht diese Stelle nie.
+     */
+    private <T> T unlocking(String sourceId, String owner, java.util.function.Supplier<T> read) {
+        java.time.Instant started = clock.instant();
+        try {
+            return read.get();
+        } catch (SignInRequiredException e) {
+            if (owner == null || signIns == null || !signIns.interactive()) {
+                throw e;
+            }
+            if (signIns.unlockedSince(sourceId, started)) {
+                return read.get();
+            }
+            SignInRequest request = signIns.open(sourceId, owner, e.challenge());
+            throw new SignInPendingException(sourceId, request.id(), e);
         }
     }
 

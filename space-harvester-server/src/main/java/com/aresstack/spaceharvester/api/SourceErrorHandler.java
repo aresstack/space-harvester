@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.api;
 
+import com.aresstack.spaceharvester.application.signin.SignInPendingException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
@@ -37,6 +38,19 @@ class SourceErrorHandler {
     ProblemDetail invalidQuery(InvalidQueryException e) {
         // Die Meldung stammt aus der eigenen Validierung, nicht aus der Quelle.
         return problem(HttpStatus.BAD_REQUEST, "invalid-request", "Ungültige Anfrage", e.getMessage());
+    }
+
+    /**
+     * Lesen auf Abruf (ADR 0018): die Quelle verlangt einen Einmalcode, die Anforderung ist offen. Erst nach bestandener
+     * Prüfung der Seite geworfen; die Antwort nennt die Anforderung für {@code /api/v1/sign-ins}, nie Code oder Token.
+     */
+    @ExceptionHandler(SignInPendingException.class)
+    ProblemDetail signInPending(SignInPendingException e) {
+        ProblemDetail problem = problem(HttpStatus.FORBIDDEN, "sign-in-required", "Einmalcode erforderlich",
+                "Die Quelle verlangt einen Einmalcode; nach der Eingabe kann die Anfrage wiederholt werden.");
+        problem.setProperty("sourceId", e.sourceId());
+        problem.setProperty("signInRequestId", e.signInRequestId());
+        return problem;
     }
 
     @ExceptionHandler(SourceAccessException.class)
