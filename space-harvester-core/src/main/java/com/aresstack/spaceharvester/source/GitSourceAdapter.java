@@ -71,6 +71,11 @@ public final class GitSourceAdapter implements SourceAdapter {
     }
 
     @Override
+    public boolean tls() {
+        return adapter().tls();
+    }
+
+    @Override
     public List<String> check(SourceSettingsConfig config) {
         return adapter().check(config);
     }
