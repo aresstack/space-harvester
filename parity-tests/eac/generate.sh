@@ -6,9 +6,10 @@
 # Ohne Pfad wird der Commit aus parity-tests/src/test/resources/eac/COMMIT frisch geklont. Mit Pfad wird dessen
 # aktueller Stand genommen und COMMIT danach auf ihn gesetzt. Ergebnis unter parity-tests/src/test/resources/eac/:
 # parity.docx, parity.pdf, parity.md, problems-<format>.txt (nicht eingebettete Bilder), reading/ (Leseansicht),
-# navigation.properties (Kinder, Breadcrumbs, Querverweise), management.properties (Quellenverwaltung),
-# addresses.properties (Adressformen), search.properties (Index-Rückfall, Auszüge, Vorladen) und documents/
-# (Typerkennung und Dokumenttext der Dateien aus src/test/resources/documents).
+# scope-page.md und scope-subtree.md (Einzelseite und Teilbaum ab Seite, #186), navigation.properties (Kinder,
+# Breadcrumbs, Querverweise), management.properties (Quellenverwaltung), addresses.properties (Adressformen),
+# search.properties (Index-Rückfall, Auszüge, Vorladen) und documents/ (Typerkennung und Dokumenttext der Dateien aus
+# src/test/resources/documents).
 # Braucht JDK 8 oder neuer (übersetzt mit --release 8, läuft headless). PARITY_KEEP=1 behält den Arbeitsordner zur Fehlersuche.
 set -euo pipefail
 

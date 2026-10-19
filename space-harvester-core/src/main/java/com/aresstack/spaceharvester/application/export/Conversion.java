@@ -18,7 +18,8 @@ public record Conversion(String format, String converter, String mediaType, Stri
 
     /**
      * Kennung des Input-Hashes: SHA-256 über je eine Zeile {@code depth TAB pageId TAB metadataHash TAB rawSha256 LF}
-     * je Seite in Baumreihenfolge. Er deckt Baum, Kopfdaten und Payload ab; gleicher Hash und gleiche Converter-Version
+     * je Seite in Baumreihenfolge, bei einem Teilbaum oder einer Einzelseite (#186) danach {@code root TAB rootPageId LF},
+     * weil die Formate dann mit der Startseite als Kapitel 1 beginnen. Er deckt Baum, Kopfdaten und Payload ab; gleicher Hash und gleiche Converter-Version
      * ergeben dieselbe Datei.
      */
     public static final String INPUT_HASH_VERSION = "conversion-input/v1";

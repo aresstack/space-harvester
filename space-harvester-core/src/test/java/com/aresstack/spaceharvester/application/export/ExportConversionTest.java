@@ -121,6 +121,20 @@ class ExportConversionTest {
     }
 
     @Test
+    void aRootedExportHashesDifferentlyFromTheWholeSpaceWithTheSameTree() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "100", null),
+                page("confluence", "DEV", "101", "100")));
+        Exports exports = exports(cache);
+        JobStatus whole = exports.start("confluence", "DEV", "a", List.of("outline"));
+        JobStatus rooted = exports.start("confluence", "DEV", "100", "a", List.of("outline"));
+
+        // Gleicher Baum, aber die Formate beginnen mit der Startseite statt mit dem Space (#186).
+        assertThat(writer.published.get(rooted.id()).tree()).isEqualTo(writer.published.get(whole.id()).tree());
+        assertThat(onlyConversion(rooted).getKey().inputSha256())
+                .isNotEqualTo(onlyConversion(whole).getKey().inputSha256());
+    }
+
+    @Test
     void sameInputGivesSameHashAndContentChangedInputAnother() {
         publishTree();
         Exports exports = exports(cache);

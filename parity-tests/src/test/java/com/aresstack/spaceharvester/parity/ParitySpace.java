@@ -23,6 +23,8 @@ public final class ParitySpace {
     public static final String SPACE = "PARITY";
     public static final String SPACE_NAME = "Paritätsprüfung";
     public static final String HOME = "1001";
+    /** Wurzel der Exportumfänge (#186): „Architektur“ mit der Kette „Komponenten“ → „Ebene 4“ … „Ebene 7“ darunter. */
+    public static final String SCOPE_ROOT = "1002";
     /** Alle Seiten des Space, für den Vergleich der Leseansicht. */
     public static final String[] PAGES = {"1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
             "1010"};

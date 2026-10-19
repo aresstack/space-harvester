@@ -269,6 +269,35 @@ class ExportsApiTest {
     }
 
     @Test
+    void depthZeroExportsTheStartPageAlone() throws Exception {
+        HttpRequest request = TestClient.authenticated(HttpRequest.newBuilder(
+                        uri("/api/v1/sources/wiki/spaces/DEV/exports"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"rootPageId\":\"100\",\"depth\":0}"))).build();
+
+        JsonNode done = awaitFinished(body(http.send(request, HttpResponse.BodyHandlers.ofByteArray()))
+                .path("id").asString());
+
+        assertThat(done.path("state").asString()).isEqualTo("completed");
+        assertThat(done.path("rootPageId").asString()).isEqualTo("100");
+        assertThat(done.path("progress").path("written").asLong()).isEqualTo(1);
+        assertThat(done.path("artifact").path("complete").asBoolean()).isTrue();
+    }
+
+    @Test
+    void depthWithoutStartPageOrBelowZeroIsRejected() throws Exception {
+        for (String json : List.of("{\"depth\":1}", "{\"rootPageId\":\"100\",\"depth\":-1}")) {
+            HttpResponse<byte[]> response = http.send(TestClient.authenticated(HttpRequest.newBuilder(
+                            uri("/api/v1/sources/wiki/spaces/DEV/exports"))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json))).build(), HttpResponse.BodyHandlers.ofByteArray());
+
+            assertThat(response.statusCode()).as(json).isEqualTo(400);
+            assertThat(body(response).path("type").asString()).endsWith("/invalid-request");
+        }
+    }
+
+    @Test
     void anUnknownStartPageFailsTheExport() throws Exception {
         HttpRequest request = TestClient.authenticated(HttpRequest.newBuilder(
                         uri("/api/v1/sources/wiki/spaces/DEV/exports"))
