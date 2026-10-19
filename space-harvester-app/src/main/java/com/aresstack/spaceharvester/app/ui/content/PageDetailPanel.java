@@ -713,9 +713,19 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /**
+     * Der Lesetext wie in der Anreicherung des Core (Confluence, Ordner-Quelle, übrige Quellen), damit Fundstellen,
+     * Absätze und Navigation auf denselben Zeichenpositionen liegen.
+     */
+    private static final com.aresstack.spaceharvester.application.enrichment.PageTextProjector PROJECTOR =
+            com.aresstack.spaceharvester.application.enrichment.PageTextProjector.firstOf(List.of(
+                    new ConfluenceStorageTextProjector(),
+                    new com.aresstack.spaceharvester.source.LocalFilesTextProjector(),
+                    new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector()));
+
     private static PageText project(PageSnapshot snapshot) {
         try {
-            return new ConfluenceStorageTextProjector().project(snapshot).orElse(null);
+            return PROJECTOR.project(snapshot).orElse(null);
         } catch (IllegalArgumentException e) {
             return null;
         }
