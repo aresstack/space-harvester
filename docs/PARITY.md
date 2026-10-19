@@ -276,7 +276,7 @@ Partition je Quelle, docs/SOURCE_ADAPTERS.md, „Quellen ohne Partitionen“).
 | #178 | URL- und Ressourcenauflösung vollständig | erledigt (Q) |
 | #179 | Space-Filter der Schlagwortsuche in der CQL-Anfrage | Q, erledigt |
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt; Vorladen mit der Beschaffungsplanung (#363) vollständig |
-| #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013); semantische Passagen je Seite (#360, ADR 0020) mit Suchschnipseln, Embeddings und Reranking je Absatz; Reader #354 | Q, Passagen V |
+| #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013); semantische Passagen je Seite (#360, ADR 0020) mit Suchschnipseln, Embeddings und Reranking je Absatz; Reader #354 | erledigt (Q, Passagen V; geschlossen mit #392) |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | W; Suchläufe und Fakten (#348), EVENT/RELATION regelbasiert (#374), manuelle und geprüfte Fakten (#383); offen: Entscheidung zum Chat-Modell-Weg des EAC |
 | #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q; umgesetzt: Extraktion, Typerkennung, lokale Dateien (#328), Vorschauen (#365), Anhangstexte im Volltextindex mit den Rechten der Seite und REST `…/assets/{attachmentId}/text` (#385); Core vollständig, offen nur der Vorschau-Reiter in der App (L) |
 | #184 | `ImageDescriber` über den externen KI-Dienst | X; Core umgesetzt (#371, ADR 0021), Bildanhänge im Volltextindex (#385); offen nur der Reiter „Bilder“ in der App (L, #362) |
