@@ -336,12 +336,14 @@ Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht ges
 
 **Wechsel der Freigabe (`ai.external-processing-sources`):** Wird eine Quelle neu freigegeben oder ihre Freigabe
 entzogen, reiht der Dienst (im Core der Harvester mit `Harvester.Builder.configuration`, im Server mit
-Embedding-Modell beim Start) beim Aktivieren alle Seiten der Quelle im Cache zur Neuberechnung von `embedding`,
-`passages` und `navigation` ein, gedrosselt im Hintergrund der Anreicherungen (höchstens 50 zugleich wartend), ohne
+Embedding-Modell oder eingeschalteter Satzanalyse beim Start) beim Aktivieren alle Seiten der Quelle im Cache zur
+Neuberechnung von `embedding`, `passages` und `navigation` ein, eingeschaltet auch von `statements`, gedrosselt im Hintergrund der Anreicherungen (höchstens 50 zugleich wartend), ohne
 neuen Abruf von der Quelle, ohne neue Version und ohne 503. Neu freigegeben rechnen sie mit Modell; entzogen ohne:
 Absätze und Navigation nach Struktur (`source-not-approved`), die Embeddings der Quelle entfallen. Ob eine Berechnung
 das Modell fragen darf, prüft ihre Ausführung: Ab dem Aktivieren eines Entzugs fragt auch keine schon eingereihte
-Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. `images`
+Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. Die
+Satzanalyse rechnet nach einer Freigabe mit dem Chat-Modell nach; nach einem Entzug entfallen ihr Ergebnis und ihre
+Fakten. Das gilt auch ohne Embedding-Modell, sobald ein Chat-Modell eingestellt ist. `images`
 rechnet nur auf Abruf und prüft die Freigabe dann. Das Log nennt nur Quelle und Anzahl der Seiten.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
