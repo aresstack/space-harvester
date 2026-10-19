@@ -4,6 +4,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -23,10 +24,18 @@ import java.util.TreeMap;
  *       {@code pageId} des Zyklus aufgebrochen ({@link PageTree.Kind#CYCLE}).</li>
  * </ul>
  *
+ * <p>Geschwister stehen wie in Confluence ({@code /child/page}, so liest sie der Enterprise AI Client): erst nach
+ * {@link TreeEntry#position()}, Seiten ohne Position danach nach Titel, bei Gleichstand nach Seiten-ID. Ohne Position
+ * und Titel bleibt es bei der Seiten-ID.
+ *
  * <p>Iterativ statt rekursiv, damit auch sehr tiefe Ketten keinen Stack-Überlauf auslösen. Das Ergebnis hängt nur von
  * der Menge der Einträge ab, nicht von ihrer Reihenfolge.
  */
 public final class PageTreeBuilder {
+
+    /** Titel ohne Rücksicht auf Groß- und Kleinschreibung, bei Gleichheit exakt. */
+    private static final Comparator<String> TITLES = String.CASE_INSENSITIVE_ORDER.thenComparing(
+            Comparator.naturalOrder());
 
     private PageTreeBuilder() {
     }
@@ -36,11 +45,13 @@ public final class PageTreeBuilder {
      */
     public static PageTree build(Collection<TreeEntry> entries) {
         Map<String, String> parents = new HashMap<>();
+        Map<String, TreeEntry> byId = new HashMap<>();
         for (TreeEntry entry : entries) {
             if (parents.containsKey(entry.pageId())) {
                 throw new IllegalArgumentException("pageId mehrfach im Baum: " + entry.pageId());
             }
             parents.put(entry.pageId(), entry.parentPageId());
+            byId.put(entry.pageId(), entry);
         }
 
         Map<String, List<String>> children = new HashMap<>();
@@ -58,7 +69,11 @@ public final class PageTreeBuilder {
                 children.computeIfAbsent(parent, key -> new ArrayList<>()).add(pageId);
             }
         }
-        children.values().forEach(Collections::sort);
+        Comparator<String> siblings = Comparator.comparing((String pageId) -> byId.get(pageId).position(),
+                        Comparator.nullsLast(Comparator.<Long>naturalOrder()))
+                .thenComparing(pageId -> byId.get(pageId).title(), Comparator.nullsLast(TITLES))
+                .thenComparing(Comparator.naturalOrder());
+        children.values().forEach(list -> list.sort(siblings));
 
         Set<String> visited = new HashSet<>();
         roots.keySet().forEach(root -> visit(root, children, visited));
