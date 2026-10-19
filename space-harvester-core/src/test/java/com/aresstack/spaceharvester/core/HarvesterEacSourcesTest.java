@@ -35,7 +35,7 @@ class HarvesterEacSourcesTest {
                     new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
                     new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
                     new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
-                    new SourceType("git", "Git-Repository", false));
+                    new SourceType("mediawiki", "MediaWiki", false), new SourceType("git", "Git-Repository", false));
         }
     }
 
