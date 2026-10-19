@@ -65,7 +65,7 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Berechnet beim Lesen aus dem gespeicherten Ergebnis, ohne Schemaänderung. `PassageQueries.resolve` und
    `GET /api/v1/passages?id=` lösen sie wie `KnowledgeResourceReader` auf: gefunden mit je einem Nachbarn
    (`found`), sonst alle aktuellen Absätze mit `older-version` (andere Capture) oder `changed` (Zerlegung oder Modell
-   gewechselt); eine unbekannte oder nicht sichtbare Seite antwortet gleich mit 404. Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; die Versionsteile
+   gewechselt); eine unbekannte oder nicht sichtbare Seite antwortet gleich mit 404. Abweichungen: Die Seite steht als `sourceId:pageId` statt der Resource-ID des Clients; der Modellteil ist der Modellname aus dem Ergebnis statt des Fingerabdrucks des Embedding-Raums (zwei Dienste mit gleichem Modellnamen geben dieselbe ID, ein Dienstwechsel rechnet über die Prozessorversion ohnehin neu); eine unbekannte Quelle antwortet wie eine unsichtbare Seite; die Versionsteile
    stammen aus dem gespeicherten Ergebnis statt aus der aktuellen Einstellung, ein veraltetes Ergebnis desselben
    Textes behält also seine IDs bis zur Neuberechnung; ohne Absätze gibt es zusätzlich `unavailable`; die ID steht im
    Parameter statt im Pfad, weil sie `#` und Seiten-IDs `/` enthalten.

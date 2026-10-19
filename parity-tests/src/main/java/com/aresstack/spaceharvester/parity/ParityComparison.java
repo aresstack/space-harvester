@@ -213,7 +213,11 @@ public final class ParityComparison {
             } else {
                 verdict = items(actual).containsAll(items(expected)) ? Verdict.CORE_MEHR : Verdict.CORE_WENIGER;
             }
-            String title = key.startsWith("prefetch.") ? "Live-Treffer " + key.substring("prefetch.".length())
+            String title = key.startsWith("anhang.") ? (key.endsWith(".gelesen")
+                    ? "Anhangstext gefunden, nachdem der Anhang geladen ist: "
+                    + key.substring("anhang.".length(), key.length() - ".gelesen".length())
+                    : "Anhangstext gefunden, ohne den Anhang zu öffnen: " + key.substring("anhang.".length()))
+                    : key.startsWith("prefetch.") ? "Live-Treffer " + key.substring("prefetch.".length())
                     + " vorgeladen"
                     : key.endsWith(".snippet") ? "Auszug zeigt den Suchbegriff: "
                     + key.substring("search.".length(), key.length() - ".snippet".length())

@@ -7,6 +7,7 @@ import com.aresstack.spaceharvester.application.passages.PassageLookup;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
+import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -64,8 +65,8 @@ public class PassageLookupController {
         PassageId requested = PassageId.parse(id);
         try {
             return PassageLookupResponse.of(passages.resolve(caller, id));
-        } catch (AccessDeniedException e) {
-            // Eine ID nennt Seiten, die der Aufrufer vielleicht nicht sehen darf: unsichtbar antwortet wie unbekannt.
+        } catch (AccessDeniedException | UnknownSourceException e) {
+            // Eine ID nennt Quelle und Seite: unsichtbar und unbekannt antworten gleich, auch bei unbekannter Quelle.
             throw new CacheMissException(requested.sourceId(), "Seite nicht vorhanden oder nicht sichtbar");
         }
     }

@@ -68,20 +68,20 @@ und `space-harvester.network.*`.
   `syncFor`) beim nächsten Abruf bzw. Lauf, Embedding-Modell und Reranker für neue Suchen (alte Vektoren werden ohne
   neuen Abruf der Seiten neu berechnet, sobald die Suche sie braucht), der Zeitplan aus `sync.spaces` mit Abstand und
   Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen; Webhooks (`sync.events`) bei jedem Aufruf; Proxy
-  und TLS (`network.*`), solange am Builder weder `proxy` noch `trust` gesetzt ist (die App setzt beide). Noch
-  nicht live: Bestandsinventur-Zeitplan, `before-search` und `search.prefetch-hits` (nur beim Bauen).
+  und TLS (`network.*`), solange am Builder weder `proxy` noch `trust` gesetzt ist (die App setzt beide);
+  `search.prefetch-hits` für den nächsten Stapel der Schlagwortsuche, solange am Builder `prefetchSearchHits` nicht
+  danach fest gesetzt ist. Noch nicht live: Bestandsinventur-Zeitplan und `before-search`.
 - Im Server wirkt eine aktivierte Version ebenso sofort (`LiveConfiguration`): Aktualität (`cache.*`,
   `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
   beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
   Reranker, Reranker an, aus oder neues Modell (`ai.rerank-model`, `ai.base-url`, `search.rerank`) für neue Suchen,
   das Vision-Modell (`ai.vision-model`, ADR 0021) für die nächste Bildbeschreibung, auch erstmals eingeschaltet (ein
   Wechsel macht vorhandene Bildanalysen veraltet), der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
-  einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf und `catch-up-on-start` je Quelle
-  beim Start. Das Embedding-Modell wechselt live
-  oder schaltet ab, wenn beim Start eines eingestellt war; **Embeddings erstmals einschalten braucht einen Neustart**
-  (die Kette entsteht nur mit `ai.embedding-model` beim Start). Noch nicht live im Server: Bestandsinventur-Zeitplan,
-  `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
-  gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
+  einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf, `search.prefetch-hits` für den nächsten Stapel der
+  Schlagwortsuche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
+  schaltet ab und lässt sich auch erstmals einschalten, ohne Neustart: Die Kette (Prozessor, Hintergrund,
+  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Noch nicht live im Server: Bestandsinventur-Zeitplan,
+  `before-search` und `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Suchlauf-Protokoll und Fakten (#182)
 

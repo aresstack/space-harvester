@@ -9,6 +9,10 @@ import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexKnowledgeUseCase
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingListener;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.IndexingReport;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgeDocumentReader;
+import com.aresstack.enterpriseai.astu.acropolis.knowledge.SourceAttachmentReader;
+import com.aresstack.enterpriseai.astu.acropolis.chalcotheca.RawKnowledgeHit;
+import com.aresstack.enterpriseai.astu.acropolis.chalcotheca.RawKnowledgeQuery;
+import com.aresstack.enterpriseai.proasteion.application.knowledge.DocumentSourceFileTextExtractor;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.KnowledgePrefetchService;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.SearchDrivenIndexingUseCase;
 import com.aresstack.enterpriseai.astu.acropolis.knowledge.SourceCalls;
@@ -89,6 +93,7 @@ import java.util.concurrent.Executor;
 import java.util.function.Supplier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
 
@@ -637,6 +642,7 @@ public final class EacParityExport {
                 out.println("prefetch." + page + "=" + (raw.get(id).isPresent() ? "ja" : "nein"));
             }
             searchRun(confluence, prefetch, runs);
+            attachments(confluence, indexing, raw, out);
         } finally {
             out.close();
             if (prefetch != null) {
@@ -656,6 +662,78 @@ public final class EacParityExport {
     }
 
     /** Eine Suche in einer Quelle; scheitert sie, bricht die Erzeugung ab, statt „keine Treffer“ zu melden. */
+    /**
+     * Anhangstexte (#183) wie im Client ({@code CompositionRoot}): Dateianhänge liest der Dateiweg der Quelle
+     * ({@code SourceAttachmentReader} mit {@code DocumentSourceFileTextExtractor}) und legt sie wie eine Seite in den
+     * Rohindex, aber nur, wenn die Anhangs-ID selbst geladen wird; die Live-Suche fragt {@code type=page}, und die
+     * Indexierung nimmt nur textartige Anhänge. Gemessen wird je Merksatz der Seite „Anhänge“, ob die Volltextsuche
+     * ihn findet, nachdem die Seite geladen ist ({@code anhang.<datei>}) und nachdem der Anhang selbst geladen ist
+     * ({@code anhang.<datei>.gelesen}).
+     */
+    private static void attachments(ConfluenceKnowledgeSource confluence, IndexKnowledgeUseCase indexing,
+                                    LuceneRawKnowledgeIndex raw, PrintWriter out) throws Exception {
+        KnowledgeDocumentReader reader = new SourceAttachmentReader(KnowledgeDocumentReader.direct(),
+                new DocumentSourceFileTextExtractor(DocumentExtraction.detector(), DocumentExtraction.registry(),
+                        null));
+        KnowledgePrefetchService prefetch = new KnowledgePrefetchService(indexing, raw, reader,
+                new Supplier<KnowledgePrefetchService.Settings>() {
+                    @Override
+                    public KnowledgePrefetchService.Settings get() {
+                        return KnowledgePrefetchService.Settings.defaults();
+                    }
+                });
+        try {
+            KnowledgeResourceId page = KnowledgeResourceId.of("confluence",
+                    FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/"
+                            + ParityConfluence.ATTACHMENTS_PAGE);
+            load(prefetch, confluence, java.util.Collections.singletonList(page));
+            List<KnowledgeResource> files = confluence.attachmentsOf(page);
+            Map<String, KnowledgeResourceId> byName = new LinkedHashMap<String, KnowledgeResourceId>();
+            for (KnowledgeResource file : files) {
+                byName.put(file.title(), file.id());
+            }
+            for (String[] document : ParityConfluence.DOCUMENTS) {
+                out.println("anhang." + document[0] + "=" + (found(raw, document, byName) ? "ja" : "nein"));
+            }
+            List<KnowledgeResourceId> ids = new ArrayList<KnowledgeResourceId>();
+            for (String[] document : ParityConfluence.DOCUMENTS) {
+                ids.add(byName.get(document[0]));
+            }
+            load(prefetch, confluence, ids);
+            for (String[] document : ParityConfluence.DOCUMENTS) {
+                out.println("anhang." + document[0] + ".gelesen=" + (found(raw, document, byName) ? "ja" : "nein"));
+            }
+        } finally {
+            prefetch.shutdown();
+        }
+    }
+
+    private static void load(KnowledgePrefetchService prefetch, ConfluenceKnowledgeSource confluence,
+                             List<KnowledgeResourceId> ids) throws Exception {
+        List<KnowledgePrefetchService.Candidate> candidates = new ArrayList<KnowledgePrefetchService.Candidate>();
+        for (KnowledgeResourceId id : ids) {
+            candidates.add(new KnowledgePrefetchService.Candidate(confluence, id, null));
+        }
+        prefetch.prefetch("anhang", candidates, 0).awaitAvailable(candidates.size(), 30_000L,
+                new java.util.function.IntConsumer() {
+                    @Override
+                    public void accept(int value) {
+                    }
+                });
+    }
+
+    /** Ob die Volltextsuche nach dem Schlüsselwort des Merksatzes (sein zweites Wort) den Anhang findet. */
+    private static boolean found(LuceneRawKnowledgeIndex raw, String[] document,
+                                 Map<String, KnowledgeResourceId> byName) {
+        KnowledgeResourceId file = byName.get(document[0]);
+        for (RawKnowledgeHit hit : raw.search(RawKnowledgeQuery.of(document[2].split(" ")[1], 20, 1, 200))) {
+            if (hit.resource().id().equals(file)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static SourceSearchOutcome searchOne(SearchKnowledgeSourcesUseCase search, KnowledgeSourcePort source,
                                                  String text) {
         SourceSearchOutcome outcome = search.search(Collections.singletonList(source), text, 10).join().get(0);
