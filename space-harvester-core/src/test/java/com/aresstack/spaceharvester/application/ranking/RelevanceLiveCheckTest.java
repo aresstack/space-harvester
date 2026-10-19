@@ -313,7 +313,7 @@ class RelevanceLiveCheckTest {
                 recording, texts).search(CALLER, byTitle, "Betrieb", 5);
 
         assertThat(ids(results)).containsExactly("1", "2");
-        assertThat(documents).containsOnlyKeys("1", "2").containsEntry("1", "Betrieb eins\nGeheimtext");
+        assertThat(documents).containsOnlyKeys("1", "2").containsEntry("1", "Betrieb eins\nGeheimtext 1");
         assertThat(metadataCalls).contains("5");
     }
 

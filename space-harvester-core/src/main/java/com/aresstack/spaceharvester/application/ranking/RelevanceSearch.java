@@ -694,8 +694,8 @@ public class RelevanceSearch {
 
     /**
      * Was ein Reranker von einem Treffer sieht (#181): der Titel und, nur mit {@code content}-Freigabe, aus dem
-     * Lesetext des Volltextindex das ähnlichste Stück (der Absatz, ADR 0020), ohne Stück den Anfang. Nie die Adresse der
-     * Seite.
+     * Lesetext des Volltextindex genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (ADR 0020);
+     * sonst ein Auszug um das ähnlichste Stück herum oder vom Anfang. Nie die Adresse der Seite.
      */
     private String document(AccessContext caller, SearchHit hit, Score score, String partition) {
         String title = hit.page().header().metadata().title();
@@ -713,10 +713,16 @@ public class RelevanceSearch {
         }
         int start = score == null ? 0 : Math.clamp(score.charStart(), 0, text.length());
         int end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
-        if (score != null && score.charEnd() > start) {
-            // Re-Ranking auf Absatzebene (#181, ADR 0020): genau das ähnlichste Stück, seit withPassages ein
-            // semantischer Absatz, ohne Nachbartext, der seine Bewertung verwässert.
+        if (score != null && score.charEnd() > start && score.freshness() == Freshness.CURRENT
+                && embedding.passages()) {
+            // Re-Ranking auf Absatzebene (#181, ADR 0020): genau der ähnlichste aktuelle Absatz, ohne Nachbartext,
+            // der seine Bewertung verwässert.
             end = Math.min(end, score.charEnd());
+        } else if (score != null && score.charEnd() > start && score.charEnd() - start < MAX_DOCUMENT_CHARS) {
+            // Ohne aktuelle Absätze wie bisher: das Stück mittig, soweit der Text reicht.
+            int spare = MAX_DOCUMENT_CHARS - (Math.min(score.charEnd(), text.length()) - start);
+            start = Math.max(0, start - spare / 2);
+            end = Math.min(text.length(), start + MAX_DOCUMENT_CHARS);
         }
         String excerpt = text.substring(start, end).strip();
         return title.isEmpty() ? excerpt : excerpt.isEmpty() ? title : title + "\n" + excerpt;

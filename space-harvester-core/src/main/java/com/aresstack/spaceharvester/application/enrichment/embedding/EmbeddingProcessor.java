@@ -108,6 +108,11 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"));
     }
 
+    /** Ob die Stücke semantische Absätze sind ({@link #withPassages}). */
+    public boolean passages() {
+        return passages != null;
+    }
+
     private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
         check(Objects.requireNonNull(provider, "provider"));
         return () -> provider;

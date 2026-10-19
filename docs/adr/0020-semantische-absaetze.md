@@ -54,8 +54,9 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    veralten einmal und werden aus dem Cache neu berechnet. Die Satzvektoren der Themengrenzen kosten den Prozessor
    `embedding` wie `passages` je einen Aufruf je 32 Sätze.
 9. **Re-Ranking auf Absatzebene**: Der Reranker der semantischen Suche (`ModelReranker`, `/rerank`) bekommt je Treffer
-   den Titel und genau das ähnlichste Stück, seit Punkt 8 einen Absatz, statt eines auf 2 000 Zeichen aufgefüllten
-   Fensters; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
+   den Titel und genau den ähnlichsten Absatz, wenn die Embeddings aktuell je Absatz sind (Punkt 8), statt eines auf
+   2 000 Zeichen aufgefüllten Fensters; ohne aktuelle Absätze (veraltete Revision, Zerlegung ohne Absätze) bleibt das
+   Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
    Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
 
 ## Abweichungen vom Client
