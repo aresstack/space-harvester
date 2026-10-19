@@ -91,6 +91,14 @@ class ParityComparisonTest {
         assertThat(missing.detail()).contains("Satz India.");
         assertThat(ParityComparison.macros("md", eac, eac, sentences, List.of("1009 children (not-collected)"))
                 .verdict()).isEqualTo(Verdict.CORE_WENIGER);
+        // Ungleiche Zählung von Ansicht und Storage: gewollt nicht eingesetzt (#426), steht im Detail, keine Lücke
+        Finding mismatch = ParityComparison.macros("md", eac, eac, sentences,
+                List.of("1012 contentbylabel (view-count-mismatch)"));
+        assertThat(mismatch.verdict()).isEqualTo(Verdict.GLEICH);
+        assertThat(mismatch.detail()).startsWith("gewollt anders: ").contains("1012 contentbylabel");
+        assertThat(ParityComparison.macros("md", eac, eac, sentences, List.of(
+                "1012 contentbylabel (view-count-mismatch)", "1009 children (not-collected)")).verdict())
+                .isEqualTo(Verdict.CORE_WENIGER);
     }
 
     @Test
