@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.application.export;
 
+import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.convert.PageAnalyses;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
@@ -23,6 +24,8 @@ import java.util.function.Function;
  * Liest nur; rechnet weder fehlende noch veraltete Ergebnisse nach.
  */
 public final class EnrichmentAnalyses implements PageAnalyses {
+
+    private static final System.Logger LOG = System.getLogger(EnrichmentAnalyses.class.getName());
 
     private final Enrichments enrichments;
     private final FactStore facts;
@@ -80,7 +83,16 @@ public final class EnrichmentAnalyses implements PageAnalyses {
         if (sha256 == null) {
             return Optional.empty();
         }
-        return descriptions.apply(sha256).map(description -> new PageAnalyses.StoredImageDescription(
+        Optional<ImageDescription> stored;
+        try {
+            stored = descriptions.apply(sha256);
+        } catch (AssetStoreException e) {
+            // Ein unlesbarer Eintrag bricht nicht die ganze analysis.json ab; das Bild bleibt ohne Beschreibung.
+            LOG.log(System.Logger.Level.WARNING, "Bildbeschreibung nicht lesbar: asset-store, "
+                    + e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+        return stored.map(description -> new PageAnalyses.StoredImageDescription(
                 description.imageSha256(), description.describer(), description.modelVersion(), description.text(),
                 description.createdAt()));
     }

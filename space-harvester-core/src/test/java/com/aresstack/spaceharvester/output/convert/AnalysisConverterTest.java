@@ -4,6 +4,7 @@ import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.c
 import static com.aresstack.spaceharvester.application.query.InMemoryPageCache.page;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.application.assets.AssetStoreException;
 import com.aresstack.spaceharvester.application.assets.ImageDescription;
 import com.aresstack.spaceharvester.application.convert.ConversionInput;
 import com.aresstack.spaceharvester.application.convert.ConvertiblePage;
@@ -166,8 +167,13 @@ class AnalysisConverterTest {
                 "Ein Bauplan", clock.instant());
         // Einzeln beschrieben: im Asset-Speicher, kein Ergebnis "images" an der Seite.
         Map<String, ImageDescription> described = Map.of("sha256:aa", plan);
-        AnalysisConverter converter = new AnalysisConverter(new EnrichmentAnalyses(enrichments, null,
-                sha256 -> Optional.ofNullable(described.get(sha256))));
+        // Ein unlesbarer Eintrag lässt nur dieses Bild ohne Beschreibung.
+        AnalysisConverter converter = new AnalysisConverter(new EnrichmentAnalyses(enrichments, null, sha256 -> {
+            if (sha256.equals("sha256:cc")) {
+                throw new AssetStoreException("kaputt", null);
+            }
+            return Optional.ofNullable(described.get(sha256));
+        }));
         ExportAssetManifest manifest = new ExportAssetManifest(true, List.of(
                 new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att1", "plan.png"),
                         "att1", "2", "plan.png", "image/png", 3, "sha256:aa", ExportAssetManifest.Status.STORED,
@@ -175,6 +181,9 @@ class AnalysisConverterTest {
                 // Andere Bytes (ersetztes Bild): keine Beschreibung, kein Eintrag.
                 new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att2", "neu.png"),
                         "att2", "1", "neu.png", "image/png", 3, "sha256:bb", ExportAssetManifest.Status.STORED,
+                        null),
+                new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att4", "kaputt.png"),
+                        "att4", "1", "kaputt.png", "image/png", 3, "sha256:cc", ExportAssetManifest.Status.STORED,
                         null),
                 new ExportAssetManifest.Entry("100", ExportAssetManifest.Reference.attachment("att3", "weg.png"),
                         "att3", null, "weg.png", "image/png", 0, null, ExportAssetManifest.Status.MISSING,
