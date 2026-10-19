@@ -32,6 +32,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
@@ -278,6 +279,8 @@ public final class Harvester implements AutoCloseable {
     private final boolean networkFollows;
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
+    /** Textprojektion wie in Anreicherungen und Volltextindex: Confluence, lokale Dateien, Dokumente. */
+    private final PageTextProjector pageTexts;
     /** {@code sync.before-search} nur mit Konfiguration; steht, sobald die Abgleiche verdrahtet sind. */
     private volatile SyncBeforeSearch syncBeforeSearch;
     /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
@@ -421,6 +424,7 @@ public final class Harvester implements AutoCloseable {
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
+            this.pageTexts = projector;
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
             // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
             // selbst. Schließt vor dem Hintergrund.
@@ -956,6 +960,18 @@ public final class Harvester implements AutoCloseable {
      */
     public List<SourceType> sourceTypes() {
         return sources.types();
+    }
+
+    /**
+     * Der Klartext einer Seite, wie ihn Anreicherungen, Volltextindex und Absätze sehen: Confluence-Storage, lokale
+     * Dateien und Dokumente über discover/load (#187), der erste passende Projektor gewinnt. Rechnet nur über die
+     * übergebene Payload, lädt nichts nach und prüft keine Rechte; wer den Snapshot hat, darf ihn lesen.
+     *
+     * @return die Projektion, oder leer, wenn kein Projektor das Format kennt
+     * @throws IllegalArgumentException wenn die Payload das Format verletzt, das sie angibt
+     */
+    public Optional<PageText> pageText(PageSnapshot snapshot) {
+        return pageTexts.project(Objects.requireNonNull(snapshot, "snapshot"));
     }
 
     /** Native Seiten-Snapshots direkt von der Quelle, ohne Cache. */
