@@ -373,6 +373,121 @@ class SearchOrchestratorTest {
         releaser.join();
     }
 
+    @Test
+    void semanticallyEveryVariantRunsThroughTheSemanticSearchAgainstTheOriginalAndKeepsItsSimilarity()
+            throws Exception {
+        List<String> runs = Collections.synchronizedList(new ArrayList<>());
+        VariantSearch semantic = new VariantSearch() {
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
+                throw new AssertionError("ohne ursprüngliche Anfrage aufgerufen");
+            }
+
+            @Override
+            public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
+                runs.add(variant.text() + " | " + original);
+                // Die Vektorsuche mit der ursprünglichen Anfrage; v1 hat eine weitere Seite in den Cache geladen.
+                List<KeywordSearch.Hit> hits = variant.text().equals("v1") ? List.of(hit("a"), hit("b"))
+                        : List.of(hit("a"));
+                return new Outcome(new KeywordSearch.Results("wiki", hits, List.of(), null, true, 0),
+                        variant.text().equals("v1") ? Map.of(key("a"), 0.4, key("b"), 0.8) : Map.of(key("a"), 0.4));
+            }
+        };
+        HitScorer crossEncoder = (original, hits) -> {
+            throw new AssertionError("semantisch bewertet die Ähnlichkeit, nicht der Cross-Encoder");
+        };
+        orchestrator = new SearchOrchestrator(search, semantic, (original, max) -> List.of("v1", "v2"),
+                (original, max) -> List.of(), crossEncoder);
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                profile(SearchProfile.Mode.ALL_VARIANTS, 3).withRanking(SearchProfile.Ranking.SEMANTIC))
+                .result().get(10, TimeUnit.SECONDS);
+
+        assertThat(search.calls()).isEmpty();
+        assertThat(runs).containsExactlyInAnyOrder(ORIGINAL + " | " + ORIGINAL, "v1 | " + ORIGINAL,
+                "v2 | " + ORIGINAL);
+        assertThat(result.reason()).isEqualTo(Completion.ALL_VARIANTS_DONE);
+        assertThat(result.hits()).extracting(hit -> hit.hit().pageId(), RankedHit::score, RankedHit::foundBy,
+                        RankedHit::confirmed)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("b", 0.8, 1, true),
+                        org.assertj.core.groups.Tuple.tuple("a", 0.4, 0, true));
+        assertThat(result.variants()).extracting(Variant::newHits).containsExactly(1, 1, 0);
+    }
+
+    @Test
+    void theSimilarityReachesTheQualityGoalOfASemanticSearch() throws Exception {
+        VariantSearch semantic = new VariantSearch() {
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
+                throw new AssertionError("ohne ursprüngliche Anfrage aufgerufen");
+            }
+
+            @Override
+            public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
+                return new Outcome(new KeywordSearch.Results("wiki", List.of(hit("a"), hit("b")), List.of(), null,
+                        true, 0), Map.of(key("a"), 0.7, key("b"), 0.6));
+            }
+        };
+        orchestrator = new SearchOrchestrator(search, semantic, (original, max) -> List.of("v1"),
+                (original, max) -> List.of(), HitScorer.none());
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults().withQuality(2, 0.5).withRanking(SearchProfile.Ranking.SEMANTIC))
+                .result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.reason()).isEqualTo(Completion.QUALITY_REACHED);
+        assertThat(result.hits()).extracting(hit -> hit.hit().pageId()).containsExactly("a", "b");
+    }
+
+    @Test
+    void aSemanticSearchThatIsNotPossibleIsRefusedBeforeAnythingIsSearched() {
+        SearchProfile semanticProfile = SearchProfile.defaults().withRanking(SearchProfile.Ranking.SEMANTIC);
+        SearchOrchestrator withoutSemantic = orchestrator(List.of("v1"), HitScorer.none());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> withoutSemantic.searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), semanticProfile)).isInstanceOf(IllegalArgumentException.class);
+        withoutSemantic.close();
+
+        VariantSearch unavailable = new VariantSearch() {
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
+                throw new AssertionError("nie gesucht");
+            }
+
+            @Override
+            public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
+                throw new IllegalStateException("Kein Embedding-Dienst eingerichtet");
+            }
+        };
+        orchestrator = new SearchOrchestrator(search, unavailable, (original, max) -> List.of("v1"),
+                (original, max) -> List.of(), HitScorer.none());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> orchestrator.searchAsync(APP,
+                KeywordSearch.Query.of(ORIGINAL), semanticProfile)).isInstanceOf(IllegalStateException.class)
+                .hasMessageNotContaining(ORIGINAL);
+        assertThat(search.calls()).isEmpty();
+    }
+
+    @Test
+    void theKeywordProfileKeepsTheKeywordSearchEvenWithASemanticSearchWired() throws Exception {
+        search.results(ORIGINAL, found("o"));
+        VariantSearch semantic = (caller, query, limit) -> {
+            throw new AssertionError("nur mit Haken");
+        };
+        orchestrator = new SearchOrchestrator(search, semantic, (original, max) -> List.of(),
+                (original, max) -> List.of(), HitScorer.none());
+
+        ProgressiveResult result = orchestrator.searchAsync(APP, KeywordSearch.Query.of(ORIGINAL),
+                SearchProfile.defaults()).result().get(10, TimeUnit.SECONDS);
+
+        assertThat(result.hits()).extracting(hit -> hit.hit().pageId()).containsExactly("o");
+        assertThat(search.calls()).containsExactly(ORIGINAL);
+    }
+
+    private static com.aresstack.spaceharvester.application.snapshot.PageKey key(String pageId) {
+        return new com.aresstack.spaceharvester.application.snapshot.PageKey("wiki", pageId);
+    }
+
     private SearchOrchestrator orchestrator(List<String> variants, HitScorer scorer) {
         orchestrator = new SearchOrchestrator(search, (original, max) -> variants, scorer);
         return orchestrator;
