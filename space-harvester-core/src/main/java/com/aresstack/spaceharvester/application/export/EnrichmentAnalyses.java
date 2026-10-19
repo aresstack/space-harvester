@@ -1,0 +1,67 @@
+package com.aresstack.spaceharvester.application.export;
+
+import com.aresstack.spaceharvester.application.convert.PageAnalyses;
+import com.aresstack.spaceharvester.application.enrichment.Enrichment;
+import com.aresstack.spaceharvester.application.enrichment.Enrichments;
+import com.aresstack.spaceharvester.application.facts.FactStore;
+import com.aresstack.spaceharvester.application.facts.MetadataFact;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Analysedaten aus der Ablage der Anreicherungen (#359): je Prozessor ein Abschnitt, Zustand gegenüber dem
+ * exportierten Snapshot. Neue Prozessoren (etwa Begriffe, Passagen) erscheinen ohne Umbau als weitere Abschnitte.
+ * Liest nur; rechnet weder fehlende noch veraltete Ergebnisse nach.
+ */
+public final class EnrichmentAnalyses implements PageAnalyses {
+
+    private final Enrichments enrichments;
+    private final FactStore facts;
+
+    public EnrichmentAnalyses(Enrichments enrichments) {
+        this.enrichments = Objects.requireNonNull(enrichments, "enrichments");
+        this.facts = enrichments.facts().orElse(null);
+    }
+
+    @Override
+    public List<Processor> processors() {
+        List<Processor> processors = new ArrayList<>();
+        enrichments.processorVersions().forEach((id, version) -> processors.add(new Processor(id, version)));
+        return processors;
+    }
+
+    @Override
+    public PageAnalysis of(PageSnapshot snapshot) {
+        Enrichments.Inspection inspection = enrichments.inspect(snapshot);
+        Map<String, Enrichments.View> stored = new LinkedHashMap<>();
+        for (Enrichments.View view : inspection.stored()) {
+            stored.put(view.enrichment().processorId(), view);
+        }
+        Map<String, String> versions = enrichments.processorVersions();
+        List<Section> sections = new ArrayList<>();
+        inspection.applicable().forEach((id, version) -> {
+            Enrichments.View view = stored.remove(id);
+            sections.add(view == null ? Section.missing(new Processor(id, version)) : section(view, version));
+        });
+        // Gespeichert, aber nicht (mehr) zuständig: ein Prozessor, den es nicht mehr gibt oder der die Seite auslässt.
+        stored.values().stream().sorted(Comparator.comparing(view -> view.enrichment().processorId()))
+                .forEach(view -> sections.add(section(view, versions.get(view.enrichment().processorId()))));
+        List<MetadataFact> pageFacts = facts == null ? List.of() : facts.factsOf(snapshot.key());
+        return new PageAnalysis(inspection.inputSha256(), sections, pageFacts);
+    }
+
+    private static Section section(Enrichments.View view, String currentVersion) {
+        Enrichment enrichment = view.enrichment();
+        State state = enrichment.status() == Enrichment.Status.FAILED ? State.FAILED
+                : view.freshness() == Enrichment.Freshness.CURRENT ? State.CURRENT : State.STALE;
+        boolean failed = enrichment.status() == Enrichment.Status.FAILED;
+        return new Section(enrichment.processorId(), currentVersion, state, enrichment.processorVersion(),
+                enrichment.inputSha256(), enrichment.revision(), enrichment.computedAt(),
+                failed ? null : enrichment.payloadJson(), enrichment.warnings(), enrichment.errorCode());
+    }
+}

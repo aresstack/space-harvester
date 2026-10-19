@@ -6,18 +6,22 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Leitet die Fakten einer Seite aus einem gespeicherten Anreicherungsergebnis ab, deterministisch und ohne Quelle oder
  * Text: dasselbe Ergebnis ergibt dieselben Fakten mit denselben Kennungen. Nur Ergebnisse mit
- * {@link Enrichment.Status#OK} der Prozessoren {@value #ACRONYMS}, {@value #ENTITIES} und {@value #PROPERTIES} tragen
+ * {@link Enrichment.Status#OK} der Prozessoren {@value #ACRONYMS}, {@value #ENTITIES}, {@value #PROPERTIES},
+ * {@value #ACTIVITIES} und {@value #RELATIONS} tragen
  * Fakten (Aufbau: {@link FactTypes}); ein Ergebnis, das sich nicht lesen lässt, trägt keine. Die Ergebnisformate
  * (Prozessorversionen) bleiben unverändert.
  */
@@ -26,9 +30,11 @@ public final class EnrichmentFacts {
     public static final String ACRONYMS = "acronyms";
     public static final String ENTITIES = "entities";
     public static final String PROPERTIES = "properties";
+    public static final String ACTIVITIES = "activities";
+    public static final String RELATIONS = "relations";
 
     /** Prozessoren, deren Ergebnisse Fakten tragen. */
-    public static final Set<String> PROCESSORS = Set.of(ACRONYMS, ENTITIES, PROPERTIES);
+    public static final Set<String> PROCESSORS = Set.of(ACRONYMS, ENTITIES, PROPERTIES, ACTIVITIES, RELATIONS);
 
     /** Höchstens so viele Fakten je Ergebnis. */
     public static final int MAX_PER_RESULT = 2_000;
@@ -62,6 +68,8 @@ public final class EnrichmentFacts {
                 case ACRONYMS -> acronyms(enrichment.key(), payload, provenance, facts);
                 case ENTITIES -> entities(enrichment.key(), payload, provenance, facts);
                 case PROPERTIES -> properties(enrichment.key(), payload, provenance, facts);
+                case ACTIVITIES -> activities(enrichment.key(), payload, provenance, facts);
+                case RELATIONS -> relations(enrichment.key(), payload, provenance, facts);
                 default -> {
                     return List.of();
                 }
@@ -159,6 +167,114 @@ public final class EnrichmentFacts {
             arguments.add(argument(FactTypes.STATUS, negated ? "negated" : "asserted"));
             facts.add(fact(key, FactTypes.PROPERTY, null, value, provenance,
                     anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments));
+        }
+    }
+
+    private static void activities(PageKey key, JsonNode payload, MetadataFact.Provenance provenance,
+                                   List<MetadataFact> facts) {
+        for (JsonNode entry : payload.path("activities")) {
+            String predicate = text(entry, "predicate");
+            String lemma = text(entry, "lemma");
+            if (predicate == null || lemma == null) {
+                continue;
+            }
+            String modal = text(entry, "modal");
+            boolean negated = entry.path("negated").asBoolean();
+            String section = text(entry, "section");
+            ObjectNode value = JSON.createObjectNode();
+            value.put("predicate", predicate);
+            value.put("lemma", lemma);
+            putNullable(value, "voice", text(entry, "voice"));
+            putNullable(value, "mood", text(entry, "mood"));
+            putNullable(value, "modal", modal);
+            value.put("negated", negated);
+            ArrayNode participants = value.putArray("participants");
+            Arguments arguments = new Arguments();
+            arguments.add(FactTypes.PREDICATE, lemma);
+            for (JsonNode participant : entry.path("participants")) {
+                String role = text(participant, "role");
+                String term = text(participant, "term");
+                String normalized = text(participant, "normalized");
+                if (role == null || term == null) {
+                    continue;
+                }
+                boolean pronoun = participant.path("pronoun").asBoolean();
+                ObjectNode copy = participants.addObject();
+                copy.put("role", role);
+                copy.put("term", term);
+                putNullable(copy, "normalized", normalized);
+                copy.put("pronoun", pronoun);
+                if (!pronoun && normalized != null) {
+                    // Pronomen ohne aufgelösten Bezug wären als Suchwert nur Rauschen.
+                    arguments.add(role, normalized);
+                }
+            }
+            putNullable(value, "section", section);
+            arguments.add(FactTypes.STATUS, negated ? "negated" : "asserted");
+            qualifiers(arguments, negated, modal != null);
+            facts.add(fact(key, FactTypes.EVENT, null, value, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+    }
+
+    private static void relations(PageKey key, JsonNode payload, MetadataFact.Provenance provenance,
+                                  List<MetadataFact> facts) {
+        for (JsonNode entry : payload.path("relations")) {
+            String kind = text(entry, "type");
+            String subject = text(entry, "subject");
+            String object = text(entry, "object");
+            if (kind == null || subject == null || object == null) {
+                continue;
+            }
+            String subjectNormalized = text(entry, "subjectNormalized");
+            String objectNormalized = text(entry, "objectNormalized");
+            String predicate = text(entry, "predicate");
+            boolean negated = entry.path("negated").asBoolean();
+            String section = text(entry, "section");
+            ObjectNode value = JSON.createObjectNode();
+            value.put("kind", kind);
+            value.put("subject", subject);
+            putNullable(value, "subjectNormalized", subjectNormalized);
+            putNullable(value, "predicate", predicate);
+            value.put("object", object);
+            putNullable(value, "objectNormalized", objectNormalized);
+            value.put("negated", negated);
+            putNullable(value, "cue", text(entry, "cue"));
+            putNullable(value, "section", section);
+            Arguments arguments = new Arguments();
+            arguments.add(FactTypes.KIND, kind);
+            arguments.add(FactTypes.SUBJECT, subjectNormalized != null ? subjectNormalized : subject);
+            arguments.add(FactTypes.OBJECT, objectNormalized != null ? objectNormalized : object);
+            if (predicate != null) {
+                arguments.add(FactTypes.VALUE, predicate);
+            }
+            arguments.add(FactTypes.STATUS, negated ? "negated" : "asserted");
+            qualifiers(arguments, negated, false);
+            facts.add(fact(key, FactTypes.RELATION, null, value, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+    }
+
+    /** {@code QUALIFIER} wie {@code FactCatalogStatements} im Client: {@code negated}, {@code modal}. */
+    private static void qualifiers(Arguments arguments, boolean negated, boolean modal) {
+        if (negated) {
+            arguments.add(FactTypes.QUALIFIER, "negated");
+        }
+        if (modal) {
+            arguments.add(FactTypes.QUALIFIER, "modal");
+        }
+    }
+
+    /** Argumente in Reihenfolge; gleiche Rollen zählen ihre Ordnungszahl hoch. */
+    private static final class Arguments {
+
+        private final List<MetadataFact.Argument> list = new ArrayList<>();
+        private final Map<String, Integer> ordinals = new HashMap<>();
+
+        void add(String role, String value) {
+            int ordinal = ordinals.merge(role, 1, Integer::sum) - 1;
+            MetadataFact.Argument first = argument(role, value);
+            list.add(new MetadataFact.Argument(first.role(), ordinal, first.value()));
         }
     }
 
