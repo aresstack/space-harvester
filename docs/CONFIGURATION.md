@@ -115,13 +115,37 @@ Schema `enrichment-store/v4`; ein v1/v2/v3-Bestand erhält sie beim Öffnen; ohn
 ersetzt und gelöscht. Typen nach
 dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
 (aus `entities`), `PROPERTY` (aus `properties`), `EVENT` (aus `activities`) und `RELATION` (aus `relations`);
+`MENTION`, `EVENT` und `RELATION` auch aus der Satzanalyse `statements` (unten);
 Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`, `OBJECT`, `VALUE`, `PREDICATE`, Rollen wie `ACTOR`,
 `STATUS`, `QUALIFIER`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
 
-- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
+**Satzanalyse über das Chat-Modell** (Prozessor `statements`, wie Issue #108 im Enterprise AI Client): zusätzlich zum
+regelbasierten Weg schlägt das Chat-Modell `ai.chat-model` je Absatz Erwähnungen, Handlungen mit Rollen und
+Eigenschaften mit Wortbereichen vor; behalten wird nur, was wörtlich im Satz steht, optional bestätigt eine zweite
+Ja/Nein-Anfrage jede Aussage. Satzgrenzen wie bei `passages` (OpenNLP, ADR 0020), kein Wortartmodell. Die Fakten tragen
+`STATUS` `extracted`, `model_validated`, `uncertain` oder `unresolved_reference`, `QUALIFIER` auch `conditional`,
+Herkunft `AUTOMATIC` mit Prozessor `statements` und einer Version samt Chat-Modell (ein Modellwechsel macht sie
+veraltet). Berechnet wird im Hintergrund der Anreicherungen nach Abgleich oder Abruf.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `space-harvester.enrichment.statements.enabled` | `false` | Satzanalyse einschalten; ohne Chat-Modell wird sie übersprungen |
+| `space-harvester.enrichment.statements.verify` | `true` | jede Handlung und Relation mit einer zweiten Anfrage prüfen (verneint: verworfen) |
+| `space-harvester.enrichment.statements.max-paragraphs` | `40` | höchstens so viele Absätze (Modellanfragen) je Seite, höchstens 200 |
+| `space-harvester.enrichment.statements.max-paragraph-chars` | `1500` | längere Absätze in Folgen ganzer Sätze bis zu dieser Länge, höchstens 8000 |
+
+- **Datenschutz:** Absätze gehen nur aus Quellen in `ai.external-processing-sources` an den Dienst, sonst nie, auch
+  nicht bei einer Neuberechnung. Das Log nennt nur Prozessor, Seite und Fehlertyp, nie Text oder Antwort.
+- Die Schlüssel wirken beim Start (in der Bibliothek `Harvester.builder().statements(…)`); Chat-Modell und Freigabe
+  folgen der wirksamen Konfiguration. Scheitert ein Absatz, ist das ganze Ergebnis fehlgeschlagen (kein halbes).
+- `MENTION`, `EVENT` und `RELATION` entstehen dann doppelt, regelbasiert und aus `statements`, mit eigenen Kennungen.
+  `processor=` an beiden Fakten-Endpunkten wählt einen Weg (etwa `entities`, `statements` oder `manual`), ohne ihn
+  kommen alle. Endet ein Ergebnis an der Grenze von 2000 Fakten, fallen Erwähnungen vor Handlungen und Relationen weg.
+
+- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…][&processor=…]`: das Faktenblatt einer Seite mit derselben Prüfung
   wie das Lesen der Seite und `freshness` je Fakt. Je Prozessor und Seite gibt es höchstens 2000 Fakten;
   `truncated` nennt die Prozessoren, deren Fakten an dieser Grenze enden (sonst leer).
-- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&cursor&limit]`: Fakten über alle
+- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&processor=…][&cursor&limit]`: Fakten über alle
   Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
   es gibt keine Gesamtzahl.
 
@@ -365,12 +389,14 @@ Modells ebenso mit `reason=model-unavailable`. Ein anderes Chat-Modell macht ges
 
 **Wechsel der Freigabe (`ai.external-processing-sources`):** Wird eine Quelle neu freigegeben oder ihre Freigabe
 entzogen, reiht der Dienst (im Core der Harvester mit `Harvester.Builder.configuration`, im Server mit
-Embedding-Modell beim Start) beim Aktivieren alle Seiten der Quelle im Cache zur Neuberechnung von `embedding`,
-`passages` und `navigation` ein, gedrosselt im Hintergrund der Anreicherungen (höchstens 50 zugleich wartend), ohne
+Embedding-Modell oder eingeschalteter Satzanalyse beim Start) beim Aktivieren alle Seiten der Quelle im Cache zur
+Neuberechnung von `embedding`, `passages` und `navigation` ein, eingeschaltet auch von `statements`, gedrosselt im Hintergrund der Anreicherungen (höchstens 50 zugleich wartend), ohne
 neuen Abruf von der Quelle, ohne neue Version und ohne 503. Neu freigegeben rechnen sie mit Modell; entzogen ohne:
 Absätze und Navigation nach Struktur (`source-not-approved`), die Embeddings der Quelle entfallen. Ob eine Berechnung
 das Modell fragen darf, prüft ihre Ausführung: Ab dem Aktivieren eines Entzugs fragt auch keine schon eingereihte
-Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. `images`
+Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. Die
+Satzanalyse rechnet nach einer Freigabe mit dem Chat-Modell nach; nach einem Entzug entfallen ihr Ergebnis und ihre
+Fakten. Das gilt auch ohne Embedding-Modell, sobald ein Chat-Modell eingestellt ist. `images`
 rechnet nur auf Abruf und prüft die Freigabe dann; schon gespeicherte Bildbeschreibungen bleiben nach einem Entzug
 lesbar (nur mit den Rechten an der Seite), neue entstehen erst nach erneuter Freigabe. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
 ein Lauf ab, gleicht der Start das einmal im selben Hintergrund ab, allein aus den gespeicherten Ergebnissen: Nur

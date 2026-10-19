@@ -10,6 +10,8 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementSettings;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
@@ -27,15 +29,20 @@ import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Predicate;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -213,7 +220,33 @@ class AiConfiguration {
         return Enrichments.background(100);
     }
 
-    /** Hintergrund der Anreicherungen, die über das Netz rechnen. */
+    /**
+     * Satzanalyse über das Chat-Modell (Prozessor {@code statements}, #108), nur mit
+     * {@code space-harvester.enrichment.statements.enabled=true} (Standard aus, wie im Enterprise AI Client). Das
+     * Chat-Modell ({@code ai.chat-model}, {@code base-url}) und die Freigabe je Quelle
+     * ({@code ai.external-processing-sources}) folgen der wirksamen Konfiguration; ohne Chat-Modell wird der Prozessor
+     * übersprungen, und Inhalte nicht freigegebener Quellen gehen nie an den Dienst. {@code verify},
+     * {@code max-paragraphs} und {@code max-paragraph-chars} wirken beim Start.
+     */
+    @Bean
+    @ConditionalOnProperty(prefix = "space-harvester.enrichment.statements", name = "enabled", havingValue = "true")
+    StatementProcessor statementProcessor(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                          ObjectProvider<BuildProperties> build, LiveConfiguration live,
+                                          SentenceSegmenter sentences,
+                                          @Value("${space-harvester.enrichment.statements.verify:"
+                                                  + StatementSettings.DEFAULT_VERIFY + "}") boolean verify,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraphs:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPHS + "}") int maxParagraphs,
+                                          @Value("${space-harvester.enrichment.statements.max-paragraph-chars:"
+                                                  + StatementSettings.DEFAULT_MAX_PARAGRAPH_CHARS + "}")
+                                          int maxParagraphChars) {
+        StatementSettings settings = new StatementSettings(true, verify, maxParagraphs, maxParagraphChars);
+        StatementChatModels chats = new StatementChatModels(() -> live.current().ai(), catalog, trust,
+                userAgent(build));
+        return new StatementProcessor(sentences, () -> settings, chats, chats.mayProcessExternally());
+    }
+
+    /** Hintergrund der Anreicherungen, die über das Netz rechnen: Embeddings und Satzanalyse. */
     @Bean(destroyMethod = "shutdownNow")
     ExecutorService enrichmentBackground() {
         return Enrichments.background(1000);
@@ -221,17 +254,31 @@ class AiConfiguration {
 
     /**
      * Wechselt die Freigabe {@code ai.external-processing-sources} einer Quelle, rechnet der Dienst {@code embedding},
-     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, ohne neuen Abruf und
-     * ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
+     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, eingeschaltet auch
+     * {@code statements} (#108), ohne neuen Abruf und ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
      * Embedding-Modells, weil {@code covers} die Freigabe so fragt, wie das Modell sie sieht.
      */
     @Bean(destroyMethod = "close")
-    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, EmbeddingProcessor embedding,
+    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, ObjectProvider<EmbeddingProcessor> embedding,
+                                              ObjectProvider<StatementProcessor> statements,
                                               ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
         LucenePageCache pages = cache.getIfAvailable();
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        boolean withStatements = statements.getIfAvailable() != null;
+        List<String> processorIds = new ArrayList<>();
+        if (embeddings != null) {
+            processorIds.addAll(List.of(embeddings.id(), PassageProcessor.ID, NavigationProcessor.ID));
+        }
+        // #108: Die Satzanalyse hängt ebenso an der Freigabe; ein Entzug entfernt ihre Ergebnisse. Sie fragt die
+        // Freigabe selbst, denn ohne Embedding-Modell bliebe covers beim alten Stand.
+        if (withStatements) {
+            processorIds.add(StatementProcessor.ID);
+        }
+        Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
+                || withStatements && live.current().ai().mayProcessExternally(sourceId);
         ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
-                embedding::covers, List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                released, processorIds);
         live.listen(recomputation);
         return recomputation;
     }
@@ -243,10 +290,17 @@ class AiConfiguration {
      */
     @Bean
     org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
-            releaseReconciliationOnStart(ReleaseRecomputation recomputation, EmbeddingProcessor embedding,
+            releaseReconciliationOnStart(ReleaseRecomputation recomputation,
+                                         ObjectProvider<EmbeddingProcessor> embedding,
+                                         ObjectProvider<StatementProcessor> statements,
                                          ConfiguredSourceCatalog catalog) {
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        StatementProcessor statementProcessor = statements.getIfAvailable();
+        // Mit Satzanalyse (#108) auch nur mit Chat-Modell.
         return event -> recomputation.reconcileOnStart(
-                catalog.configs().stream().map(SourceSettingsConfig::id).toList(), embedding::available,
+                catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                () -> embeddings != null && embeddings.available()
+                        || statementProcessor != null && statementProcessor.available(),
                 PassagePayload.REASON_NOT_APPROVED);
     }
 }

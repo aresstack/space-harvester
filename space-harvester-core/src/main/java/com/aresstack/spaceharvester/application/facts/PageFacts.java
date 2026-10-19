@@ -47,6 +47,8 @@ public final class PageFacts {
     static final int MAX_SCANNED = 5_000;
 
     private static final Pattern CURSOR = Pattern.compile("[0-9a-f]{32}");
+    /** Prozessor-IDs wie {@code entities}, {@code reading-view} oder {@code manual}. */
+    private static final Pattern PROCESSOR = Pattern.compile("[a-z][a-z0-9-]{0,63}");
 
     private final SourceCatalog catalog;
     private final AccessGuard access;
@@ -84,9 +86,21 @@ public final class PageFacts {
      * @param type nur dieser Typ oder {@code null}
      */
     public Sheet factsOf(AccessContext caller, String sourceId, String pageId, String type) {
+        return factsOf(caller, sourceId, pageId, type, null);
+    }
+
+    /**
+     * Wie {@link #factsOf(AccessContext, String, String, String)}, nur Fakten eines Prozessors, etwa {@code entities}
+     * oder {@code statements} ({@code MENTION} entsteht aus beiden), oder {@value FactEdits#MANUAL_PROCESSOR}.
+     *
+     * @param processor nur Fakten dieses Prozessors oder {@code null}
+     * @throws InvalidQueryException bei einem ungültigen Prozessornamen
+     */
+    public Sheet factsOf(AccessContext caller, String sourceId, String pageId, String type, String processor) {
         if (type != null) {
             MetadataFact.requireName("type", type);
         }
+        requireProcessor(processor);
         DeliveredPage page = pages.page(caller, sourceId, pageId, false);
         Map<String, Enrichment.Freshness> freshness = new HashMap<>();
         String input = null;
@@ -104,7 +118,8 @@ public final class PageFacts {
         }
         List<Entry> entries = new ArrayList<>();
         for (MetadataFact fact : store.factsOf(page.header().key())) {
-            if (type == null || type.equals(fact.type())) {
+            if ((type == null || type.equals(fact.type()))
+                    && (processor == null || processor.equals(fact.provenance().processorId()))) {
                 // Manuelle Fakten gelten für den Text, gegen den sie angelegt wurden.
                 Enrichment.Freshness current = fact.origin() == FactOrigin.MANUAL
                         ? input != null && input.equals(fact.provenance().inputSha256())
@@ -128,7 +143,18 @@ public final class PageFacts {
      *                                                                              {@link SearchScope#authorize}
      */
     public Results search(AccessContext caller, Search search, String cursor, int limit) {
+        return search(caller, search, null, cursor, limit);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, Search, String, int)}, nur Fakten eines Prozessors. Gefiltert wird nach dem
+     * Lesen; ein Stapel kann dadurch kürzer als das Limit sein, auch wenn noch Fakten folgen.
+     *
+     * @param processor nur Fakten dieses Prozessors oder {@code null}
+     */
+    public Results search(AccessContext caller, Search search, String processor, String cursor, int limit) {
         Objects.requireNonNull(search, "search");
+        requireProcessor(processor);
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
@@ -157,6 +183,9 @@ public final class PageFacts {
                 used++;
                 scanned++;
                 after = fact.id();
+                if (processor != null && !processor.equals(fact.provenance().processorId())) {
+                    continue;
+                }
                 if (readable.computeIfAbsent(fact.page(), key -> readable(caller, key, search.spaceKeys()))) {
                     found.add(fact);
                 }
@@ -165,6 +194,12 @@ public final class PageFacts {
             exhausted = next.size() < batch && used == next.size();
         }
         return new Results(found, exhausted ? null : after);
+    }
+
+    private static void requireProcessor(String processor) {
+        if (processor != null && !PROCESSOR.matcher(processor).matches()) {
+            throw new InvalidQueryException("processor ist kein gültiger Prozessorname");
+        }
     }
 
     /** Lesbar an den Kopfdaten im Cache, im gewünschten Space; ohne Kopfdaten nicht. */
