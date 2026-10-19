@@ -97,7 +97,6 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
     private static final String SPACE_NODE = "space:";
     /** {@link PageAttachments#nativeFormat()} der Ersatzliste aus dem Lesebereich; sie hat keine Rohantworten. */
     static final String READER_ATTACHMENTS = "knowledge-reader-attachments";
-    private static final System.Logger LOG = System.getLogger(KnowledgeSourceHarvestSource.class.getName());
     /** Präfix des Cursors der Kindseiten; versioniert das Format. */
     private static final String CURSOR_PREFIX = "c1.";
     /** Präfix des Cursors der Discovery-Listung; versioniert das Format. */
@@ -784,8 +783,7 @@ final class KnowledgeSourceHarvestSource implements HarvestSource {
             attachments = view.attachmentsOf(resource(pageId).id()).stream()
                     .map(KnowledgeSourceHarvestSource::attachment).toList();
         } catch (KnowledgeSourceException | RuntimeException e) {
-            LOG.log(System.Logger.Level.WARNING, "Quelle {0}: Anhänge des Lesebereichs nicht lesbar ({1})", id,
-                    e.getClass().getSimpleName());
+            LOG.warn("Quelle {}: Anhänge des Lesebereichs nicht lesbar ({})", id, e.getClass().getSimpleName());
             warning = "Anhangsliste nicht lieferbar; die Seite bleibt ohne Anhänge";
         }
         return new PageAttachments(pageId, attachments, List.of(), "application/json", READER_ATTACHMENTS,
