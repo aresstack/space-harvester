@@ -16,6 +16,7 @@ import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
@@ -103,6 +104,34 @@ class HarvesterConfigurationLiveTest {
             harvester.pages().page(harvester.caller(), "wiki", "100", false);
             assertThat(CONFLUENCE.requestHeaders().size()).isEqualTo(before);
         }
+    }
+
+    @Test
+    void catchingUpBeforeASearchFollowsTheConfigurationAtRuntime() throws Exception {
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        try (Harvester harvester = harvester(manager)) {
+            harvester.await(harvester.sync("wiki", "DEV").id(), Duration.ofSeconds(30));
+            KeywordSearch.Query query = new KeywordSearch.Query("Start", "wiki", Set.of(), Set.of());
+            harvester.keywordSearch().search(harvester.caller(), query, null, 10);
+            // Standard aus: Die Suche startet keinen Abgleich.
+            assertThat(syncJobs(harvester)).isEqualTo(1);
+
+            // ADR 0015: sync.before-search je Quelle wirkt für die nächste Suche, ohne den Harvester neu zu bauen.
+            SourceSyncOverride before = new SourceSyncOverride(null, null, null, null, true, null, null, null, null);
+            HarvesterConfiguration next = manager.current().configuration()
+                    .withSync(manager.current().configuration().sync().withSource("wiki", before));
+            assertThat(manager.apply(next).activated()).isTrue();
+            harvester.keywordSearch().search(harvester.caller(), query, null, 10);
+            assertThat(syncJobs(harvester)).isEqualTo(2);
+
+            // Gleich danach holt eine weitere Suche nicht erneut nach.
+            harvester.keywordSearch().search(harvester.caller(), query, null, 10);
+            assertThat(syncJobs(harvester)).isEqualTo(2);
+        }
+    }
+
+    private static int syncJobs(Harvester harvester) {
+        return harvester.jobs().list(Harvester.OWNER, JobType.SYNC).size();
     }
 
     @Test

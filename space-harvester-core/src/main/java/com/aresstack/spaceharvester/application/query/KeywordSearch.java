@@ -133,6 +133,7 @@ public class KeywordSearch {
     private final PageTextIndex texts;
     private final Prefetch prefetch;
     private final BooleanSupplier prefetching;
+    private final BeforeSearch before;
     private final int maxQueries;
     private final ExcerptPriority excerpts;
     private final CandidateSelectionStrategy selection;
@@ -219,6 +220,19 @@ public class KeywordSearch {
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, findings, prefetching,
+                BeforeSearch.NONE);
+    }
+
+    /**
+     * @param before erfährt zu Beginn jeder Suche (erster Stapel, nicht bei Folgestapeln über den Cursor) die Quellen,
+     *               die der Aufrufer darin lesen darf ({@code sync.before-search}, ADR 0015); hält die Suche nicht auf
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings, BooleanSupplier prefetching,
+                         BeforeSearch before) {
+        this.before = Objects.requireNonNull(before, "before");
         this.prefetching = Objects.requireNonNull(prefetching, "prefetching");
         this.findings = Objects.requireNonNull(findings, "findings");
         this.selection = Objects.requireNonNull(selection, "selection");
@@ -363,6 +377,20 @@ public class KeywordSearch {
                 state.status().name()), state.reason());
     }
 
+    /**
+     * Was vor einer Suche geschieht, etwa das Nachholen der Änderungen ihrer Quellen ({@code sync.before-search}). Muss
+     * sofort zurückkehren und darf nicht werfen: Die Suche antwortet aus dem Stand, den sie vorfindet.
+     */
+    @FunctionalInterface
+    public interface BeforeSearch {
+
+        BeforeSearch NONE = sourceIds -> {
+        };
+
+        /** @param sourceIds die Quellen der Suche, die der Aufrufer lesen darf */
+        void searching(Set<String> sourceIds);
+    }
+
     /** Zahlen eines Stapels für das Suchlauf-Protokoll; nur geprüfte Seiten. */
     private static final class Tally {
 
@@ -381,6 +409,9 @@ public class KeywordSearch {
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query.scope());
         scope.requireKnown(catalog);
         Position position = cursor == null || cursor.isEmpty() ? null : decode(cursor, fingerprint(query));
+        if (position == null && !scope.sourceIds().isEmpty()) {
+            before.searching(scope.sourceIds());
+        }
         Map<String, Integer> offsets = position == null ? null : position.offsets();
         boolean cached = texts != null;
 

@@ -111,6 +111,7 @@ import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
+import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
@@ -274,6 +275,8 @@ public final class Harvester implements AutoCloseable {
     private final boolean networkFollows;
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
+    /** {@code sync.before-search} nur mit Konfiguration; steht, sobald die Abgleiche verdrahtet sind. */
+    private volatile SyncBeforeSearch syncBeforeSearch;
     /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
     private final Swappable<EmbeddingGeneration> embeddingModel;
     /** Austauschbarer Reranker; {@code null}, wenn er fest eingestellt ist. */
@@ -551,7 +554,12 @@ public final class Harvester implements AutoCloseable {
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
                     excerpts, builder.selection(), runLog, findings,
-                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true);
+                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true, sourceIds -> {
+                        SyncBeforeSearch before = this.syncBeforeSearch;
+                        if (before != null) {
+                            before.searching(sourceIds);
+                        }
+                    });
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -592,6 +600,10 @@ public final class Harvester implements AutoCloseable {
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
                             // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
                             List.of(acronymRelationRule::refresh))), retentionRule(builder));
+            if (manager != null) {
+                // ADR 0015: vor jeder Suche nachholen, je Quelle aus der wirksamen Konfiguration.
+                this.syncBeforeSearch = new SyncBeforeSearch(syncs, () -> this.settings, OWNER, clock);
+            }
             // ADR 0014: Webhooks markieren nur den Katalog; ein- und ausgeschaltet je Quelle über sync.events.
             boolean eventsFixed = builder.changeEvents;
             Map<String, char[]> webhookSecrets = Map.copyOf(builder.webhookSecrets);
