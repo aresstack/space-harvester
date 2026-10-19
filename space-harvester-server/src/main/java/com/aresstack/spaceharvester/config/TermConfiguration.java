@@ -18,6 +18,7 @@ import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -65,6 +66,8 @@ class TermConfiguration {
     @Bean
     AcronymResolution acronymResolution(SourceCatalog catalog, AccessGuard access, Enrichments enrichments,
                                         TermRelations relations, Jobs jobs,
+                                        @Value("${space-harvester.term-relations.directory:data/term-relations}")
+                                        Path directory,
                                         ObjectProvider<AcronymExpansionModel> model,
                                         ObjectProvider<SnapshotRepository> repository,
                                         ObjectProvider<PageCacheReader> reader) {
@@ -75,7 +78,8 @@ class TermConfiguration {
         PageTextProjector projector = projector();
         return new AcronymResolution(catalog, index, access, headers(snapshots, cache),
                 key -> payloads.apply(key).flatMap(projector::project), relations,
-                model.getIfAvailable(() -> AcronymExpansionModel.NONE), jobs, new TermProcessor().version(),
+                model.getIfAvailable(() -> AcronymExpansionModel.NONE), new FileResolutionCache(directory), jobs,
+                new TermProcessor().version(),
                 Clock.systemUTC());
     }
 
