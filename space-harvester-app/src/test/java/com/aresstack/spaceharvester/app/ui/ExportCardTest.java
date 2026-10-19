@@ -88,6 +88,17 @@ class ExportCardTest {
         assertThat(ActivitiesView.FORMATS).contains("json-package").doesNotContain("json");
         SwingUtilities.invokeAndWait(() -> view[0].exportAs(job, "json-package"));
         await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".zip")));
+        // „Analyse“ (#359) erzeugt die Analysedaten als eigene JSON-Datei, ohne die übrigen Dateien zu berühren.
+        await(() -> view[0].exportBlocked(job, "analysis") == null);
+        SwingUtilities.invokeAndWait(() -> view[0].exportAs(job, "analysis"));
+        await(() -> list(out).stream().anyMatch(p -> p.toString().endsWith(".json")));
+        assertThat(list(out)).hasSize(3);
+    }
+
+    @Test
+    void analysisIsExactlyOneMoreRowButtonAfterTheFormats() {
+        assertThat(ActivitiesView.FORMATS).containsExactly("pdf", "docx", "markdown", "json-package", "analysis");
+        assertThat(ActivitiesView.Format.title("analysis")).isEqualTo("Analyse");
     }
 
     @Test

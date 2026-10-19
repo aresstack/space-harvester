@@ -35,6 +35,7 @@ final class FormatIcon implements Icon {
             case "docx" -> new FormatIcon("W", Comic.BLUE);
             case "markdown" -> new FormatIcon("MD", Comic.INK);
             case "json" -> new FormatIcon("{}", Comic.PETROL);
+            case "analysis" -> new FormatIcon("AN", Comic.ORANGE);
             default -> new FormatIcon(format.substring(0, Math.min(3, format.length())).toUpperCase(
                     java.util.Locale.ROOT), Comic.INK);
         };
