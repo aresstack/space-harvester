@@ -4,9 +4,12 @@ import com.aresstack.enterpriseai.ui.comic.control.ComposerButton;
 import com.aresstack.spaceharvester.app.runtime.AppRuntime;
 import com.aresstack.spaceharvester.app.settings.AiDraft;
 import com.aresstack.spaceharvester.app.settings.AppSettings;
+import com.aresstack.spaceharvester.app.settings.AuthMode;
 import com.aresstack.spaceharvester.app.settings.ConfigFileEditor;
 import com.aresstack.spaceharvester.app.settings.SecretVault;
 import com.aresstack.spaceharvester.app.settings.SourceDraft;
+import com.aresstack.spaceharvester.app.settings.SourceFieldSpec;
+import com.aresstack.spaceharvester.app.settings.SourceFields;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.app.settings.TrustStores;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -28,6 +31,7 @@ import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.GraphicsEnvironment;
 import java.awt.Insets;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,7 +47,9 @@ import java.util.stream.Collectors;
  * Formular einer Wissensquelle auf einer Seite, zum Hinzufügen und zum Bearbeiten, in der Wissensquellenverwaltung wie
  * im Einrichtungsassistenten: Quelle (Art und Adresse zuerst, Anzeigename und technische Kennung werden daraus
  * vorgeschlagen), Anmeldung, Client-Zertifikat und Serverzertifikate dieser Quelle sowie die Freigabe für den
- * KI-Dienst. Proxy und Netzwerk gelten für alle Quellen und stehen nicht hier, sondern unter Einstellungen › Netzwerk.
+ * KI-Dienst. Confluence und Ordner haben ihre eigenen Zeilen; jede andere Art zeigt die Felder ihres Typs
+ * ({@link SourceFieldsEditor}, wie im Enterprise AI Client), die Anmeldearten des Typs und Zertifikate nur bei Typen
+ * mit TLS. Proxy und Netzwerk gelten für alle Quellen und stehen nicht hier, sondern unter Einstellungen › Netzwerk.
  * Ohne eigene Adresse gilt die öffentliche Confluence-Hilfe von Atlassian. Fehlende Angaben stehen direkt unter dem
  * Feld.
  *
@@ -98,10 +104,8 @@ final class SourceForm {
     final JTextArea notes = Comic.note("");
     private final Form form = new Form();
     private final JLabel loginSection = Form.section("Anmeldung");
-    /** Bei Typen ohne eigenes Formular, die Zugangsdaten verlangen: die Felder dafür folgen mit den Feldern des Typs. */
-    static final String CREDENTIALS_LATER = "Diese Art braucht eine Anmeldung; bis das Formular ihre Felder kennt, "
-            + "steht sie in der Datei unter auth (Einstellungen › Datei öffnen).";
-    final JLabel credentialsNote = Comic.muted(CREDENTIALS_LATER);
+    /** Die Felder des Typs bei Arten ohne eigenes Formular. */
+    final SourceFieldsEditor fields;
     /** Anzeigename im Auswahlfeld → Typ des Core; Confluence und Ordner behalten ihr eigenes Formular. */
     private final Map<String, SourceType> types = new java.util.LinkedHashMap<>();
     private final JLabel certificateSection = Form.section("Client-Zertifikat");
@@ -138,9 +142,6 @@ final class SourceForm {
             types.put(label, type);
             kind.addItem(label);
         }
-        auth.addItem(PAT);
-        auth.addItem(BASIC);
-        auth.addItem(NONE);
         certificate.addItem(NO_CERTIFICATE);
         certificate.addItem(WINDOWS_MY);
         certificate.addItem(PKCS12);
@@ -154,6 +155,8 @@ final class SourceForm {
         release.setFont(Comic.regular(13f));
         release.setForeground(Comic.INK);
         kind.addActionListener(e -> {
+            loadFields();
+            refreshAuth();
             updateVisibility();
             derive();
         });
@@ -166,12 +169,13 @@ final class SourceForm {
 
         form.header(Form.section("Quelle"));
         form.row("Art", kind);
+        int mainFields = form.reserve(SourceFieldsEditor.ROWS);
         form.row("Adresse", baseUrl, "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe");
         form.row("Ordner", row(directory, browse(directory, true)), null);
-        form.row(" ", credentialsNote);
         form.row("Dateien", include, "Muster, durch Komma getrennt");
         form.row("Anzeigename", title, "So heißt die Quelle in der App");
         form.row("Technische Kennung", id, "Wird aus der Adresse vorgeschlagen; nur ändern, wenn nötig");
+        fields = new SourceFieldsEditor(form, mainFields, form.reserve(SourceFieldsEditor.ROWS), this::derive);
         onEdit(baseUrl, this::derive);
         onEdit(directory, this::derive);
         onEdit(id, this::suggestVariable);
@@ -226,6 +230,8 @@ final class SourceForm {
         test.addActionListener(e -> test(() -> { }));
         save.addActionListener(e -> save());
         cancel.addActionListener(e -> close.run());
+        loadFields();
+        refreshAuth();
         if (editing != null) {
             prefill(editing.draft());
         }
@@ -270,42 +276,62 @@ final class SourceForm {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
         String type = typeId();
         boolean files = SourceDraft.FILES.equals(type);
-        if (!confluence && !files && editing != null && editing.draft().type().equals(type)) {
-            // Anmeldung, Zertifikat und Vertrauen dieser Arten kennt das Formular noch nicht; sie bleiben wie in der Datei.
-            SourceDraft kept = editing.draft();
-            return new SourceDraft(id.getText(), type, title.getText(), null, null, null, kept.authType(),
-                    kept.username(), kept.secretVariable(), kept.certificateType(), kept.certificatePath(),
-                    kept.certificatePasswordVariable(), kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(),
-                    options(false));
-        }
-        SourceSettingsConfig.AuthType authType = !confluence ? SourceSettingsConfig.AuthType.NONE
+        boolean generic = !confluence && !files;
+        boolean tls = confluence || generic && SourceFields.tls(type);
+        // Zertifikat und Vertrauen eines Typs ohne TLS zeigt das Formular nicht; sie bleiben wie in der Datei.
+        SourceDraft kept = generic && editing != null && editing.draft().type().equals(type) ? editing.draft() : null;
+        SourceSettingsConfig.AuthType authType = files ? SourceSettingsConfig.AuthType.NONE
                 : PAT.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.PAT
                 : BASIC.equals(auth.getSelectedItem()) ? SourceSettingsConfig.AuthType.BASIC
                 : SourceSettingsConfig.AuthType.NONE;
-        SourceSettingsConfig.CertificateStoreType certificateType = !confluence ? null
+        SourceSettingsConfig.CertificateStoreType certificateType = !tls ? (kept == null ? null : kept.certificateType())
                 : WINDOWS_MY.equals(certificate.getSelectedItem()) ? SourceSettingsConfig.CertificateStoreType.WINDOWS_MY
                 : PKCS12.equals(certificate.getSelectedItem()) ? SourceSettingsConfig.CertificateStoreType.PKCS12
                 : null;
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
         String bundle = String.valueOf(trust.getSelectedItem());
-        return new SourceDraft(id.getText(), type,
-                title.getText(), confluence ? address() : null,
-                files ? directory.getText() : null, files ? include.getText() : null, authType,
-                authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
-                authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
-                pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
-                certificateType == null ? null : alias.getText(),
-                certificateType == null ? null : thumbprint.getText(),
-                !confluence || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
+        SourceDraft draft;
+        if (tls || kept == null) {
+            draft = new SourceDraft(id.getText(), type,
+                    title.getText(), confluence ? address() : null,
+                    files ? directory.getText() : null, files ? include.getText() : null, authType,
+                    authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
+                    authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
+                    pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
+                    certificateType == null ? null : alias.getText(),
+                    certificateType == null ? null : thumbprint.getText(),
+                    !tls || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
+        } else {
+            draft = new SourceDraft(id.getText(), type, title.getText(), null, null, null, authType,
+                    authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
+                    authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(),
+                    kept.certificateType(), kept.certificatePath(), kept.certificatePasswordVariable(),
+                    kept.certificateAlias(), kept.thumbprint(), kept.trustBundle(), options(false));
+        }
+        if (generic && authType == SourceSettingsConfig.AuthType.BASIC && !typed()
+                && !SourceSaving.secretAvailable(context, editing, draft, false)) {
+            // Ohne eingegebenes oder hinterlegtes Passwort keine Zeile password: der Core fragt das Programm (ADR 0022).
+            draft = draft.withSecretVariable(null);
+        }
+        return draft;
+    }
+
+    /** Ob Token bzw. Passwort eingegeben ist (ohne den Wert zu kopieren). */
+    private boolean typed() {
+        return sessionValue.getDocument().getLength() > 0;
     }
 
     /**
-     * Die übrigen {@code options}; bei Arten ohne eigenes Formular kommt die Adresse unter den Schlüssel, den der Core
-     * für den Typ nennt ({@code SourceType.addressOption}, #387).
+     * Die übrigen {@code options}; bei Arten ohne eigenes Formular die Felder des Typs ({@link SourceFieldsEditor}),
+     * bei Arten ohne Felder die Adresse unter dem Schlüssel, den der Core für den Typ nennt
+     * ({@code SourceType.addressOption}, #387).
      */
     private Map<String, String> options(boolean ownForm) {
         Map<String, String> options = new java.util.TreeMap<>(editing == null ? Map.of()
                 : editing.draft().extraOptions());
+        if (!ownForm && fields.active()) {
+            return fields.apply(options);
+        }
         String key = addressOption();
         if (!ownForm && key != null) {
             options.remove(key);
@@ -314,6 +340,63 @@ final class SourceForm {
             }
         }
         return options;
+    }
+
+    /** Baut die Felder der gewählten Art; beim Bearbeiten mit den Werten der Datei, sonst mit den Vorgaben. */
+    private void loadFields() {
+        String type = typeId();
+        boolean ownForm = SourceDraft.CONFLUENCE.equals(type) || SourceDraft.FILES.equals(type);
+        List<SourceFieldSpec> specs = ownForm ? List.of() : SourceFields.fields(selectedType());
+        boolean same = editing != null && editing.draft().type().equals(type);
+        fields.load(specs, same ? editing.draft().extraOptions() : Map.of(), !same, addressOption());
+    }
+
+    /**
+     * Bietet nur die Anmeldearten des Typs an ({@code SourceType.authModes}); beim Bearbeiten bleibt auch eine Art
+     * aus der Datei, die der Typ nicht nennt. Eine gewählte Art bleibt, wenn der neue Typ sie kennt; sonst bei Typen,
+     * die Zugangsdaten verlangen, „Benutzer und Passwort“.
+     */
+    private void refreshAuth() {
+        SourceType type = selectedType();
+        List<AuthMode> modes = new ArrayList<>(SourceFields.authModes(type));
+        if (editing != null && editing.draft().type().equals(typeId())
+                && !modes.contains(AuthMode.of(editing.draft().authType()))) {
+            modes.add(AuthMode.of(editing.draft().authType()));
+        }
+        Object before = auth.getSelectedItem();
+        boolean was = deriving;
+        deriving = true;
+        try {
+            auth.removeAllItems();
+            if (modes.contains(AuthMode.PAT)) {
+                auth.addItem(PAT);
+            }
+            if (modes.contains(AuthMode.BASIC)) {
+                auth.addItem(BASIC);
+            }
+            if (modes.contains(AuthMode.NONE)) {
+                auth.addItem(NONE);
+            }
+            boolean offered = false;
+            for (int i = 0; i < auth.getItemCount(); i++) {
+                offered |= auth.getItemAt(i).equals(before);
+            }
+            if (authChosen && offered) {
+                auth.setSelectedItem(before);
+            } else if (SourceDraft.CONFLUENCE.equals(typeId())) {
+                auth.setSelectedItem(offered ? before : PAT);
+            } else {
+                auth.setSelectedItem(type != null && type.needsCredentials() && modes.contains(AuthMode.BASIC) ? BASIC
+                        : NONE);
+            }
+        } finally {
+            deriving = was;
+        }
+        suggestVariable();
+    }
+
+    private SourceType selectedType() {
+        return types.get(String.valueOf(kind.getSelectedItem()));
     }
 
     /** Der {@code options}-Schlüssel der Adresse für die gewählte Art oder {@code null}. */
@@ -370,13 +453,20 @@ final class SourceForm {
     boolean validateInput() {
         form.clearErrors();
         List<String> problems = problems();
-        if (problems.isEmpty()) {
+        List<SourceFieldsEditor.Problem> placed = fieldProblems();
+        if (problems.isEmpty() && placed.isEmpty()) {
             return true;
         }
         JComponent first = null;
         List<String> unplaced = new ArrayList<>();
+        for (SourceFieldsEditor.Problem problem : placed) {
+            fields.reveal(problem.field());
+            form.error(problem.field(), problem.message());
+            first = first == null ? problem.field() : first;
+        }
         for (String problem : problems) {
             JComponent field = field(problem);
+            fields.reveal(field);
             if (form.has(field)) {
                 form.error(field, shortly(problem));
                 first = first == null ? field : first;
@@ -433,6 +523,12 @@ final class SourceForm {
 
     /** Prüft, schreibt die Quelle (und eine geänderte KI-Freigabe) in die Datei und lädt die Konfiguration neu. */
     void save() {
+        if (fields.certificateMissing() && !GraphicsEnvironment.isHeadless() && !Dialogs.confirm(root,
+                "Hinweis: Kein Zertifikat", "„Zertifikat verwenden“ ist eingeschaltet, aber kein Zertifikat gewählt. "
+                        + "Ohne mTLS-Zertifikat kann die Verbindung fehlschlagen, wenn der Server eines verlangt. "
+                        + "Trotzdem ohne Zertifikat speichern?", "Ohne Zertifikat speichern")) {
+            return;
+        }
         if (!validateInput() || !Dialogs.restartAllowed(root, context)) {
             return;
         }
@@ -600,7 +696,7 @@ final class SourceForm {
     private List<String> problems() {
         SourceDraft source = draft();
         List<String> problems = new ArrayList<>(source.problems());
-        if (source.generic() && addressOption() != null) {
+        if (source.generic() && !fields.active() && addressOption() != null) {
             String address = source.extraOptions().get(addressOption());
             if (address == null) {
                 problems.add("Die Adresse fehlt.");
@@ -608,13 +704,37 @@ final class SourceForm {
                 problems.add("Die Adresse darf keinen Platzhalter enthalten.");
             }
         }
-        if (source.confluence() && !secretAvailable(source)) {
+        if ((source.confluence() || source.authType() == SourceSettingsConfig.AuthType.PAT) && !secretAvailable(source)) {
             problems.add(source.authType() == SourceSettingsConfig.AuthType.PAT ? "Das Token fehlt."
                     : "Das Passwort fehlt.");
+        }
+        if (source.generic() && typed() && source.authType() != SourceSettingsConfig.AuthType.NONE
+                && source.secretVariable() == null) {
+            problems.add("Die Umgebungsvariable für " + source.secretName() + " fehlt oder ist kein gültiger Name "
+                    + "(Buchstaben, Ziffern, Unterstrich).");
         }
         if (editing == null && source.id() != null && context.settings() != null
                 && context.settings().sources().stream().anyMatch(s -> s.id().equals(source.id()))) {
             problems.add("Eine Quelle mit der ID " + source.id() + " gibt es schon.");
+        }
+        return problems;
+    }
+
+    /** Probleme an den Feldern des Typs: Pflichtangaben, Zahlen, Adresse und Zugangsverweis. */
+    private List<SourceFieldsEditor.Problem> fieldProblems() {
+        if (!fields.active()) {
+            return List.of();
+        }
+        List<SourceFieldsEditor.Problem> problems = new ArrayList<>(fields.problems());
+        JTextField address = fields.address();
+        if (address != null && address.getText().contains("${")) {
+            problems.add(new SourceFieldsEditor.Problem(address, "Die Adresse darf keinen Platzhalter ${…} enthalten."));
+        }
+        JTextField reference = fields.secretReference();
+        if (reference != null && !reference.getText().isBlank() && BASIC.equals(auth.getSelectedItem())) {
+            // Wie der Core: credentialRef neben auth.type basic ist ein Fehler (ADR 0022).
+            problems.add(new SourceFieldsEditor.Problem(reference,
+                    "Nur ohne Anmeldung; bei „Benutzer und Passwort“ bitte leeren."));
         }
         return problems;
     }
@@ -626,7 +746,7 @@ final class SourceForm {
         } else if (problem.startsWith("Die Art")) {
             return kind;
         } else if (problem.startsWith("Die Adresse")) {
-            return baseUrl;
+            return fields.address() != null ? fields.address() : baseUrl;
         } else if (problem.startsWith("Der Ordner")) {
             return directory;
         } else if (problem.startsWith("Der Benutzername")) {
@@ -687,10 +807,16 @@ final class SourceForm {
         try {
             boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
             boolean generic = !confluence && !SourceDraft.FILES.equals(typeId());
-            String proposedTitle = confluence ? titleFor(address()) : generic ? genericTitle(baseUrl.getText())
-                    : folderName(directory.getText());
-            String proposedId = unique(confluence ? idForUrl(address()) : generic ? genericId(baseUrl.getText())
-                    : slug(folderName(directory.getText())));
+            // Bei Arten mit Feldern ist die Adresse das Feld des Typs; ist es ein Verzeichnis, gilt sein Name.
+            JTextField addressField = fields.address();
+            String genericAddress = addressField == null ? baseUrl.getText() : addressField.getText();
+            boolean folder = !generic || addressField != null
+                    && fields.spec(addressOption()).kind() == SourceFieldSpec.Kind.DIRECTORY;
+            String folderPath = generic ? genericAddress : directory.getText();
+            String proposedTitle = confluence ? titleFor(address()) : folder ? folderName(folderPath)
+                    : genericTitle(genericAddress);
+            String proposedId = unique(confluence ? idForUrl(address()) : folder ? slug(folderName(folderPath))
+                    : genericId(genericAddress));
             if (title.getText().isBlank() || title.getText().equals(suggestedTitle)) {
                 title.setText(proposedTitle);
                 suggestedTitle = proposedTitle;
@@ -795,7 +921,7 @@ final class SourceForm {
         field.getDocument().addDocumentListener(changes(action));
     }
 
-    private static javax.swing.event.DocumentListener changes(Runnable action) {
+    static javax.swing.event.DocumentListener changes(Runnable action) {
         return new javax.swing.event.DocumentListener() {
             @Override
             public void insertUpdate(javax.swing.event.DocumentEvent e) {
@@ -839,6 +965,11 @@ final class SourceForm {
                     .append(" steht nie in der Datei, sondern wird ").append(context.vault().describe())
                     .append(" gespeichert; die App setzt es beim Start selbst.");
         }
+        if (source.generic() && source.authType() == SourceSettingsConfig.AuthType.BASIC
+                && source.secretVariable() == null) {
+            text.append("\nOhne Passwort steht in der Datei keins; beim Zugriff fragt der Core das Programm nach der "
+                    + "Anmeldung (ADR 0022).");
+        }
         if (source.certificatePasswordVariable() != null && System.getenv(source.certificatePasswordVariable()) == null
                 && System.getProperty(source.certificatePasswordVariable()) == null) {
             text.append("\nDas Zertifikatspasswort kommt aus der Java-Property bzw. Umgebungsvariable ")
@@ -849,36 +980,38 @@ final class SourceForm {
 
     private void updateVisibility() {
         boolean confluence = CONFLUENCE.equals(kind.getSelectedItem());
-        SourceType type = types.get(String.valueOf(kind.getSelectedItem()));
         boolean files = SourceDraft.FILES.equals(typeId());
         boolean generic = !confluence && !files;
-        form.visible(baseUrl, confluence || generic && addressOption() != null);
+        // Bei Arten mit Feldern ist die Adresse eins davon; das Adressfeld bleibt für Arten ohne Felder.
+        form.visible(baseUrl, confluence || generic && !fields.active() && addressOption() != null);
         baseUrl.setPlaceholder(confluence ? DEFAULT_URL : "");
         form.hint(baseUrl, confluence ? "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe"
                 : "Adresse der Quelle (in der Datei options." + addressOption() + ")");
         form.visible(directory, files);
         form.visible(include, files);
-        form.visible(credentialsNote, generic && type != null && type.needsCredentials());
-        loginSection.setVisible(confluence);
-        certificateSection.setVisible(confluence);
-        trustSection.setVisible(confluence);
-        form.visible(auth, confluence);
+        boolean login = confluence || generic && (auth.getItemCount() > 1
+                || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));
+        boolean tls = confluence || generic && SourceFields.tls(typeId());
+        loginSection.setVisible(login);
+        certificateSection.setVisible(tls);
+        trustSection.setVisible(tls);
+        form.visible(auth, login);
         boolean basic = BASIC.equals(auth.getSelectedItem());
         boolean anonymous = NONE.equals(auth.getSelectedItem());
-        form.visible(username, confluence && basic);
-        form.visible(variable, confluence && !anonymous);
-        form.visible(sessionValue, confluence && !anonymous);
+        form.visible(username, login && basic);
+        form.visible(variable, login && !anonymous);
+        form.visible(sessionValue, login && !anonymous);
         form.label(sessionValue, basic ? "Passwort" : "Token");
         form.hint(sessionValue, secretHint());
-        form.visible(certificate, confluence);
-        boolean windows = confluence && WINDOWS_MY.equals(certificate.getSelectedItem());
-        boolean pkcs12 = confluence && PKCS12.equals(certificate.getSelectedItem());
+        form.visible(certificate, tls);
+        boolean windows = tls && WINDOWS_MY.equals(certificate.getSelectedItem());
+        boolean pkcs12 = tls && PKCS12.equals(certificate.getSelectedItem());
         form.visible(thumbprint, windows || pkcs12);
         form.visible(alias, windows || pkcs12);
         chooseCertificate.setVisible(windows);
         form.visible(certificatePath, pkcs12);
         form.visible(certificatePasswordVariable, pkcs12);
-        form.visible(trust, confluence);
+        form.visible(trust, tls);
         if (pkcs12 && certificatePasswordVariable.getText().isBlank()) {
             String base = id.getText().isBlank() ? "CONFLUENCE" : SourceDraft.suggestedVariable(id.getText(),
                     SourceSettingsConfig.AuthType.PAT).replaceAll("_TOKEN$", "");
@@ -894,6 +1027,9 @@ final class SourceForm {
         String stored = editing != null && (context.vault().has(editing.draft().id(), SourceSaving.login(editing.draft()))
                 || context.secrets().has(editing.draft().id(), SourceSaving.login(editing.draft())))
                 ? "Schon hinterlegt; leer lassen zum Behalten. " : "";
+        if (stored.isEmpty() && BASIC.equals(auth.getSelectedItem()) && !CONFLUENCE.equals(kind.getSelectedItem())) {
+            stored = "Leer lassen, wenn das Programm beim Zugriff fragt. ";
+        }
         return stored + (context.vault().available() ? "Wird verschlüsselt für dein Windows-Konto gespeichert, nie in "
                 + "der Datei" : "Gilt bis zum Schließen der App, nie in der Datei");
     }
@@ -928,7 +1064,7 @@ final class SourceForm {
      * ausblenden. Ein Fehler ersetzt den Hinweis in derselben Zeile (rot), so bleibt die Höhe gleich; Tippen im Feld
      * nimmt ihn wieder weg.
      */
-    private static final class Form extends JPanel {
+    static final class Form extends JPanel {
 
         private final List<Row> rows = new ArrayList<>();
         private int y;
@@ -960,6 +1096,40 @@ final class SourceForm {
 
         void row(String label, JComponent field) {
             row(label, field, null);
+        }
+
+        /** Hält Platz für bis zu {@code count} Zeilen frei, die später kommen ({@link #build}); leer ohne Höhe. */
+        int reserve(int count) {
+            int start = y;
+            y += 2 * count;
+            return start;
+        }
+
+        /** Legt die Zeilen von {@code rows} in den mit {@link #reserve} freigehaltenen Platz ab {@code start}. */
+        void build(int start, int count, Runnable rows) {
+            int after = y;
+            y = start;
+            try {
+                rows.run();
+                if (y > start + 2 * count) {
+                    throw new IllegalStateException("Zu viele Zeilen für den freigehaltenen Platz");
+                }
+            } finally {
+                y = after;
+            }
+        }
+
+        /** Nimmt die Zeile zu {@code field} aus dem Formular. */
+        void removeRow(JComponent field) {
+            rows.removeIf(row -> {
+                if (row.key() != field) {
+                    return false;
+                }
+                remove(row.label());
+                remove(row.field());
+                remove(row.hint());
+                return true;
+            });
         }
 
         void row(String text, JComponent field, String hint) {

@@ -241,6 +241,41 @@ class ConfigFileEditorTest {
                 "host: \"mvs.example.org\"").doesNotContain("password");
     }
 
+    /**
+     * Rundreise einer JES-Quelle mit „Benutzer und Passwort“ und den Feldern ihres Typs: das Passwort nur als
+     * Platzhalter, die Felder unter options, ein Schlüssel ohne Feld bleibt; ohne Passwort keine Zeile (ADR 0022).
+     */
+    @Test
+    void aJesSourceWithBasicLoginAndItsFieldsRoundTrips() throws Exception {
+        Path file = home.resolve("app.yml");
+        SourceDraft jes = new SourceDraft("host-jes", "jes", "Host", null, null, null,
+                SourceSettingsConfig.AuthType.BASIC, "batch", "HOST_JES_PASSWORD", null, null, null, null, null, null,
+                Map.of("host", "mvs.example.org", "port", "2121", "status", "ALL", "connectTimeoutMillis", "2000"));
+        assertThat(jes.problems()).isEmpty();
+        editor.save(file, editor.draft(file, jes));
+        assertThat(Files.readString(file)).contains("type: jes", "type: basic", "username: \"batch\"",
+                "password: ${HOST_JES_PASSWORD}", "host: \"mvs.example.org\"", "port: \"2121\"", "status: \"ALL\"")
+                .doesNotContain("client-certificate", "trust-bundle", "base-url");
+
+        SourceDraft.Editable read = editor.editable(file, "host-jes");
+        assertThat(read.plaintextSecrets()).isEmpty();
+        assertThat(read.draft()).isEqualTo(jes);
+        AppSettings settings = loader.load(file);
+        assertThat(settings.sources().get(0).config().options()).containsEntry("host", "mvs.example.org")
+                .containsEntry("port", "2121").containsEntry("connectTimeoutMillis", "2000");
+        assertThat(settings.sources().get(0).config().auth().username()).isEqualTo("batch");
+
+        SourceDraft without = read.draft().withSecretVariable(null);
+        assertThat(without.problems()).as("andere Typen dürfen das Passwort weglassen").isEmpty();
+        editor.save(file, editor.replace(file, without));
+        assertThat(Files.readString(file)).contains("type: basic", "username: \"batch\"").doesNotContain("password");
+        assertThat(editor.editable(file, "host-jes").draft()).isEqualTo(without);
+
+        SourceDraft noUser = new SourceDraft("host-jes", "jes", "Host", null, null, null,
+                SourceSettingsConfig.AuthType.BASIC, null, null, null, null, null, null, null, null, jes.extraOptions());
+        assertThat(noUser.problems()).containsExactly("Der Benutzername fehlt.");
+    }
+
     @Test
     void removesOnlyTheChosenEntry() throws Exception {
         Path file = home.resolve("app.yml");
