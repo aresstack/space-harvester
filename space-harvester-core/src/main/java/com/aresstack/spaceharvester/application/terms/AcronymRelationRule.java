@@ -25,8 +25,8 @@ import java.util.function.Function;
  * ersten Fundstelle je Seite. Ohne KI und ohne Netz, nur aus dem Begriffsindex; nichts wird bestätigt. Der Lauf gleicht
  * über {@link TermRelations#propose} ab: Abgelehnte bleiben gesperrt, bestätigte unberührt.
  *
- * <p>Zählt nur Seiten im Cache, deren Begriffe zur aktuellen Revision gehören. Starten darf ihn, wer {@code sync} auf
- * die Quelle hat; sichtbar werden die Vorschläge je Leser nur mit lesbarem Beleg.
+ * <p>Zählt nur Seiten im Cache, deren Begriffe zur aktuellen Revision gehören. Der Core startet ihn nach jeder
+ * Anreicherung einer Quelle selbst ({@link #refresh}); von Hand starten darf ihn, wer {@code sync} auf die Quelle hat; sichtbar werden die Vorschläge je Leser nur mit lesbarem Beleg.
  */
 public class AcronymRelationRule {
 
@@ -64,6 +64,18 @@ public class AcronymRelationRule {
             throw new UnknownSourceException(sourceId);
         }
         access.require(caller, ResourceScope.source(sourceId), AccessKind.SYNC);
+        return refresh(sourceId);
+    }
+
+    /**
+     * Gleicht die Regelvorschläge einer Quelle ohne Aufrufer ab: für den Anreicherungsauftrag nach einem Abgleich, der
+     * schon unter den Rechten seines Auslösers läuft. Idempotent; unverändert belegte Vorschläge werden nicht neu
+     * geschrieben, abgelehnte nie wieder vorgeschlagen. Eine unbekannte Quelle ergibt einen leeren Lauf.
+     */
+    public TermRelations.ProposalRun refresh(String sourceId) {
+        if (catalog.find(sourceId).isEmpty()) {
+            return new TermRelations.ProposalRun(0, 0, 0, 0, 0);
+        }
         TermIndex.Filter filter = new TermIndex.Filter(Set.of(sourceId), TermKind.ACRONYM, null, null,
                 processorVersion);
         Map<String, Candidate> candidates = new LinkedHashMap<>();

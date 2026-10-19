@@ -106,6 +106,23 @@ class SyncEnrichmentsTest {
     }
 
     @Test
+    void followUpsRunOncePerSourceAfterAllProcessorsAndTheirFailuresAreContained() {
+        List<String> calls = new java.util.ArrayList<>();
+        EnrichmentsAfterSync hook = new EnrichmentsAfterSync(enrichments, store.repository, null, null,
+                List.of(sourceId -> {
+                    throw new IllegalStateException("Regel kaputt");
+                }, sourceId -> {
+                    assertThat(results.find(new PageKey("wiki", "3"))).hasSize(1);
+                    calls.add(sourceId);
+                }));
+
+        JobStatus job = run(hook);
+
+        assertThat(job.state()).isEqualTo(JobState.COMPLETED);
+        assertThat(calls).containsExactly("wiki");
+    }
+
+    @Test
     void withoutACacheNothingHappens() {
         JobStatus job = run(new EnrichmentsAfterSync(enrichments, null));
 
