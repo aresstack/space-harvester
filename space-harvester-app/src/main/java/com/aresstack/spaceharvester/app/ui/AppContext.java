@@ -84,6 +84,11 @@ public final class AppContext {
 
         /** Startet sofort den Download einer Seite samt Unterseiten, wie {@link #download(String, java.util.List)}. */
         default void downloadPage(String sourceId, String spaceKey, String pageId) {
+            downloadPage(sourceId, spaceKey, pageId, true);
+        }
+
+        /** Wie {@link #downloadPage(String, String, String)}, ohne {@code withChildren} nur die Seite selbst. */
+        default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
         }
 
         void search(String text);
