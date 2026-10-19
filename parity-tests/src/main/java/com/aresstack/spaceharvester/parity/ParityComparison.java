@@ -332,6 +332,15 @@ public final class ParityComparison {
         return sourceFiles("ftp", eac, core);
     }
 
+    /**
+     * SharePoint-Quelle (#193) wie {@link #git}: je Tiefe ({@code deep}, {@code shallow}) die gelisteten Pfade
+     * (Core ⊇ EAC), der Titel je Pfad (gleich) und die Sätze im Inhalt je Pfad (Core ⊇ EAC); Leerzeichen im Pfad
+     * stehen im Schlüssel als {@code _}.
+     */
+    public static List<Finding> sharePoint(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("sharepoint", eac, core);
+    }
+
     private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
         List<Finding> findings = new ArrayList<>();
         for (Map.Entry<String, String> entry : eac.entrySet()) {

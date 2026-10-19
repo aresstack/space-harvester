@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityCo
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
@@ -94,6 +95,7 @@ class CoreParityTest {
     private static final Map<String, String> CORE_GIT = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FILES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FTP = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_SHAREPOINT = new LinkedHashMap<>();
     @TempDir
     static Path gitData;
     @TempDir
@@ -153,6 +155,7 @@ class CoreParityTest {
         git();
         files();
         ftp();
+        sharePoint();
     }
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
@@ -349,6 +352,54 @@ class CoreParityTest {
                 }
                 CORE_FTP.put("ftp." + prefix + ".title." + path, page.header().metadata().title());
                 CORE_FTP.put("ftp." + prefix + ".sentences." + path, found.isEmpty() ? "-" : String.join(",", found));
+            });
+        }
+    }
+
+    /**
+     * SharePoint-Quelle (#193) wie {@code EacParityExport.sharePoint}: die Site {@link ParitySharePoint} als Typ
+     * {@code sharepoint} ohne Anmeldung, mit {@link ParitySharePoint#DEPTH} ({@code deep}) und eine Ebene flacher
+     * ({@code shallow}).
+     */
+    private static void sharePoint() throws Exception {
+        try (ParitySharePoint site = ParitySharePoint.start()) {
+            sharePointDepth(site, ParitySharePoint.DEPTH, "deep");
+            sharePointDepth(site, ParitySharePoint.DEPTH - 1, "shallow");
+        }
+    }
+
+    private static void sharePointDepth(ParitySharePoint site, int depth, String prefix) throws Exception {
+        try (Harvester harvester = Harvester.builder()
+                .source(new SourceSettingsConfig("parity", "sharepoint", "Parität", null, null,
+                        Map.of("siteUrl", site.siteUrl(), "maxDepth", String.valueOf(depth))))
+                .dataDirectory(gitData.resolve("data-sharepoint-" + prefix))
+                .build()) {
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            Map<String, ListedPage> byPath = new TreeMap<>();
+            for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                // Seiten-ID = Ressourcen-ID des EAC als Base64url; der Port wechselt je Lauf
+                String value = new String(Base64.getUrlDecoder().decode(page.header().key().pageId()),
+                        StandardCharsets.UTF_8);
+                int start = value.indexOf(ParitySharePoint.SITE_PATH + "/");
+                byPath.put(start < 0 ? value : value.substring(start), page);
+            }
+            CORE_SHAREPOINT.put("sharepoint." + prefix + ".documents", String.join(",", byPath.keySet()));
+            byPath.forEach((path, page) -> {
+                String text = new String(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < ParitySharePoint.SENTENCES.length; i++) {
+                    if (text.contains(ParitySharePoint.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                if (text.contains(ParitySharePoint.HIDDEN_SENTENCE)) {
+                    found.add("hidden");
+                }
+                String key = "sharepoint." + prefix + ".%s." + path.replace(' ', '_');
+                CORE_SHAREPOINT.put(String.format(key, "title"), page.header().metadata().title());
+                CORE_SHAREPOINT.put(String.format(key, "sentences"), found.isEmpty() ? "-" : String.join(",", found));
             });
         }
     }
@@ -586,6 +637,10 @@ class CoreParityTest {
         List<Finding> ftp = ParityComparison.ftp(eacProperties("ftp.properties"), CORE_FTP);
         report.append('\n').append(ParityReport.section("FTP-Quelle", ftp, gaps));
         factsAndRuns.addAll(ftp);
+        List<Finding> sharePoint = ParityComparison.sharePoint(eacProperties("sharepoint.properties"),
+                CORE_SHAREPOINT);
+        report.append('\n').append(ParityReport.section("SharePoint-Quelle", sharePoint, gaps));
+        factsAndRuns.addAll(sharePoint);
         for (Finding finding : factsAndRuns) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "

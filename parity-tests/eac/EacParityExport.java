@@ -49,6 +49,9 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFil
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
+import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -136,6 +139,7 @@ public final class EacParityExport {
         git(new File(out, "git.properties"));
         files(new File(out, "files.properties"));
         ftp(new File(out, "ftp.properties"));
+        sharePoint(new File(out, "sharepoint.properties"));
     }
 
     /**
@@ -324,6 +328,63 @@ public final class EacParityExport {
             out.println("ftp." + prefix + ".title." + entry.getKey() + "=" + entry.getValue().title());
             out.println("ftp." + prefix + ".sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
         }
+    }
+
+    /**
+     * SharePoint-Quelle (#193) über {@link ParitySharePoint}: ohne Anmeldung, alle Bibliotheken, einmal mit
+     * {@link ParitySharePoint#DEPTH} ({@code deep}) und eine Ebene flacher ({@code shallow}); je Pfad Titel und welche
+     * Sätze aus {@link ParitySharePoint#SENTENCES} (Index ab 0) oder {@link ParitySharePoint#HIDDEN_SENTENCE}
+     * ({@code hidden}) der geladene Text enthält.
+     */
+    private static void sharePoint(File target) throws Exception {
+        ParitySharePoint site = ParitySharePoint.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            sharePointDepth(site, ParitySharePoint.DEPTH, "deep", out);
+            sharePointDepth(site, ParitySharePoint.DEPTH - 1, "shallow", out);
+        } finally {
+            out.close();
+            site.close();
+        }
+    }
+
+    private static void sharePointDepth(ParitySharePoint site, int depth, String prefix, PrintWriter out)
+            throws Exception {
+        SharePointSourceProvider provider = new SharePointSourceProvider(ref -> {
+            throw new IllegalStateException("ohne Anmeldung");
+        }, HttpRoutePort.direct(), null, null, DocumentExtraction.detector(), DocumentExtraction.registry());
+        Map<String, String> values = new java.util.HashMap<String, String>();
+        values.put("siteUrl", site.siteUrl());
+        values.put("maxDepth", String.valueOf(depth));
+        SourceSettings settings = SourceSettings.of(values);
+        KnowledgeSourcePort source = provider.open(SourceAddress.of("sharepoint", provider.locator(settings)),
+                settings);
+        java.util.TreeMap<String, KnowledgeResource> byPath = new java.util.TreeMap<String, KnowledgeResource>();
+        for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+            byPath.put(sharePointPath(resource.id().value()), resource);
+        }
+        out.println("sharepoint." + prefix + ".documents=" + join(new ArrayList<String>(byPath.keySet())));
+        for (Map.Entry<String, KnowledgeResource> entry : byPath.entrySet()) {
+            String text = source.load(entry.getValue().id()).text();
+            List<String> found = new ArrayList<String>();
+            for (int i = 0; i < ParitySharePoint.SENTENCES.length; i++) {
+                if (text != null && text.contains(ParitySharePoint.SENTENCES[i])) {
+                    found.add(String.valueOf(i));
+                }
+            }
+            if (text != null && text.contains(ParitySharePoint.HIDDEN_SENTENCE)) {
+                found.add("hidden");
+            }
+            String key = "sharepoint." + prefix + "." + "%s." + entry.getKey().replace(' ', '_');
+            out.println(String.format(key, "title") + "=" + entry.getValue().title());
+            out.println(String.format(key, "sentences") + "=" + (found.isEmpty() ? "-" : join(found)));
+        }
+    }
+
+    /** Serverrelativer Pfad ab {@link ParitySharePoint#SITE_PATH}; der Port wechselt je Lauf. */
+    static String sharePointPath(String id) {
+        int start = id.indexOf(ParitySharePoint.SITE_PATH + "/");
+        return start < 0 ? id : id.substring(start);
     }
 
     /** Pfad ab {@link ParityFtp#START_POINT}; Host und Port wechseln je Lauf. */
