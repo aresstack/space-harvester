@@ -6,6 +6,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -78,6 +79,9 @@ class ParityConfluenceTest {
             }
             assertThat(viewed).contains(ParityConfluence.INCLUDED_MENTION)
                     .doesNotContain(ParityConfluence.HIDDEN_MENTION);
+            // Die Ansicht hat nur eines der beiden Makros gerendert: keins wird geraten, beide werden gemeldet.
+            assertThat(withViews.notices()).contains(new ConversionNotice(ParityConfluence.MISMATCH_PAGE,
+                    ConversionNotice.Kind.OMITTED_CONTENT, "contentbylabel", "view-count-mismatch"));
             ReadingView attachments = harvester.readingViews().view(caller, "wiki",
                     ParityConfluence.ATTACHMENTS_PAGE, false);
             // Die Ansicht kommt aus export_view mit dem gerenderten Vorgang; der Lesetext des Adapters liest body.view

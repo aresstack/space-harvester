@@ -480,6 +480,74 @@ public final class ParityComparison {
                 coreCount + " verschiedene", verdict, detail);
     }
 
+    /**
+     * Reihenfolge der Kapitel (#417): die gemeinsamen Überschriften in der Reihenfolge beider Exporte. Der EAC folgt
+     * der Position aus Confluence, der Core ordnet Geschwister nach Position, sonst nach Titel. Solange der Fake keine
+     * Position liefert (Upstream-Patch 09), ist die Reihenfolge nicht vergleichbar: dann {@link Verdict#NICHT_MESSBAR}
+     * mit der ersten Abweichung im Detail; mit {@code strict} ist eine Abweichung eine Lücke.
+     *
+     * @param strict ob der Fake Positionen liefert und der Vergleich scharf ist
+     */
+    public static Finding chapterOrder(String format, DocumentOutline eac, DocumentOutline core, boolean strict) {
+        List<String> eacTitles = chapterTitles(eac);
+        List<String> coreTitles = chapterTitles(core);
+        List<String> eacCommon = common(eacTitles, coreTitles);
+        List<String> coreCommon = common(coreTitles, eacTitles);
+        int first = 0;
+        while (first < eacCommon.size() && first < coreCommon.size()
+                && eacCommon.get(first).equals(coreCommon.get(first))) {
+            first++;
+        }
+        boolean same = first == eacCommon.size() && first == coreCommon.size();
+        String detail = same ? "" : "erste Abweichung an Stelle " + (first + 1) + ": EAC „"
+                + (first < eacCommon.size() ? eacCommon.get(first) : "–") + "“, Core „"
+                + (first < coreCommon.size() ? coreCommon.get(first) : "–") + "“"
+                + (strict ? "" : " (scharf erst mit Position im Fake, Upstream-Patch 09)");
+        return new Finding(format, "kapitel-reihenfolge", "Reihenfolge der Kapitel", eacCommon.size() + " gemeinsame",
+                same ? "gleiche Reihenfolge" : "andere Reihenfolge",
+                same ? Verdict.GLEICH : strict ? Verdict.CORE_WENIGER : Verdict.NICHT_MESSBAR, detail);
+    }
+
+    /** Die Titel aus {@code titles}, die auch in {@code other} vorkommen, mit Vielfachheit, in ihrer Reihenfolge. */
+    private static List<String> common(List<String> titles, List<String> other) {
+        Map<String, Integer> remaining = counts(other);
+        List<String> common = new ArrayList<>();
+        for (String title : titles) {
+            Integer left = remaining.get(title);
+            if (left != null && left > 0) {
+                common.add(title);
+                remaining.put(title, left - 1);
+            }
+        }
+        return common;
+    }
+
+    /**
+     * Erwähnungen von Personen (#413): Jeder Anzeigename, den der EAC aus der Ansicht schreibt, steht auch im Core;
+     * was der EAC nicht zeigt (Kennungen aus dem Storage, versteckte Erwähnungen der Ansicht), zeigt auch der Core
+     * nicht.
+     *
+     * @param names  Anzeigenamen, die im Export stehen sollen
+     * @param absent was nicht im Export stehen soll
+     */
+    public static Finding mentions(String format, DocumentOutline eac, DocumentOutline core, List<String> names,
+                                   List<String> absent) {
+        List<String> expected = names.stream().filter(name -> contains(eac, name)).toList();
+        List<String> missing = expected.stream().filter(name -> !contains(core, name)).toList();
+        List<String> leaked = absent.stream().filter(value -> contains(core, value) && !contains(eac, value))
+                .toList();
+        List<String> problems = new ArrayList<>();
+        if (!missing.isEmpty()) {
+            problems.add("Name fehlt: " + listed(missing));
+        }
+        if (!leaked.isEmpty()) {
+            problems.add("nur im Core: " + listed(leaked));
+        }
+        return new Finding(format, "erwaehnungen", "Erwähnungen von Personen", expected.size() + " Namen",
+                (expected.size() - missing.size()) + " Namen", problems.isEmpty() ? Verdict.GLEICH
+                : Verdict.CORE_WENIGER, String.join("; ", problems));
+    }
+
     /** Überschriften ohne direkte Wiederholung (der Enterprise AI Client wiederholt den Seitentitel als H1). */
     private static List<String> chapterTitles(DocumentOutline outline) {
         List<String> titles = new ArrayList<>();

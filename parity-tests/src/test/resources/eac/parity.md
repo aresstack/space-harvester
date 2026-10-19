@@ -125,3 +125,11 @@ PAR-7 - Getting issue details...
 - vorlage.docx
 
 ![ablauf](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4XmNo+N8AAAQCAgBQjCYAAAAAAElFTkSuQmCC)
+
+### Zählung
+
+#### Zählung
+
+Satz Quebec zur Zählung.
+
+- Architektur
