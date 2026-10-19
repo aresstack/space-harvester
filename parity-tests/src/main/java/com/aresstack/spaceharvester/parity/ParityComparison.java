@@ -92,6 +92,9 @@ public final class ParityComparison {
      * Ausgeführte Makros im Export (#218): wie viele der Sätze, die nur ein ausgeführtes {@code include} oder
      * {@code excerpt-include} in die Seite bringt, im Export stehen, und welche Makros der Core als nicht ausgeführt
      * gemeldet hat ({@code OMITTED_CONTENT}). Der Enterprise AI Client meldet nichts; er schreibt die Ansicht.
+     * Meldungen mit {@value #VIEW_COUNT_MISMATCH} sind gewollt anders (PARITY.md, #426): Zählt die Ansicht andere
+     * äußerste Makros als der Storage, setzt der Core nichts ungeprüft ein, der EAC übernimmt die Ansicht trotzdem.
+     * Sie stehen im Detail, sind aber keine Lücke.
      *
      * @param omitted die Meldungen des Core über nicht ausgeführte Makros, je eine Zeile
      */
@@ -105,13 +108,23 @@ public final class ParityComparison {
         if (!missing.isEmpty()) {
             problems.add("fehlt: " + listed(missing));
         }
-        if (!omitted.isEmpty()) {
-            problems.add("nicht ausgeführt: " + listed(omitted));
+        List<String> intended = omitted.stream().filter(line -> line.endsWith("(" + VIEW_COUNT_MISMATCH + ")"))
+                .toList();
+        List<String> gaps = omitted.stream().filter(line -> !intended.contains(line)).toList();
+        if (!gaps.isEmpty()) {
+            problems.add("nicht ausgeführt: " + listed(gaps));
+        }
+        String detail = String.join("; ", problems);
+        if (!intended.isEmpty()) {
+            detail += (detail.isEmpty() ? "" : "; ") + "gewollt anders: " + listed(intended);
         }
         return new Finding(format, "makros", "Ausgeführte Makros (include, excerpt-include, children)",
                 expected + " Sätze", found + " Sätze" + (omitted.isEmpty() ? "" : ", " + omitted.size() + " Hinweise"),
-                problems.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER, String.join("; ", problems));
+                problems.isEmpty() ? Verdict.GLEICH : Verdict.CORE_WENIGER, detail);
     }
+
+    /** Grund einer gewollt nicht ausgeführten Ansicht: Ansicht und Storage zählen verschieden viele Makros. */
+    static final String VIEW_COUNT_MISMATCH = "view-count-mismatch";
 
     private static boolean contains(DocumentOutline outline, String sentence) {
         return outline.text().replaceAll("\\s+", " ").contains(sentence);
