@@ -69,6 +69,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String ATTACHMENTS = "Anhänge";
     private static final String REFERENCES = "Verweise";
     private static final String TERMS = "Begriffe";
+    private static final String PASSAGES = "Absätze";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
@@ -85,6 +86,7 @@ public final class PageDetailPanel extends JPanel {
     private final Breadcrumbs breadcrumbs = new Breadcrumbs();
     private final References references = new References();
     private final TermsTab terms = new TermsTab();
+    private final PassagesTab passages = new PassagesTab();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -193,6 +195,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(ATTACHMENTS, attachmentsPanel)
                 .tab(REFERENCES, references)
                 .tab(TERMS, terms)
+                .tab(PASSAGES, passages)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
@@ -208,6 +211,7 @@ public final class PageDetailPanel extends JPanel {
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
+        passages.onJump(this::jumpTo);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -829,6 +833,10 @@ public final class PageDetailPanel extends JPanel {
 
     References references() {
         return references;
+    }
+
+    PassagesTab passages() {
+        return passages;
     }
 
     TermsTab terms() {
