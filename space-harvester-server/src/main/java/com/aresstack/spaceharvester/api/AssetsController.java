@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.AssetKind;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
+import com.aresstack.spaceharvester.application.sources.AttachmentPreview;
+import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.PageAttachmentList;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
@@ -33,6 +35,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -113,7 +116,55 @@ public class AssetsController {
         PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
         // Nur wer sync hat, legt beim Lesen auch ab; alle anderen bekommen die Datei, ohne die Ablage zu füllen.
         boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
-        Assets.AssetContent content = assets.content(list, attachmentId, mayStore);
+        return download(assets.content(list, attachmentId, mayStore), ifNoneMatch);
+    }
+
+    @GetMapping(path = "/{attachmentId}/preview", produces = MediaType.ALL_VALUE)
+    @Operation(summary = "Vorschau oder PDF-Konvertierung eines Anhangs durch die Quelle",
+            description = "Die Vorschau, die die Quelle selbst aus der aktuellen Version erzeugt (#183; Confluence: "
+                    + "Dokumentkonvertierung, etwa ein Office-Dokument als PDF), als eigene Asset-Variante: aus der "
+                    + "Ablage oder über die Quelle geladen; abgelegt nur mit Freigabe sync. Ohne kind die erste "
+                    + "verfügbare in der Reihenfolge document, poster, thumbnail. Immer als Download wie content, "
+                    + "ETag = sha256. Freigabe content; nur Quellen mit Vorschauen (Confluence).")
+    @ApiResponse(responseCode = "200", description = "Vorschau als PDF oder Bild")
+    @ApiResponse(responseCode = "304", description = "Inhalt unverändert (If-None-Match)")
+    @ApiResponse(responseCode = "400", description = "Unbekannte Vorschauart (invalid-query)")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle, Seite oder Anhang, nicht sichtbar, oder die "
+            + "Quelle hat für diesen Typ keine Vorschau")
+    @ApiResponse(responseCode = "502", description = "Quelle verweigert den Zugriff, antwortet fehlerhaft oder die "
+            + "Vorschau ist größer als space-harvester.assets.max-size (asset-too-large)")
+    @ApiResponse(responseCode = "503", description = "Die Quelle erzeugt die Vorschau noch; später erneut fragen")
+    public ResponseEntity<byte[]> preview(
+            @Parameter(hidden = true) AccessContext caller,
+            @Parameter(description = "Quellen-ID aus der Konfiguration", example = "confluence")
+            @PathVariable String sourceId,
+            @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
+            @Parameter(description = "ID des Anhangs in der Quelle", example = "att123") @PathVariable String attachmentId,
+            @Parameter(description = "Vorschauart: document (umgewandeltes Dokument, PDF), poster oder thumbnail "
+                    + "(Bild der ersten Seite); ohne Angabe die erste verfügbare")
+            @RequestParam(required = false) String kind,
+            @RequestHeader(name = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+        requireAttachmentId(sourceId, attachmentId);
+        AttachmentPreview preview = previewKind(kind);
+        PageAttachmentList list = visible(caller, sourceId, pageId, AccessKind.CONTENT);
+        boolean mayStore = access.permits(caller, ResourceScope.page(sourceId, list.spaceKey(), pageId), AccessKind.SYNC);
+        return download(assets.preview(list, attachmentId, preview, mayStore), ifNoneMatch);
+    }
+
+    private static AttachmentPreview previewKind(String kind) {
+        if (kind == null || kind.isBlank()) {
+            return null;
+        }
+        for (AttachmentPreview preview : AttachmentPreview.values()) {
+            if (preview.name().equalsIgnoreCase(kind.strip())) {
+                return preview;
+            }
+        }
+        throw new InvalidQueryException("kind kennt nur document, poster und thumbnail");
+    }
+
+    /** Ein abgelegter oder geladener Inhalt als Download: nosniff, CSP sandbox, ETag = sha256. */
+    private static ResponseEntity<byte[]> download(Assets.AssetContent content, String ifNoneMatch) {
         Asset asset = content.asset();
         String etag = "\"" + asset.sha256() + "\"";
         HttpHeaders headers = new HttpHeaders();
