@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationListe
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -119,13 +120,14 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     /**
      * Gleicht beim Start einmal ab, ohne gespeicherten Freigabestand: Je Quelle gilt die Freigabe, wie
      * {@code released} sie jetzt sieht, und nur Seiten, deren gespeicherte Ergebnisse nicht dazu passen, rechnen
-     * erzwungen neu, im selben Hintergrund wie die Läufe nach einem Wechsel:
+     * erzwungen neu, und nur die Prozessoren, deren Ergebnis nicht passt, im selben Hintergrund wie die Läufe nach
+     * einem Wechsel:
      *
      * <ul>
      *     <li>nicht freigegeben: Seiten mit einem Ergebnis der Prozessoren, das nicht den Grund {@code notApproved}
      *     trägt (also auch jedem gespeicherten Embedding);</li>
-     *     <li>freigegeben: Seiten, denen ein Ergebnis fehlt oder deren Ergebnis den Grund {@code notApproved}
-     *     trägt.</li>
+     *     <li>freigegeben: Seiten, denen ein Ergebnis eines Prozessors fehlt, der die Seite bearbeitet, oder deren
+     *     Ergebnis den Grund {@code notApproved} trägt.</li>
      * </ul>
      *
      * Ohne Modell beim Lauf tut er nichts. Wechselt die Freigabe währenddessen, endet er für die Quelle, und der Lauf
@@ -171,10 +173,11 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
             while (!closed && released.test(sourceId) == release && snapshots.hasNext()) {
                 PageSnapshot snapshot = snapshots.next();
                 seen++;
-                if (onStart && !outdated(snapshot.key(), release, notApproved)) {
+                List<String> due = onStart ? outdated(snapshot.key(), release, notApproved) : processorIds;
+                if (due.isEmpty()) {
                     continue;
                 }
-                if (enrichments.recomputeInBackground(snapshot, processorIds) > 0) {
+                if (enrichments.recomputeInBackground(snapshot, due) > 0) {
                     count++;
                 }
             }
@@ -202,27 +205,42 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         }
     }
 
-    /** Ob die gespeicherten Ergebnisse der Seite nicht zur Freigabe passen; liest nur die Ablage. */
-    private boolean outdated(PageKey key, boolean release, String notApproved) {
+    /**
+     * Die Prozessoren, deren gespeichertes Ergebnis nicht zur Freigabe passt; liest nur die Ablage. Nur sie rechnen neu,
+     * damit etwa ein Bestand ohne Navigation nicht alle Seiten neu einbettet.
+     */
+    private List<String> outdated(PageKey key, boolean release, String notApproved) {
         List<Enrichment> stored = enrichments.store().find(key);
+        List<String> due = new ArrayList<>();
         for (String processorId : processorIds) {
             Enrichment result = stored.stream().filter(enrichment -> enrichment.processorId().equals(processorId))
                     .findFirst().orElse(null);
-            if (release ? result == null || notApproved.equals(reason(result))
-                    : result != null && !notApproved.equals(reason(result))) {
-                return true;
+            // Ein fehlendes Ergebnis zählt nur, wenn der Prozessor die Seite bearbeitet; sonst rechnete jeder Start sie
+            // erneut (etwa ohne Chat-Modell oder für einen nicht eingerichteten Prozessor).
+            boolean mismatch = release
+                    ? result == null ? enrichments.appliesTo(processorId, key) : notApproved(result, notApproved)
+                    : result != null && !notApproved(result, notApproved);
+            if (mismatch) {
+                due.add(processorId);
             }
         }
-        return false;
+        return due;
     }
 
-    /** Der Grund im Ergebnis ({@code reason}), sonst {@code null}. */
-    private static String reason(Enrichment result) {
+    /**
+     * Ob das Ergebnis den Grund {@code notApproved} trägt ({@code reason}). Geparst wird nur, wenn der Grund im Text
+     * vorkommt: Embeddings mit ihren Vektoren lesen sich so nie als JSON.
+     */
+    private static boolean notApproved(Enrichment result, String notApproved) {
+        String payload = result.payloadJson();
+        if (payload == null || !payload.contains(notApproved)) {
+            return false;
+        }
         try {
-            JsonNode reason = JSON.readTree(result.payloadJson()).path("reason");
-            return reason.isString() ? reason.asString() : null;
+            JsonNode reason = JSON.readTree(payload).path("reason");
+            return reason.isString() && notApproved.equals(reason.asString());
         } catch (JacksonException e) {
-            return null;
+            return false;
         }
     }
 

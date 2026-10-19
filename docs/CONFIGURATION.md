@@ -359,7 +359,8 @@ rechnet nur auf Abruf und prüft die Freigabe dann; schon gespeicherte Bildbesch
 lesbar (nur mit den Rechten an der Seite), neue entstehen erst nach erneuter Freigabe. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
 ein Lauf ab, gleicht der Start das einmal im selben Hintergrund ab, allein aus den gespeicherten Ergebnissen: Nur
 Seiten, die nicht zur Freigabe passen (nicht freigegeben, aber mit Embedding oder ohne `source-not-approved`;
-freigegeben, aber mit `source-not-approved` oder ohne Embedding), rechnen neu. Das Log nennt nur Quelle und Anzahl der
+freigegeben, aber mit `source-not-approved` oder ohne Ergebnis eines Prozessors, der für die Seite gilt), rechnen neu,
+und nur mit den Prozessoren, deren Ergebnis nicht passt. Das Log nennt nur Quelle und Anzahl der
 Seiten.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie
