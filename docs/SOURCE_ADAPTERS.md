@@ -153,8 +153,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    geändert (`verifyUpstreamCopy` prüft das im Build).
    Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
    lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
-   über die Proxy-Route je Ziel; ohne `credentialRef`, `auth` und eigene Zertifikate bis #188, also nur öffentliche und
-   lokale Repositorys). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
+   über die Proxy-Route je Ziel; `credentialRef` (nur HTTPS) wird je Abruf über den `SecretProvider` des Katalogs
+   aufgelöst, erst aus der Konfiguration, sonst beim Anbieter des einbettenden Programms (#188); eigene Server-CAs über
+   `trust-bundle`; `auth` noch nicht). Ebenfalls registriert über `EacSourceAdapters` (`ContextualSourceAdapter`, eine Partition je
    Quelle, Optionen mit den Upstream-Schlüsseln): `source-ftp` als `ftp` (MVS-Datensätze und Member, `host`,
    `startPoints`, anonym ohne `credentialRef`) und `jes` (Spool, `credentialRef` Pflicht), `source-ndv` als `ndv`
    (`host`, `startPoints`, `credentialRef` Pflicht) und `source-sharepoint` als `sharepoint` (`siteUrl`, über die
