@@ -8,6 +8,8 @@ import com.aresstack.spaceharvester.application.assets.ImageDescriptionException
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.StoredReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -15,8 +17,10 @@ import com.aresstack.spaceharvester.application.sources.PageAttachment;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -37,6 +41,12 @@ public class PageImageAnalysis {
     public static final String TRUNCATED = "images-truncated";
     /** Warnung: Die Quelle hat keine Lese-Ansicht, also keine Bilder. */
     public static final String NO_READING_VIEW = "no-reading-view";
+    /**
+     * Warnung: Die Lese-Ansicht der Quelle gehörte nicht zur gespeicherten Fassung der Seite (neuer oder nicht
+     * bestätigt), die Bilder also womöglich zu einer anderen; das Ergebnis gilt dann als veraltet, wie die abgelegte
+     * Ansicht im Export ({@code page-changed}).
+     */
+    public static final String PAGE_CHANGED = "page-changed";
 
     private final Assets assets;
     private final Enrichments enrichments;
@@ -55,11 +65,17 @@ public class PageImageAnalysis {
 
     /**
      * Die gespeicherten Bilder und Beschreibungen der Seite; beschreibt nichts und fragt die Quelle nicht. Ohne
-     * Ergebnis nennt {@link PageImages#reason()}, ob ein Modell oder die Freigabe fehlt.
+     * Ergebnis nennt {@link PageImages#reason()}, ob ein Modell oder die Freigabe fehlt. Nennt die zuletzt geladene
+     * Lese-Ansicht für einen Bildanhang eine andere Version als beim Beschreiben, ist das Ergebnis
+     * {@link PageImages.State#STALE} mit {@value PageImages#ATTACHMENT_CHANGED}.
      */
     public PageImages read(PageSnapshot snapshot) {
         PageText text = enrichments.text(snapshot).orElse(null);
         PageImages images = PageImages.read(snapshot.key(), enrichments.view(snapshot), text);
+        if (images.state() == PageImages.State.CURRENT && attachmentChanged(snapshot.key(), images.result())) {
+            return new PageImages(PageImages.State.STALE, PageImages.ATTACHMENT_CHANGED, images.result(),
+                    images.images(), images.warnings());
+        }
         if (images.state() == PageImages.State.MISSING) {
             Optional<ImageDescriber> model = assets.describerInUse();
             if (model.isEmpty()) {
@@ -97,22 +113,19 @@ public class PageImageAnalysis {
         // Die Version steht vor dem ersten Bild fest: wechselt das Modell währenddessen, ist das Ergebnis veraltet.
         String version = ImageProcessor.version(model);
         List<String> warnings = new ArrayList<>();
-        List<HarvestSource.ViewImage> images;
-        try {
-            images = assets.viewImages(key.sourceId(), key.pageId());
-        } catch (SourceAccessException e) {
-            if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
-                throw e;
-            }
-            images = List.of();
-            warnings.add(NO_READING_VIEW);
-        }
+        List<HarvestSource.ViewImage> images = images(snapshot, warnings);
         if (images.size() > MAX_IMAGES) {
             images = images.subList(0, MAX_IMAGES);
             warnings.add(TRUNCATED);
         }
         List<PageAttachment> attachments = null;
         List<ImagePayload.Entry> entries = new ArrayList<>(images.size());
+        Map<String, String> versions = new LinkedHashMap<>();
+        for (HarvestSource.ViewImage image : images) {
+            if (image.attachmentId() != null && image.version() != null) {
+                versions.putIfAbsent(image.attachmentId(), image.version());
+            }
+        }
         for (int index = 0; index < images.size(); index++) {
             HarvestSource.ViewImage image = images.get(index);
             if (attachments == null && Assets.viewFileName(image).toLowerCase(Locale.ROOT).endsWith(".png")) {
@@ -122,7 +135,7 @@ public class PageImageAnalysis {
                     : attachments));
         }
         Enrichment result = new Enrichment(key, ImagePayload.PROCESSOR, version, text.get().inputSha256(),
-                snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries), warnings, null,
+                snapshot.revision(), Enrichment.Status.OK, ImagePayload.write(entries, versions), warnings, null,
                 clock.instant());
         enrichments.store().save(result);
         enrichments.flush();
@@ -168,6 +181,68 @@ public class PageImageAnalysis {
             return ImagePayload.Entry.without(index, image.attachmentId(), null, filename, title, image.mediaType(),
                     ImageStatus.FAILED, "asset-store-unavailable");
         }
+    }
+
+    /**
+     * Die Bilder der Lese-Ansicht mit ihrer Fassung, wie {@code ExportAssetCollection.readingView}: Nennt die Quelle
+     * eine andere Fassung als die gespeicherte (oder keine bestätigte), steht {@value #PAGE_CHANGED} in den Warnungen.
+     * Eine Quelle ohne Lese-Ansicht kann ihre Bilder trotzdem kennen; dann gilt die Fassung als unbekannt.
+     */
+    private List<HarvestSource.ViewImage> images(PageSnapshot snapshot, List<String> warnings) {
+        PageKey key = snapshot.key();
+        HarvestSource.ReadingPage live;
+        try {
+            live = assets.readingPage(key.sourceId(), key.pageId());
+        } catch (SourceAccessException e) {
+            if (e.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                throw e;
+            }
+            try {
+                return assets.viewImages(key.sourceId(), key.pageId());
+            } catch (SourceAccessException unsupported) {
+                if (unsupported.reason() != SourceAccessException.Reason.UNSUPPORTED) {
+                    throw unsupported;
+                }
+                warnings.add(NO_READING_VIEW);
+                return List.of();
+            }
+        }
+        if (live.version() == null || !live.version().equals(snapshot.revision())) {
+            warnings.add(PAGE_CHANGED);
+        }
+        return live.images();
+    }
+
+    /**
+     * Ob die zuletzt abgelegte Lese-Ansicht (#176, jünger als das Ergebnis) für einen beim Beschreiben gesehenen
+     * Bildanhang eine andere Version nennt oder ihn nicht mehr zeigt. Fragt die Quelle nie: Confluence hebt beim
+     * Ersetzen eines Anhangs weder die Seitenversion noch den Text an, also zeigt sich ein neues Bild erst, wenn die
+     * Lese-Ansicht neu geladen wurde.
+     */
+    private boolean attachmentChanged(PageKey key, Enrichment result) {
+        Map<String, String> described;
+        try {
+            described = ImagePayload.attachmentVersions(result.payloadJson());
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
+        if (described.isEmpty()) {
+            return false;
+        }
+        Optional<StoredReadingView> view = new ReadingViewStore(enrichments.store()).find(key)
+                .filter(stored -> stored.renderedAt().isAfter(result.computedAt()));
+        if (view.isEmpty()) {
+            return false;
+        }
+        Map<String, String> shown = new LinkedHashMap<>();
+        for (HarvestSource.ViewImage image : view.get().images()) {
+            if (image.attachmentId() != null) {
+                shown.putIfAbsent(image.attachmentId(), image.version());
+            }
+        }
+        // Ersetzt (andere Version) oder aus der Ansicht verschwunden: die Beschreibung gilt nicht mehr sicher.
+        return described.entrySet().stream().anyMatch(entry -> !shown.containsKey(entry.getKey())
+                || shown.get(entry.getKey()) != null && !shown.get(entry.getKey()).equals(entry.getValue()));
     }
 
     private List<PageAttachment> attachments(PageKey key) {

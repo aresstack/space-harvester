@@ -49,9 +49,35 @@ keine Sicht je Seite.
 
 ## Folgen
 
-- Ändert sich nur ein Bild, nicht der Seitentext, bleibt das Ergebnis `CURRENT`; der SHA-256 je Bild zeigt den Stand,
-  ein neues `describe` beschreibt das neue Bild.
+- Ändert sich nur ein Bild, nicht der Seitentext, bleibt das Ergebnis `CURRENT`, bis die Lese-Ansicht die neue
+  Version des Anhangs nennt (Nachtrag 2026-10-19); der SHA-256 je Bild zeigt den Stand, ein neues `describe`
+  beschreibt das neue Bild.
 - Ein neuer Prompt bekommt eine neue Analyseversion (`openai-compatible-vision-v1` → `-v2`); alle Ergebnisse gelten
   dann als veraltet.
 - Abweichung ohne Paritätspflicht: Beschreibung einer ganzen Seite in einem Aufruf (der EAC beschreibt im Lesebereich
   Bild für Bild); derselbe Einzelbild-Weg wird je Bild aufgerufen.
+
+## Nachtrag 2026-10-19: Bilder gehören zur gespeicherten Fassung
+
+Review 19.10.: `describe` las die Bilder live aus der Quelle, band das Ergebnis aber an den gespeicherten Text und
+dessen Revision. War die Seite in der Quelle schon weiter, standen Bilder einer neueren Fassung als `CURRENT` am alten
+Text. Jetzt holt `describe` die Lese-Ansicht wie der Export (`ExportAssetCollection.readingView`) mit ihrer Fassung;
+nennt die Quelle eine andere als die gespeicherte oder keine bestätigte, beschreibt es die Bilder trotzdem (die
+Beschreibung je Bildbytes und Modell bleibt nutzbar), legt aber die Warnung `page-changed` ab und `PageImages` meldet
+`STALE`, bis nach dem nächsten Abgleich erneut beschrieben wird; ist der Cache älter als die Quelle, bleibt also
+auch jedes erneute Beschreiben `STALE`, bis der Abgleich die Seite holt. Eine Quelle ohne Lese-Ansicht, die ihre Bilder
+trotzdem kennt, liefert sie wie bisher über `viewImages`; die Fassung gilt dort als unbekannt und bleibt ungeprüft.
+`describe` fragt die Quelle damit dreimal statt zweimal (Kopfdaten, Ansicht und Lesetext), vertretbar, weil es
+nur auf Abruf läuft. Kein Schemawechsel (`page-images/v1`), keine Änderung an den Asset-Klassen.
+
+## Nachtrag 2026-10-19: Ersetzte Bildanhänge
+
+Confluence hebt beim Ersetzen eines Anhangs weder die Seitenversion noch den Speicherformat-Text an; ein ersetztes Bild
+ließ das Ergebnis also `CURRENT`. Die Bild-Hashes in den Eingabe-Hash zu nehmen geht nicht, ohne die Quelle zu fragen
+(sie stammen aus dem Ergebnis selbst), und der Core hält keine eigene Liste der aktuellen Anhangsversionen. Darum legt
+`describe` die Version jedes Bildanhangs, wie die Lese-Ansicht sie nannte, additiv in `page-images/v1` ab
+(`attachmentVersions`, Anhang-ID → Version; ältere Ergebnisse haben keine und bleiben ungeprüft). `read` vergleicht
+sie mit der zuletzt abgelegten Lese-Ansicht (#176), sofern diese jünger als das Ergebnis ist, ohne die Quelle zu
+fragen: nennt sie für einen beschriebenen Anhang eine andere Version oder zeigt sie ihn nicht mehr, ist das Ergebnis `STALE` mit Grund
+`attachment-changed`. Sichtbar wird ein ersetztes Bild damit, sobald die Lese-Ansicht neu geladen wurde (Neuladen
+bzw. `refresh`, neue Seitenfassung). Kein neues Schema, keine Änderung an Asset-Klassen und App.

@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
+import com.aresstack.spaceharvester.application.reading.StoredReadingView;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageAttachment;
@@ -102,6 +104,85 @@ class PageImageAnalysisTest {
         analysis.describe(page("1", "Text"));
 
         assertThat(analysis.read(page("1", "Anderer Text")).state()).isEqualTo(PageImages.State.STALE);
+    }
+
+    @Test
+    void imagesOfTheStoredRevisionGiveACurrentResult() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "3";
+
+        PageImages images = analysis().describe(page("1", "Text"));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.CURRENT);
+        assertThat(images.warnings()).doesNotContain(PageImageAnalysis.PAGE_CHANGED);
+        assertThat(images.describedCount()).isEqualTo(1);
+    }
+
+    @Test
+    void imagesOfANewerRevisionInTheSourceAreDescribedButStale() {
+        // Die Quelle ist schon weiter als der gespeicherte Text: die Bilder gehören womöglich zu einer anderen Fassung.
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "4";
+        PageImageAnalysis analysis = analysis();
+
+        PageImages images = analysis.describe(page("1", "Text"));
+
+        assertThat(images.state()).isEqualTo(PageImages.State.STALE);
+        assertThat(images.warnings()).contains(PageImageAnalysis.PAGE_CHANGED);
+        assertThat(images.describedCount()).isEqualTo(1);
+        assertThat(analysis.read(page("1", "Text")).state()).isEqualTo(PageImages.State.STALE);
+
+        source.readingVersion = null;
+        assertThat(analysis.describe(page("1", "Text")).state()).as("ohne bestätigte Fassung")
+                .isEqualTo(PageImages.State.STALE);
+        assertThat(describer.calls).as("je Bildbytes und Modell nur einmal").isEqualTo(1);
+    }
+
+    @Test
+    void aReplacedImageAttachmentMakesTheResultStaleOnceTheReadingViewShowsIt() {
+        // Confluence hebt beim Ersetzen eines Anhangs weder Seitenversion noch Text an; erst die neu geladene
+        // Lese-Ansicht nennt die neue Version des Anhangs.
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "3";
+        PageImageAnalysis analysis = analysis();
+        analysis.describe(page("1", "Text"));
+        ReadingViewStore views = new ReadingViewStore(store);
+
+        views.save(view("1", "1", NOW.plusSeconds(60)));
+        assertThat(analysis.read(page("1", "Text")).state()).as("gleiche Version").isEqualTo(PageImages.State.CURRENT);
+
+        views.save(view("1", "2", NOW.minusSeconds(60)));
+        assertThat(analysis.read(page("1", "Text")).state()).as("Ansicht älter als das Ergebnis")
+                .isEqualTo(PageImages.State.CURRENT);
+
+        views.save(view("1", "2", NOW.plusSeconds(60)));
+        PageImages replaced = analysis.read(page("1", "Text"));
+        assertThat(replaced.state()).isEqualTo(PageImages.State.STALE);
+        assertThat(replaced.reason()).isEqualTo(PageImages.ATTACHMENT_CHANGED);
+        assertThat(replaced.describedCount()).isEqualTo(1);
+        assertThat(source.loads).as("liest nie von der Quelle").isEqualTo(1);
+    }
+
+    @Test
+    void anImageThatLeftTheReadingViewMakesTheResultStale() {
+        source.image("1", "att1", "ablauf.png", PNG);
+        source.readingVersion = "3";
+        PageImageAnalysis analysis = analysis();
+        analysis.describe(page("1", "Text"));
+
+        new ReadingViewStore(store).save(new StoredReadingView(page("1", "Text").key(), "sha256:" + "a".repeat(64),
+                "3", "<p/>", "", "Text", List.of(), NOW.plusSeconds(60)));
+
+        PageImages gone = analysis.read(page("1", "Text"));
+        assertThat(gone.state()).isEqualTo(PageImages.State.STALE);
+        assertThat(gone.reason()).isEqualTo(PageImages.ATTACHMENT_CHANGED);
+    }
+
+    private StoredReadingView view(String pageId, String attachmentVersion, Instant renderedAt) {
+        HarvestSource.ViewImage image = source.viewImages(pageId).getFirst();
+        return new StoredReadingView(page(pageId, "Text").key(), "sha256:" + "a".repeat(64), "3", "<p/>", "", "Text",
+                List.of(new HarvestSource.ViewImage(image.src(), image.title(), image.attachmentId(),
+                        image.mediaType(), attachmentVersion)), renderedAt);
     }
 
     @Test
@@ -271,6 +352,9 @@ class PageImageAnalysisTest {
         private final Map<String, byte[]> bytes = new HashMap<>();
         final List<PageAttachment> attachments = new ArrayList<>();
         int loads;
+        /** Fassung der Lese-Ansicht; ohne Lese-Ansicht ({@code UNSUPPORTED}), solange nie gesetzt. */
+        String readingVersion;
+        boolean reading;
 
         void image(String pageId, String attachmentId, String filename, byte[] content) {
             String src = "https://wiki.example.org/download/attachments/" + pageId + "/" + filename;
@@ -283,6 +367,15 @@ class PageImageAnalysisTest {
         @Override
         public List<ViewImage> viewImages(String pageId) {
             return List.copyOf(images.getOrDefault(pageId, List.of()));
+        }
+
+        @Override
+        public ReadingPage readingPage(String pageId) {
+            if (!reading && readingVersion == null) {
+                return HarvestSource.super.readingPage(pageId);
+            }
+            reading = true;
+            return new ReadingPage(readingVersion, "", "", "", viewImages(pageId));
         }
 
         @Override

@@ -2,7 +2,9 @@ package com.aresstack.spaceharvester.application.images;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
@@ -12,7 +14,9 @@ import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Format des Ergebnisses des Prozessors {@code images} (Schema {@value #SCHEMA}): je Bild der Lese-Ansicht in
- * Reihenfolge der Seite die Zuordnung zum Asset, der Status und die Beschreibung. Enthält nie Bildbytes.
+ * Reihenfolge der Seite die Zuordnung zum Asset, der Status und die Beschreibung, dazu (seit dem Review 19.10.,
+ * additiv) {@code attachmentVersions}: die Version jedes Anhangs, wie die Lese-Ansicht sie beim Beschreiben nannte.
+ * Enthält nie Bildbytes.
  */
 public final class ImagePayload {
 
@@ -65,10 +69,24 @@ public final class ImagePayload {
         }
     }
 
-    /** Schreibt ein Ergebnis. */
+    /** Schreibt ein Ergebnis ohne Anhangsversionen. */
     public static String write(List<Entry> entries) {
+        return write(entries, Map.of());
+    }
+
+    /**
+     * Schreibt ein Ergebnis.
+     *
+     * @param attachmentVersions Anhang-ID → Version laut Lese-Ansicht beim Beschreiben; nur Bilder, die Anhänge mit
+     *                           bekannter Version sind
+     */
+    public static String write(List<Entry> entries, Map<String, String> attachmentVersions) {
         ObjectNode root = JSON.createObjectNode();
         root.put("schema", SCHEMA);
+        if (!attachmentVersions.isEmpty()) {
+            ObjectNode versions = root.putObject("attachmentVersions");
+            attachmentVersions.forEach(versions::put);
+        }
         ArrayNode images = root.putArray("images");
         for (Entry entry : entries) {
             ObjectNode node = images.addObject();
@@ -114,6 +132,27 @@ public final class ImagePayload {
                         describedAt == null ? null : Instant.parse(describedAt)));
             } catch (RuntimeException e) {
                 throw new IllegalArgumentException("Bild nicht lesbar", e);
+            }
+        }
+        return parsed;
+    }
+
+    /**
+     * Die Anhangsversionen eines Ergebnisses; leer bei Ergebnissen von vor dem Review 19.10. oder ohne Anhänge.
+     *
+     * @throws IllegalArgumentException wenn das Ergebnis nicht lesbar ist
+     */
+    public static Map<String, String> attachmentVersions(String payloadJson) {
+        JsonNode versions;
+        try {
+            versions = JSON.readTree(payloadJson).path("attachmentVersions");
+        } catch (JacksonException e) {
+            throw new IllegalArgumentException("Ergebnis nicht lesbar", e);
+        }
+        Map<String, String> parsed = new LinkedHashMap<>();
+        for (var field : versions.properties()) {
+            if (field.getValue().isString()) {
+                parsed.put(field.getKey(), field.getValue().asString());
             }
         }
         return parsed;

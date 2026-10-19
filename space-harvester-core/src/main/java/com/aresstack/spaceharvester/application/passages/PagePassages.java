@@ -109,7 +109,7 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
         // umgestufte Überschrift bei gleichem Text gibt neue Grenzen und damit neue IDs.
         String capture = PassageId.captureOf(result.inputSha256());
         String segmentation = PassageId.versionTag(parsed.segmentation());
-        String model = PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model());
+        String model = PassageId.processorTag(result.processorVersion(), parsed.model());
         List<Passage> passages = new ArrayList<>(parsed.passages().size());
         for (int index = 0; index < parsed.passages().size(); index++) {
             PassageSegmentation.Passage passage = parsed.passages().get(index);
@@ -161,7 +161,7 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
                 try {
                     return PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(result.inputSha256()), index,
                             PassageId.versionTag(parsed.segmentation()),
-                            PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
+                            PassageId.processorTag(result.processorVersion(), parsed.model()))
                             .value();
                 } catch (IllegalArgumentException e) {
                     return null;
