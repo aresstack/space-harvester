@@ -3,6 +3,8 @@ package com.aresstack.spaceharvester.source;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.CertificateStoreType;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.ClientCertificate;
 import com.aresstack.spaceharvester.source.confluence.ClientCertificateException;
@@ -52,6 +54,20 @@ public final class ConfluenceSourceAdapter implements SourceAdapter {
     @Override
     public String displayName() {
         return "Confluence";
+    }
+
+    /**
+     * Die Felder des Upstream-Typs ohne die, die der Adapter selbst setzt: Adresse ({@code base-url}), Titel,
+     * Anmeldung ({@code auth}) und Zertifikat ({@code client-certificate}) stehen außerhalb von {@code options}.
+     */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(ConfluenceSources.anonymousProvider(null).type(), RESERVED_OPTIONS);
+    }
+
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        return List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
     }
 
     @Override

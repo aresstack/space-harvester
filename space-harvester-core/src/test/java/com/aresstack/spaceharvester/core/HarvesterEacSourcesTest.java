@@ -2,8 +2,10 @@ package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import com.aresstack.spaceharvester.application.sources.Partition;
+import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
@@ -48,17 +50,50 @@ class HarvesterEacSourcesTest {
     @Test
     void theHarvesterListsItsSourceTypesWithDisplayNames() {
         try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
-            assertThat(harvester.sourceTypes()).containsExactly(
-                    new SourceType("confluence", "Confluence", false, null),
-                    new SourceType("files", "Ordner", false, "directory"),
-                    new SourceType("ftp", "FTP", false, "host"),
-                    new SourceType("jes", "JES", true, "host"),
-                    new SourceType("ndv", "NDV", true, "host"),
-                    new SourceType("sharepoint", "SharePoint", false, "siteUrl"),
-                    new SourceType("betaview", "BetaView", true, "baseUrl"),
-                    new SourceType("outlook", "Outlook", false, "mailbox"),
-                    new SourceType("mediawiki", "MediaWiki", false, "apiUrl"),
-                    new SourceType("git", "Git-Repository", false, "url"));
+            assertThat(harvester.sourceTypes())
+                    .extracting(SourceType::id, SourceType::displayName, SourceType::needsCredentials,
+                            SourceType::addressOption)
+                    .containsExactly(
+                            tuple("confluence", "Confluence", false, null),
+                            tuple("files", "Ordner", false, "directory"),
+                            tuple("ftp", "FTP", false, "host"),
+                            tuple("jes", "JES", true, "host"),
+                            tuple("ndv", "NDV", true, "host"),
+                            tuple("sharepoint", "SharePoint", false, "siteUrl"),
+                            tuple("betaview", "BetaView", true, "baseUrl"),
+                            tuple("outlook", "Outlook", false, "mailbox"),
+                            tuple("mediawiki", "MediaWiki", false, "apiUrl"),
+                            tuple("git", "Git-Repository", false, "url"));
+        }
+    }
+
+    @Test
+    void eachTypeDescribesItsFieldsAndAuthModesWithoutValues() {
+        try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
+            Map<String, SourceType> types = new java.util.HashMap<>();
+            harvester.sourceTypes().forEach(type -> types.put(type.id(), type));
+
+            assertThat(types.get("ftp").fields()).extracting(SourceField::key).contains("host", "port", "startPoints");
+            assertThat(types.get("ftp").fields()).filteredOn(field -> field.key().equals("host")).singleElement()
+                    .satisfies(field -> assertThat(field.required()).isTrue())
+                    .satisfies(field -> assertThat(field.kind()).isEqualTo(SourceField.Kind.TEXT));
+            assertThat(types.get("jes").fields()).filteredOn(field -> field.key().equals("credentialRef"))
+                    .singleElement()
+                    .satisfies(field -> assertThat(field.kind()).isEqualTo(SourceField.Kind.SECRET_REF));
+            assertThat(types.get("outlook").fields()).filteredOn(field -> field.key().equals("mailbox"))
+                    .singleElement().satisfies(field -> assertThat(field.kind()).isEqualTo(SourceField.Kind.DIRECTORY));
+            assertThat(types.get("files").fields()).extracting(SourceField::key).contains("directory")
+                    .doesNotContain("title");
+            // Titel, Basis-URL, Anmeldung und Zertifikat des Upstream-Typs stehen bei Confluence außerhalb von
+            // options.
+            assertThat(types.get("confluence").fields()).isEmpty();
+
+            assertThat(types.get("confluence").authModes()).containsExactly(SourceType.AuthMode.NONE,
+                    SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT);
+            assertThat(types.get("ftp").authModes()).containsExactly(SourceType.AuthMode.NONE,
+                    SourceType.AuthMode.BASIC);
+            assertThat(types.get("files").authModes()).containsExactly(SourceType.AuthMode.NONE);
+            assertThat(types.get("outlook").authModes()).containsExactly(SourceType.AuthMode.NONE);
         }
     }
 

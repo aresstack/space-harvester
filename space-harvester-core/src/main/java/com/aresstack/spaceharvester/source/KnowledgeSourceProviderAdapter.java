@@ -9,11 +9,14 @@ import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.platform.network.HttpRoutePort;
 import com.aresstack.enterpriseai.source.api.KnowledgeSourceProvider;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.net.ssl.SSLSocketFactory;
@@ -200,6 +203,26 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
     @Override
     public String addressOption() {
         return unconnected.type().summaryKey();
+    }
+
+    /**
+     * Die Felder des Upstream-Typs ohne das Titelfeld, denn {@code title} steht außerhalb von {@code options}, und ohne
+     * das Anmeldefeld, wenn es gesperrt ist ({@code auth} statt eigenem Verweis).
+     */
+    @Override
+    public List<SourceField> fields() {
+        return SourceFields.of(unconnected.type(), credentialKey == null || credentialRefPassThrough
+                ? Set.of(titleKey()) : Set.of(titleKey(), credentialKey));
+    }
+
+    /** {@code none}, mit Anmeldefeld auch {@code basic}, mit {@link #acceptingToken} auch {@code pat}. */
+    @Override
+    public List<SourceType.AuthMode> authModes() {
+        if (credentialKey == null) {
+            return List.of(SourceType.AuthMode.NONE);
+        }
+        return tokenAuth ? List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC, SourceType.AuthMode.PAT)
+                : List.of(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC);
     }
 
     @Override
