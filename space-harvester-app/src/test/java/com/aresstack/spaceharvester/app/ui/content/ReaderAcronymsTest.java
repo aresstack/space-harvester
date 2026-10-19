@@ -119,6 +119,18 @@ class ReaderAcronymsTest {
         });
         assertThat(onEdt(panel::acronymDetail)).startsWith("REST: Ausschreibung unbekannt");
 
+        // Reiter „Begriffe“ (#339): dieselben Akronyme; ein Klick springt zur nächsten Fundstelle im Lesetext.
+        assertThat(onEdt(() -> panel.terms().stateLabel())).isEqualTo("Aktuell");
+        assertThat(onEdt(() -> panel.terms().counts().get(0)))
+                .isEqualTo(String.valueOf(shown.acronyms().acronyms().size()));
+        onEdt(() -> {
+            panel.reader().setCaretPosition(text.indexOf("SSO") + 3);
+            panel.jumpTo(acronym(shown, "API"));
+            return null;
+        });
+        assertThat(onEdt(() -> panel.reader().getSelectionStart())).isGreaterThan(text.indexOf("SSO"));
+        assertThat(onEdt(() -> panel.reader().getSelectedText())).isEqualTo("API");
+
         // Gleiche Seiten-ID, gleiches Akronym, andere Quelle: eigene Ausschreibung, nichts aus „wiki“
         ReaderDocument foreign = open(panel, "zweites", "200", false);
         assertThat(foreign.acronyms().result().key().sourceId()).isEqualTo("zweites");

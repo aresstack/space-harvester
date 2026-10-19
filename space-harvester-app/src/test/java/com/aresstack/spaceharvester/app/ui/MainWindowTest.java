@@ -87,11 +87,11 @@ class MainWindowTest {
         // Arbeitsbereiche, dann Verwaltung und Einstellungen.
         assertThat(find(surface[0], AbstractButton.class).stream()
                 .map(button -> button.getAccessibleContext().getAccessibleName()).toList())
-                .containsSubsequence("Suche", "Inhalte", "Aufträge", "Status", "Wissensquellen verwalten",
+                .containsSubsequence("Suche", "Inhalte", "Begriffe", "Aufträge", "Status", "Wissensquellen verwalten",
                         "Einstellungen")
                 .as("Herunterladen geht über den Explorer, kein eigener Bereich").doesNotContain("Herunterladen");
         assertThat(find(surface[0], AbstractButton.class).stream().map(AbstractButton::getToolTipText).toList())
-                .contains("Inhalte (Strg+2)", "Wissensquellen verwalten (Strg+5)");
+                .contains("Inhalte (Strg+2)", "Begriffe (Strg+3)", "Wissensquellen verwalten (Strg+6)");
         assertThat(find(surface[0], com.aresstack.enterpriseai.ui.comic.control.ComicSearchBar.class))
                 .as("keine globale Suchleiste mehr; gesucht wird im Bereich Suche").isEmpty();
         SwingUtilities.invokeAndWait(() -> window[0].show(AppContext.Section.STATUS));
