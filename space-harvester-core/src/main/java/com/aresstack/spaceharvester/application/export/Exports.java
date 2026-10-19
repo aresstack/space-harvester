@@ -449,7 +449,7 @@ public class Exports {
             }
             context.failed(failedIds.size());
             context.checkpoint();
-            PageTree tree = PageTreeBuilder.build(entries);
+            PageTree tree = startFirst(PageTreeBuilder.build(entries), request.rootPageId());
             List<String> warnings = new ArrayList<>(prepared.warnings());
             if (unrefreshed > 0) {
                 warnings.add(unrefreshed + " Seiten ließen sich beim Einlesen nicht abrufen; sie fehlen oder sind auf "
@@ -598,7 +598,7 @@ public class Exports {
         if (selected.isEmpty()) {
             return;
         }
-        String inputSha256 = inputSha256(tree, exported);
+        String inputSha256 = inputSha256(tree, exported, scope.rootPageId());
         ConversionInput input = new CachedConversionInput(context, scope, tree, exported);
         for (ExportConverter converter : selected) {
             context.checkpoint();
@@ -637,8 +637,30 @@ public class Exports {
         return null;
     }
 
-    /** {@link Conversion#INPUT_HASH_VERSION} über die exportierten Seiten, ohne den Cache erneut zu lesen. */
-    private static String inputSha256(PageTree tree, Map<String, ListedPage> exported) {
+    /**
+     * Die Startseite als erste Wurzel (#186): Converter beginnen mit ihr als Kapitel 1. Weitere Wurzeln entstehen nur
+     * unter einer nicht lesbaren oder gescheiterten Seite und folgen in ihrer Reihenfolge.
+     */
+    private static PageTree startFirst(PageTree tree, String rootPageId) {
+        if (rootPageId == null || tree.roots().isEmpty() || tree.roots().get(0).pageId().equals(rootPageId)) {
+            return tree;
+        }
+        List<PageTree.Node> roots = new ArrayList<>(tree.roots());
+        for (int i = 0; i < roots.size(); i++) {
+            if (roots.get(i).pageId().equals(rootPageId)) {
+                roots.add(0, roots.remove(i));
+                return new PageTree(roots, tree.anomalies(), tree.nodeCount(), tree.depth());
+            }
+        }
+        return tree;
+    }
+
+    /**
+     * {@link Conversion#INPUT_HASH_VERSION} über die exportierten Seiten, ohne den Cache erneut zu lesen. Mit
+     * Startseite kommt sie als letzte Zeile dazu, weil die Formate dann mit ihr als Kapitel 1 beginnen; für den ganzen
+     * Space bleibt der Hash unverändert.
+     */
+    private static String inputSha256(PageTree tree, Map<String, ListedPage> exported, String rootPageId) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -650,6 +672,9 @@ public class Exports {
             digest.update((depth + "\t" + pageId + "\t" + listed.header().metadataHash() + "\t" + listed.rawSha256()
                     + "\n").getBytes(StandardCharsets.UTF_8));
         });
+        if (rootPageId != null) {
+            digest.update(("root\t" + rootPageId + "\n").getBytes(StandardCharsets.UTF_8));
+        }
         return "sha256:" + HexFormat.of().formatHex(digest.digest());
     }
 

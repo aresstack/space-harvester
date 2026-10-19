@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.convert.ExportAssets;
 import com.aresstack.spaceharvester.application.convert.ExportReadingView;
 import com.aresstack.spaceharvester.application.diagrams.Diagrams;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.document.ExportGraphics;
 import com.aresstack.spaceharvester.document.ExportImage;
@@ -50,7 +51,8 @@ final class ExportChapters {
      */
     static boolean rooted(ConversionInput input) {
         String root = input.rootPageId();
-        return root != null && input.tree().roots().size() == 1
+        // Die Startseite steht vorn; weitere Wurzeln sind Seiten unter einer nicht lesbaren oder gescheiterten Seite.
+        return root != null && !input.tree().roots().isEmpty()
                 && input.tree().roots().get(0).pageId().equals(root);
     }
 
@@ -88,14 +90,42 @@ final class ExportChapters {
         return !rooted(input);
     }
 
-    /** Inhalt des Kapitels einer Seite; bei der Startseite als Wurzelkapitel mit dem Text des Wurzelkapitels davor. */
-    static String text(ConversionInput input, ConvertiblePage page, String markdown, String version) {
-        return rooted(input) && page.depth() == 0 ? rootText(input, version) + "\n\n" + markdown : markdown;
+    /** Kapitelaufteilung einer Konvertierung; einmal je Konvertierung bestimmen, nicht je Seite. */
+    static Layout layout(ConversionInput input) {
+        if (!rooted(input)) {
+            return new Layout(null, Set.of());
+        }
+        Set<String> start = new HashSet<>();
+        List<PageTree.Node> pending = new ArrayList<>(List.of(input.tree().roots().get(0)));
+        while (!pending.isEmpty()) {
+            PageTree.Node node = pending.remove(pending.size() - 1);
+            start.add(node.pageId());
+            pending.addAll(node.children());
+        }
+        return new Layout(input.rootPageId(), start);
     }
 
-    /** Tiefe des Kapitels einer Seite: Wurzelseiten 2, deren Kinder 3 …; mit Startseite diese 1, ihre Kinder 2 … */
-    static int depth(ConversionInput input, ConvertiblePage page) {
-        return page.depth() + (rooted(input) ? 1 : 2);
+    /**
+     * Wo die Kapitel einer Seite liegen.
+     *
+     * @param rootPageId Startseite als Wurzelkapitel ({@link #rooted}) oder {@code null} für den Space als Kapitel 1
+     * @param start      die Startseite und alle Seiten unter ihr im Baum
+     */
+    record Layout(String rootPageId, Set<String> start) {
+
+        /** Inhalt des Kapitels; bei der Startseite als Wurzelkapitel mit dem Text des Wurzelkapitels davor. */
+        String text(ConversionInput input, ConvertiblePage page, String markdown, String version) {
+            return page.pageId().equals(rootPageId) ? rootText(input, version) + "\n\n" + markdown : markdown;
+        }
+
+        /**
+         * Tiefe des Kapitels: Wurzelseiten 2, deren Kinder 3 …; mit Startseite diese 1, ihre Unterseiten 2 … Seiten,
+         * die nur wegen einer nicht lesbaren oder gescheiterten Seite dazwischen eigene Wurzel sind, stehen unter dem
+         * Wurzelkapitel (2 …), nie neben ihm.
+         */
+        int depth(ConvertiblePage page) {
+            return page.depth() + (rootPageId != null && start.contains(page.pageId()) ? 1 : 2);
+        }
     }
 
     static String title(ConvertiblePage page) {

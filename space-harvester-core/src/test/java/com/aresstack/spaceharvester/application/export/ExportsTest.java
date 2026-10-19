@@ -146,6 +146,20 @@ class ExportsTest {
     }
 
     @Test
+    void theStartPageStaysTheFirstRootWhenAnUnreadablePageOrphansALowerId() {
+        cache.publish("confluence", "DEV", confirmed("g1"), List.of(page("confluence", "DEV", "300", null),
+                page("confluence", "DEV", "301", "300"), page("confluence", "DEV", "050", "301")));
+
+        JobStatus job = exports(cache).start(ExportRequest.of("confluence", "DEV", "client-a", List.of())
+                .withRoot("300").withVisible(header -> !header.key().pageId().equals("301")));
+
+        assertThat(jobs.status(job.id()).state()).isEqualTo(JobState.COMPLETED);
+        // 050 hängt nur wegen der gesperrten 301 lose; die Startseite bleibt vorn und damit Kapitel 1.
+        assertThat(writer.published.get(job.id()).tree().roots()).extracting(PageTree.Node::pageId)
+                .containsExactly("300", "050");
+    }
+
+    @Test
     void depthNeedsAStartPageAndIsNotNegative() {
         ExportRequest request = ExportRequest.of("confluence", "DEV", "client-a", List.of());
         assertThatThrownBy(() -> request.withDepth(0)).isInstanceOf(IllegalArgumentException.class);

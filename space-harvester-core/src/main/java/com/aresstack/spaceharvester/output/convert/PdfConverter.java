@@ -84,6 +84,7 @@ public final class PdfConverter implements ExportConverter {
     public void convert(ConversionInput input, OutputStream out) throws IOException {
         StorageParser parser = new StorageParser(PageLinks.of(input.headers(), input.spaceKey()));
         String title = ExportChapters.title(input);
+        ExportChapters.Layout layout = ExportChapters.layout(input);
         Set<String> anchors = new HashSet<>();
         for (PageHeader header : input.headers()) {
             anchors.add(PageLinks.anchor(header.key().pageId()));
@@ -105,8 +106,8 @@ public final class PdfConverter implements ExportConverter {
                         ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                         figures.notices().forEach(input::report);
                         chapters.chapter(ExportChapters.title(page), PageLinks.anchor(page.pageId()),
-                                ExportChapters.text(input, page, figures.markdown(), VERSION), figures.images(),
-                                ExportChapters.depth(input, page));
+                                layout.text(input, page, figures.markdown(), VERSION), figures.images(),
+                                layout.depth(page));
                         ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);

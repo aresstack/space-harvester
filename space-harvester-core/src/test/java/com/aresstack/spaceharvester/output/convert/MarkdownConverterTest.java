@@ -111,6 +111,48 @@ class MarkdownConverterTest {
     }
 
     @Test
+    void anOrphanedPageOfASubtreeStaysBelowTheStartPage() throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        // 102 ist eigene Wurzel, weil 101 nicht lesbar ist; sie steht unter dem Wurzelkapitel, nicht daneben.
+        new MarkdownConverter().convert(new ConversionInput() {
+            @Override
+            public String sourceId() {
+                return "wiki";
+            }
+
+            @Override
+            public String spaceKey() {
+                return "DEV";
+            }
+
+            @Override
+            public String rootPageId() {
+                return "100";
+            }
+
+            @Override
+            public PageTree tree() {
+                return new PageTree(List.of(new PageTree.Node("100", List.of()), new PageTree.Node("102", List.of())),
+                        List.of(), 2, 1);
+            }
+
+            @Override
+            public List<PageHeader> headers() {
+                return List.of(storagePage("100", "1", 0, "").header(), storagePage("102", "101", 0, "").header());
+            }
+
+            @Override
+            public void forEachPage(Consumer<ConvertiblePage> action) {
+                action.accept(storagePage("100", "1", 0, "<p>Start</p>"));
+                action.accept(storagePage("102", "101", 0, "<p>Lose</p>"));
+            }
+        }, out);
+
+        assertThat(out.toString(StandardCharsets.UTF_8).lines().filter(line -> line.startsWith("#")).toList())
+                .containsExactly("# Seite 100", "## Seite 102");
+    }
+
+    @Test
     void theRootChapterCarriesTheSpaceNameLikeTheSource() throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Input input = new Input(List.of(storagePage("100", null, 0, "<p>Start</p>")));
