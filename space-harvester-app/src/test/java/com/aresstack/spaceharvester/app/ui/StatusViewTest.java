@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.app.ui;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.aresstack.spaceharvester.app.runtime.FollowUpJobs;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
@@ -59,6 +60,8 @@ class StatusViewTest {
         await(() -> context.connection("handbuch").state() == AppContext.Connection.State.CONNECTED);
         String job = workspace.startSync("handbuch", workspace.spaces("handbuch").get(0).key()).id();
         await(() -> workspace.job(job).state().terminal());
+        // Die Anreicherung läuft als eigener Auftrag weiter; ihre Ereignisse kämen sonst nach dem Bereinigen hinzu.
+        FollowUpJobs.awaitEnrichments(workspace);
         assertThat(workspace.events(job)).isNotEmpty();
 
         StatusView[] view = new StatusView[1];

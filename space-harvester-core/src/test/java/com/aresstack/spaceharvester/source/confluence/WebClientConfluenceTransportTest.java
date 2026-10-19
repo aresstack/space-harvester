@@ -305,11 +305,13 @@ class WebClientConfluenceTransportTest {
     @Test
     void cancellingTheStageClosesTheConnection() throws Exception {
         try (ServerSocket silent = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            CountDownLatch arrived = new CountDownLatch(1);
             CompletableFuture<Boolean> closedByClient = CompletableFuture.supplyAsync(() -> {
                 try (Socket socket = silent.accept()) {
                     socket.setSoTimeout(5000);
                     InputStream in = socket.getInputStream();
                     readHead(in);
+                    arrived.countDown();
                     return in.read() == -1;
                 } catch (IOException e) {
                     return true; // Reset zählt ebenfalls als geschlossen
@@ -318,7 +320,8 @@ class WebClientConfluenceTransportTest {
             CompletableFuture<ConfluenceHttpResponse> stage = transport().getAsync(
                     URI.create("http://127.0.0.1:" + silent.getLocalPort() + "/page"), HEADERS, 1024)
                     .toCompletableFuture();
-            Thread.sleep(300);
+            // Abgebrochen wird eine gesendete Anfrage, nicht eine, die noch die Verbindung aufbaut.
+            assertThat(arrived.await(10, TimeUnit.SECONDS)).as("Anfrage beim Server angekommen").isTrue();
 
             assertThat(stage.cancel(true)).isTrue();
             assertThat(closedByClient.get(10, TimeUnit.SECONDS)).isTrue();

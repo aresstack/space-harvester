@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.aresstack.spaceharvester.app.settings.AppSettingsLoader;
 import com.aresstack.spaceharvester.app.settings.Placeholders;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.enterpriseai.ui.comic.control.ComicWindowCloseButton;
 import java.awt.Color;
 import java.awt.Component;
@@ -137,7 +138,7 @@ class MainWindowTest {
         SwingUtilities.invokeAndWait(() -> Screenshots.write(surface[0], home.resolve("explorer.png")));
 
         // Rechtsbündig am Space das Download-Symbol: ein Klick startet den Auftrag sofort, ohne Dialog.
-        int jobsBefore = context.runtime().workspace().jobs().size();
+        List<String> jobsBefore = context.runtime().workspace().jobs().stream().map(JobStatus::id).toList();
         SwingUtilities.invokeAndWait(() -> {
             window[0].explorer().filter().setText("");
             java.awt.Rectangle row = tree.getRowBounds(1);
@@ -147,11 +148,16 @@ class MainWindowTest {
                         MouseEvent.BUTTON1));
             }
         });
-        for (int i = 0; i < 100 && context.runtime().workspace().jobs().size() == jobsBefore; i++) {
+        // Der Export plant nach dem Veröffentlichen selbst einen Folgeauftrag ein (Bilder); gezählt wird, was der Klick
+        // startet.
+        List<JobStatus> clicked = List.of();
+        for (int i = 0; i < 100 && clicked.isEmpty(); i++) {
             Thread.sleep(50);
+            clicked = context.runtime().workspace().jobs().stream().filter(j -> !jobsBefore.contains(j.id()))
+                    .filter(j -> !j.type().followUp()).toList();
         }
-        assertThat(context.runtime().workspace().jobs()).hasSize(jobsBefore + 1)
-                .anyMatch(j -> j.type() == com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
+        assertThat(clicked).as("vom Klick gestartete Aufträge").singleElement()
+                .extracting(JobStatus::type).isEqualTo(com.aresstack.spaceharvester.application.jobs.JobType.EXPORT);
         SwingUtilities.invokeAndWait(() -> {
             window[0].showJob(job);
             window[0].showDiagnosis(job);
