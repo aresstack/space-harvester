@@ -158,12 +158,15 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      * @param exportDirectory Exportartefakte
      * @param assetDirectory  abgelegte Anhänge
      * @param maxAssetBytes   größter Anhang, der geladen wird
+     * @param largeAssetBytes ab dieser Größe gilt ein Anhang als groß ({@code assets.large-file-threshold})
+     * @param maxLargeAssets  so viele große Anhänge höchstens gleichzeitig ({@code assets.max-concurrent-large-files})
      * @param searchTimeout   Zeitgrenze einer Suche
      * @param maxTreeNodes    größter Seitenbaum
      * @param pdfFont         TrueType-Schrift für PDF-Exporte oder {@code null}
      */
     public record Storage(Path dataDirectory, Path exportDirectory, Path assetDirectory, long maxAssetBytes,
-                          Duration searchTimeout, int maxTreeNodes, Path pdfFont) {
+                          long largeAssetBytes, int maxLargeAssets, Duration searchTimeout, int maxTreeNodes,
+                          Path pdfFont) {
 
         public Storage {
             Objects.requireNonNull(dataDirectory, "dataDirectory");

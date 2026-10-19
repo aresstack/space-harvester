@@ -186,6 +186,11 @@ public final class AppSettingsLoader {
         Path assets = path(get(map(get(root, "assets")), "directory"), problems);
         long maxAsset = size(get(map(get(root, "assets")), "max-size"), 100L * 1024 * 1024,
                 "space-harvester.assets.max-size", problems);
+        // Wie AssetConfiguration des Dienstes; die Wartezeit (large-file-wait) ist in der Bibliothek fest 30 s.
+        long largeAsset = size(get(map(get(root, "assets")), "large-file-threshold"), 20L * 1024 * 1024,
+                "space-harvester.assets.large-file-threshold", problems);
+        int maxLargeAssets = Math.max(1, integer(get(map(get(root, "assets")), "max-concurrent-large-files"), 2,
+                "space-harvester.assets.max-concurrent-large-files", problems));
         Duration searchTimeout = duration(get(map(get(root, "cache")), "search-timeout"), Duration.ofSeconds(5),
                 "space-harvester.cache.search-timeout", problems);
         int maxTreeNodes = integer(get(map(get(root, "query")), "max-tree-nodes"), 50_000,
@@ -193,7 +198,7 @@ public final class AppSettingsLoader {
         Path pdfFont = path(get(map(get(map(get(root, "export")), "pdf")), "font"), problems);
         AppSettings.Storage storage = new AppSettings.Storage(data,
                 exports == null ? data.resolve("exports") : exports, assets == null ? data.resolve("assets") : assets,
-                maxAsset, searchTimeout, maxTreeNodes, pdfFont);
+                maxAsset, largeAsset, maxLargeAssets, searchTimeout, maxTreeNodes, pdfFont);
 
         if (get(root, "embedding") != null) {
             problems.add("space-harvester.embedding entfällt (ADR 0011); den KI-Dienst unter space-harvester.ai "
