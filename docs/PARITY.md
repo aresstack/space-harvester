@@ -67,7 +67,7 @@ Nicht angebunden sind:
 | Gerenderte Ansicht `body.view` / `export_view` (Makros von Confluence ausgeführt, Jira-Platzhalter, Lese-HTML) | `#readingPage`, `conf/ConfluencePageView`, `conf/ConfluenceHtmlText`, `#pageView` | `core/application/reading/ReadingViews` (#176), REST `GET …/pages/{pageId}/reading-view`, Ablage `reading-view/v1`; im Vergleichstest gleich (Seiten, Lesetext, Bilder) | gleich |
 | Labels samt Vollständigkeit | `#toPage`, `LABELS_COMPLETE` | Kopie; `attributesHash` | gleich |
 | Anhangsliste, Download mit Bytegrenze | `#storedAttachments`, `#loadAttachmentFile` | Kopie; `core/application/assets/Assets`; fremde Weiterleitungen bewusst aus (SSRF, #90) | gleich |
-| Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` | keine | fehlt → #183 |
+| Anhang-Vorschau und Konvertierung (`/rest/documentConversion`) | `#loadAttachmentPreview`, `#conversionPath` (`convert`, `poster`, `thumbnail`) | dieselbe Methode der übernommenen Kopie über `HarvestSource.attachmentPreview(PageAttachment, AttachmentPreview, maxBytes)`, Arten `DOCUMENT` (PDF), `POSTER`, `THUMBNAIL` wie `PageView.Preview`; Fähigkeit `ATTACHMENT_PREVIEWS` (#365) | gleich |
 | CQL-Suche mit Auszug, Space-Filter in der Anfrage | `#search`, `ConfluenceKnowledgeSource#cql` | dieselbe Quelle über `KnowledgeSourceHarvestSource#searchPages(text, limit, SearchSpaces)`: `KeywordSearch.Query` mit `spaceKeys`/`excludedSpaceKeys` (REST `spaceKey`, `excludeSpaceKey`) wird zu `space in (…)` und `space not in (…)` in der CQL, ohne Obergrenze (`SourceQuery.withIncludedPartitions`/`withExcludedPartitions`) | gleich (#179) |
 | URL-Auflösung: `pageId=`, `/spaces/K/pages/ID`, `/x/…` | `conf/ConfluenceLinks`, `#resolveAddress` | `core/application/query/PageUrls` | gleich |
 | URL-Auflösung: `display/KEY/Titel`, Space-Startseite, `confluence://`, Ressourcen-IDs | `#pageIdByTitle`, `know/ResolveKnowledgeResourceUseCase`, `KnowledgeBookmarkIds` | `Harvester.addresses()` (`PageAddresses`), `pageByUrl`, REST `GET /api/v1/addresses` (#239); dazu Lesezeichen `space-harvester://…` | gleich (Vergleichstest Adressen) |
@@ -147,7 +147,7 @@ Nicht angebunden sind:
 | Auflisten mit Metadaten (Größe, Medientyp, Version, Änderung, Container) | `#storedAttachments`, `know/ListKnowledgeAttachmentsUseCase` | `SourceQueries.attachments`, `PageAttachment` | gleich |
 | Abrufen mit Grenze, Ablage | `#loadAttachmentFile` | dasselbe plus versionierter Store, `AssetTooLargeException`, Speichergrenze | SH+ |
 | Text aus Anhängen und Dateien (PDF, DOCX, XLSX, PPTX, ODF, RTF) | `deigma/document-tika/…/TikaResourceExtractor`, `know/SourceAttachmentReader`, `DocumentSourceFileTextExtractor` | `core/application/assets/DocumentText` mit `TikaDocumentText` (#328): dieselben übernommenen Klassen `DocumentExtraction` und `DocumentSourceFileTextExtractor`, Tika 3.3.2 statt 2.9.1 (PDFBox 3.0.8 statt 2), Grenzen 20 MiB je Datei, 30 s je Lauf, 2 Läufe gleichzeitig, 1 Mio. Zeichen; `Assets.text()` → `AssetText`; lokale Dateien im Volltextindex. Noch offen: Anhangstexte im Index mit den Rechten der Seite, REST für `Assets.text` | teilweise (Q, #328) → #183; Text und Typ gleich laut Vergleichstest Dokumenttext |
-| Vorschau von Office- und PDF-Anhängen | `#loadAttachmentPreview` | keine | fehlt → #183 |
+| Vorschau von Office- und PDF-Anhängen | `#loadAttachmentPreview` | `Assets.preview(…, attachmentId, kind, mayStore)` (Asset-Variante `PREVIEW_RENDITION`, ID `preview-<art>-<attId>`, abgelegt nur mit `sync`); REST `GET …/pages/{pageId}/assets/{attachmentId}/preview?kind=document\|poster\|thumbnail` (ohne `kind` die erste verfügbare Art, ETag = SHA-256, 304, 400 bei unbekannter Art, Rechte wie `…/content`) (#365); Typerkennung mit Dateiname wie im EAC (`DocumentText.detect`). Reiter „Anhänge“ in der App folgt (L) | gleich (Core); App offen |
 
 ## 8. Diagramme
 
@@ -273,7 +273,7 @@ Partition je Quelle, docs/SOURCE_ADAPTERS.md, „Quellen ohne Partitionen“).
 | #180 | Volltextindex über den Cache, Index-Rückfall, Treffer vorladen | Q, erledigt |
 | #181 | Zerlegung, Rerank-Modell, verwandte Abschnitte (keine hybride Suche, ADR 0013); semantische Passagen je Seite (#360, ADR 0020), offen: Nutzung für Suche, Embeddings und Reranking, Reader #354 | Q, Passagen V |
 | #182 | Suchlauf-Protokoll und Metadaten-Fakten als Core-Ports | Q |
-| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q; teilweise (#328): Extraktion, Typerkennung, lokale Dateien; offen Anhangstexte im Index, REST, Vorschauen |
+| #183 | Textextraktion (Anhänge und PDF/Word lokaler Dateien im Volltextindex), Typerkennung am Inhalt, Vorschauen von Anhängen | Q; umgesetzt: Extraktion, Typerkennung, lokale Dateien (#328), Vorschauen (#365); offen: Anhangstexte im Volltextindex mit den Rechten der Seite (EAC `SourceAttachmentReader`), REST für `Assets.text` |
 | #184 | `ImageDescriber` über den externen KI-Dienst | offen, nicht beauftragt; Diagramme textuell erledigt (#306) |
 | #185 | Einmalcode-Anmeldung (2FA) als Port | erledigt: Core (#303), Server-REST (#308), App (#312) |
 | #186 | Export einzelner Seiten und Teilbäume | erledigt: Teilbaum (#315), Einzelseite und Tiefe (#333), Vergleichstest (#333) |
@@ -393,5 +393,5 @@ ist Markdown, Rückgabewert 1 heißt: Der Core kann irgendwo weniger.
 ### Noch nicht abgedeckt
 
 Die Trefferauswahl der Live-Suche vergleicht `:parity-tests` nicht, weil der Fake feste Treffer liefert und beide Seiten
-dieselbe CQL bauen. Anhänge von Confluence-Seiten fehlen noch, dafür fehlen Core-Schnittstellen: Anhangstexte im Index und Vorschauen #183 (den Dokumenttext je Datei vergleicht der Abschnitt Dokumenttext seit #328). Bekannte, gewollte Abweichungen (Core darf
+dieselbe CQL bauen. Anhänge von Confluence-Seiten fehlen noch, dafür fehlt eine Core-Schnittstelle: Anhangstexte im Index (#183; Vorschauen seit #365) (den Dokumenttext je Datei vergleicht der Abschnitt Dokumenttext seit #328). Bekannte, gewollte Abweichungen (Core darf
 hier mehr): interne Seitenlinks, Raw-JSON, Herkunft im Manifest, textuelle Diagrammquellen, PlantUML als Code.
