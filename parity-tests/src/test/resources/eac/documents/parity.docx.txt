@@ -68,6 +68,10 @@ PAR-7 - Getting issue details...
 · handbuch.pdf
 · vorlage.docx
 ablauf
+Zählung
+Zählung
+Satz Quebec zur Zählung.
+· Architektur
 image1.png
 image2.png
 image3.png
