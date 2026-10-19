@@ -123,8 +123,8 @@ def appJarCheck = tasks.register('appJarCheck') {
         def shots = new File(dir, 'screenshots')
         def log = run(['--config', config.absolutePath, '--screenshot', shots.absolutePath])
         def pngs = (shots.listFiles() ?: []).findAll { it.name.endsWith('.png') && it.length() > 0 }
-        if (pngs.size() != 7) {
-            throw new GradleException("Erwartet 7 Bildschirmfotos, gefunden ${pngs*.name}:\n${log}")
+        if (pngs.size() != 8) {
+            throw new GradleException("Erwartet 8 Bildschirmfotos, gefunden ${pngs*.name}:\n${log}")
         }
         if (log.contains('Exception')) {
             throw new GradleException("Ausnahme beim Rendern:\n${log}")

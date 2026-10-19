@@ -40,7 +40,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
         // Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
