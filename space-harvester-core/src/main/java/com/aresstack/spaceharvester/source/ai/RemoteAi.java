@@ -180,8 +180,9 @@ public final class RemoteAi {
     /**
      * Benennt Themenabschnitte der Dokumentnavigation mit dem Chat-Modell ({@code POST /chat/completions}, #181,
      * ADR 0020) über die unveränderte {@code ChatSectionLabeler} des Enterprise AI Client: dieselbe Anweisung, je 40
-     * Abschnitte eine Anfrage, höchstens 700 Zeichen je Abschnitt. Scheitert eine Anfrage, behält nur ihr Paket die
-     * Bezeichnungen der Analyse, und das Ergebnis ist unvollständig. Weder Text noch Antwort werden geloggt oder in
+     * Abschnitte eine Anfrage, höchstens 700 Zeichen je Abschnitt. Scheitert eine Anfrage, gehen die folgenden Pakete nicht
+     * mehr ans Netz; sie und das gescheiterte behalten die Bezeichnungen der Analyse, und das Ergebnis ist
+     * unvollständig. Weder Text noch Antwort werden geloggt oder in
      * eine Meldung übernommen.
      *
      * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
@@ -196,6 +197,10 @@ public final class RemoteAi {
         ChatCompletionPort port = new ChatCompletionPort() {
             @Override
             public ChatResponse complete(ChatRequest request) {
+                if (failed.get()) {
+                    // Nach dem ersten Fehler kein weiteres Paket ans Netz: jedes wartete sonst bis zur Frist.
+                    throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "Chat-Modell nicht erreichbar");
+                }
                 try {
                     return adapter.complete(request);
                 } catch (RuntimeException e) {
