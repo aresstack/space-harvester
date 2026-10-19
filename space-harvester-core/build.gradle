@@ -64,6 +64,8 @@ dependencies {
     testFixturesApi testFixtures(project(':enterprise-ai-sources'))
     testFixturesImplementation platform(libs.spring.boot.dependencies)
     testFixturesImplementation 'org.assertj:assertj-core'
+    // Paritäts-Repository der Git-Quelle (#193) mit derselben JGit-Fassung wie die Kopie
+    testFixturesImplementation libs.jgit
 }
 
 tasks.withType(JavaCompile).configureEach {

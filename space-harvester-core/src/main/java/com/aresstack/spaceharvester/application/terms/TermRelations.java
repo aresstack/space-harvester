@@ -126,7 +126,8 @@ public class TermRelations {
      * Ausgang eines Vorschlagslaufs.
      *
      * @param added      neue Vorschläge
-     * @param updated    bestehende Vorschläge und bestätigte Beziehungen dieser Herkunft mit neuen Belegen
+     * @param updated    bestehende Vorschläge und bestätigte Beziehungen dieser Herkunft mit geänderten Belegen;
+     *                   unverändert belegte zählen nirgends
      * @param withdrawn  unbestätigte Vorschläge, die der Lauf nicht mehr belegt
      * @param suppressed Vorschläge, die eine Ablehnung oder eine manuelle Beziehung unterdrückt
      * @param stale      bestätigte Beziehungen dieser Herkunft, die der Lauf nicht mehr belegt
@@ -380,6 +381,9 @@ public class TermRelations {
             } else if (current.status() == ReviewStatus.REJECTED || current.origin() != origin) {
                 // Benutzerentscheidungen und andere Herkunft haben Vorrang.
                 suppressed++;
+            } else if (current.evidence().equals(proposal.evidence()) && !current.evidenceStale()) {
+                // Unverändert belegt: kein Schreiben, keine Protokollzeile, so bleibt ein Lauf je Abgleich billig.
+                continue;
             } else {
                 TermRelation refreshed = current.proposedAgain(proposal.evidence(), generation);
                 put.put(id, refreshed);
@@ -405,7 +409,9 @@ public class TermRelations {
                 stale++;
             }
         }
-        store.write(put.values(), removed, audit);
+        if (!put.isEmpty() || !removed.isEmpty()) {
+            store.write(put.values(), removed, audit);
+        }
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
     }
 
