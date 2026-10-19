@@ -59,9 +59,10 @@ in den Enterprise AI Client (`astu/acropolis/…/passage/PassageSegmentation`, S
    Fenster; die Ladereihenfolge der Schlagwortsuche (`ExcerptPriority`) bewertet über Punkt 7 schon den Absatz.
    Reihenfolge nur umordnen, nie verwerfen, und Rechte (nur mit `content`) bleiben.
 10. **Stabile Passage-IDs** (EAC-Lücke 5, Kopie von `KnowledgePassageId`): Jeder Absatz trägt
-   `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`. `capture` ist der volle SHA-256 des angezeigten
-   Textes, `position` zählt ab 0, `zerlegung` und `modell` sind 8 Hex aus SHA-256 über `PassageSegmentation.fingerprint()`
-   und das Embedding-Modell (ohne Modell `structure`). Ändert sich Text, Zerlegung oder Modell, ändert sich die ID.
+   `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`. `capture` ist der volle SHA-256 der angezeigten
+   Fassung (Text und Gliederung, siehe Nachtrag), `position` zählt ab 0, `zerlegung` und `modell` sind 8 Hex aus
+   SHA-256 über `PassageSegmentation.fingerprint()` und das Embedding-Modell (ohne Modell `structure`). Ändert sich
+   Text, Gliederung, Zerlegung oder Modell, ändert sich die ID.
    Berechnet beim Lesen aus dem gespeicherten Ergebnis, ohne Schemaänderung. `PassageQueries.resolve` und
    `GET /api/v1/passages?id=` lösen sie wie `KnowledgeResourceReader` auf: gefunden mit je einem Nachbarn
    (`found`), sonst alle aktuellen Absätze mit `older-version` (andere Capture) oder `changed` (Zerlegung oder Modell
@@ -122,13 +123,15 @@ Kopie der Dokumentnavigation des Clients (FA-01 bis FA-05, `BuildDocumentNavigat
 Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
 
 - **Aufbau:** `<sourceId>:<pageId>@<capture>#p<position>@<zerlegung>-<modell>`, z. B.
-  `confluence:47110815@39950a2c…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 des angezeigten Textes,
-  `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
+  `confluence:47110815@aa2b0cb3…(64 Hex)#p0@1a796cb0-2c747974`. `capture` ist der volle SHA-256 der angezeigten
+  Fassung, `inputSha256` der Textprojektion über Schema, Gliederung und Text (anfangs nur der Text, siehe „Gewollt
+  anders“), `position` die Stelle des Absatzes im gespeicherten Ergebnis ab 0, `zerlegung` und `modell` je 8 Hex aus SHA-256
   über `PassageSegmentation.fingerprint()` und den Modellnamen (ohne Modell `versionTag("structure")`). Gelesen wird
   von hinten, die Quellen-ID endet am ersten `:`; Seiten-IDs dürfen `@`, `#`, `:` und `/` enthalten.
 - **Nachschlagen:** `GET /api/v1/passages?id=` antwortet wie `KnowledgeResourceReader` mit `match`:
-  `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: der Text hat sich geändert, es folgen
-  alle aktuellen Absätze), `changed` (gleicher Text, Zerlegung oder Modell gewechselt, alle aktuellen Absätze) und
+  `found` (der Absatz mit je einem Nachbarn), `older-version` (andere Capture: Text oder Gliederung haben sich
+  geändert, es folgen alle aktuellen Absätze), `changed` (gleiche Fassung, aber Zerlegung oder Modell gewechselt oder
+  die Position gibt es nicht, alle aktuellen Absätze) und
   zusätzlich `unavailable` (die Seite hat gerade keine Absätze; `state` sagt warum). Eine unbekannte Seite, eine
   unbekannte Quelle und eine Seite ohne `metadata`- oder `content`-Freigabe antworten gleich mit 404 `cache-miss`, nie
   403: Eine ID verrät nicht, ob es die Seite gibt. Keine Passage-ID (falsche Form) ist 400 `invalid-request`; die
@@ -142,11 +145,14 @@ Ergänzt Punkt 10; EAC-Lücke 5 ist damit im Core geschlossen.
   - semantische Treffer: `relevance.passageId` (bei `sort=relevance`) bzw. `passageId` der semantischen Variante,
     der Absatz, der das ähnlichste Stück ganz enthält.
 - **Keine ID** gibt es, wenn die Absätze der Seite nicht aus genau dem Text stammen, aus dem Auszug oder Stück stammen
-  (anderer `inputSha256`), wenn das Ergebnis keine Capture kennt (Format 1), wenn kein Absatz das Stück ganz enthält
-  (Stücke nach Zeichenlänge über eine Absatzgrenze) und wenn sich Absätze im Ergebnis überlappen: Ohne Text ist ein
-  kaputtes Ergebnis nur daran zu erkennen, und eine ID darf nie still auf einen anderen Absatz zeigen. Leseansicht
-  und Treffer zählen gleich (Stelle im Ergebnis), auch wenn die Leseansicht einen Absatz hinter dem Textende auslässt.
+  (anderer `inputSha256`), wenn kein Absatz das Stück ganz enthält (Stücke nach Zeichenlänge über eine Absatzgrenze)
+  und, nur an Treffern, wenn sich Absätze im Ergebnis überlappen: Ohne den Text ist ein kaputtes Ergebnis nur daran
+  zu erkennen, und eine ID darf nie still auf einen anderen Absatz zeigen. Leseansicht und Treffer zählen gleich
+  (Stelle im Ergebnis), auch wenn die Leseansicht einen Absatz hinter dem Textende auslässt. Eine Position gilt nur in
+  kanonischer Form (`#p7`, nie `#p007`).
 - **Gewollt anders als der Client** (siehe auch Punkt 10): Seite als `sourceId:pageId` statt Resource-ID;
+  Capture über Text und Gliederung statt nur über den Text, denn die Grenzen hängen an den Abschnitten (eine umgestufte
+  Überschrift bei gleichem Text schneidet neu, die alte ID darf dann nicht als `found` auf den neuen Schnitt zeigen);
   Modellteil aus dem Modellnamen statt aus dem Fingerabdruck des Embedding-Raums; Versionsteile aus dem gespeicherten
   Ergebnis; zusätzlicher Fall `unavailable`; ID im Parameter statt im Pfad; Themenabschnitte behalten `p<start>` als
   `id` und tragen die Passage-ID zusätzlich; unsichtbar und unbekannt antworten gleich.

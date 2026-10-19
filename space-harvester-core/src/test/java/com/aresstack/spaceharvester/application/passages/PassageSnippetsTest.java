@@ -54,6 +54,21 @@ class PassageSnippetsTest {
     }
 
     @Test
+    void aBrokenResultKeepsTheSnippetButNamesNoPassageId() {
+        // Ein Absatz hinter dem Textende überlappt den nächsten: Ohne ID kann der Treffer nie auf einen Absatz
+        // zeigen, den die Leseansicht anders zählt oder gar nicht zeigt.
+        Enrichment intact = semantic(PassageProcessorTest.TEXT);
+        stored.add(new Enrichment(KEY, PassageProcessor.ID, intact.processorVersion(), intact.inputSha256(), "1",
+                Enrichment.Status.OK, intact.payloadJson().replaceFirst("\"end\":\\d+", "\"end\":999999"),
+                List.of(), null, Instant.EPOCH));
+
+        assertThat(snippets.search("server nachts", Set.of("wiki"), null, 10)).singleElement().satisfies(match -> {
+            assertThat(match.snippet()).startsWith("Der Server startet um acht.");
+            assertThat(match.passageId()).isNull();
+        });
+    }
+
+    @Test
     void anAttachmentHitKeepsItsExcerptAndTheWrapperPassesAttachmentsOn() {
         stored.add(semantic(PassageProcessorTest.TEXT));
         index.attachmentId = "att-1";
