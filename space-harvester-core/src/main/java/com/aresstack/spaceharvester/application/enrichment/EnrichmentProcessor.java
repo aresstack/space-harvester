@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.enrichment;
 
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 
 /**
  * SPI eines deterministischen Prozessors. Gleiche Eingabe und gleiche Version ergeben dasselbe Ergebnis; ändert sich
@@ -21,10 +22,19 @@ public interface EnrichmentProcessor {
 
     /**
      * Wie {@link #process(PageText)}, mit der Seite, zu der der Text gehört; für Prozessoren, deren Verfahren von der
-     * Quelle abhängt (etwa nur freigegebene Quellen an den KI-Dienst, ADR 0011). {@link Enrichments} ruft diese Form.
+     * Quelle abhängt (etwa nur freigegebene Quellen an den KI-Dienst, ADR 0011). Standard von
+     * {@link #process(PageSnapshot, PageText)}.
      */
     default EnrichmentOutput process(PageKey key, PageText text) {
         return process(text);
+    }
+
+    /**
+     * Wie {@link #process(PageKey, PageText)}, mit dem ganzen Snapshot, etwa für den Titel der Seite.
+     * {@link Enrichments} ruft diese Form.
+     */
+    default EnrichmentOutput process(PageSnapshot snapshot, PageText text) {
+        return process(snapshot.key(), text);
     }
 
     /**
