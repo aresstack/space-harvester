@@ -70,3 +70,28 @@ Desktop und Server sollen dasselbe Modell benutzen, ohne dass der Core Spring ke
 - `ProxySettings.Authentication` vergleicht das Passwort als Array nach Identität; ein unverändertes Proxy-Passwort
   kann daher als Änderung gelten und Transporte unnötig neu bauen. Das ist harmlos und wird mit dem
   Transport-Beobachter bereinigt.
+
+## Nachtrag 19.10.2026: Netz-Umstellung zur Laufzeit (#424, #446)
+
+Proxy, PAC, TLS und Proxy-Anmeldung (`network.*`) wechseln ohne Neustart. `ConfiguredSourceCatalog.reconfigure`
+setzt Routen, Anmeldung und Vertrauen neu und öffnet alle Quellen neu. Für laufende Aufträge gilt Punkt 4 auch hier:
+
+- **Laufende Abrufe überleben die Umstellung.** Die alten Transporte schließen sanft (`closeGracefully`). Die Pools
+  verworfener Clients schließt `WebClientConfluenceTransport.retire` erst nach `pendingAcquireTimeout`
+  (`connectTimeout + readTimeout`). Ein sofortiges `disposeLater` beendete Anfragen, die noch auf eine Verbindung
+  warteten, mit `PoolShutdownException`. Nach Ablauf der Frist kann keine Anfrage mehr warten, laufende Verbindungen
+  enden nach ihrer Antwort. Eine Anfrage, die beim sanften Schließen noch ihre Route wählt, bekommt einen eigenen
+  Client, der danach ebenso zurückgezogen wird.
+- **`close()` bleibt hart.** Es schließt auch nach `closeGracefully()` sofort alle Pools, auch solche, die in `retire`
+  auf ihre Frist warten. Danach bekommt keine Anfrage mehr einen Client.
+- **Zielprüfung nur bei geänderten Einstellungen.** `reconfigure` öffnet die Quellen mit ihren unveränderten
+  Einstellungen neu und prüft sie nicht erneut gegen die übrigen Quellen. Sonst blieben Quellen mit demselben Ziel
+  (beim Start nur eine Warnung) mit altem Vertrauen und alten Routen stehen. Geänderte Quelleinstellungen prüft
+  `replace(config)` wie bisher.
+- **BASIC im HTTPS-Tunnel beim Start.** Das JDK liest `jdk.http.auth.tunneling.disabledSchemes` nur einmal. Server
+  und App rufen deshalb `ProxyAuthenticator.allowBasicTunneling()` vor allen Verbindungen auf. So gilt auch eine erst
+  zur Laufzeit eingerichtete Proxy-Anmeldung für `HttpURLConnection`. Eine schon gesetzte Property bleibt.
+- **Bewusst nicht aufgeräumt:** Jede Umstellung lässt die vorigen asynchronen Transporte der Quellen in
+  `AsyncSnapshotTransports` liegen, je Quelle ein Scheduler samt Evictor-Thread; ihre Pools sind schon verworfen.
+  Sie zu schließen bräche Aufträge, die die alte Quelleninstanz noch halten. Umstellungen sind selten und manuell,
+  und laufende Aufträge abzubrechen wöge schwerer als die liegen gebliebenen Threads.
