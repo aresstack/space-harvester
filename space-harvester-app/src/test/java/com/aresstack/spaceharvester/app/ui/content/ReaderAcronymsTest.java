@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.app.runtime.FollowUpJobs;
 import com.aresstack.spaceharvester.app.runtime.Workspace;
 import com.aresstack.spaceharvester.app.ui.AppContext;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.terms.TermKind;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
@@ -145,6 +146,19 @@ class ReaderAcronymsTest {
         assertThat(api.terms()).singleElement().satisfies(term -> {
             assertThat(term.expansions()).contains("Application Programming Interface");
         });
+
+        // Absätze (#354): ohne Embedding-Modell die strukturelle Rückfallebene des Core, Klick markiert den Absatz
+        assertThat(shown.passages().state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(onEdt(() -> panel.passages().titles())).hasSize(shown.passages().passages().size()).isNotEmpty();
+        assertThat(onEdt(() -> panel.passages().mode())).isEqualTo(PassagesTab.STRUCTURAL);
+        PagePassages.Passage first = shown.passages().passages().get(0);
+        onEdt(() -> {
+            panel.reader().setCaretPosition(0);
+            panel.passages().click(0);
+            return null;
+        });
+        assertThat(onEdt(() -> panel.reader().getSelectionStart())).isEqualTo(first.start());
+        assertThat(onEdt(() -> panel.reader().getSelectionEnd())).isEqualTo(first.end());
 
         // Gleiche Seiten-ID, gleiches Akronym, andere Quelle: eigene Ausschreibung, nichts aus „wiki“
         ReaderDocument foreign = open(panel, "zweites", "200", false);
