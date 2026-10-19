@@ -26,6 +26,7 @@ import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -75,6 +76,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class CoreParityTest {
 
+    /** Obergrenze für das Warten auf Hintergrundarbeit; nur gegen Hänger, das Ergebnis hängt nicht an ihr. */
+    private static final Duration WAIT = Duration.ofSeconds(120);
     private static final String[] FORMATS = {"docx", "pdf", "markdown"};
 
     private static FakeConfluenceServer server;
@@ -216,18 +219,13 @@ class CoreParityTest {
                 CORE_SEARCH.put("search." + query[0] + ".snippet", found.isEmpty() ? "-" : snippets ? "ja" : "nein");
             }
 
-            harvester.keywordSearch().search(harvester.caller(),
+            KeywordSearch.Results live = harvester.keywordSearch().search(harvester.caller(),
                     new KeywordSearch.Query(ParityConfluence.LIVE_SEARCH, "wiki", Set.of(), Set.of()), null, 10);
-            Instant deadline = Instant.now().plusSeconds(30);
-            while (!cachedPages(harvester).containsAll(List.of(ParityConfluence.LIVE_HITS))
-                    && Instant.now().isBefore(deadline)) {
-                Thread.sleep(50);
-            }
-            Set<String> cached = cachedPages(harvester);
+            Set<String> cached = awaitPrefetch(harvester, live);
             for (String page : ParityConfluence.LIVE_HITS) {
                 CORE_SEARCH.put("prefetch." + page, cached.contains(page) ? "ja" : "nein");
             }
-            searchRun(harvester);
+            searchRun(harvester, live);
         }
     }
 
@@ -559,21 +557,45 @@ class CoreParityTest {
      * Suchlauf-Protokoll (#182) wie {@code EacParityExport.searchRun}: der Lauf der Live-Suche in Confluence aus
      * {@code Harvester.searchRuns()}; Suchtext, gefragte und ausgefallene Quellen, geprüfte Funde der Quellen.
      */
-    private static void searchRun(Harvester harvester) {
-        SearchRun run = harvester.searchRuns().recent(harvester.caller(), 50).stream()
-                .filter(candidate -> candidate.kind() == SearchRun.Kind.KEYWORD
-                        && ParityConfluence.LIVE_SEARCH.equals(candidate.query())
-                        && candidate.sources().stream().anyMatch(source -> source.sourceId().equals("wiki")))
-                .findFirst().orElse(null);
-        if (run == null) {
-            return;
-        }
+    private static void searchRun(Harvester harvester, KeywordSearch.Results live) {
+        // Der Lauf genau dieser Suche, nicht irgendeiner aus der Liste der jüngsten.
+        assertThat(live.searchRun()).as("Suchlauf der Live-Suche").isNotNull();
+        SearchRun run = harvester.searchRuns().find(harvester.caller(), live.searchRun())
+                .map(SearchRuns.View::run)
+                .orElseThrow(() -> new AssertionError("Suchlauf " + live.searchRun() + " nicht gespeichert"));
         CORE_RUNS.put("run.live.query", run.query());
         CORE_RUNS.put("run.live.sources", String.valueOf(run.sources().size()));
         CORE_RUNS.put("run.live.failures", String.valueOf(run.sources().stream()
                 .filter(source -> source.status() == SearchRun.SourceOutcome.Status.UNAVAILABLE).count()));
         run.count(SearchRun.Stage.DISCOVERED).ifPresent(count ->
                 CORE_RUNS.put("run.live.candidates", String.valueOf(count)));
+    }
+
+    /**
+     * Wartet, bis das Vorladen der Live-Suche fertig ist (geladen, gescheitert oder abgebrochen), und liefert die
+     * Seiten des Space im Cache. Fertig heißt hier der Stand des Stapels, nicht eine feste Frist: Unter Last dauert das
+     * Laden länger, das Ergebnis darf sich dadurch nicht ändern (ein „nein“ nach Fristablauf war eine Scheinlücke).
+     */
+    private static Set<String> awaitPrefetch(Harvester harvester, KeywordSearch.Results live)
+            throws InterruptedException {
+        Instant deadline = Instant.now().plus(WAIT);
+        KeywordSearch.Progress progress = live.progress();
+        while (progress != null && !progress.done()) {
+            if (Instant.now().isAfter(deadline)) {
+                throw new AssertionError("Vorladen der Live-Suche nach " + WAIT.toSeconds() + " s nicht fertig: "
+                        + progress);
+            }
+            Thread.sleep(50);
+            progress = harvester.keywordSearch().progress(progress.id()).orElse(null);
+        }
+        // Geladen heißt abgelegt; die Seitenliste des Caches folgt im selben Schritt, kurz nachsehen genügt.
+        Set<String> cached = cachedPages(harvester);
+        while (!cached.containsAll(List.of(ParityConfluence.LIVE_HITS)) && Instant.now().isBefore(deadline)
+                && (progress == null || progress.failed() == 0)) {
+            Thread.sleep(50);
+            cached = cachedPages(harvester);
+        }
+        return cached;
     }
 
     private static Set<String> cachedPages(Harvester harvester) {
@@ -587,16 +609,26 @@ class CoreParityTest {
         }
     }
 
+    /**
+     * Wartet, bis die Anreicherung nach dem Abgleich eingeplant ist und alle Folgeaufträge ({@link JobType#followUp()})
+     * beendet sind, wie {@code FollowUpJobs.awaitEnrichments} der App.
+     */
     private static void awaitEnrichments(Harvester harvester) throws InterruptedException {
-        Instant deadline = Instant.now().plusSeconds(60);
+        Instant deadline = Instant.now().plus(WAIT);
         while (Instant.now().isBefore(deadline)) {
-            var enrichments = harvester.jobs().list(Harvester.OWNER, JobType.ENRICHMENT);
-            if (!enrichments.isEmpty() && enrichments.stream().allMatch(job -> job.finishedAt() != null)) {
+            List<JobStatus> followUps = new ArrayList<>();
+            for (JobType type : JobType.values()) {
+                if (type.followUp()) {
+                    followUps.addAll(harvester.jobs().list(Harvester.OWNER, type));
+                }
+            }
+            if (followUps.stream().anyMatch(job -> job.type() == JobType.ENRICHMENT)
+                    && followUps.stream().allMatch(job -> job.finishedAt() != null)) {
                 return;
             }
             Thread.sleep(50);
         }
-        throw new AssertionError("Anreicherung läuft nach 60 s noch");
+        throw new AssertionError("Anreicherung läuft nach " + WAIT.toSeconds() + " s noch");
     }
 
     /**
