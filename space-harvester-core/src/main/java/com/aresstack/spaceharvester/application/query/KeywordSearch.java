@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
+import com.aresstack.spaceharvester.application.acquisition.FindingCatalog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
@@ -78,6 +79,10 @@ import java.util.regex.Pattern;
  * {@link SourceState.Status#INDEXED} darin, ohne Cache als {@link SourceState.Status#NOT_SUPPORTED}. Ohne Cache
  * ({@code texts == null}) liefert die Suche die geprüften Treffer der Quellen selbst.
  *
+ * <p>Die Funde jedes Stapels gehen außerdem an den {@link FindingCatalog} (ADR 0016): Was noch nicht im Katalog steht,
+ * kommt dort im Hintergrund als Kopfdaten hinein, damit die Hintergrundfüllung es lädt; nur für technische Aufrufer,
+ * nie für Endnutzer.
+ *
  * <p>Nur Schlagworte, nie Embeddings; die semantische Suche (nur mit Haken) ist
  * {@link com.aresstack.spaceharvester.application.ranking.RelevanceSearch}.
  *
@@ -128,6 +133,7 @@ public class KeywordSearch {
     private final ExcerptPriority excerpts;
     private final CandidateSelectionStrategy selection;
     private final SearchRunLog runs;
+    private final FindingCatalog findings;
 
     public KeywordSearch(SourceCatalog catalog, AccessGuard access) {
         this(catalog, access, null, null);
@@ -188,6 +194,18 @@ public class KeywordSearch {
     public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
                          int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
                          SearchRunLog runs) {
+        this(catalog, access, texts, prefetch, maxQueries, excerpts, selection, runs, FindingCatalog.NONE);
+    }
+
+    /**
+     * @param runs     Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE}
+     * @param findings nimmt die Funde jedes Stapels zum Katalogisieren als Kopfdaten (ADR 0016), ohne die Suche
+     *                 aufzuhalten; {@link FindingCatalog#NONE} katalogisiert nichts
+     */
+    public KeywordSearch(SourceCatalog catalog, AccessGuard access, PageTextIndex texts, Prefetch prefetch,
+                         int maxQueries, ExcerptPriority excerpts, CandidateSelectionStrategy selection,
+                         SearchRunLog runs, FindingCatalog findings) {
+        this.findings = Objects.requireNonNull(findings, "findings");
         this.selection = Objects.requireNonNull(selection, "selection");
         this.runs = Objects.requireNonNull(runs, "runs");
         this.catalog = Objects.requireNonNull(catalog, "catalog");
@@ -474,6 +492,8 @@ public class KeywordSearch {
             }
         }
 
+        catalogFindings(caller, pending);
+
         Map<String, Integer> next = new LinkedHashMap<>();
         for (String sourceId : pending.keySet()) {
             int used = taken.get(sourceId);
@@ -603,6 +623,22 @@ public class KeywordSearch {
                 .filter(hit -> !fromIndex.contains(new PageKey(hit.sourceId(), hit.pageId()))).toList();
         return new Results(scope.sourceId(), checked.hits(), states, nextCursor, checkedAll && exhausted, loading,
                 provisional, progress);
+    }
+
+    /**
+     * Bietet die Funde dieses Stapels zum Katalogisieren als Kopfdaten an (ADR 0016). Das reiht nur ein; ob ein Fund in
+     * den Katalog kommt, entscheiden Aufrufer und Richtlinie dort. Ein Fehler lässt die Suche nie scheitern.
+     */
+    private void catalogFindings(AccessContext caller, Map<String, List<SourceSearchMatch>> found) {
+        found.forEach((sourceId, matches) -> {
+            try {
+                findings.offer(caller, sourceId, matches.stream()
+                        .map(match -> new FindingCatalog.Finding(match.pageId(), match.version())).toList());
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.INFO, "Funde aus {0} nicht katalogisiert ({1})", sourceId,
+                        e.getClass().getName());
+            }
+        });
     }
 
     /** Was jetzt lädt, nach der Strategie; scheitert sie, lädt nichts, die Funde bleiben vorläufig. */

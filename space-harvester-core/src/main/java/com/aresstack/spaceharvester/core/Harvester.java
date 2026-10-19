@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationListe
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
+import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -101,6 +102,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -135,6 +137,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -339,7 +342,18 @@ public final class Harvester implements AutoCloseable {
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
-            this.navigation = new PageNavigation(catalog, reader, access);
+            // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
+            // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
+            AtomicReference<BackgroundFill> filling = new AtomicReference<>();
+            FindingCataloging findings = new FindingCataloging(catalog, access, new LuceneFindingStore(cache),
+                    gaps -> {
+                        BackgroundFill fill = filling.get();
+                        if (fill != null) {
+                            fill.offer(gaps);
+                        }
+                    }, clock);
+            opened.add(findings);
+            this.navigation = new PageNavigation(catalog, reader, access, findings);
             this.search = new PageSearch(catalog, index, access);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
@@ -394,7 +408,7 @@ public final class Harvester implements AutoCloseable {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
-                    excerpts, builder.selection(), runLog);
+                    excerpts, builder.selection(), runLog, findings);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -471,6 +485,7 @@ public final class Harvester implements AutoCloseable {
                         fillFollows ? settings.sync().backgroundFillAnywhere() : builder.backgroundFill);
                 opened.add(fill);
                 this.backgroundFill = fill;
+                filling.set(fill);
             } else {
                 this.backgroundFill = null;
             }
