@@ -171,6 +171,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
+| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
 ### Regeln je Quelle
 

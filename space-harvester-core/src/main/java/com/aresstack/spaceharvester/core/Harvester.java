@@ -90,6 +90,8 @@ import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
+import com.aresstack.spaceharvester.application.terms.TermRelations;
+import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -98,6 +100,7 @@ import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
@@ -209,6 +212,8 @@ public final class Harvester implements AutoCloseable {
     private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
+    private final TermRelations termRelations;
+    private final AcronymRelationRule acronymRelationRule;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
@@ -345,6 +350,11 @@ public final class Harvester implements AutoCloseable {
             // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
             this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
                     new TermProcessor().version());
+            this.termRelations = new TermRelations(catalog,
+                    new FileTermRelationStore(builder.dataDirectory.resolve("term-relations")), access,
+                    cache::findHeader, clock);
+            this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
+                    termRelations, new TermProcessor().version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -767,6 +777,19 @@ public final class Harvester implements AutoCloseable {
      */
     public TermQueries terms() {
         return terms;
+    }
+
+    /**
+     * Begriffsbeziehungen (#120, ADR 0019 Punkt 5): Abkürzung, Synonym, Schreibvariante, fachlich verwandt, mit
+     * Herkunft, Prüfstatus und Sperren. Liegen unter {@code <dataDirectory>/term-relations}, außerhalb des Caches.
+     */
+    public TermRelations termRelations() {
+        return termRelations;
+    }
+
+    /** Regelvorschläge aus den Akronym-Ausschreibungen des Begriffsindex, je Quelle ({@code sync}). */
+    public AcronymRelationRule acronymRelationRule() {
+        return acronymRelationRule;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */

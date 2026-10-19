@@ -1,12 +1,14 @@
 # ADR 0019: Begriffsindex und Begriffsbeziehungen
 
-- Status: **Angenommen, Begriffsindex umgesetzt** (Strang B, 19.10.2026; Festlegung von Angelo, 19.10. 00:33).
+- Status: **Angenommen, Begriffsindex und Beziehungen umgesetzt** (Strang B, 19.10.2026; Festlegung von Angelo, 19.10. 00:33).
   Ergänzt [ADR 0003](0003-lucene-cache.md) (Lucene-Cache) und [ADR 0014](0014-abgleich-berechtigung-suche-getrennt.md)
   Punkt 4 (Rechte je Seite).
 - Umgesetzt (#119): Prozessor `terms`, Begriffsdokumente in `LuceneEnrichmentStore`, `TermQueries`
   (`harvester.terms()`), `PageTerms.read` für die Leseansicht, REST `GET /api/v1/terms`,
   `GET /api/v1/terms/occurrences`, `GET /api/v1/terms/snippet`.
-- Geplant (#120): Begriffsbeziehungen als Dateien außerhalb des Cache-Verzeichnisses, Punkt 5.
+- Umgesetzt (#120): `TermRelations` (`harvester.termRelations()`), `FileTermRelationStore` unter
+  `<dataDirectory>/term-relations` (Server: `space-harvester.term-relations.directory`), REST
+  `/api/v1/term-relations` (Punkt 5 und 7).
 - Bezüge: #119, #120, #122, #336, #339 (Oberfläche, Strang L); `AcronymProcessor`, `EntityProcessor`, `PageAcronyms`.
 
 ## Kontext
@@ -64,6 +66,23 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 6. **Leseansicht und globale Sicht teilen den Datensatz.** `PageTerms.read(key, views, text)` liest dasselbe
    `terms`-Ergebnis für genau den angezeigten Text wie `PageAcronyms.read` und meldet `CURRENT`, `STALE`, `FAILED`
    oder `MISSING`. Positionen der globalen Fundstellen und der Leseansicht sind dieselben.
+7. **Regeln der Beziehungen (#120).** Arten: `abbreviation` (gerichtet, Kurzform → Langform), `synonym`, `variant`
+   (Schreibvariante), `related` (fachlich verwandt). Identität ist der Schlüssel aus normalisierten Endpunkten, Art und
+   Geltungsbereich (global, Quelle oder Space); ungerichtete Arten ohne Reihenfolge. Eine Sperre gilt genau für
+   diesen Schlüssel, nie für andere Bedeutungen derselben Abkürzung.
+   - Manuell angelegt heißt `MANUAL` und `CONFIRMED`; Bestätigen ändert nur den Status, nie die Herkunft.
+   - Ablehnen ist dauerhaft; Entfernen eines automatischen Eintrags lehnt ihn ab, damit der nächste Lauf ihn nicht
+     wiederbringt; nur manuelle verschwinden ganz. Wiederherstellen macht aus der Sperre wieder einen Vorschlag
+     (automatisch) oder eine bestätigte Beziehung (manuell). Jede Änderung trägt eine Revision; eine veraltete
+     Revision ergibt 409.
+   - Ein Vorschlagslauf (`propose`, für #122 und #336) gleicht in einem Schritt ab: neue Schlüssel werden
+     `PROPOSED`, eigene Vorschläge bekommen neue Belege, abgelehnte und fremde Schlüssel bleiben unberührt, eigene
+     unbestätigte, die er nicht mehr nennt, entfallen, eigene bestätigte werden nur als `evidenceStale` markiert.
+   - Lesen: Quelle oder Space braucht `metadata`; Belege zählen nur von Seiten mit Inhaltsrecht; ein automatischer
+     Vorschlag ohne lesbaren Beleg ist verborgen, weil er aus deren Inhalt stammt. Ändern braucht `sync` auf den
+     Geltungsbereich, global auf jede Quelle. Verborgenes gilt als unbekannt (404).
+   - Suche darf über bestätigte Beziehungen außer `related` ausweiten (`expansions`), nie transitiv; ob die Suche das
+     nutzt, entscheidet ADR 0013/0017.
 
 ## Grenzen
 

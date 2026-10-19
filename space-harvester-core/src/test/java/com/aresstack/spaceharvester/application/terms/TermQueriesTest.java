@@ -250,7 +250,7 @@ class TermQueriesTest {
                 : AccessDecision.ALLOW;
         TermQueries limited = new TermQueries(catalog, store, new AccessGuard(noB),
                 key -> Optional.ofNullable(cache.get(key)).map(PageSnapshot::header),
-                key -> Optional.ofNullable(cache.get(key)), PLAIN, "1");
+                key -> Optional.ofNullable(cache.get(key)), PLAIN, new TermProcessor().version());
 
         assertThatThrownBy(() -> limited.terms(CALLER, new TermQueries.TermSearch("wiki-b", null, null, null, false,
                 10, null))).isInstanceOf(AccessDeniedException.class);
