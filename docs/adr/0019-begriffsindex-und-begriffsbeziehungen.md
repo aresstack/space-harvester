@@ -99,8 +99,9 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
    - Modell über den Port `AcronymExpansionModel`, umgesetzt mit `ChatAcronymExpansionModel` über
      `RemoteAi.acronymExpansions()` (Chat-Modell der wirksamen Konfiguration, eigene Frist 90 s). Version =
      Verfahren, Modell und Fingerabdruck der `base-url`, nie die Adresse. Ohne Modell `ai-unavailable` (503), ohne
-     Freigabe der Quelle in `external-processing-sources` `external-processing-not-allowed` (409); die Freigabe wird
-     vor jeder Anfrage erneut geprüft.
+     Freigabe der Quelle in `external-processing-sources` `external-processing-not-allowed` (409). Die Freigabe gilt
+     bei Ausführung, nicht beim Einreihen: Sie wird vor jeder Anfrage erneut geprüft, und fällt sie oder das Modell
+     während des Laufs weg, scheitert der Auftrag mit `ai-unavailable` ohne Abgleich (#425).
    - Die Antwort ist nicht vertrauenswürdig: Eine Ausschreibung zählt nur, wenn sie wörtlich in einer der genannten
      Fundstellen dieses Akronyms steht; Länge, Zeichen und Anzahl je Akronym sind begrenzt. Verschiedene Bedeutungen
      sind getrennte Vorschläge. Ergebnis nur `ai`/`proposed` über `propose`; Regel-, manuelle und bestätigte
@@ -110,7 +111,11 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
    - Ergebnis-Cache `ai-cache.json` neben der Beziehungsablage (Schema `term-relations-ai-cache/v1`): je Akronym ein
      SHA-256 über Verfahren, Modellversion, Akronym und Lage samt Texthash der Fundstellen, dazu nur die Kennungen der
      Beziehungen aus der Antwort. Ein unveränderter Stand geht nicht noch einmal an das Modell. Keine Begriffe, kein
-     Text, keine Antworten; unlesbar beginnt er leer. Geschrieben erst nach dem Abgleich.
+     Text, keine Antworten. Geschrieben erst nach dem Abgleich, atomar ersetzt (#430).
+   - Eine kaputte, unlesbare oder fremde Cache-Datei (anderes Schema, unerwartete Werte) wird verworfen: Der Start
+     scheitert nicht, der Cache beginnt leer, der nächste Lauf fragt das Modell und schreibt die Datei neu. Ins Log
+     kommt nur die Ausnahmeklasse. Ein neues Verfahren (`PROMPT_VERSION`) oder Modell ändert jeden Fingerabdruck und
+     macht alte Einträge damit wirkungslos.
 
 ## Grenzen
 
