@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.application.query.progressive;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.Map;
 import java.util.Objects;
@@ -21,6 +22,15 @@ public interface VariantSearch {
     KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit);
 
     /**
+     * Wie {@link #search(AccessContext, KeywordSearch.Query, int)} als Teil des Laufs {@code partOf} im
+     * Suchlauf-Protokoll (#182); ohne Protokoll dasselbe.
+     */
+    default KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit,
+                                         SearchRunId partOf) {
+        return search(caller, query, limit);
+    }
+
+    /**
      * Die Suchanfrage {@code variant} einer Suche nach {@code original}. Ohne eigene Bewertung wie
      * {@link #search}; der Orchestrator bewertet dann mit dem {@link HitScorer}.
      *
@@ -28,6 +38,17 @@ public interface VariantSearch {
      */
     default Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
         return new Outcome(search(caller, variant, limit), Map.of());
+    }
+
+    /**
+     * Wie {@link #run(AccessContext, KeywordSearch.Query, String, int)} als Teil des Laufs {@code partOf} im
+     * Suchlauf-Protokoll (#182); so ruft der Orchestrator jede Suchanfrage auf. Ohne eigene Umsetzung ohne Zuordnung.
+     *
+     * @param partOf der Lauf der progressiven Suche oder {@code null}
+     */
+    default Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit,
+                        SearchRunId partOf) {
+        return run(caller, variant, original, limit);
     }
 
     /**
@@ -66,6 +87,18 @@ public interface VariantSearch {
             @Override
             public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
                 return keywords.search(caller, query, null, limit);
+            }
+
+            @Override
+            public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit,
+                                                SearchRunId partOf) {
+                return keywords.search(caller, query, null, limit, partOf);
+            }
+
+            @Override
+            public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit,
+                               SearchRunId partOf) {
+                return new Outcome(search(caller, variant, limit, partOf), Map.of());
             }
 
             @Override

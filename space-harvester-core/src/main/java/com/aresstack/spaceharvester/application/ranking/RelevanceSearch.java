@@ -18,6 +18,9 @@ import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchScope;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -25,6 +28,8 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -88,6 +93,10 @@ import java.util.concurrent.Semaphore;
  * Quelle eine neuere Version, wird die Seite über {@link Renewal} nachgeladen und abgelegt, ihr Vektor neu berechnet,
  * und der Treffer heißt bis dahin {@link Freshness#STALE}. Ist ein Kandidat nicht prüfbar, fehlt er, und das Ergebnis
  * ist unvollständig. Der Index bleibt gemeinsam für alle Benutzer.
+ *
+ * <p>Jede Suche ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182) mit Anfrage, Quellen des Umfangs,
+ * ausgelieferten Treffern und noch nicht vorbereiteten Seiten; die Schlagwortsuche der Vorbereitung ist ein Teillauf.
+ * Kandidaten aus der Vektorsuche zählen nicht, weil sie vor der Live-Prüfung ungeprüft sind.
  */
 public class RelevanceSearch {
 
@@ -118,6 +127,7 @@ public class RelevanceSearch {
     private final SearchReranker reranker;
     private final PageTextIndex texts;
     private final Preparation preparation;
+    private final SearchRunLog runs;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -176,6 +186,16 @@ public class RelevanceSearch {
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts, Preparation preparation) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts, preparation,
+                SearchRunLog.NONE);
+    }
+
+    /** @param runs Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE} */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts, Preparation preparation,
+                           SearchRunLog runs) {
+        this.runs = Objects.requireNonNull(runs, "runs");
         this.preparation = preparation;
         this.texts = texts;
         this.renewal = renewal;
@@ -227,6 +247,17 @@ public class RelevanceSearch {
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
                                    Set<String> excludedSpaceKeys, int limit) {
+        return search(caller, query, text, discovery, excludedSpaceKeys, limit, null);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, String, Set, int)} als Teil des Laufs {@code partOf}
+     * im Suchlauf-Protokoll (#182), etwa eine Suchanfrage der semantischen progressiven Suche.
+     *
+     * @param partOf der übergeordnete Lauf oder {@code null}
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   Set<String> excludedSpaceKeys, int limit, SearchRunId partOf) {
         Set<String> excluded = Set.copyOf(excludedSpaceKeys);
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
@@ -248,10 +279,15 @@ public class RelevanceSearch {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+        Instant startedAt = Instant.now();
+        long started = System.nanoTime();
+        SearchRunId runId = runs == SearchRunLog.NONE ? null : SearchRunId.random();
         int preparing = 0;
+        boolean prepared = false;
         if (preparation != null) {
             try {
-                preparing = preparation.prepare(caller, query, findText, excluded);
+                preparing = preparation.prepare(caller, query, findText, excluded, runId);
+                prepared = true;
             } catch (RuntimeException e) {
                 // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
                 LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",
@@ -262,7 +298,8 @@ public class RelevanceSearch {
         SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
-            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0);
+            return recorded(new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0),
+                    runId, partOf, caller, queryText, scope, startedAt, started, prepared ? preparing : -1);
         }
 
         // Ein Modell für den ganzen Vorgang (ADR 0015): Anfragevektor und gesuchte Vektoren passen zusammen.
@@ -319,7 +356,31 @@ public class RelevanceSearch {
             hits = reranked.stream().map(byHit::get).toList();
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
-        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0);
+        return recorded(new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0),
+                runId, partOf, caller, queryText, scope, startedAt, started, prepared ? preparing : -1);
+    }
+
+    /**
+     * Legt den Lauf im Suchlauf-Protokoll ab; nur ausgelieferte, also geprüfte Treffer zählen.
+     *
+     * @param pending Seiten der Vorbereitung ohne aktuelles Embedding oder {@code -1}, wenn nicht bekannt
+     */
+    private RelevanceResults recorded(RelevanceResults results, SearchRunId id, SearchRunId partOf,
+                                      AccessContext caller, String text, SearchScope scope, Instant startedAt,
+                                      long started, int pending) {
+        if (id == null) {
+            return results;
+        }
+        List<SearchRun.StageCount> stages = new ArrayList<>();
+        if (pending >= 0) {
+            stages.add(new SearchRun.StageCount(SearchRun.Stage.PENDING, pending));
+        }
+        stages.add(new SearchRun.StageCount(SearchRun.Stage.DELIVERED, results.hits().size()));
+        boolean recorded = SearchRunLog.recordQuietly(runs, new SearchRun(id, partOf, SearchRun.Kind.RELEVANCE,
+                SearchRun.ownerOf(caller), text, startedAt, Duration.ofNanos(System.nanoTime() - started),
+                scope.sourceIds().stream().sorted().map(sourceId -> new SearchRun.SourceOutcome(sourceId,
+                        SearchRun.SourceOutcome.Status.INDEXED, null)).toList(), stages, results.complete(), null));
+        return recorded ? results.withSearchRun(id.value()) : results;
     }
 
     /**
@@ -517,6 +578,17 @@ public class RelevanceSearch {
         default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys) {
             return prepare(caller, query, text);
         }
+
+        /**
+         * Wie {@link #prepare(AccessContext, PageSearchQuery, String, Set)} als Teil des Laufs {@code partOf} im
+         * Suchlauf-Protokoll (#182).
+         *
+         * @param partOf der Lauf der semantischen Suche oder {@code null}
+         */
+        default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                            SearchRunId partOf) {
+            return prepare(caller, query, text, excludedSpaceKeys);
+        }
     }
 
     @FunctionalInterface
@@ -698,12 +770,23 @@ public class RelevanceSearch {
      * @param reranker Kennung des Rerankers, {@code none} ohne Modell
      * @param complete {@code false}, wenn die Kopfdaten eines Kandidaten bei der Quelle nicht lesbar waren; er fehlt
      *                 dann, weil ungeprüft nichts ausgeliefert wird
+     * @param searchRun Kennung des Laufs im Suchlauf-Protokoll (#182) oder {@code null}, wenn nicht protokolliert
      */
     public record RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits,
-                                   boolean complete) {
+                                   boolean complete, String searchRun) {
 
         public RelevanceResults {
             hits = List.copyOf(hits);
+        }
+
+        public RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits,
+                                boolean complete) {
+            this(sourceId, index, reranker, hits, complete, null);
+        }
+
+        /** Dieselben Treffer mit der Kennung ihres Laufs im Suchlauf-Protokoll. */
+        public RelevanceResults withSearchRun(String id) {
+            return new RelevanceResults(sourceId, index, reranker, hits, complete, id);
         }
 
         /** Ob die Treffer aus allen freigegebenen Quellen stammen. */
