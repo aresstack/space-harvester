@@ -78,9 +78,9 @@ und `space-harvester.network.*`.
   das Vision-Modell (`ai.vision-model`, ADR 0021) für die nächste Bildbeschreibung, auch erstmals eingeschaltet (ein
   Wechsel macht vorhandene Bildanalysen veraltet), der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
   einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf, `search.prefetch-hits` für den nächsten Stapel der
-  Schlagwortsuche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live
-  oder schaltet ab, wenn beim Start eines eingestellt war; **Embeddings erstmals einschalten braucht einen Neustart**
-  (die Kette entsteht nur mit `ai.embedding-model` beim Start). Noch nicht live im Server: Bestandsinventur-Zeitplan,
+  Schlagwortsuche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
+  schaltet ab und lässt sich auch erstmals einschalten, ohne Neustart: Die Kette (Prozessor, Hintergrund,
+  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Noch nicht live im Server: Bestandsinventur-Zeitplan,
   `before-search` und `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Suchlauf-Protokoll und Fakten (#182)

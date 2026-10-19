@@ -35,16 +35,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Embeddings über den externen KI-Dienst (ADR 0011). Ohne {@code space-harvester.ai.embedding-model} gibt es keinen
- * Embedding-Prozessor, und {@code sort=relevance} antwortet mit {@code semantic-search-unavailable}. Mit ihm müssen
- * {@code base-url} und {@code embedding-dimensions} gesetzt sein, sonst startet der Dienst nicht. Eingebettet wird im
+ * Embeddings über den externen KI-Dienst (ADR 0011). Ohne {@code space-harvester.ai.embedding-model} bettet der
+ * Embedding-Prozessor nichts ein, und {@code sort=relevance} antwortet mit {@code semantic-search-unavailable}. Mit ihm
+ * müssen {@code base-url} und {@code embedding-dimensions} gesetzt sein, sonst startet der Dienst nicht. Eingebettet wird im
  * begrenzten Hintergrund der Anreicherungen und nur für Quellen aus {@code external-processing-sources}; die Freigabe je
  * Quelle, Embedding- und Rerank-Modell folgen der Konfiguration zur Laufzeit ({@link LiveConfiguration}).
  */
@@ -60,16 +59,15 @@ class AiConfiguration {
     /**
      * Das Embedding-Modell wechselt mit der Konfiguration ({@code ai.embedding-model}, {@code embedding-dimensions},
      * {@code base-url}, ADR 0015); ohne Modell bettet der Prozessor nichts ein und {@code sort=relevance} antwortet mit
-     * {@code semantic-search-unavailable}. Die Kette (Prozessor, Hintergrund) entsteht nur, wenn beim Start ein Modell
-     * eingestellt ist: Embeddings erstmals einschalten wirkt erst nach einem Neustart.
+     * {@code semantic-search-unavailable}. Die Kette (Prozessor, Hintergrund) steht immer, wie in der Bibliothek mit
+     * {@code Harvester.builder().configuration(...)}: Embeddings lassen sich ohne Neustart erstmals einschalten.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     EmbeddingProcessor embeddingProcessor(AiServiceSettings settings, AiProperties properties,
                                           ConfiguredSourceCatalog catalog, TrustBundles trust,
                                           ObjectProvider<BuildProperties> build, LiveConfiguration live,
                                           ObjectProvider<SentenceSegmenter> sentences) {
-        if (!settings.embeddings()) {
+        if (properties.embeddingModel() != null && !settings.embeddings()) {
             throw new IllegalStateException("space-harvester.ai.embedding-model braucht base-url und "
                     + "embedding-dimensions");
         }
@@ -211,14 +209,12 @@ class AiConfiguration {
 
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
     @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ExecutorService relevanceRenewals() {
         return Enrichments.background(100);
     }
 
     /** Hintergrund der Anreicherungen, die über das Netz rechnen. */
     @Bean(destroyMethod = "shutdownNow")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ExecutorService enrichmentBackground() {
         return Enrichments.background(1000);
     }
@@ -230,7 +226,6 @@ class AiConfiguration {
      * Embedding-Modells, weil {@code covers} die Freigabe so fragt, wie das Modell sie sieht.
      */
     @Bean(destroyMethod = "close")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     ReleaseRecomputation releaseRecomputation(Enrichments enrichments, EmbeddingProcessor embedding,
                                               ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
         LucenePageCache pages = cache.getIfAvailable();
@@ -247,7 +242,6 @@ class AiConfiguration {
      * ohne den Start aufzuhalten.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
     org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
             releaseReconciliationOnStart(ReleaseRecomputation recomputation, EmbeddingProcessor embedding,
                                          ConfiguredSourceCatalog catalog) {
