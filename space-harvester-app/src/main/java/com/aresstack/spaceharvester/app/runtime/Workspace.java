@@ -31,6 +31,7 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearch;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveSearchListener;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.terms.ReviewStatus;
@@ -235,6 +236,18 @@ public final class Workspace {
     /** Seitenbaum aus dem Cache ({@code …/spaces/{key}/tree}). */
     public SpaceTree tree(String sourceId, String spaceKey) {
         return harvester.pages().tree(caller, sourceId, spaceKey);
+    }
+
+    /**
+     * Lesetext einer gelieferten Seite wie in Anreicherung und Index des Core, damit Fundstellen, Absätze und
+     * Navigation auf denselben Zeichenpositionen liegen; {@code null} ohne Lesetext oder bei kaputter Payload.
+     */
+    public PageText pageText(PageSnapshot snapshot) {
+        try {
+            return harvester.pageText(snapshot).orElse(null);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     /** Seite mit nativer Payload ({@code …/pages/{pageId}}, {@code refresh=true} prüft gegen die Quelle). */

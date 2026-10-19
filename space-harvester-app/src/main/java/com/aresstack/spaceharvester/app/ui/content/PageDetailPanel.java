@@ -34,7 +34,6 @@ import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotWarning;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
-import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
@@ -419,7 +418,7 @@ public final class PageDetailPanel extends JPanel {
             PassageLookup passage = passageId == null ? null : runtime.workspace().passage(passageId);
             DeliveredPage delivered = runtime.workspace().page(sourceId, pageId, refresh);
             List<Enrichments.View> enrichments = runtime.workspace().enrichments(delivered);
-            PageText text = project(delivered.snapshot());
+            PageText text = runtime.workspace().pageText(delivered.snapshot());
             ReaderDocument document = document(sourceId, pageId, enrichments, text, font);
             relations(runtime, document, sourceId, delivered.header().metadata().partitionKey());
             navigation(runtime, document, sourceId, pageId);
@@ -716,24 +715,6 @@ public final class PageDetailPanel extends JPanel {
             reader.select(mark.occurrence().start(), mark.occurrence().end());
             readerPage.revealBelowSky(mark.occurrence().start());
             showAcronymAt(mark.occurrence().start());
-        }
-    }
-
-    /**
-     * Der Lesetext wie in der Anreicherung des Core (Confluence, Ordner-Quelle, übrige Quellen), damit Fundstellen,
-     * Absätze und Navigation auf denselben Zeichenpositionen liegen.
-     */
-    private static final com.aresstack.spaceharvester.application.enrichment.PageTextProjector PROJECTOR =
-            com.aresstack.spaceharvester.application.enrichment.PageTextProjector.firstOf(List.of(
-                    new ConfluenceStorageTextProjector(),
-                    new com.aresstack.spaceharvester.source.LocalFilesTextProjector(),
-                    new com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector()));
-
-    private static PageText project(PageSnapshot snapshot) {
-        try {
-            return PROJECTOR.project(snapshot).orElse(null);
-        } catch (IllegalArgumentException e) {
-            return null;
         }
     }
 
