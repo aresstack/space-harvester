@@ -53,6 +53,11 @@ public interface SourceAdapter {
         return List.of(SourceType.AuthMode.NONE);
     }
 
+    /** Ob der Typ {@code trust-bundle} und {@code client-certificate} annimmt ({@link SourceType#tls()}). */
+    default boolean tls() {
+        return false;
+    }
+
     /**
      * Typeigene Probleme der Einstellungen, ohne etwas zu öffnen; ID und Typ prüft der Katalog.
      *

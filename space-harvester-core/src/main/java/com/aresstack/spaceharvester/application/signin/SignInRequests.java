@@ -28,6 +28,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * auf dieselbe Anforderung. Wartet niemand mehr (Abbruch), verschwindet sie. Der Code wird nur an die Abfrage der Quelle
  * weitergereicht und danach im übergebenen {@code char[]} überschrieben; er steht in keinem Feld, Log oder Ereignis.
  * Mit Wartezeit null (Server ohne Oberfläche) wartet niemand: die Datei gilt sofort als „Anmeldung erforderlich“.
+ *
+ * <p>Lesen auf Abruf (Bild, Anhang, Vorschau in der Lese-Ansicht, wie {@code KnowledgeReadingController} des Enterprise
+ * AI Client): {@link #open} legt die Anforderung ohne Warten an und trägt den Aufrufer als Halter ein; sie bleibt bis
+ * zur Antwort oder höchstens die Wartezeit offen. Schlüssel ist die Quelle, weil der Einmalcode die gemeinsame Sitzung
+ * der Quelle freischaltet (ADR 0018); alle Bilder einer Seite und alle Aufrufer derselben Quelle teilen sie.
  */
 public class SignInRequests {
 
@@ -69,6 +74,58 @@ public class SignInRequests {
     /** Ob überhaupt gewartet wird. */
     public boolean interactive() {
         return !wait.isZero();
+    }
+
+    /**
+     * Legt für Lesen auf Abruf die Anforderung der Quelle an, ohne zu warten, oder nimmt die offene; idempotent je
+     * Quelle. Der Aufrufer wird Halter ({@link #ownedBy}) und lädt nach {@link SignInRequest.Answer#ACCEPTED} neu.
+     * Der Aufrufer hat vorher geprüft, dass er die Seite lesen darf.
+     *
+     * @throws IllegalStateException ohne Oberfläche ({@link #interactive()} ist {@code false})
+     */
+    public SignInRequest open(String sourceId, String owner, SignInChallenge challenge) {
+        Objects.requireNonNull(sourceId, "sourceId");
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(challenge, "challenge");
+        if (!interactive()) {
+            throw new IllegalStateException("Ohne Oberfläche gibt es keine Anmeldung auf Abruf");
+        }
+        SignInRequest view;
+        boolean changed;
+        synchronized (this) {
+            purge();
+            Pending pending = bySource.get(sourceId);
+            if (pending == null) {
+                pending = new Pending(UUID.randomUUID().toString(), sourceId, challenge, clock.instant());
+                bySource.put(sourceId, pending);
+                LOG.log(System.Logger.Level.INFO, "Quelle {0} verlangt eine Anmeldung (Einmalcode)", sourceId);
+            }
+            changed = pending.owners.add(owner);
+            Instant until = clock.instant().plus(wait);
+            if (pending.until == null || until.isAfter(pending.until)) {
+                pending.until = until;
+            }
+            view = pending.view();
+        }
+        if (changed) {
+            changed();
+        }
+        return view;
+    }
+
+    /** Ob {@code owner} die offene Anforderung {@code requestId} über {@link #open} hält. */
+    public synchronized boolean ownedBy(String requestId, String owner) {
+        purge();
+        return owner != null && find(requestId).map(pending -> pending.owners.contains(owner)).orElse(false);
+    }
+
+    /**
+     * Ob die Quelle seit kurz vor {@code since} freigeschaltet wurde; dann lohnt ein neuer Versuch statt einer neuen
+     * Anforderung.
+     */
+    public synchronized boolean unlockedSince(String sourceId, Instant since) {
+        Instant unlocked = unlockedAt.get(sourceId);
+        return unlocked != null && since != null && !unlocked.isBefore(since.minus(RECENT));
     }
 
     /**
@@ -133,7 +190,7 @@ public class SignInRequests {
         boolean changed = false;
         synchronized (this) {
             pending.jobs.remove(jobId);
-            if (pending.jobs.isEmpty() && bySource.get(pending.sourceId) == pending) {
+            if (pending.jobs.isEmpty() && !held(pending) && bySource.get(pending.sourceId) == pending) {
                 bySource.remove(pending.sourceId);
                 changed = true;
             } else if (pending.state == State.OPEN) {
@@ -147,6 +204,7 @@ public class SignInRequests {
 
     /** Offene Anforderungen, älteste zuerst. */
     public synchronized List<SignInRequest> pending() {
+        purge();
         List<SignInRequest> list = new ArrayList<>();
         for (Pending pending : bySource.values()) {
             list.add(pending.view());
@@ -157,6 +215,7 @@ public class SignInRequests {
 
     /** Die offene Anforderung einer Quelle. */
     public synchronized Optional<SignInRequest> pendingFor(String sourceId) {
+        purge();
         return Optional.ofNullable(bySource.get(sourceId)).map(Pending::view);
     }
 
@@ -168,6 +227,7 @@ public class SignInRequests {
 
     /** Die offene Anforderung mit dieser Kennung. */
     public synchronized Optional<SignInRequest> request(String requestId) {
+        purge();
         return find(requestId).map(Pending::view);
     }
 
@@ -294,6 +354,19 @@ public class SignInRequests {
         }
     }
 
+    /** Ob Leser auf Abruf die Anforderung noch halten (bis zur Antwort, höchstens die Wartezeit). */
+    private boolean held(Pending pending) {
+        return !pending.owners.isEmpty() && pending.until != null && clock.instant().isBefore(pending.until);
+    }
+
+    /** Entfernt Anforderungen, auf die kein Auftrag mehr wartet und die kein Leser mehr hält. */
+    private void purge() {
+        boolean removed = bySource.values().removeIf(pending -> pending.jobs.isEmpty() && !held(pending));
+        if (removed) {
+            notifyAll();
+        }
+    }
+
     private Optional<Pending> find(String requestId) {
         return bySource.values().stream().filter(pending -> pending.id.equals(requestId)).findFirst();
     }
@@ -308,6 +381,10 @@ public class SignInRequests {
         final String sourceId;
         final Instant since;
         final Set<String> jobs = new LinkedHashSet<>();
+        /** Aufrufer, die die Anforderung beim Lesen auf Abruf angelegt oder übernommen haben. */
+        final Set<String> owners = new LinkedHashSet<>();
+        /** Bis wann die Halter sie offen halten; {@code null} ohne Halter. */
+        Instant until;
         final Object sending = new Object();
         SignInChallenge challenge;
         State state = State.OPEN;

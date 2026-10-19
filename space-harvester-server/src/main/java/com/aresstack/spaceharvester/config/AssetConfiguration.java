@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.application.assets.AssetStore;
 import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.signin.SignInRequests;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -44,7 +45,7 @@ class AssetConfiguration {
 
     @Bean
     Assets assets(SourceCatalog catalog, AssetStore store, ObjectProvider<ImageDescriber> describer,
-                  ObjectProvider<PageTextIndex> texts,
+                  ObjectProvider<PageTextIndex> texts, ObjectProvider<SignInRequests> signIns,
                   @Value("${space-harvester.assets.max-size:100MB}") DataSize maxSize,
                   @Value("${space-harvester.assets.large-file-threshold:20MB}") DataSize largeFileThreshold,
                   @Value("${space-harvester.assets.max-concurrent-large-files:"
@@ -53,6 +54,7 @@ class AssetConfiguration {
         LargeFileGate gate = new LargeFileGate(largeFileThreshold.toBytes(), maxConcurrentLargeFiles, largeFileWait);
         // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
         return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
-                TikaDocumentText.shared(), texts.getIfAvailable(), gate);
+                TikaDocumentText.shared(), texts.getIfAvailable(), gate,
+                signIns.getIfAvailable());
     }
 }
