@@ -120,7 +120,7 @@ Nicht angebunden sind:
 | Tabellen mit verbundenen Zellen (`colspan`/`rowspan`) | `conf/ConfluenceHtmlText`, `MarkdownTable` (Inhalt an jeder überdeckten Stelle) | `StorageParser` legt die Tabelle auf ihr Raster wie `MarkdownTable`, für Markdown, Word und PDF (#406) | gleich |
 | Verschachtelte Tabellen (Tabelle in einer Zelle) | `conf/ConfluenceHtmlText`: Text der inneren Tabelle in der Zelle (`cell.text()`) | `MarkdownConverter.cell` übernimmt den Text der inneren Tabelle in die Zelle (#408) | gleich |
 | Erwähnungen von Personen | `ConfluenceHtmlText`: Anzeigename aus der gerenderten Ansicht | `StorageParser.mentions`: Anzeigename aus der Leseansicht, zugeordnet über die Konto-Kennung (#413); ohne Leseansicht oder bei ungleicher Anzahl bleibt `@kennung` (Benutzername → Benutzerschlüssel → Account-ID), weil der EAC die Ansicht ungeprüft übernimmt | gleich |
-| Weitere von Confluence gerenderte Makros im Export (#218) | `ConfluenceKnowledgeSource` übernimmt alle Makros aus `body.view` | `StorageParser` führt nur die bekannten Makros aus der Leseansicht ein | teilweise → in Arbeit (M) |
+| Weitere von Confluence gerenderte Makros im Export (#218) | `ConfluenceKnowledgeSource` übernimmt alle Makros aus `body.view` | `StorageParser` setzt jedes berechnete Makro (`include`, `excerpt-include`, `children`, `toc`, `contentbylabel`, Jira-Abfrage …) aus der abgelegten Leseansicht ein: das n-te äußerste Makro eines Namens im Speicherformat ist das n-te gerenderte mit diesem `data-macro-name`; selbst abgebildete Makros (Code, Diagramme, Panels, Status, einzelnes Jira-Ticket) bleiben eigene Umsetzung; eine Jira-Abfrage mit Tabelle wird ein eigener Block (#426, docs/CONVERTERS.md). Gewollt anders: stimmt die Zahl je Name nicht überein, bleibt der Storage-Körper mit Hinweis `OMITTED_CONTENT` (Grund `view-count-mismatch`), ohne Ansicht `not-rendered`; der EAC übernimmt die Ansicht ungeprüft. Erwähnungen in eingebundenen Seiten zählen nicht, in berechneten Makros nur über `data-username`/`data-account-id`. Der KI-Text bleibt auf `storage` (Zeile „Text für die KI-Anreicherung“) | gleich (#426) |
 | Inline-Makros Emoticon, Status, Datum | `ConfluenceHtmlText`: gerenderter Text | `StorageParser`: eigene Notation (`:name:`, `[Status]` fett, `datetime`-Wert) | gewollt anders: Notation trägt dieselbe Information und bleibt maschinenlesbar |
 | Text für die KI-Anreicherung | `KnowledgeDocumentReader` (aus `body.view`) | `PageTextProjector`, `ConfluenceStorageTextProjector` (aus `storage`) | gewollt anders: fremd gerendert eingebundene Inhalte wären in der gemeinsamen Anreicherung ein Rechteleck; wer die Seite lesen darf, bekommt den Lesetext über `ReadingViews` |
 
@@ -302,7 +302,7 @@ Partition je Quelle, docs/SOURCE_ADAPTERS.md, „Quellen ohne Partitionen“).
 | #190 | draw.io- und Mermaid-Rendering im Core | erledigt: Export (#206, #210, #220), Leseansicht (#322, #314) |
 | #192 | Leseansicht der App mit Bildern und Diagrammen | L |
 | #193 | Vergleichstests EAC und Core mit denselben Testdaten | S |
-| #218 | Ausgeführte Makros aus der Leseansicht in den Konvertern (KI-Text bleibt auf `storage`) | Q, dann R |
+| #218 | Ausgeführte Makros aus der Leseansicht in den Konvertern (KI-Text bleibt auf `storage`) | aus Paritätssicht vollständig: bekannte Makros (#222), alle übrigen berechneten Makros (#426), Vergleichstest unverändert grün |
 
 Rückmeldungen an den Upstream (Enterprise AI Client):
 
