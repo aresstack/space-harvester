@@ -1,14 +1,12 @@
 package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.Partition;
-import com.aresstack.spaceharvester.source.InvalidSourceConfigurationException;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -73,13 +71,18 @@ class HarvesterGitSourceTest {
     }
 
     @Test
-    void credentialsAreRejectedUntilTheSecretProviderPathExists() {
+    void aCredentialRefIsAcceptedAndResolvedOnlyWhenFetching() throws Exception {
         SourceSettingsConfig withCredential = new SourceSettingsConfig("repo", "git", "Repo", null, null,
                 Map.of("url", "https://example.org/repo.git", "credentialRef", "keepass:repo"));
-        assertThatThrownBy(() -> Harvester.builder().source(withCredential).dataDirectory(data).build())
-                .isInstanceOf(InvalidSourceConfigurationException.class)
-                .satisfies(e -> assertThat(((InvalidSourceConfigurationException) e).problems())
-                        .contains("sources[0] (id=repo): options.credentialRef wird für type git noch nicht "
-                                + "unterstützt"));
+        List<String> asked = new java.util.ArrayList<>();
+        try (Harvester harvester = Harvester.builder().source(withCredential).dataDirectory(data)
+                .secretProvider(ref -> {
+                    asked.add(ref);
+                    return java.util.Optional.empty();
+                }).build()) {
+            assertThat(harvester.sources().sources()).extracting(source -> source.id()).contains("repo");
+        }
+        // Beim Öffnen wird nichts aufgelöst; erst ein Abruf fragt den Anbieter.
+        assertThat(asked).isEmpty();
     }
 }
