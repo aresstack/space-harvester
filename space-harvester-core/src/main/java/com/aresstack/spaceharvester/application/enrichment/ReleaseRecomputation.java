@@ -3,8 +3,11 @@ package com.aresstack.spaceharvester.application.enrichment;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +17,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Rechnet nach einem Wechsel der Freigabe {@code ai.external-processing-sources} (ADR 0015) die Seiten einer Quelle im
@@ -30,8 +37,11 @@ import java.util.function.Predicate;
  *     also auch keine schon eingereihte Berechnung mehr das Modell.</li>
  * </ul>
  *
- * Läufe gehen nacheinander; wechselt die Freigabe während eines Laufs erneut, endet er, und der nächste übernimmt. Das
- * Log nennt nur Quelle und Anzahl, nie Seiten.
+ * Was die Freigabe verpasst, weil sie wechselte, während der Dienst nicht lief, oder weil ein Lauf abbrach, holt
+ * {@link #reconcileOnStart} beim Start einmal nach, allein aus den gespeicherten Ergebnissen.
+ *
+ * <p>Läufe gehen nacheinander; wechselt die Freigabe während eines Laufs erneut, endet er, und der nächste übernimmt.
+ * Das Log nennt nur Quelle und Anzahl, nie Seiten.
  *
  * <p>Als {@link ConfigurationListener} muss er nach dem Beobachter angemeldet sein, der das Embedding-Modell tauscht:
  * {@code released} fragt die Freigabe so, wie das Modell sie sieht.
@@ -40,6 +50,7 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
 
     private static final System.Logger LOG = System.getLogger(ReleaseRecomputation.class.getName());
     private static final Duration CLOSE_WAIT = Duration.ofSeconds(10);
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final Enrichments enrichments;
     private final CachedPages pages;
@@ -99,24 +110,88 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
     /** Reiht einen Lauf für die Quelle ein; schließt der Dienst schon, gilt die Freigabe beim nächsten Abruf. */
     void recompute(String sourceId, boolean release) {
         try {
-            runs.execute(() -> run(sourceId, release));
+            runs.execute(() -> run(sourceId, release, null));
         } catch (RejectedExecutionException e) {
             LOG.log(System.Logger.Level.INFO, "Neuberechnung nach Wechsel der Freigabe, Quelle {0}, nicht gestartet",
                     sourceId);
         }
     }
 
-    private void run(String sourceId, boolean release) {
+    /**
+     * Gleicht beim Start einmal ab, ohne gespeicherten Freigabestand: Je Quelle gilt die Freigabe, wie
+     * {@code released} sie jetzt sieht, und nur Seiten, deren gespeicherte Ergebnisse nicht dazu passen, rechnen
+     * erzwungen neu, und nur die Prozessoren, deren Ergebnis nicht passt, im selben Hintergrund wie die Läufe nach
+     * einem Wechsel:
+     *
+     * <ul>
+     *     <li>nicht freigegeben: Seiten mit einem Ergebnis der Prozessoren, das nicht den Grund {@code notApproved}
+     *     trägt (also auch jedem gespeicherten Embedding);</li>
+     *     <li>freigegeben: Seiten, denen ein Ergebnis eines Prozessors fehlt, der die Seite bearbeitet, oder deren
+     *     Ergebnis den Grund {@code notApproved} trägt.</li>
+     * </ul>
+     *
+     * Ohne Modell beim Lauf tut er nichts. Wechselt die Freigabe währenddessen, endet er für die Quelle, und der Lauf
+     * des Wechsels übernimmt.
+     *
+     * @param sourceIds   die Quellen; ohne Seiten im Cache geschieht für eine Quelle nichts
+     * @param model       ob ein Embedding-Modell eingestellt ist, z. B. {@code EmbeddingProcessor::available}
+     * @param notApproved der Grund ({@code reason}) im Ergebnis, das ohne Freigabe entstand, z. B.
+     *                    {@code PassagePayload.REASON_NOT_APPROVED}
+     */
+    public void reconcileOnStart(Collection<String> sourceIds, BooleanSupplier model, String notApproved) {
+        List<String> ids = List.copyOf(sourceIds);
+        Objects.requireNonNull(model, "model");
+        Objects.requireNonNull(notApproved, "notApproved");
+        try {
+            runs.execute(() -> {
+                if (!model.getAsBoolean()) {
+                    return;
+                }
+                for (String sourceId : ids) {
+                    if (closed) {
+                        return;
+                    }
+                    run(sourceId, released.test(sourceId), notApproved);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            LOG.log(System.Logger.Level.INFO, "Abgleich der Freigabe beim Start nicht gestartet");
+        }
+    }
+
+    /**
+     * Ein Lauf für eine Quelle; mit {@code notApproved} der Abgleich beim Start, der nur nicht passende Seiten neu
+     * rechnet, sonst alle Seiten.
+     */
+    private void run(String sourceId, boolean release, String notApproved) {
+        boolean onStart = notApproved != null;
+        int seen = 0;
         int count = 0;
         try {
             Iterator<PageSnapshot> snapshots = pages.of(sourceId);
             // Wechselt die Freigabe währenddessen wieder, übernimmt der nächste Lauf.
             while (!closed && released.test(sourceId) == release && snapshots.hasNext()) {
-                if (enrichments.recomputeInBackground(snapshots.next(), processorIds) > 0) {
+                PageSnapshot snapshot = snapshots.next();
+                seen++;
+                List<String> due = onStart ? outdated(snapshot.key(), release, notApproved) : processorIds;
+                if (due.isEmpty()) {
+                    continue;
+                }
+                if (enrichments.recomputeInBackground(snapshot, due) > 0) {
                     count++;
                 }
             }
             enrichments.flush();
+            if (onStart) {
+                if (seen > 0) {
+                    LOG.log(System.Logger.Level.INFO, release
+                            ? "Abgleich der Freigabe beim Start, Quelle {0} freigegeben: {1} von {2} Seiten zur "
+                                    + "Neuberechnung mit Modell"
+                            : "Abgleich der Freigabe beim Start, Quelle {0} nicht freigegeben: {1} von {2} Seiten "
+                                    + "zur Neuberechnung ohne Modell", sourceId, count, seen);
+                }
+                return;
+            }
             LOG.log(System.Logger.Level.INFO, release
                     ? "Freigabe für den KI-Dienst erteilt, Quelle {0}: {1} Seiten zur Neuberechnung mit Modell"
                     : "Freigabe für den KI-Dienst entzogen, Quelle {0}: {1} Seiten zur Neuberechnung ohne Modell",
@@ -124,8 +199,48 @@ public final class ReleaseRecomputation implements ConfigurationListener, AutoCl
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException e) {
-            LOG.log(System.Logger.Level.WARNING, "Neuberechnung nach Wechsel der Freigabe, Quelle {0}, nach {1} "
-                    + "Seiten abgebrochen ({2})", sourceId, count, e.getClass().getName());
+            LOG.log(System.Logger.Level.WARNING, (onStart ? "Abgleich der Freigabe beim Start"
+                    : "Neuberechnung nach Wechsel der Freigabe") + ", Quelle {0}, nach {1} Seiten abgebrochen ({2})",
+                    sourceId, count, e.getClass().getName());
+        }
+    }
+
+    /**
+     * Die Prozessoren, deren gespeichertes Ergebnis nicht zur Freigabe passt; liest nur die Ablage. Nur sie rechnen neu,
+     * damit etwa ein Bestand ohne Navigation nicht alle Seiten neu einbettet.
+     */
+    private List<String> outdated(PageKey key, boolean release, String notApproved) {
+        List<Enrichment> stored = enrichments.store().find(key);
+        List<String> due = new ArrayList<>();
+        for (String processorId : processorIds) {
+            Enrichment result = stored.stream().filter(enrichment -> enrichment.processorId().equals(processorId))
+                    .findFirst().orElse(null);
+            // Ein fehlendes Ergebnis zählt nur, wenn der Prozessor die Seite bearbeitet; sonst rechnete jeder Start sie
+            // erneut (etwa ohne Chat-Modell oder für einen nicht eingerichteten Prozessor).
+            boolean mismatch = release
+                    ? result == null ? enrichments.appliesTo(processorId, key) : notApproved(result, notApproved)
+                    : result != null && !notApproved(result, notApproved);
+            if (mismatch) {
+                due.add(processorId);
+            }
+        }
+        return due;
+    }
+
+    /**
+     * Ob das Ergebnis den Grund {@code notApproved} trägt ({@code reason}). Geparst wird nur, wenn der Grund im Text
+     * vorkommt: Embeddings mit ihren Vektoren lesen sich so nie als JSON.
+     */
+    private static boolean notApproved(Enrichment result, String notApproved) {
+        String payload = result.payloadJson();
+        if (payload == null || !payload.contains(notApproved)) {
+            return false;
+        }
+        try {
+            JsonNode reason = JSON.readTree(payload).path("reason");
+            return reason.isString() && notApproved.equals(reason.asString());
+        } catch (JacksonException e) {
+            return false;
         }
     }
 
