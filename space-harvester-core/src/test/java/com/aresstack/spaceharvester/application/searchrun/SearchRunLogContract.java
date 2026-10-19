@@ -112,6 +112,48 @@ public abstract class SearchRunLogContract {
     }
 
     @Test
+    void anExpiredRunIsNeverReadEvenWithoutAnotherWrite() {
+        MovingClock clock = new MovingClock(T0.plusSeconds(10));
+        SearchRunLog log = newLog(Duration.ofDays(30), clock);
+        log.record(run("r1", null, "a", 0));
+        log.record(run("k1", "r1", "a", 1));
+        assertThat(log.find(new SearchRunId("r1"))).isPresent();
+
+        clock.now = T0.plus(Duration.ofDays(31));
+
+        assertThat(log.find(new SearchRunId("r1"))).isEmpty();
+        assertThat(log.find(new SearchRunId("k1"))).isEmpty();
+        assertThat(log.parts(new SearchRunId("r1"))).isEmpty();
+        assertThat(log.recent(null, 10)).isEmpty();
+        assertThat(log.recent("a", 10)).isEmpty();
+    }
+
+    /** Eine Uhr, die der Test vorstellt. */
+    protected static final class MovingClock extends Clock {
+
+        volatile Instant now;
+
+        MovingClock(Instant now) {
+            this.now = now;
+        }
+
+        @Override
+        public java.time.ZoneId getZone() {
+            return ZoneOffset.UTC;
+        }
+
+        @Override
+        public Clock withZone(java.time.ZoneId zone) {
+            return this;
+        }
+
+        @Override
+        public Instant instant() {
+            return now;
+        }
+    }
+
+    @Test
     void runsSurviveARestart() {
         SearchRunLog log = log();
         log.record(run("r1", null, "a", 0));

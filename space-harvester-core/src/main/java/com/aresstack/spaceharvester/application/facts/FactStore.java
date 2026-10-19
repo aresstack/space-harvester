@@ -37,11 +37,17 @@ public interface FactStore {
      */
     record Query(String type, List<ArgumentCondition> conditions, Set<String> sourceIds) {
 
+        /** Höchstens so viele Argumentbedingungen; mehr sprengen die Abfrage eines Index. */
+        public static final int MAX_CONDITIONS = 16;
+
         public Query {
             if (type != null) {
                 MetadataFact.requireName("type", type);
             }
             conditions = List.copyOf(conditions);
+            if (conditions.size() > MAX_CONDITIONS) {
+                throw new IllegalArgumentException("Höchstens " + MAX_CONDITIONS + " Bedingungen");
+            }
             sourceIds = Set.copyOf(sourceIds);
             if (type == null && conditions.isEmpty()) {
                 throw new IllegalArgumentException("Abfrage braucht einen Typ oder eine Bedingung");
