@@ -4,6 +4,7 @@ import com.aresstack.enterpriseai.ui.comic.theme.ResearchUiPalette;
 import com.aresstack.spaceharvester.app.ui.Comic;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.terms.PageTerms;
 
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultStyledDocument;
@@ -32,12 +33,19 @@ final class ReaderDocument {
     private final PageText text;
     private final PageAcronyms acronyms;
     private final List<PageAcronyms.Mark> marks;
+    private final PageTerms terms;
 
-    private ReaderDocument(StyledDocument document, PageText text, PageAcronyms acronyms) {
+    private ReaderDocument(StyledDocument document, PageText text, PageAcronyms acronyms, PageTerms terms) {
         this.document = document;
         this.text = text;
         this.acronyms = acronyms;
         this.marks = acronyms.marks();
+        this.terms = terms;
+    }
+
+    /** Wie {@link #build(PageText, PageAcronyms, PageTerms, Font)} ohne Begriffsergebnis. */
+    static ReaderDocument build(PageText text, PageAcronyms acronyms, Font font) {
+        return build(text, acronyms, new PageTerms(PageTerms.State.MISSING, null, List.of(), List.of()), font);
     }
 
     /**
@@ -45,9 +53,11 @@ final class ReaderDocument {
      *
      * @param text     Projektion der angezeigten Payload oder {@code null}, wenn es keine gibt
      * @param acronyms das Core-Ergebnis für genau diesen Text ({@link PageAcronyms#read})
+     * @param terms    das Core-Ergebnis {@code terms} für genau diesen Text ({@link PageTerms#read}); markiert wird es
+     *                 nicht, der Reiter „Begriffe“ zeigt es
      * @param font     Grundschrift des Lesebereichs
      */
-    static ReaderDocument build(PageText text, PageAcronyms acronyms, Font font) {
+    static ReaderDocument build(PageText text, PageAcronyms acronyms, PageTerms terms, Font font) {
         StyleContext styles = new StyleContext();
         Style base = styles.getStyle(StyleContext.DEFAULT_STYLE);
         StyleConstants.setFontFamily(base, font.getFamily());
@@ -56,7 +66,7 @@ final class ReaderDocument {
         try {
             if (text == null) {
                 document.insertString(0, NO_PREVIEW, null);
-                return new ReaderDocument(document, null, acronyms);
+                return new ReaderDocument(document, null, acronyms, terms);
             }
             document.insertString(0, text.text(), null);
             for (PageText.Section section : text.sections()) {
@@ -77,7 +87,7 @@ final class ReaderDocument {
         } catch (BadLocationException e) {
             // Abschnitte und Fundstellen stammen aus demselben Text (PageAcronyms prüft den Eingabe-Hash).
         }
-        return new ReaderDocument(document, text, acronyms);
+        return new ReaderDocument(document, text, acronyms, terms);
     }
 
     StyledDocument document() {
@@ -90,6 +100,10 @@ final class ReaderDocument {
 
     PageAcronyms acronyms() {
         return acronyms;
+    }
+
+    PageTerms terms() {
+        return terms;
     }
 
     /** Die markierten Fundstellen in Textreihenfolge. */
