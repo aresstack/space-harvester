@@ -61,6 +61,7 @@ class NavigationProcessorTest {
         DocumentNavigationView view = read(processor.process(KEY, text));
 
         assertThat(calls.get()).as("eingebettet wird hier nichts").isEqualTo(before);
+        assertThat(processor.background()).as("nach den Embeddings in derselben Warteschlange").isTrue();
         assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
         assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.SEMANTIC);
         assertThat(view.reason()).isNull();
@@ -100,6 +101,7 @@ class NavigationProcessorTest {
         assertThat(read(output).reason()).isEqualTo(NavigationPayload.REASON_NO_MODEL);
         assertThat(read(output).state()).isEqualTo(PagePassages.State.CURRENT);
         assertThat(processor.version()).endsWith("no-model");
+        assertThat(processor.background()).isFalse();
     }
 
     @Test

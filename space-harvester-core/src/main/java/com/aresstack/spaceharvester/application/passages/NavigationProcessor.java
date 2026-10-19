@@ -55,6 +55,15 @@ public final class NavigationProcessor implements EnrichmentProcessor {
                 + (embedding == null || !embedding.available() ? "no-model" : "embedding=" + embedding.version());
     }
 
+    /**
+     * Mit Modell im Hintergrund wie {@code embedding}: Die Warteschlange rechnet eine Berechnung nach der anderen, die
+     * Navigation einer Seite also nach ihren Embeddings.
+     */
+    @Override
+    public boolean background() {
+        return embedding != null && embedding.background();
+    }
+
     @Override
     public EnrichmentOutput process(PageText text) {
         throw new UnsupportedOperationException("Navigation braucht die Seite");
