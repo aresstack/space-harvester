@@ -70,7 +70,7 @@ public class FactController {
             @Parameter(description = "ID der Seite in der Quelle", example = "123456") @PathVariable String pageId,
             @Parameter(description = "Nur dieser Typ", schema = @Schema(allowableValues = {
                     FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION, FactTypes.MENTION,
-                    FactTypes.PROPERTY}))
+                    FactTypes.PROPERTY, FactTypes.EVENT, FactTypes.RELATION}))
             @RequestParam(required = false) String type) {
         PageFacts.Sheet sheet = facts.factsOf(caller, sourceId, pageId, type(type));
         return new SheetResponse(sheet.sourceId(), sheet.pageId(), sheet.spaceKey(), sheet.facts().stream()
@@ -97,7 +97,7 @@ public class FactController {
             @Parameter(hidden = true) AccessContext caller,
             @Parameter(description = "Nur dieser Typ", schema = @Schema(allowableValues = {
                     FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION, FactTypes.MENTION,
-                    FactTypes.PROPERTY}))
+                    FactTypes.PROPERTY, FactTypes.EVENT, FactTypes.RELATION}))
             @RequestParam(required = false) String type,
             @Parameter(description = "Bedingung ROLLE:Wert, höchstens 16-mal; Rollen SHORT_FORM, LONG_FORM, TERM, KIND, "
                     + "SUBJECT, VALUE, STATUS", example = "SHORT_FORM:API")
