@@ -321,7 +321,8 @@ neuen Abruf von der Quelle, ohne neue Version und ohne 503. Neu freigegeben rech
 Absätze und Navigation nach Struktur (`source-not-approved`), die Embeddings der Quelle entfallen. Ob eine Berechnung
 das Modell fragen darf, prüft ihre Ausführung: Ab dem Aktivieren eines Entzugs fragt auch keine schon eingereihte
 Berechnung das Modell mehr; nur eine, die gerade läuft, rechnet zu Ende, und ihr Ergebnis wird verworfen. `images`
-rechnet nur auf Abruf und prüft die Freigabe dann. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
+rechnet nur auf Abruf und prüft die Freigabe dann; schon gespeicherte Bildbeschreibungen bleiben nach einem Entzug
+lesbar (nur mit den Rechten an der Seite), neue entstehen erst nach erneuter Freigabe. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
 ein Lauf ab, gleicht der Start das einmal im selben Hintergrund ab, allein aus den gespeicherten Ergebnissen: Nur
 Seiten, die nicht zur Freigabe passen (nicht freigegeben, aber mit Embedding oder ohne `source-not-approved`;
 freigegeben, aber mit `source-not-approved` oder ohne Embedding), rechnen neu. Das Log nennt nur Quelle und Anzahl der
