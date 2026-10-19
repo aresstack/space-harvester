@@ -62,7 +62,7 @@ class ConfiguredSourceCatalogTest {
                                 + "Bindestrich; z. B. 'confluence')",
                         // Ohne bekannten Typ gibt es keine typeigenen Prüfungen (base-url gehört zu confluence).
                         "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files, ftp, jes, ndv, "
-                                + "sharepoint, mediawiki)",
+                                + "sharepoint, betaview, mediawiki)",
                         "sources[2] (id=basic): auth.type basic braucht auth.username und auth.password",
                         "sources[3] (id=pat): auth.username/auth.password passen nicht zu auth.type pat",
                         "sources[4] (id=none): auth.type ist none, aber Zugangsdaten sind gesetzt; auth.type basic "
