@@ -259,6 +259,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   `trust-bundle` auch durch den Proxy-Tunnel, unbrauchbare Zertifikate verhindern den Start.
 - `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
   `credentialRef` wird abgelehnt.
+- `ParityGitTest`: das Paritäts-Repository `ParityGit` (Test-Fixtures des Core, Paket der Git-Quelle, Java 8, #193)
+  durch Abgleich, Cache und Suche; Tag `v1.0` zeigt den alten Stand, Commit-IDs sind fest.
 - `HarvesterEacSourcesTest`: `ftp`, `jes`, `ndv`, `sharepoint`, `betaview` und `outlook` öffnen je eine Partition ohne Verbindung; die
   Prüfung des Upstream-Typs meldet fehlende Pflichtangaben beim Start.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
