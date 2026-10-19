@@ -148,7 +148,7 @@ public final class Reconciliation implements AutoCloseable {
         if (inventory != null) {
             Optional<Instant> since = inventory.since(sourceId, spaceKey);
             if (since.isEmpty()) {
-                inventory.mark(sourceId, spaceKey, now);
+                markQuietly(sourceId, spaceKey, now);
             } else if (since.get().plus(interval).isBefore(first)) {
                 // Überfällige Inventuren starten kurz nach dem Einplanen, nicht alle im selben Augenblick.
                 first = since.get().plus(interval).isAfter(now) ? since.get().plus(interval) : now.plus(CATCH_UP);
@@ -233,7 +233,7 @@ public final class Reconciliation implements AutoCloseable {
         Duration next = entry.interval;
         if (inventory != null) {
             if (outcome == Outcome.STARTED) {
-                markQuietly(entry, now);
+                markQuietly(entry.sourceId, entry.spaceKey, now);
             } else if (outcome == Outcome.ALREADY_RUNNING || outcome == Outcome.NO_CAPACITY) {
                 // Ein laufendes Nachholen ersetzt keine Inventur: bald erneut versuchen.
                 next = MIN_INTERVAL;
@@ -247,11 +247,12 @@ public final class Reconciliation implements AutoCloseable {
         }
     }
 
-    private void markQuietly(Entry entry, Instant at) {
+    private void markQuietly(String sourceId, String spaceKey, Instant at) {
         try {
-            inventory.mark(entry.sourceId, entry.spaceKey, at);
+            inventory.mark(sourceId, spaceKey, at);
         } catch (RuntimeException e) {
-            // Die Inventur läuft; ohne Vermerk zählt der Abstand nach einem Neustart ab dem Einplanen.
+            // Weder Start noch Konfigurationswechsel scheitern daran; ohne Vermerk zählt der Abstand nach einem
+            // Neustart ab dem Einplanen.
             LOG.log(System.Logger.Level.WARNING, "Zeitpunkt der Bestandsinventur nicht gespeichert ({0})",
                     e.getClass().getName());
         }

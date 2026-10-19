@@ -232,6 +232,28 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void anUnwritableLogDoesNotStopTheSchedule() {
+        InventoryLog broken = new InventoryLog() {
+            @Override
+            public java.util.Optional<Instant> since(String sourceId, String spaceKey) {
+                return java.util.Optional.empty();
+            }
+
+            @Override
+            public void mark(String sourceId, String spaceKey, Instant at) {
+                throw new java.io.UncheckedIOException(new java.io.IOException("schreibgeschützt"));
+            }
+        };
+        try (Reconciliation inventories = Reconciliation.inventories(syncs, null, FakeSource.CLOCK, broken)) {
+            assertThat(inventories.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.CATALOG_ONLY).nextAt())
+                    .isEqualTo(FakeSource.CLOCK.instant().plus(Duration.ofDays(7)));
+            inventories.due(inventories.entry("wiki", "DOC"));
+            assertThat(inventories.schedules().get(0).lastOutcome()).isEqualTo(Reconciliation.Outcome.STARTED);
+            runQueued();
+        }
+    }
+
+    @Test
     void anInventoryBlockedByARunningSyncIsRetriedAfterAMinute() {
         InventoryLog log = InventoryLog.inMemory();
         syncs.start("wiki", "DOC", "client:a");
