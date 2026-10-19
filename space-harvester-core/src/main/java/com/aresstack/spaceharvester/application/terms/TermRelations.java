@@ -415,6 +415,17 @@ public class TermRelations {
         return new ProposalRun(added, updated, withdrawn, suppressed, stale);
     }
 
+    /** Die Beziehungen einer Herkunft in genau diesem Geltungsbereich, ohne Rechteprüfung; nur für Vorschlagsläufe. */
+    List<TermRelation> automatic(RelationOrigin origin, RelationScope scope) {
+        List<TermRelation> found = new ArrayList<>();
+        for (TermRelation relation : store.all()) {
+            if (relation.origin() == origin && relation.scope().equals(scope)) {
+                found.add(relation);
+            }
+        }
+        return found;
+    }
+
     private TermRelation writable(AccessContext caller, String id, Long expectedRevision) {
         TermRelation current = relation(caller, id);
         requireWrite(caller, current.scope());

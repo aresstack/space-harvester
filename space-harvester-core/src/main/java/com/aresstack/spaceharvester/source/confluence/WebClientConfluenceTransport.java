@@ -362,6 +362,22 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 ApplicationProtocolConfig.DISABLED, ClientAuth.NONE, null, false);
     }
 
+    /**
+     * Verwirft alle gehaltenen Clients, etwa nach einer geänderten Proxy-Anmeldung (ADR 0015): Die nächste Anfrage baut
+     * neue Clients mit der dann gültigen Anmeldung. Die alten Pools schließen über {@code disposeLater}; laufende
+     * Anfragen enden normal über ihre Verbindung.
+     */
+    public void discardClients() {
+        List<Client> all;
+        synchronized (clients) {
+            all = new ArrayList<>(clients.values());
+            clients.clear();
+        }
+        for (Client client : all) {
+            client.pool().disposeLater().subscribe();
+        }
+    }
+
     /** Anzahl gerade gehaltener Clients (für Tests der Pool-Trennung). */
     int clientCount() {
         synchronized (clients) {
@@ -383,6 +399,19 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
             client.pool().dispose();
         }
         routeScheduler.dispose();
+    }
+
+    /**
+     * Schließt wie {@link #close()} für neue Anfragen, lässt laufende aber zu Ende laufen, etwa wenn die Quelle nach
+     * geänderten Netzwerkeinstellungen neu geöffnet wird (ADR 0015): Die Pools schließen über {@code disposeLater},
+     * der Scheduler der Routenwahl über {@code disposeGracefully}.
+     */
+    public void closeGracefully() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        discardClients();
+        routeScheduler.disposeGracefully().subscribe();
     }
 
     @Override
