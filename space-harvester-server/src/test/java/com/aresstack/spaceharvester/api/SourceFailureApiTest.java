@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.TestClient;
-import java.net.ServerSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -31,6 +33,11 @@ class SourceFailureApiTest {
 
     private static final FakeConfluence CONFLUENCE = new FakeConfluence();
     private static final FakeConfluenceServer SERVER;
+    /**
+     * Gebunden, aber ohne listen(): Verbindungen dorthin werden abgewiesen, und kein anderer Testserver kann den Port
+     * übernehmen (ein nur kurz geöffneter Port wurde unter CI-Last neu vergeben).
+     */
+    private static final Socket RESERVED = new Socket();
     private static final int CLOSED_PORT;
 
     static {
@@ -46,9 +53,8 @@ class SourceFailureApiTest {
         CONFLUENCE.restrict("101");
         try {
             SERVER = new FakeConfluenceServer(CONFLUENCE);
-            try (ServerSocket socket = new ServerSocket(0)) {
-                CLOSED_PORT = socket.getLocalPort();
-            }
+            RESERVED.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0));
+            CLOSED_PORT = RESERVED.getLocalPort();
         } catch (Exception e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -74,8 +80,9 @@ class SourceFailureApiTest {
     }
 
     @AfterAll
-    static void stopServer() {
+    static void stopServer() throws Exception {
         SERVER.close();
+        RESERVED.close();
     }
 
     private final HttpClient http = HttpClient.newHttpClient();
