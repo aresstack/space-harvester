@@ -228,10 +228,11 @@ public class SourcesController {
     }
 
     /** Ein Quellentyp für Auswahllisten. */
-    public record SourceTypeResponse(String id, String displayName, boolean needsCredentials) {
+    public record SourceTypeResponse(String id, String displayName, boolean needsCredentials, String addressOption) {
 
         static SourceTypeResponse of(SourceType type) {
-            return new SourceTypeResponse(type.id(), type.displayName(), type.needsCredentials());
+            return new SourceTypeResponse(type.id(), type.displayName(), type.needsCredentials(),
+                    type.addressOption());
         }
     }
 

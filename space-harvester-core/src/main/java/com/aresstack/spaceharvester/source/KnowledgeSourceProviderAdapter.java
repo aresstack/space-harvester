@@ -108,6 +108,12 @@ public final class KnowledgeSourceProviderAdapter implements SourceAdapter {
         return unconnected.type().displayName();
     }
 
+    /** Das Adressfeld des Upstream-Typs ({@code summaryKey}). */
+    @Override
+    public String addressOption() {
+        return unconnected.type().summaryKey();
+    }
+
     @Override
     public List<String> check(SourceSettingsConfig config) {
         return check(config, false);

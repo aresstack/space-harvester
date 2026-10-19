@@ -338,17 +338,42 @@ public class SearchController {
      * Ein Treffer der Schlagwortsuche; Kopfdaten live von der Quelle, Auszug aus dem Cache. Den Inhalt liefert
      * {@code GET /api/v1/sources/{sourceId}/pages/{pageId}}.
      *
-     * @param snippet Textauszug als Klartext, leer, wenn es keinen gibt
+     * @param snippet    Textauszug als Klartext, leer, wenn es keinen gibt
+     * @param matchedIn  Trefferart: {@code page} oder {@code attachment}, wenn die Fundstelle im Text eines Anhangs der
+     *                   Seite liegt; der Treffer ist immer die Seite und gilt mit ihren Rechten
+     * @param attachment bei {@code attachment} der Anhang, sonst {@code null}
      */
     public record KeywordHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                      String title, String snippet,
                                      @Schema(nullable = true) URI url, @Schema(nullable = true) String version,
                                      @Schema(nullable = true) Instant modifiedAt,
-                                     @Schema(nullable = true) String parentPageId) {
+                                     @Schema(nullable = true) String parentPageId,
+                                     @Schema(allowableValues = {"page", "attachment"}) String matchedIn,
+                                     @Schema(nullable = true) AttachmentMatchResponse attachment) {
 
         static KeywordHitResponse of(KeywordSearch.Hit hit) {
             return new KeywordHitResponse(hit.sourceId(), hit.pageId(), hit.spaceKey(), hit.title(), hit.snippet(),
-                    hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId());
+                    hit.url(), hit.version(), hit.modifiedAt(), hit.parentPageId(), matchKind(hit),
+                    AttachmentMatchResponse.of(hit.attachment()));
+        }
+    }
+
+    /** Trefferart: {@code page} (Seite) oder {@code attachment} (Text eines Anhangs der Seite, #183). */
+    static String matchKind(KeywordSearch.Hit hit) {
+        return hit.matchedIn().name().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Der Anhang eines Anhangstreffers; Text unter
+     * {@code GET /api/v1/sources/{sourceId}/pages/{pageId}/assets/{attachmentId}/text}.
+     *
+     * @param title Dateiname
+     */
+    public record AttachmentMatchResponse(String attachmentId, String title) {
+
+        static AttachmentMatchResponse of(KeywordSearch.AttachmentMatch attachment) {
+            return attachment == null ? null : new AttachmentMatchResponse(attachment.attachmentId(),
+                    attachment.title());
         }
     }
 

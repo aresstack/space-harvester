@@ -139,6 +139,25 @@ class AcronymRelationRuleTest {
     }
 
     @Test
+    void theAutomaticRunIsIdempotentAndNeverProposesARejectionAgain() {
+        TermRelations.ProposalRun first = rule.refresh("wiki");
+        TermRelation api = relations.relations(EDITOR, new TermRelations.RelationSearch("api", null, null, null,
+                null, 50, null)).relations().get(0);
+
+        TermRelations.ProposalRun again = rule.refresh("wiki");
+
+        assertThat(first.added()).isEqualTo(1);
+        assertThat(again).isEqualTo(new TermRelations.ProposalRun(0, 0, 0, 0, 0));
+        assertThat(relations.relation(EDITOR, api.id()).revision()).isEqualTo(api.revision());
+        assertThat(relations.history(EDITOR, api.id())).hasSize(1);
+
+        relations.reject(EDITOR, api.id(), null);
+        rule.refresh("wiki");
+        assertThat(relations.relation(EDITOR, api.id()).status()).isEqualTo(ReviewStatus.REJECTED);
+        assertThat(rule.refresh("unbekannt")).isEqualTo(new TermRelations.ProposalRun(0, 0, 0, 0, 0));
+    }
+
+    @Test
     void needsSyncAndAKnownSource() {
         assertThatThrownBy(() -> rule.run(READER, "wiki")).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> rule.run(EDITOR, "unbekannt")).isInstanceOf(UnknownSourceException.class);

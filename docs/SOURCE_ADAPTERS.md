@@ -16,10 +16,13 @@ Confluence-Client gibt es nicht.
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
-Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ
-`id` (Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
-`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188). Eigene Adapter geben ihren Namen
-über `SourceAdapter.displayName()` an.
+Welche Typen ein Harvester kennt, liefert `Harvester.sourceTypes()` (im Dienst `GET /api/v1/sources/types`): je Typ `id`
+(Wert von `type`), `displayName` (z. B. „Git-Repository“, „FTP“, „JES“, „NDV“, „SharePoint“, „BetaView“, „Outlook“) und
+`needsCredentials`, ob der Typ einen Eintrag `options.credentialRef` verlangt (#188), und `addressOption`, unter welchem
+Schlüssel in `options` der Typ seine Adresse liest: `host` (ftp, jes, ndv), `siteUrl` (sharepoint), `baseUrl`
+(betaview), `mailbox` (outlook), `apiUrl` (mediawiki), `url` (git), `directory` (files); bei Confluence `null`, die
+Adresse steht dort in `base-url`. Eigene Adapter geben Namen und Adressschlüssel über `SourceAdapter.displayName()` und
+`SourceAdapter.addressOption()` an.
 
 ## Vertrag
 
@@ -216,7 +219,24 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
   eigene Asset-Variante (`preview-<art>-<Anhang>`, Version `source-preview-1:<Version des Anhangs>`,
   `Assets.PREVIEW_RENDITION`), abgelegt nur mit `sync` und nie ohne Version; Medientyp nach den Bytes. REST:
   `GET …/assets/{attachmentId}/preview?kind=…` mit derselben Rechteprüfung wie `…/content`.
-- Offen in #183: Anhangstexte im Volltextindex und in der API.
+- **Anhangstexte im Volltextindex:** wie im Enterprise AI Client (`SourceAttachmentReader` mit
+  `DocumentSourceFileTextExtractor`, Composition Root): Jeder Anhang ist ein eigenes Dokument mit der Seite als Eltern
+  im `LucenePageTextIndex` (Schema `page-text-index/v2`; ein v1-Index wird leer neu angelegt und füllt sich wieder),
+  Dateiname als Titel, Text aus `DocumentText` bzw. bei Bildern eine vorhandene Beschreibung; ohne lesbaren Text steht
+  nur der Dateiname darin (EAC: `# Titel`). Grenzen wie oben und `space-harvester.assets.max-size`. In den Index kommt
+  nur Abgelegtes, also beim Ablegen (`harvest`, auch für schon abgelegte Anhänge) und auf Abruf mit `sync`
+  (`…/text`, `POST …/description`); was die vollständige Anhangsliste nicht mehr nennt, fällt bei der nächsten Ernte
+  heraus, mit der Seite alle ihre Anhänge. Die Schlagwortsuche liefert je Seite ihr bestes Dokument: ein Treffer im
+  Anhang ist die Seite mit `matchedIn: attachment` und `attachment {attachmentId, title}`, Auszug aus dem Anhang. Er
+  wird wie jeder Treffer seitenweise live mit `metadata` und `content` geprüft (ADR 0014, Punkt 4); nicht lesbare
+  Seiten erscheinen auch über ihre Anhänge nirgends. Bildanhänge (Raster und SVG) stehen wie im EAC
+  (`DocumentSourceFileTextExtractor` → `describe`) mit ihrer Beschreibung im Index, aber nur mit der vorhandenen aus der
+  Ablage der Bildanalyse (ADR 0021, `Assets.storedDescription`, eingestelltes Modell); Indexieren ruft nie ein Modell
+  auf, beschrieben wird nur auf Abruf (`Assets.describe`, danach im Index), ohne Beschreibung steht nur der Dateiname
+  darin, keine OCR. Der Wissensindex (Passagen, Embeddings) bleibt Seiten vorbehalten.
+- **REST:** `GET …/assets/{attachmentId}/text` liefert den Text mit Extraktion, Version und `truncated`; Rechte wie
+  `…/content` (Freigabe `content`, nicht sichtbare Seiten 404, abgelegt und indiziert nur mit `sync`). Fehler als
+  `document-text-*` (`unsupported` 415, `failed`/`too-large` 422, `busy` 429, `timeout`/`not-configured` 503).
 
 ## Einen Adapter ergänzen
 

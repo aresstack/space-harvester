@@ -495,7 +495,9 @@ public final class Harvester implements AutoCloseable {
             this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
-                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
+                    List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts,
+                            // #120: Regelvorschläge der Begriffsbeziehungen nach jeder Anreicherung einer Quelle.
+                            List.of(acronymRelationRule::refresh))), retentionRule(builder));
             // ADR 0014: Webhooks markieren nur den Katalog; ein- und ausgeschaltet je Quelle über sync.events.
             boolean eventsFixed = builder.changeEvents;
             Map<String, char[]> webhookSecrets = Map.copyOf(builder.webhookSecrets);
@@ -512,9 +514,10 @@ public final class Harvester implements AutoCloseable {
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
-            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika
+            // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
+            // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared());
+                    TikaDocumentText.shared(), textIndex);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
