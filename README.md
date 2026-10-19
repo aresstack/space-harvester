@@ -1,5 +1,3 @@
-# Space Harvester
-
 ![Space Harvester – Vom Dokument zum Wissensnetz](docs/images/space-harvester-banner.png)
 
 **Space Harvester** erschließt Wissensquellen: Seiten und Dokumente finden, sicher abrufen, lokal indexieren,
