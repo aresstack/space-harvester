@@ -111,6 +111,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -146,6 +147,7 @@ import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
+import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
@@ -246,6 +248,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFacts facts;
     private final TermRelations termRelations;
     private final AcronymRelationRule acronymRelationRule;
+    private final AcronymResolution acronymResolution;
     private final FactEdits factEdits;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -439,6 +442,11 @@ public final class Harvester implements AutoCloseable {
                     cache::findHeader, clock);
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
                     termRelations, new TermProcessor().version(), clock);
+            // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
+            this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
+                    key -> cache.find(key).flatMap(projector::project), termRelations,
+                    new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                            builder.userAgent), jobs, new TermProcessor().version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -918,6 +926,11 @@ public final class Harvester implements AutoCloseable {
     /** Regelvorschläge aus den Akronym-Ausschreibungen des Begriffsindex, je Quelle ({@code sync}). */
     public AcronymRelationRule acronymRelationRule() {
         return acronymRelationRule;
+    }
+
+    /** KI-Akronymauflösung als Vorschlagslauf je Quelle (#122). */
+    public AcronymResolution acronymResolution() {
+        return acronymResolution;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
