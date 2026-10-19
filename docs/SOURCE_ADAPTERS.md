@@ -89,6 +89,9 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    Änderungen an `KnowledgeSourcePort.load()`.
 2. Die Kopie mit `enterprise-ai-sources/sync-from-upstream.sh sync <commit>` übernehmen; die Kopie wird nie lokal
    geändert (`verifyUpstreamCopy` prüft das im Build).
+   Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
+   `PageNavigationSource`; JGit wie im Upstream, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
+   ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren. `KnowledgeSourceHarvestSource` bildet jeden
    `KnowledgeSourcePort` mit seinen Fähigkeiten ab.
 
@@ -100,4 +103,4 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `TikaDocumentTextTest`, `LocalFilesTextProjectorTest`, `AssetDocumentTextTest`: Text aus zur Laufzeit erzeugten
   Dokumenten (`DocumentFixtures`: DOCX, XLSX, PPTX, PDF, ODT, RTF), Erkennung am Inhalt gegen eine falsche Angabe,
   Grenzen; `HarvesterFullTextTest` findet Word und PDF lokaler Dateien im Volltextindex.
-- Upstream: `ConfluenceStoredContentTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
+- Upstream: `ConfluenceStoredContentTest`, `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
