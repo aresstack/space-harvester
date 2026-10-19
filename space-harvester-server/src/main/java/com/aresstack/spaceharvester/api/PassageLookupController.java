@@ -1,9 +1,11 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDeniedException;
 import com.aresstack.spaceharvester.application.passages.PassageId;
 import com.aresstack.spaceharvester.application.passages.PassageLookup;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
+import com.aresstack.spaceharvester.application.query.CacheMissException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -42,16 +44,14 @@ public class PassageLookupController {
                     + "je einem Nachbarn; older-version: die ID gehört zu einer älteren Fassung der Seite (anderer "
                     + "Text), es folgen alle aktuellen Absätze; changed: gleicher Text, aber Zerlegung oder "
                     + "Embedding-Modell gewechselt, es folgen alle aktuellen Absätze; unavailable: für die Seite "
-                    + "liegen gerade keine Absätze vor (state sagt warum). Rechte und Nachziehen wie "
-                    + "GET …/pages/{pageId}/passages.")
+                    + "liegen gerade keine Absätze vor (state sagt warum). Nachziehen wie "
+                    + "GET …/pages/{pageId}/passages; eine nicht sichtbare Seite antwortet wie eine unbekannte (404).")
     @ApiResponse(responseCode = "200", description = "PassageLookupResponse")
     @ApiResponse(responseCode = "400", description = "Keine Passage-ID (invalid-request)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "403", description = "Keine content-Freigabe (access-denied)",
-            content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
-                    schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "404", description = "Seite nicht vorhanden oder nicht lesbar (cache-miss)",
+    @ApiResponse(responseCode = "404", description = "Seite nicht vorhanden, nicht lesbar oder ohne content-Freigabe; "
+            + "beides gleich (cache-miss), damit eine ID nicht verrät, ob es die Seite gibt",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
                     schema = @Schema(implementation = ProblemDetail.class)))
     public PassageLookupResponse lookup(
@@ -61,7 +61,13 @@ public class PassageLookupController {
         if (!PassageId.looksLike(id)) {
             throw new InvalidQueryException("id ist keine Passage-ID");
         }
-        return PassageLookupResponse.of(passages.resolve(caller, id));
+        PassageId requested = PassageId.parse(id);
+        try {
+            return PassageLookupResponse.of(passages.resolve(caller, id));
+        } catch (AccessDeniedException e) {
+            // Eine ID nennt Seiten, die der Aufrufer vielleicht nicht sehen darf: unsichtbar antwortet wie unbekannt.
+            throw new CacheMissException(requested.sourceId(), "Seite nicht vorhanden oder nicht sichtbar");
+        }
     }
 
     /**

@@ -166,21 +166,21 @@ class PassageProcessorTest {
     void aPassageIdIsFoundWithItsNeighboursOrTellsWhyNot() {
         PagePassages current = read(processor.process(KEY, TEXT));
         List<PagePassages.Passage> all = current.passages();
-        assertThat(all).hasSizeGreaterThan(3);
+        assertThat(all).hasSize(2);
 
-        PassageLookup middle = PassageLookup.of(PassageId.parse(all.get(2).id()), current, 1);
-        assertThat(middle.match()).isEqualTo(PassageLookup.Match.FOUND);
-        assertThat(middle.passages()).containsExactly(all.get(1), all.get(2), all.get(3));
-        assertThat(PassageLookup.of(PassageId.parse(all.get(0).id()), current, 1).passages())
-                .containsExactly(all.get(0), all.get(1));
+        PassageLookup second = PassageLookup.of(PassageId.parse(all.get(1).id()), current, 1);
+        assertThat(second.match()).isEqualTo(PassageLookup.Match.FOUND);
+        assertThat(second.passages()).containsExactly(all.get(0), all.get(1));
+        assertThat(PassageLookup.of(PassageId.parse(all.get(1).id()), current, 0).passages())
+                .containsExactly(all.get(1));
 
-        PassageId found = PassageId.parse(all.get(2).id());
-        PassageId olderText = PassageId.of("wiki", "101", "0".repeat(64), 2, found.segmentation(), found.embedding());
+        PassageId found = PassageId.parse(all.get(1).id());
+        PassageId olderText = PassageId.of("wiki", "101", "0".repeat(64), 1, found.segmentation(), found.embedding());
         assertThat(PassageLookup.of(olderText, current, 1)).satisfies(lookup -> {
             assertThat(lookup.match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
             assertThat(lookup.passages()).isEqualTo(all);
         });
-        PassageId otherModel = PassageId.of("wiki", "101", found.capture(), 2, found.segmentation(), "00000000");
+        PassageId otherModel = PassageId.of("wiki", "101", found.capture(), 1, found.segmentation(), "00000000");
         assertThat(PassageLookup.of(otherModel, current, 1).match()).isEqualTo(PassageLookup.Match.CHANGED);
         assertThat(PassageLookup.of(found, PagePassages.read(KEY, List.of(), TEXT), 1).match())
                 .isEqualTo(PassageLookup.Match.UNAVAILABLE);
