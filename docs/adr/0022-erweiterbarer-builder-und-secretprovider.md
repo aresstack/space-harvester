@@ -42,4 +42,5 @@ der Anbieter des Programms auflöste; `auth`, Client-Zertifikat und Server-Vertr
 
 - Neue Typen mit Netz brauchen keinen eigenen Code für Anmeldung, Proxy und TLS.
 - FTPS fehlt, solange der Upstream-Adapter es nicht kann; es käme über die Kopie, nicht lokal.
+- `pat` gibt es nur bei Confluence und Git, wie im Enterprise AI Client; weitere Typen bekämen es über `acceptingToken`.
 - `ContextualSourceAdapter` bleibt für Typen ohne Netz (Outlook).
