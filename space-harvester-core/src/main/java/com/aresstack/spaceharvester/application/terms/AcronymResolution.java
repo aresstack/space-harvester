@@ -258,7 +258,9 @@ public class AcronymResolution {
             proposals.addAll(accepted.proposals);
             for (Acronym acronym : batch) {
                 if (!accepted.readable) {
-                    // Eine unlesbare Antwort ist kein „ohne Ausschreibung“: nächstes Mal erneut fragen.
+                    // Eine unlesbare Antwort ist kein „ohne Ausschreibung“: Vorschläge behalten, nächstes Mal erneut
+                    // fragen.
+                    skipped.add(acronym.normalized);
                     continue;
                 }
                 List<String> ids = new ArrayList<>();

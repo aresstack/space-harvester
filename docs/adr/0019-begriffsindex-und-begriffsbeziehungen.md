@@ -112,7 +112,8 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
      SHA-256 über Verfahren, Quelle, Modellversion, Akronym und Lage samt Texthash der Fundstellen, dazu nur die Kennungen der
      Beziehungen aus der Antwort. Ein unveränderter Stand geht nicht noch einmal an das Modell. Keine Begriffe, kein
      Text, keine Antworten. Geschrieben erst nach dem Abgleich, atomar ersetzt (#430); scheitert das Schreiben, gilt der
-     Lauf trotzdem. Eine unlesbare Antwort wird nicht gemerkt, das Akronym also beim nächsten Lauf erneut gefragt.
+     Lauf trotzdem. Eine unlesbare Antwort wird nicht gemerkt: Die Akronyme ihres Batches behalten ihre Vorschläge und werden beim
+     nächsten Lauf erneut gefragt. Seit der Quelle im Fingerabdruck wird jedes Akronym einmal neu gefragt.
    - Läufe derselben Quelle gehen nacheinander; ein Akronym ohne lesbare Fundstelle wird nicht gefragt und behält seine
      Vorschläge. `…/refresh-jobs/{jobId}` kennt nur Aufträge der Akronymauflösung.
    - Eine kaputte, unlesbare oder fremde Cache-Datei (anderes Schema, unerwartete Werte) wird verworfen: Der Start

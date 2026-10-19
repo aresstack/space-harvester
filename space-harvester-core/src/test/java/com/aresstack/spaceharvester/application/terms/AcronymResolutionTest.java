@@ -276,14 +276,18 @@ class AcronymResolutionTest {
     }
 
     @Test
-    void anUnreadableAnswerIsNoResultAndIsAskedAgain() {
-        answers = (instructions, input) -> "Leider abgeschnitten: {\"expansions\":[";
-        resolution.run("wiki", null);
+    void anUnreadableAnswerKeepsTheProposalsAndIsAskedAgain() {
         answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
-
         resolution.run("wiki", null);
+        cached("1", "Geändert: Jede Meldung trägt den RSL.");
+        answers = (instructions, input) -> "Leider abgeschnitten: {\"expansions\":[";
 
-        assertThat(inputs).hasSize(2);
+        assertThat(resolution.run("wiki", null).withdrawn()).isZero();
+        assertThat(proposals("rsl")).hasSize(1);
+
+        answers = naming(Map.of("RSL", List.of("Rückmeldeschlüssel")));
+        resolution.run("wiki", null);
+        assertThat(inputs).hasSize(3);
         assertThat(proposals("rsl")).hasSize(1);
     }
 
