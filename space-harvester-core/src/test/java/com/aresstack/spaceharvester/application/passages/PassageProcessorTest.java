@@ -140,6 +140,53 @@ class PassageProcessorTest {
     }
 
     @Test
+    void everyPassageHasAStableIdThatChangesWithTextOrModel() {
+        EnrichmentOutput output = processor.process(KEY, TEXT);
+        PagePassages passages = read(output);
+
+        assertThat(passages.passages()).extracting(PagePassages.Passage::id).doesNotHaveDuplicates()
+                .allSatisfy(id -> assertThat(PassageId.looksLike(id)).isTrue());
+        PassageId first = PassageId.parse(passages.passages().get(1).id());
+        assertThat(first.sourceId()).isEqualTo("wiki");
+        assertThat(first.pageId()).isEqualTo("101");
+        assertThat(first.position()).isEqualTo(1);
+        assertThat(first.capture()).isEqualTo(PassageId.captureOf(PassagePayload.textSha256(TEXT.text())));
+        assertThat(first.embedding()).isEqualTo(PassageId.versionTag("topics@1"));
+        assertThat(read(output).passages()).extracting(PagePassages.Passage::id)
+                .isEqualTo(passages.passages().stream().map(PagePassages.Passage::id).toList());
+
+        approved.set(false);
+        PagePassages structure = read(processor.process(KEY, TEXT));
+        assertThat(PassageId.parse(structure.passages().get(0).id()).embedding())
+                .isEqualTo(PassageId.versionTag(PassageId.NO_MODEL));
+        assertThat(PassageId.parse(structure.passages().get(0).id()).capture()).isEqualTo(first.capture());
+    }
+
+    @Test
+    void aPassageIdIsFoundWithItsNeighboursOrTellsWhyNot() {
+        PagePassages current = read(processor.process(KEY, TEXT));
+        List<PagePassages.Passage> all = current.passages();
+        assertThat(all).hasSize(2);
+
+        PassageLookup second = PassageLookup.of(PassageId.parse(all.get(1).id()), current, 1);
+        assertThat(second.match()).isEqualTo(PassageLookup.Match.FOUND);
+        assertThat(second.passages()).containsExactly(all.get(0), all.get(1));
+        assertThat(PassageLookup.of(PassageId.parse(all.get(1).id()), current, 0).passages())
+                .containsExactly(all.get(1));
+
+        PassageId found = PassageId.parse(all.get(1).id());
+        PassageId olderText = PassageId.of("wiki", "101", "0".repeat(64), 1, found.segmentation(), found.embedding());
+        assertThat(PassageLookup.of(olderText, current, 1)).satisfies(lookup -> {
+            assertThat(lookup.match()).isEqualTo(PassageLookup.Match.OLDER_VERSION);
+            assertThat(lookup.passages()).isEqualTo(all);
+        });
+        PassageId otherModel = PassageId.of("wiki", "101", found.capture(), 1, found.segmentation(), "00000000");
+        assertThat(PassageLookup.of(otherModel, current, 1).match()).isEqualTo(PassageLookup.Match.CHANGED);
+        assertThat(PassageLookup.of(found, PagePassages.read(KEY, List.of(), TEXT), 1).match())
+                .isEqualTo(PassageLookup.Match.UNAVAILABLE);
+    }
+
+    @Test
     void payloadStoresPositionsButNoText() {
         String json = processor.process(KEY, TEXT).payloadJson();
 
