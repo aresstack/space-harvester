@@ -71,8 +71,11 @@ public class AcronymRelationRule {
      * Gleicht die Regelvorschläge einer Quelle ohne Aufrufer ab: für den Anreicherungsauftrag nach einem Abgleich, der
      * schon unter den Rechten seines Auslösers läuft. Idempotent; unverändert belegte Vorschläge werden nicht neu
      * geschrieben, abgelehnte nie wieder vorgeschlagen. Eine unbekannte Quelle ergibt einen leeren Lauf.
+     *
+     * <p>Läufe sind serialisiert: Anreicherungen zweier Spaces derselben Quelle können gleichzeitig enden, und ein
+     * älterer Durchgang durch den Index darf den Abgleich eines neueren nicht überschreiben.
      */
-    public TermRelations.ProposalRun refresh(String sourceId) {
+    public synchronized TermRelations.ProposalRun refresh(String sourceId) {
         if (catalog.find(sourceId).isEmpty()) {
             return new TermRelations.ProposalRun(0, 0, 0, 0, 0);
         }
