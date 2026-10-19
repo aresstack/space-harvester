@@ -296,12 +296,17 @@ bilden jede Datei auf ein neutrales `DocumentOutline` ab, `ParityComparison` ver
 
 ### Testdaten
 
-`ParitySpace` legt im `FakeConfluence` (in beiden Repositories gleich) den Space `PARITY` „Paritätsprüfung“ an:
-Handbuch → Architektur, Komponenten → Ebene 4 … Ebene 7 (sieben Gliederungsebenen unter dem Space), Betrieb. Darin:
-externer Link und `mailto`, Tabelle 3 × 3 mit Kopfzeile, verschachtelte Listen, Hervorhebungen, Code-Makro,
+`ParityConfluence` (Testfixtures des Core, im Paket des `FakeConfluence`, nur Java 8, #345) legt im `FakeConfluence`
+(in beiden Repositories gleich) den Space `PARITY` „Paritätsprüfung“ an: Handbuch → Architektur, Komponenten → Ebene 4
+… Ebene 7 (sieben Gliederungsebenen unter dem Space), Betrieb und die Seite „Anhänge“ (1011), zusammen elf Seiten.
+Darin: externer Link und `mailto`, Tabelle 3 × 3 mit Kopfzeile, verschachtelte Listen, Hervorhebungen, Code-Makro,
 eingebettetes SVG aus der Anhangsliste, interner `ac:link`, Mermaid-Makro, draw.io-Makro mit Anhang, ein fehlendes
-Bild (404) und ein nicht ladbares externes Bild, sieben Merksätze. Jede Seite hat `body.storage` und eine
-handgeschriebene `export_view`. Bilder sind SVG, weil der Fake Anhänge als Text speichert.
+Bild (404), ein nicht ladbares externes Bild und ausgeführte Makros (`include`, `excerpt-include`, `children`); auf
+„Anhänge“ ein Inline-Vorschaubild, ein Emoticon, ein `data:`-Bild, ein `inc-drawio` auf das Diagramm einer anderen
+Seite, ein Jira-Vorgang (`PAR-7`, in `body.view` nur als Ladehinweis, in `export_view` mit Zusammenfassung) sowie ein
+PDF und ein DOCX als binäre Anhänge; 13 Merksätze. Jede Seite hat `body.storage` und eine handgeschriebene
+`export_view`. `ParitySpace` ergänzt testseitig Adressformen, Dateien und Suchen. Der Ladehinweis „Getting issue
+details...“ zählt wie die Bildhinweise der Exporter nicht zum Text.
 
 Für den Dokumenttext (#183) liegen unter `src/test/resources/documents/` acht kleine Dateien (DOCX, XLSX, PPTX,
 ODT, RTF, HTML, TXT, Markdown); dazu kommen die Word- und PDF-Referenz des Enterprise AI Client.

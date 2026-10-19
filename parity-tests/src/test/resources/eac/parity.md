@@ -102,3 +102,18 @@ Satz India aus dem Auszug.
 ##### Juliett
 
 Satz Juliett.
+
+### Anhänge
+
+#### Anhänge
+
+Satz Kilo zu den Anhängen.
+
+Satz Lima mit Symbol im Text. Satz Mike nach dem Symbol.
+
+*[Abbildung nicht verfügbar: symbol.svg]*
+
+PAR-7 - Getting issue details...
+
+- handbuch.pdf
+- vorlage.docx

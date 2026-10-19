@@ -1,2 +1,3 @@
 Abbildung „logo.svg“: nicht ladbar
 Abbildung „fehlt.png“: gibt es nicht (mehr)
+Abbildung „symbol.svg“: gibt es nicht (mehr)

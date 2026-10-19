@@ -26,6 +26,7 @@ dependencies {
 
     testImplementation project(':space-harvester-core')
     testImplementation testFixtures(project(':enterprise-ai-sources'))
+    testImplementation testFixtures(project(':space-harvester-core'))
     testImplementation platform(libs.spring.boot.dependencies)
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'
