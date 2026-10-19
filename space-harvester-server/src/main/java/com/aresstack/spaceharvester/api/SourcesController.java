@@ -230,15 +230,17 @@ public class SourcesController {
 
     /**
      * Ein Quellentyp für Auswahllisten und Formulare: Felder unter {@code options} und erlaubte Werte von
-     * {@code auth.type} ({@code none}, {@code basic}, {@code pat}).
+     * {@code auth.type} ({@code none}, {@code basic}, {@code pat}); {@code tls}, wenn der Typ {@code trust-bundle} und
+     * {@code client-certificate} annimmt.
      */
     public record SourceTypeResponse(String id, String displayName, boolean needsCredentials, String addressOption,
-                                     List<SourceFieldResponse> fields, List<String> authModes) {
+                                     List<SourceFieldResponse> fields, List<String> authModes, boolean tls) {
 
         static SourceTypeResponse of(SourceType type) {
             return new SourceTypeResponse(type.id(), type.displayName(), type.needsCredentials(),
                     type.addressOption(), type.fields().stream().map(SourceFieldResponse::of).toList(),
-                    type.authModes().stream().map(mode -> mode.name().toLowerCase(java.util.Locale.ROOT)).toList());
+                    type.authModes().stream().map(mode -> mode.name().toLowerCase(java.util.Locale.ROOT)).toList(),
+                    type.tls());
         }
     }
 

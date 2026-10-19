@@ -248,7 +248,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
-| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
+| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) samt Ergebnis-Cache der KI-Akronymauflösung (#122, `ai-cache.json`: nur Fingerabdrücke und Beziehungs-IDs, Auslösung über `POST /api/v1/term-relations/refresh?sourceId=` mit `{"kind":"acronym"}`, Auftrag unter `/api/v1/term-relations/refresh-jobs/{id}`) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
 ### Regeln je Quelle
 
@@ -382,7 +382,8 @@ rechnet nur auf Abruf und prüft die Freigabe dann; schon gespeicherte Bildbesch
 lesbar (nur mit den Rechten an der Seite), neue entstehen erst nach erneuter Freigabe. Wechselte die Freigabe, während der Dienst nicht lief, oder brach
 ein Lauf ab, gleicht der Start das einmal im selben Hintergrund ab, allein aus den gespeicherten Ergebnissen: Nur
 Seiten, die nicht zur Freigabe passen (nicht freigegeben, aber mit Embedding oder ohne `source-not-approved`;
-freigegeben, aber mit `source-not-approved` oder ohne Embedding), rechnen neu. Das Log nennt nur Quelle und Anzahl der
+freigegeben, aber mit `source-not-approved` oder ohne Ergebnis eines Prozessors, der für die Seite gilt), rechnen neu,
+und nur mit den Prozessoren, deren Ergebnis nicht passt. Das Log nennt nur Quelle und Anzahl der
 Seiten.
 
 Fehler meldet der Dienst je Feld als `key` (ohne Präfix, z. B. `ai.embedding-dimensions`) und deutschen Satz, nie

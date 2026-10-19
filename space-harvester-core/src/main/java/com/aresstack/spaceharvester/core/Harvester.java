@@ -126,6 +126,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
@@ -490,7 +491,8 @@ public final class Harvester implements AutoCloseable {
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
                     key -> cache.find(key).flatMap(projector::project), termRelations,
                     new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
-                            builder.userAgent), jobs, new TermProcessor().version(), clock);
+                            builder.userAgent), new FileResolutionCache(builder.dataDirectory.resolve("term-relations")),
+                    jobs, new TermProcessor().version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -604,14 +606,15 @@ public final class Harvester implements AutoCloseable {
             FileSystemAssetStore assetStore = new FileSystemAssetStore(builder.assetDirectory());
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
+            // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche; beim Lesen auf
+            // Abruf legt Assets die Anforderung ohne Warten an.
+            this.signIns = new SignInRequests(builder.signInWait, clock);
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
                     TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
-                            builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT));
+                            builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT), signIns);
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
-            // ADR 0018: verlangt die Quelle einen Einmalcode, wartet der Auftrag auf die Oberfläche.
-            this.signIns = new SignInRequests(builder.signInWait, clock);
             ExportAssetCollection images = new ExportAssetCollection(jobs, exportWriter, sources, assets,
                     (owner, sourceId) -> OWNER.equals(owner)
                             && access.permitsSourceWide(caller, sourceId, AccessKind.CONTENT), signIns);
