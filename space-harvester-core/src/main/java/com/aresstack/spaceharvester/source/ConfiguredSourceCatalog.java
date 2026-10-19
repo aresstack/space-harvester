@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.source;
 
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.source.confluence.AsyncSnapshotTransports;
 import com.aresstack.spaceharvester.source.confluence.DelegatedConfluenceHttp;
@@ -26,6 +27,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import javax.net.ssl.X509TrustManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,13 +39,17 @@ import org.slf4j.LoggerFactory;
  */
 public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseable {
 
-    /** Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien und MediaWiki (#187). */
+    /**
+     * Quellentypen ohne eigene Registrierung: Confluence, lokale Dateien, die Kopien aus dem Enterprise AI Client
+     * ohne eigenen Ordner ({@link EacSourceAdapters}: ftp, jes, ndv, sharepoint) und MediaWiki (#187).
+     */
     public static final List<SourceAdapter> DEFAULT_ADAPTERS = List.of(new ConfluenceSourceAdapter(),
-            new LocalFilesSourceAdapter(), MediaWikiSources.adapter());
+            new LocalFilesSourceAdapter(), EacSourceAdapters.ftp(), EacSourceAdapters.jes(), EacSourceAdapters.ndv(),
+            EacSourceAdapters.sharePoint(), MediaWikiSources.adapter());
 
     /** Quellentypen, die der Space Harvester ohne eigene Registrierung kennt. */
-    public static final Set<String> TYPES = Set.of(ConfluenceSourceAdapter.TYPE, LocalFilesSourceAdapter.TYPE,
-            MediaWikiSources.TYPE);
+    public static final Set<String> TYPES = DEFAULT_ADAPTERS.stream().map(SourceAdapter::type)
+            .collect(Collectors.toUnmodifiableSet());
 
     private static final Logger LOG = LoggerFactory.getLogger(ConfiguredSourceCatalog.class);
 
@@ -258,6 +264,13 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     @Override
     public Optional<HarvestSource> find(String sourceId) {
         return active(sourceId).map(Opened::source);
+    }
+
+    @Override
+    public List<SourceType> types() {
+        return adapters.values().stream()
+                .map(adapter -> new SourceType(adapter.type(), adapter.displayName(), adapter.needsCredentials()))
+                .toList();
     }
 
     private Optional<Opened> active(String sourceId) {

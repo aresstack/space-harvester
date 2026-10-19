@@ -7,7 +7,8 @@ import java.util.Locale;
 /**
  * Die Faktentypen, Rollen und Argumentrollen des Core. Namen wie im Enterprise AI Client, wo es dort dieselbe Sache
  * gibt ({@code ACRONYM_CANDIDATE}, {@code ACRONYM_DEFINITION} aus {@code AcronymFindings}, {@code MENTION} aus
- * {@code FactCatalogStatements}); {@code PROPERTY} ist eigen, weil der Client Eigenschaften nicht als eigene Fakten
+ * {@code FactCatalogStatements}, {@code EVENT} und {@code RELATION} ebenfalls aus {@code FactCatalogStatements});
+ * {@code PROPERTY} ist eigen, weil der Client Eigenschaften nicht als eigene Fakten
  * führt.
  *
  * <table>
@@ -21,7 +22,17 @@ import java.util.Locale;
  *       <td>{@code term, normalized, kind, count, section}</td></tr>
  *   <tr><td>{@code PROPERTY}</td><td>{@code properties}</td><td>—</td><td>{@code SUBJECT, VALUE, KIND, STATUS}</td>
  *       <td>{@code subject, property, normalized, kind, form, negated, section}</td></tr>
+ *   <tr><td>{@code EVENT}</td><td>{@code activities}</td><td>—</td>
+ *       <td>{@code PREDICATE}, je Beteiligtem seine Rolle ({@code ACTOR}, {@code AFFECTED_OBJECT}, {@code RECIPIENT},
+ *       {@code INSTRUMENT}; ohne Pronomen), {@code STATUS}, {@code QUALIFIER}</td>
+ *       <td>{@code predicate, lemma, voice, mood, modal, negated, participants, section}</td></tr>
+ *   <tr><td>{@code RELATION}</td><td>{@code relations}</td><td>—</td>
+ *       <td>{@code KIND, SUBJECT, OBJECT, VALUE, STATUS, QUALIFIER}</td>
+ *       <td>{@code kind, subject, subjectNormalized, predicate, object, objectNormalized, negated, cue, section}</td></tr>
  * </table>
+ *
+ * <p>Gleiche Argumentrollen in einem Fakt zählen ihre Ordnungszahl ab 0 hoch (zwei {@code ACTOR}, zwei
+ * {@code QUALIFIER}). {@code QUALIFIER} ist {@code negated} oder {@code modal} wie im Client.
  *
  * <p>Argumentwerte sind {@link #normalize normalisiert}: Unicode NFKC, Kleinbuchstaben, Leerraum zusammengefasst.
  */
@@ -31,6 +42,8 @@ public final class FactTypes {
     public static final String ACRONYM_DEFINITION = "ACRONYM_DEFINITION";
     public static final String MENTION = "MENTION";
     public static final String PROPERTY = "PROPERTY";
+    public static final String EVENT = "EVENT";
+    public static final String RELATION = "RELATION";
 
     /** Die Seite definiert, was der Fakt sagt (wie {@code FactRole.defines()} im Client). */
     public static final String DEFINES = "DEFINES";
@@ -44,9 +57,13 @@ public final class FactTypes {
     public static final String SUBJECT = "SUBJECT";
     public static final String VALUE = "VALUE";
     public static final String STATUS = "STATUS";
+    public static final String PREDICATE = "PREDICATE";
+    public static final String OBJECT = "OBJECT";
+    public static final String QUALIFIER = "QUALIFIER";
 
     /** Alle Typen. */
-    public static final List<String> ALL = List.of(ACRONYM_CANDIDATE, ACRONYM_DEFINITION, MENTION, PROPERTY);
+    public static final List<String> ALL = List.of(ACRONYM_CANDIDATE, ACRONYM_DEFINITION, MENTION, PROPERTY, EVENT,
+            RELATION);
 
     private FactTypes() {
     }
@@ -66,6 +83,9 @@ public final class FactTypes {
                     + "nur für diese Seite";
             case MENTION -> "Begriff (Kern einer Nominalgruppe) mit Häufigkeit";
             case PROPERTY -> "Eigenschaft eines Begriffs, wie der Satz sie nennt; gilt nur für ihren Satz";
+            case EVENT -> "Handlung eines Teilsatzes mit Prädikat und Beteiligten in ihrer Rolle; gilt nur für ihren Satz";
+            case RELATION -> "Beziehung zwischen zwei Begriffen oder die Folge zweier Handlungen (is_a, part_of, "
+                    + "has_part, synonym, before, spo); gilt nur für ihren Satz";
             default -> "";
         };
     }
