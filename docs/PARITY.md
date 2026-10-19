@@ -217,15 +217,16 @@ Allgemeine Infrastruktur gehört in den Core, Rechercheplanung bleibt im EAC (AD
 
 ## 12. Weitere Quellen und Quellenabstraktion
 
-Der Core bindet nur Quellen mit `PartitionListingSource` an; `discover`/`load` ruft er nie auf. Eine Quelle, die nur
-`KnowledgeSourcePort` anbietet, hätte im Core keine Partitionen und keine Seiten.
+Quellen mit `PartitionListingSource` bindet der Core über ihre Partitionen an; Quellen, die nur `KnowledgeSourcePort`
+anbieten, liest er seit #357 wie die Indexierung des Enterprise AI Client über `discover`/`load` (eine virtuelle
+Partition je Quelle, docs/SOURCE_ADAPTERS.md, „Quellen ohne Partitionen“).
 
 | Fähigkeit | EAC | Core | Bewertung |
 |---|---|---|---|
 | Lokale Dateien | `source-localfiles` | `core/source/LocalFilesSourceAdapter` (Kopie) | gleich, mit Text aus PDF und Office-Dateien (#328) |
-| Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | nur Option `directory` | teilweise → #187 |
-| Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort` | keine | fehlt → #187 |
-| Git | `proasteion/emporion/holkas/source-git` | `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`) unverändert übernommen, JGit 5.13.5 wie im Upstream, Upstream-Tests laufen in `:enterprise-ai-sources:test` (#351); im Core noch nicht registriert, das folgt über den allgemeinen Pfad für Quellen ohne Partitionen | teilweise → #187 |
+| Freigegebene Ordner für lokale Dateien | `source-api/…/files/LocalFileAccessPolicy` | `LocalFileGrants(allowAll, roots)` für `LocalFilesSourceAdapter` über `Harvester.builder().sourceAdapter`: Verzeichnis der Quelle immer frei, Links hinaus nur in freigegebene Ordner, sonst `ACCESS_DENIED`, Freigaben ohne Neustart (#357); keine Einstellung im Dienst | teilweise → #187 (Freigaben in der Konfiguration des Dienstes) |
+| Quellen ohne Partitionen (`discover`/`load`) | `KnowledgeSourcePort`, `IndexKnowledgeUseCase.indexSource` | `KnowledgeSourceHarvestSource` über `KnowledgeSourceProviderAdapter` (#357): eine Partition je Quelle, Seiten-ID = Ressourcen-ID als Base64url, Seitenliste aus einer Discovery je Listung (bei geändertem Stand `UNAVAILABLE`), Inhalt über `load` als Lesetext (`knowledge-document`, `KnowledgeDocumentTextProjector` `knowledge-document-text/v1`), Weiterleitung nur unter ihrem Ziel, Volltextsuche über den Cache, eigene Suche der Quelle zusätzlich, Export als Blöcke; Rechte je Seite | teilweise → #187 (Anmeldung, Zertifikate, `base-url` erst mit #188; keine Bereiche `partitions()`) |
+| Git | `proasteion/emporion/holkas/source-git` | `GitSourceProvider`, `GitKnowledgeSource` (ein Ref, aktueller Stand, `PageNavigationSource`) unverändert übernommen, JGit 5.13.5 wie im Upstream, Upstream-Tests laufen in `:enterprise-ai-sources:test` (#351); im Core noch nicht registriert; der allgemeine Pfad für Quellen ohne Partitionen steht (#357), die Registrierung folgt (M) | teilweise → #187 |
 | MediaWiki, FTP/JES, NDV, Outlook, SharePoint, BetaView | `proasteion/emporion/holkas/source-*` | keine | fehlt → #187 |
 | Quellen zur Laufzeit hinzufügen, entfernen, prüfen, Daten zurückziehen | `SourceDefinitionStore`, `acro/source/KnowledgeSourceManagement`, `SourceConnectionCheck`, `SourceDataWithdrawal` | `Harvester.sourceManagement()` (#227): `validate`, `test`, `add`, `change`, `remove` mit Rückzug von Cache, Anreicherungen und Assets | gleich (Vergleichstest Quellenverwaltung), mit `setEnabled` und Ablehnung desselben Ziels unter neuer ID |
 | Eigene Adapter, Embedding-Anbieter, Reranker, Secret-Speicher einhängen | Kompositionspunkt `app/composition` | `Harvester.builder()` mit `sourceAdapter`, `secretProvider`, `embeddings`, `reranker` (#226) | gleich |
