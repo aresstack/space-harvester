@@ -3,19 +3,13 @@ package com.aresstack.spaceharvester.app.settings;
 import com.aresstack.spaceharvester.application.sources.SourceField;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Felder, Anmeldearten und TLS je Quellentyp für das Quellenformular, aus dem Typ des Core
- * ({@link SourceType#fields()}, {@link SourceType#authModes()}). Confluence hat keine Felder (eigenes Formular).
+ * ({@link SourceType#fields()}, {@link SourceType#authModes()}, {@link SourceType#tls()}). Confluence hat keine
+ * Felder (eigenes Formular).
  */
 public final class SourceFields {
-
-    /**
-     * Typen, die {@code client-certificate} und {@code trust-bundle} annehmen (docs/SOURCE_ADAPTERS.md, ADR 0022, Git seit #393); FTP,
-     * JES und NDV kennen kein TLS und weisen beides ab. Der Core sagt das nicht am Typ.
-     */
-    private static final Set<String> WITH_TLS = Set.of("confluence", "sharepoint", "betaview", "mediawiki", "git");
 
     private SourceFields() {
     }
@@ -31,9 +25,9 @@ public final class SourceFields {
                 : type.authModes().stream().map(mode -> AuthMode.valueOf(mode.name())).toList();
     }
 
-    /** Ob der Typ Client-Zertifikat und eigenes Server-Vertrauen annimmt. */
-    public static boolean tls(String typeId) {
-        return typeId != null && WITH_TLS.contains(typeId);
+    /** Ob der Typ Client-Zertifikat und eigenes Server-Vertrauen annimmt ({@link SourceType#tls()}, #431). */
+    public static boolean tls(SourceType type) {
+        return type != null && type.tls();
     }
 
     /**

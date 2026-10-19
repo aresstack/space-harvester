@@ -277,7 +277,7 @@ final class SourceForm {
         String type = typeId();
         boolean files = SourceDraft.FILES.equals(type);
         boolean generic = !confluence && !files;
-        boolean tls = confluence || generic && SourceFields.tls(type);
+        boolean tls = confluence || generic && SourceFields.tls(selectedType());
         // Zertifikat und Vertrauen eines Typs ohne TLS zeigt das Formular nicht; sie bleiben wie in der Datei.
         SourceDraft kept = generic && editing != null && editing.draft().type().equals(type) ? editing.draft() : null;
         SourceSettingsConfig.AuthType authType = files ? SourceSettingsConfig.AuthType.NONE
@@ -992,7 +992,7 @@ final class SourceForm {
         form.visible(include, files);
         boolean login = confluence || generic && (auth.getItemCount() > 1
                 || auth.getItemCount() == 1 && !NONE.equals(auth.getItemAt(0)));
-        boolean tls = confluence || generic && SourceFields.tls(typeId());
+        boolean tls = confluence || generic && SourceFields.tls(selectedType());
         loginSection.setVisible(login);
         certificateSection.setVisible(tls);
         trustSection.setVisible(tls);
