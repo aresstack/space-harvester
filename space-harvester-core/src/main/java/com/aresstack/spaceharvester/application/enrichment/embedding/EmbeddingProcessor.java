@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.JsonText;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.ProcessingNotAllowedException;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
 import java.util.List;
@@ -193,12 +194,12 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
      * Prüft die Freigabe der Quelle erst hier, beim Rechnen: Eine Berechnung, die vor dem Entzug eingereiht wurde,
      * schickt danach nichts mehr an den Dienst (ADR 0015).
      *
-     * @throws IllegalStateException wenn Inhalte der Quelle nicht an den Dienst gehen dürfen
+     * @throws ProcessingNotAllowedException wenn Inhalte der Quelle nicht an den Dienst gehen dürfen
      */
     @Override
     public EnrichmentOutput process(PageKey key, PageText text) {
         if (!sources.test(key.sourceId())) {
-            throw new IllegalStateException("Quelle nicht für den KI-Dienst freigegeben");
+            throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
         }
         return process(text);
     }

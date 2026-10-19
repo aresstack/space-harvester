@@ -279,6 +279,42 @@ class EnrichmentsTest {
         assertThat(remote.calls.get()).isEqualTo(1);
     }
 
+    @Test
+    void aReleaseWithdrawnWhileSavingLeavesNoResult() {
+        // Gilt bei der Auswahl und vor dem Speichern, danach nicht mehr: Der Entzug kam zwischen Prüfung und Speichern.
+        AtomicInteger checks = new AtomicInteger();
+        Remote remote = new Remote(key -> checks.incrementAndGet() <= 2, new CountDownLatch(0));
+        PageSnapshot page = text("approved", "101", "1", "Text");
+
+        assertThat(enrichments(remote).recompute(page, null)).isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(remote.calls.get()).isEqualTo(1);
+        assertThat(store.find(page.key())).isEmpty();
+    }
+
+    @Test
+    void aProcessorThatMayNotProcessThePageStoresNothing() {
+        Enrichments enrichments = enrichments(new EnrichmentProcessor() {
+            @Override
+            public String id() {
+                return "remote";
+            }
+
+            @Override
+            public String version() {
+                return "1";
+            }
+
+            @Override
+            public EnrichmentOutput process(PageText text) {
+                throw new ProcessingNotAllowedException("Quelle nicht für den KI-Dienst freigegeben");
+            }
+        });
+        PageSnapshot page = text("wiki", "101", "1", "Text");
+
+        assertThat(enrichments.refresh(page)).isEqualTo(new Enrichments.Run(true, 0, 0, 0));
+        assertThat(store.find(page.key())).isEmpty();
+    }
+
     private Enrichments enrichments(EnrichmentProcessor... processors) {
         return new Enrichments(PROJECTOR, List.of(processors), store, CLOCK);
     }

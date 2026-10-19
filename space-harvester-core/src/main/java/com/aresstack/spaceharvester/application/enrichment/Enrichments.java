@@ -207,8 +207,9 @@ public class Enrichments {
                     continue;
                 }
             }
-            store.save(compute(processor, snapshot, text, input));
-            count++;
+            if (saveWhileApplies(processor, compute(processor, snapshot, text, input))) {
+                count++;
+            }
         }
         return count;
     }
@@ -339,7 +340,9 @@ public class Enrichments {
                 continue;
             }
             Enrichment result = compute(processor, snapshot, text, input);
-            store.save(result);
+            if (!saveWhileApplies(processor, result)) {
+                continue;
+            }
             computed++;
             if (result.status() == Enrichment.Status.FAILED) {
                 failed++;
@@ -384,13 +387,9 @@ public class Enrichments {
                             && previous.freshness(input, processor.version()) == Enrichment.Freshness.CURRENT) {
                         return;
                     }
-                    Enrichment result = compute(processor, snapshot, text, input);
-                    if (!processor.appliesTo(snapshot.key())) {
-                        // Während der Berechnung entzogen: nichts aus der alten Freigabe aufbewahren.
-                        return;
+                    if (saveWhileApplies(processor, compute(processor, snapshot, text, input))) {
+                        store.flush();
                     }
-                    store.save(result);
-                    store.flush();
                 } catch (RuntimeException e) {
                     LOG.log(System.Logger.Level.WARNING, "Hintergrundberechnung {0} scheiterte ({1})",
                             processor.id(), e.getClass().getName());
@@ -414,12 +413,38 @@ public class Enrichments {
         }
     }
 
+    /**
+     * Speichert das Ergebnis nur, solange der Prozessor die Seite bearbeitet (ADR 0015). Wird die Freigabe während der
+     * Berechnung oder zwischen Prüfung und Speichern entzogen, bleibt nichts aus der alten Freigabe stehen: Ein Entzug,
+     * der vor dem Speichern schon aufgeräumt hat, würde das Ergebnis sonst dauerhaft übersehen.
+     *
+     * @param result {@code null}, wenn der Prozessor die Seite nicht bearbeiten durfte
+     * @return ob das Ergebnis gespeichert blieb
+     */
+    private boolean saveWhileApplies(EnrichmentProcessor processor, Enrichment result) {
+        if (result == null || !processor.appliesTo(result.key())) {
+            return false;
+        }
+        store.save(result);
+        if (!processor.appliesTo(result.key())) {
+            store.remove(result.key(), processor.id());
+            return false;
+        }
+        return true;
+    }
+
+    /** @return das Ergebnis oder {@code null}, wenn der Prozessor die Seite nicht bearbeiten darf */
     private Enrichment compute(EnrichmentProcessor processor, PageSnapshot snapshot, PageText text, String input) {
         try {
             EnrichmentOutput output = processor.process(snapshot, text);
             String version = output.version() != null ? output.version() : processor.version();
             return new Enrichment(snapshot.key(), processor.id(), version, input, snapshot.revision(),
                     Enrichment.Status.OK, output.payloadJson(), output.warnings(), null, clock.instant());
+        } catch (ProcessingNotAllowedException e) {
+            // Kein Fehler der Seite: nichts speichern, die Seite nicht nennen.
+            LOG.log(System.Logger.Level.DEBUG, "Prozessor {0} übersprungen, Quelle {1} nicht freigegeben",
+                    processor.id(), snapshot.key().sourceId());
+            return null;
         } catch (RuntimeException e) {
             // Keine Meldung in Ergebnis oder Log: sie könnte Text der Seite enthalten.
             LOG.log(System.Logger.Level.WARNING, "Prozessor {0} {1} scheiterte an Seite {2}/{3} ({4})",
