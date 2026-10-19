@@ -10,17 +10,24 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
+import com.aresstack.spaceharvester.app.runtime.AppRuntime;
+import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
+
 import java.awt.BorderLayout;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 
 /**
  * Der Bereich „Begriffe“ (#339): die quellenübergreifende Sicht auf die je Seite ermittelten Begriffe, mit den
  * Reitern Akronyme, Bezeichner, Beziehungen und Fachglossar in dieser Reihenfolge. Akronyme, Bezeichner und
- * Beziehungen zeigen je ein Verzeichnis über alle berechtigten, aktuell indexierten Seiten mit Suchfeld; die Daten
- * liefert der Begriffsindex des Core (#119, #120), bis dahin sind die Verzeichnisse leer und nennen, wo die Begriffe
- * einer Seite schon stehen. Für das Fachglossar gibt es noch keinen Unterbau. Nur auf dem EDT.
+ * Beziehungen zeigen je ein Verzeichnis über alle berechtigten, aktuell indexierten Seiten mit Suchfeld. Akronyme und
+ * Bezeichner liefert der Begriffsindex des Core ({@code Harvester.terms()}, #119), außerhalb des EDT abgefragt, sobald
+ * der Bereich sichtbar wird und bei jeder Eingabe ins Suchfeld; Beziehungen folgen mit #120. Für das Fachglossar gibt
+ * es noch keinen Unterbau. Nur auf dem EDT.
  */
 public final class TermsView implements View {
 
@@ -31,6 +38,11 @@ public final class TermsView implements View {
     static final String NOT_AVAILABLE = "Das Fachglossar ist noch nicht verfügbar.";
     static final String PENDING = "Das Verzeichnis füllt der Begriffsindex des Core; bis dahin stehen die Akronyme "
             + "einer Seite unter Inhalte › Begriffe.";
+    static final String EMPTY = "Noch keine Begriffe im Index. Sie entstehen, wenn Seiten in den Cache geladen werden.";
+    static final String NO_MATCH = "Kein Begriff passt zur Suche.";
+    static final String NO_RUNTIME = "Die Laufzeit ist noch nicht gestartet.";
+    /** Einträge je Abfrage; mehr zeigt die Suche. */
+    static final int LIMIT = TermQueries.MAX_LIMIT;
 
     private final JPanel root = new JPanel(new BorderLayout());
     private final PillTabs tabs = new PillTabs();
@@ -41,7 +53,13 @@ public final class TermsView implements View {
     private final Directory relations = new Directory("Beziehungen zwischen Begriffen",
             new String[]{"Begriff", "Beziehung", "Zu Begriff"});
 
-    public TermsView() {
+    private final AppContext context;
+    private int acronymRequest;
+    private int identifierRequest;
+
+    /** @param context Laufzeit für den Begriffsindex; {@code null} zeigt nur das Gerüst (Tests) */
+    public TermsView(AppContext context) {
+        this.context = context;
         root.setBackground(Comic.SURFACE);
         root.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
         JLabel glossary = Comic.muted(NOT_AVAILABLE);
@@ -55,6 +73,72 @@ public final class TermsView implements View {
         acronyms.show(List.of(), PENDING);
         identifiers.show(List.of(), PENDING);
         relations.show(List.of(), PENDING);
+        if (context != null) {
+            acronyms.onSearch(q -> loadAcronyms());
+            identifiers.onSearch(q -> loadIdentifiers());
+        }
+    }
+
+    @Override
+    public void shown() {
+        if (context != null) {
+            loadAcronyms();
+            loadIdentifiers();
+        }
+    }
+
+    /** Akronym, Bedeutung (Ausschreibungen neben dem Akronym), Fundstellen. */
+    private void loadAcronyms() {
+        int request = ++acronymRequest;
+        String q = acronyms.query();
+        load(acronyms, () -> query(TermKind.ACRONYM, q), rows -> {
+            if (request == acronymRequest) {
+                acronyms.show(rows, q.isEmpty() ? EMPTY : NO_MATCH);
+            }
+        });
+    }
+
+    /** Bezeichner (Nomen, Nominalgruppen, Kennungen), Schreibweisen, Fundstellen. */
+    private void loadIdentifiers() {
+        int request = ++identifierRequest;
+        String q = identifiers.query();
+        load(identifiers, () -> {
+            List<TermQueries.TermSummary> all = new ArrayList<>(query(TermKind.NOUN, q));
+            all.addAll(query(TermKind.IDENTIFIER, q));
+            all.sort(Comparator.comparing(TermQueries.TermSummary::normalized));
+            return all.size() > LIMIT ? all.subList(0, LIMIT) : all;
+        }, rows -> {
+            if (request == identifierRequest) {
+                identifiers.show(rows, q.isEmpty() ? EMPTY : NO_MATCH);
+            }
+        });
+    }
+
+    private List<TermQueries.TermSummary> query(TermKind kind, String q) {
+        AppRuntime runtime = context.runtime();
+        return runtime.workspace().terms(new TermQueries.TermSearch(null, null, kind, q.isEmpty() ? null : q, false,
+                LIMIT, null)).terms();
+    }
+
+    private void load(Directory directory, java.util.concurrent.Callable<List<TermQueries.TermSummary>> work,
+                      Consumer<List<List<String>>> onRows) {
+        if (context.runtime() == null) {
+            directory.show(List.of(), NO_RUNTIME);
+            return;
+        }
+        Background.run(work, terms -> onRows.accept(rows(terms)),
+                failure -> directory.show(List.of(), "Begriffe nicht lesbar: " + failure.getMessage()));
+    }
+
+    /** Je Begriff Wortlaut, Ausschreibungen bzw. Schreibweisen, Zahl der Fundstellen. */
+    static List<List<String>> rows(List<TermQueries.TermSummary> terms) {
+        List<List<String>> rows = new ArrayList<>(terms.size());
+        for (TermQueries.TermSummary term : terms) {
+            List<String> second = term.kind() == TermKind.ACRONYM ? term.expansions() : term.spellings();
+            rows.add(List.of(term.term(), second.isEmpty() ? "–" : String.join(" · ", second),
+                    String.valueOf(term.occurrences())));
+        }
+        return rows;
     }
 
     @Override
@@ -72,6 +156,10 @@ public final class TermsView implements View {
         return acronyms;
     }
 
+    Directory identifiers() {
+        return identifiers;
+    }
+
     /**
      * Ein Verzeichnis: Überschrift, „Alle berechtigten, aktuell indexierten Seiten“, Suchfeld und Tabelle; die letzte
      * Spalte ist rechtsbündig. Das Suchfeld filtert über alle Spalten.
@@ -82,6 +170,7 @@ public final class TermsView implements View {
         private final JTable table;
         private final PlaceholderField search = new PlaceholderField(16, "Suchen …");
         private final JLabel hint = Comic.muted(" ");
+        private Consumer<String> onSearch;
 
         Directory(String title, String[] columns) {
             super(new BorderLayout(0, 8));
@@ -109,19 +198,36 @@ public final class TermsView implements View {
             search.getDocument().addDocumentListener(new DocumentListener() {
                 @Override
                 public void insertUpdate(DocumentEvent e) {
-                    model.filter(search.getText());
+                    searched();
                 }
 
                 @Override
                 public void removeUpdate(DocumentEvent e) {
-                    model.filter(search.getText());
+                    searched();
                 }
 
                 @Override
                 public void changedUpdate(DocumentEvent e) {
-                    model.filter(search.getText());
+                    searched();
                 }
             });
+        }
+
+        /** Ab jetzt sucht der Core: jede Eingabe geht an {@code listener}, die Tabelle filtert nicht mehr selbst. */
+        void onSearch(Consumer<String> listener) {
+            onSearch = listener;
+        }
+
+        String query() {
+            return search.getText() == null ? "" : search.getText().trim();
+        }
+
+        private void searched() {
+            if (onSearch != null) {
+                onSearch.accept(query());
+            } else {
+                model.filter(search.getText());
+            }
         }
 
         /** Zeigt die Zeilen; {@code hint} steht unter der Tabelle, solange sie leer ist. */

@@ -1,5 +1,7 @@
 package com.aresstack.spaceharvester.app.ui;
 
+import com.aresstack.spaceharvester.application.terms.TermKind;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.SwingUtilities;
@@ -15,7 +17,7 @@ class TermsViewTest {
     void theTabsComeInTheAgreedOrderAndTheDirectoryFiltersAllColumns() throws Exception {
         List<String> seen = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            TermsView view = new TermsView();
+            TermsView view = new TermsView(null);
             seen.add(view.tabs().selected());
             TermsView.Directory acronyms = view.acronyms();
             seen.add(acronyms.hint());
@@ -32,12 +34,26 @@ class TermsViewTest {
     void theButtonsOfTheTabsAreAcronymsIdentifiersRelationsGlossary() throws Exception {
         List<String> names = new ArrayList<>();
         SwingUtilities.invokeAndWait(() -> {
-            TermsView view = new TermsView();
+            TermsView view = new TermsView(null);
             for (String name : List.of(TermsView.ACRONYMS, TermsView.IDENTIFIERS, TermsView.RELATIONS,
                     TermsView.GLOSSARY)) {
                 names.add(view.tabs().button(name).getText());
             }
         });
         assertThat(names).containsExactly("Akronyme", "Bezeichner", "Beziehungen", "Fachglossar");
+    }
+
+    @Test
+    void aRowNamesExpansionsForAcronymsAndSpellingsForIdentifiers() {
+        assertThat(TermsView.rows(List.of(
+                new TermQueries.TermSummary("API", "api", TermKind.ACRONYM, 43, 12, 2, List.of("API"),
+                        List.of("Application Programming Interface", "Automatische Prüfungs Instanz")),
+                new TermQueries.TermSummary("RSL", "rsl", TermKind.ACRONYM, 3, 1, 1, List.of("RSL"), List.of()),
+                new TermQueries.TermSummary("Sachbearbeitung", "sachbearbeitung", TermKind.NOUN, 5, 3, 1,
+                        List.of("Sachbearbeitung", "sachbearbeitung"), List.of()))))
+                .containsExactly(
+                        List.of("API", "Application Programming Interface · Automatische Prüfungs Instanz", "43"),
+                        List.of("RSL", "–", "3"),
+                        List.of("Sachbearbeitung", "Sachbearbeitung · sachbearbeitung", "5"));
     }
 }

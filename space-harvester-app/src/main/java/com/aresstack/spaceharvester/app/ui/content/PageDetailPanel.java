@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
 import com.aresstack.spaceharvester.application.query.PageBookmark;
@@ -442,7 +443,7 @@ public final class PageDetailPanel extends JPanel {
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
         shown = document;
-        terms.show(document == null ? null : document.acronyms());
+        terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");
@@ -459,7 +460,8 @@ public final class PageDetailPanel extends JPanel {
     /** Baut den Lesetext mit den Akronymen der Seite {@code sourceId}/{@code pageId}; außerhalb des EDT. */
     private static ReaderDocument document(String sourceId, String pageId, List<Enrichments.View> views, PageText text,
                                            Font font) {
-        return ReaderDocument.build(text, PageAcronyms.read(new PageKey(sourceId, pageId), views, text), font);
+        PageKey key = new PageKey(sourceId, pageId);
+        return ReaderDocument.build(text, PageAcronyms.read(key, views, text), PageTerms.read(key, views, text), font);
     }
 
     private String acronymTooltip(Point point) {
@@ -493,32 +495,26 @@ public final class PageDetailPanel extends JPanel {
      * zur ersten.
      */
     void jumpTo(PageAcronyms.Acronym acronym) {
+        jumpTo(acronym.occurrences().stream()
+                .map(occurrence -> new TermsTab.Span(occurrence.start(), occurrence.end())).toList());
+    }
+
+    /** Springt zur ersten dieser Fundstellen ab der Auswahl, nach der letzten wieder zur ersten. */
+    void jumpTo(List<TermsTab.Span> spans) {
         ReaderDocument document = shown;
-        if (document == null) {
+        if (document == null || spans.isEmpty()) {
             return;
         }
         int caret = Math.max(reader.getCaret().getDot(), reader.getCaret().getMark());
-        PageAcronyms.Mark first = null;
-        PageAcronyms.Mark next = null;
-        for (PageAcronyms.Mark mark : document.marks()) {
-            if (!mark.acronym().acronym().equals(acronym.acronym())) {
-                continue;
-            }
-            if (first == null) {
-                first = mark;
-            }
-            if (next == null && mark.occurrence().start() >= caret) {
-                next = mark;
-            }
-        }
-        PageAcronyms.Mark target = next != null ? next : first;
-        if (target == null) {
+        TermsTab.Span target = spans.stream().filter(span -> span.start() >= caret).findFirst()
+                .orElse(spans.get(0));
+        if (target.end() > reader.getDocument().getLength()) {
             return;
         }
         tabs.select(READ);
         reader.requestFocusInWindow();
-        reader.select(target.occurrence().start(), target.occurrence().end());
-        showAcronymAt(target.occurrence().start());
+        reader.select(target.start(), target.end());
+        showAcronymAt(target.start());
     }
 
     /** Markiert die nächste bzw. vorige Fundstelle und zeigt ihre Ausschreibung. */
