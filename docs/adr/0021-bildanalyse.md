@@ -49,8 +49,9 @@ keine Sicht je Seite.
 
 ## Folgen
 
-- Ändert sich nur ein Bild, nicht der Seitentext, bleibt das Ergebnis `CURRENT`; der SHA-256 je Bild zeigt den Stand,
-  ein neues `describe` beschreibt das neue Bild.
+- Ändert sich nur ein Bild, nicht der Seitentext, bleibt das Ergebnis `CURRENT`, bis die Lese-Ansicht die neue
+  Version des Anhangs nennt (Nachtrag 2026-10-19); der SHA-256 je Bild zeigt den Stand, ein neues `describe`
+  beschreibt das neue Bild.
 - Ein neuer Prompt bekommt eine neue Analyseversion (`openai-compatible-vision-v1` → `-v2`); alle Ergebnisse gelten
   dann als veraltet.
 - Abweichung ohne Paritätspflicht: Beschreibung einer ganzen Seite in einem Aufruf (der EAC beschreibt im Lesebereich
@@ -67,3 +68,15 @@ Beschreibung je Bildbytes und Modell bleibt nutzbar), legt aber die Warnung `pag
 auch jedes erneute Beschreiben `STALE`, bis der Abgleich die Seite holt. Eine Quelle ohne Lese-Ansicht, die ihre Bilder
 trotzdem kennt, liefert sie wie bisher über `viewImages`; die Fassung gilt dort als unbekannt und bleibt ungeprüft.
 Kein Schemawechsel (`page-images/v1`), keine Änderung an den Asset-Klassen.
+
+## Nachtrag 2026-10-19: Ersetzte Bildanhänge
+
+Confluence hebt beim Ersetzen eines Anhangs weder die Seitenversion noch den Speicherformat-Text an; ein ersetztes Bild
+ließ das Ergebnis also `CURRENT`. Die Bild-Hashes in den Eingabe-Hash zu nehmen geht nicht, ohne die Quelle zu fragen
+(sie stammen aus dem Ergebnis selbst), und der Core hält keine eigene Liste der aktuellen Anhangsversionen. Darum legt
+`describe` die Version jedes Bildanhangs, wie die Lese-Ansicht sie nannte, additiv in `page-images/v1` ab
+(`attachmentVersions`, Anhang-ID → Version; ältere Ergebnisse haben keine und bleiben ungeprüft). `read` vergleicht
+sie mit der zuletzt abgelegten Lese-Ansicht (#176), sofern diese jünger als das Ergebnis ist, ohne die Quelle zu
+fragen: nennt sie für einen beschriebenen Anhang eine andere Version, ist das Ergebnis `STALE` mit Grund
+`attachment-changed`. Sichtbar wird ein ersetztes Bild damit, sobald die Lese-Ansicht neu geladen wurde (Neuladen
+bzw. `refresh`, neue Seitenfassung). Kein neues Schema, keine Änderung an Asset-Klassen und App.
