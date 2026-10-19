@@ -441,9 +441,9 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
 ## 9. Anreicherungen
 
 Nach jedem bestätigten Abgleich berechnet der Dienst Anreicherungen aus der Payload im Cache, als eigene Ergebnisse mit
-Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier alle acht Prozessoren für 1002 (die
+Eingabe-Hash neben dem Original. `view=extended` liefert sie mit der Seite; hier alle neun Prozessoren für 1002 (die
 Seite nennt keine Eigenschaft, darum ist diese Liste leer; `terms` speist den Begriffsindex, ADR 0019; ohne Embedding-Modell teilt `passages` die Absätze nur nach
-Struktur, ADR 0020):
+Struktur und `navigation` zeigt nur die Überschriften, ADR 0020):
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/demo/pages/1002?view=extended"
@@ -485,6 +485,12 @@ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/sources/
         { "term": "JSON", "kind": "acronym", "count": 1 },
         { "term": "REST-Schnittstelle", "kind": "noun", "count": 1, "section": "REST-Schnittstelle" }
       ] }
+    },
+    {
+      "processor": "navigation",
+      "status": "ok",
+      "freshness": "current",
+      "result": { "analysis": "headings", "reason": "no-model" }
     },
     {
       "processor": "outline",

@@ -51,6 +51,9 @@ import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
+import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
+import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.NavigationQueries;
 import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
@@ -232,6 +235,7 @@ public final class Harvester implements AutoCloseable {
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
     private final PassageQueries passages;
+    private final NavigationQueries documentNavigation;
     private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
@@ -357,6 +361,9 @@ public final class Harvester implements AutoCloseable {
             }
             // #181: semantische Absätze, Satzvektoren vom selben Modell wie embedding, sonst nach Struktur.
             processors.add(new PassageProcessor(sentences, sentenceRules, embedding));
+            // #181: Dokumentnavigation aus den Embeddings je Absatz, ohne sie nur die Überschriften (ADR 0020).
+            DocumentNavigationBuilder navigationBuilder = new DocumentNavigationBuilder();
+            processors.add(new NavigationProcessor(navigationBuilder, embedding, enrichmentStore::find));
             // ADR 0021: Bildbeschreibung über das Vision-Modell der wirksamen Konfiguration, nur auf Abruf; der
             // Prozessor images rechnet nie selbst, er bestimmt nur, wann ein Ergebnis gilt.
             AiServiceSettings startAi = builder.ai;
@@ -387,6 +394,7 @@ public final class Harvester implements AutoCloseable {
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.passages = new PassageQueries(pages, enrichments, projector);
+            this.documentNavigation = new NavigationQueries(pages, enrichments, projector, navigationBuilder);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
             // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
@@ -852,6 +860,15 @@ public final class Harvester implements AutoCloseable {
      */
     public PassageQueries passages() {
         return passages;
+    }
+
+    /**
+     * Dokumentnavigation einer Seite: Überschriften und erkannte Themenabschnitte (#181, ADR 0020); in der Leseansicht
+     * ohne Aufrufer {@link com.aresstack.spaceharvester.application.passages.DocumentNavigationView#read} mit
+     * {@link #enrichments()}.
+     */
+    public NavigationQueries documentNavigation() {
+        return documentNavigation;
     }
 
     /**
