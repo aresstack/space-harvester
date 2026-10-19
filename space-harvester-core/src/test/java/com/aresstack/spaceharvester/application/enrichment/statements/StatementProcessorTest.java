@@ -9,6 +9,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.enrichment.ProcessingNotAllowedException;
 import com.aresstack.spaceharvester.application.facts.EnrichmentFacts;
 import com.aresstack.spaceharvester.application.facts.FactOrigin;
 import com.aresstack.spaceharvester.application.facts.FactReview;
@@ -69,7 +70,7 @@ class StatementProcessorTest {
         assertThat(enrichments.recompute(page, null).computed()).isZero();
         assertThat(store.find(page.key())).isEmpty();
         assertThatThrownBy(() -> processor.process(page.key(), PROJECTOR.project(page).orElseThrow()))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(ProcessingNotAllowedException.class);
     }
 
     @Test
@@ -82,7 +83,8 @@ class StatementProcessorTest {
         assertThat(enrichments.refresh(secret).computed()).isZero();
         assertThat(enrichments.recompute(secret, null).computed()).isZero();
         assertThat(enrichments.recompute(secret, StatementProcessor.ID).computed()).isZero();
-        assertThatThrownBy(() -> processor.process(secret.key(), text)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> processor.process(secret.key(), text))
+                .isInstanceOf(ProcessingNotAllowedException.class);
         assertThatThrownBy(() -> processor.process(text)).isInstanceOf(IllegalStateException.class);
         assertThat(store.find(secret.key())).isEmpty();
         assertThat(chat.requests()).isEmpty();

@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.enrichment.statements;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.ProcessingNotAllowedException;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.util.ArrayList;
@@ -108,8 +109,8 @@ public final class StatementProcessor implements EnrichmentProcessor {
         StatementChat model = chat.get();
         if (!current.enabled() || ChatStatementExtractor.model(model) == null
                 || !mayProcessExternally.test(key.sourceId())) {
-            throw new IllegalStateException("statements ist aus, ohne Chat-Modell oder für diese Quelle nicht "
-                    + "freigegeben");
+            throw new ProcessingNotAllowedException("statements ist aus, ohne Chat-Modell oder für diese Quelle "
+                    + "nicht freigegeben");
         }
         StatementAnalyzer analyzer = analyzer(model, current);
         String version = version(analyzer, current);
