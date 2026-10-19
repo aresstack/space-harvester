@@ -4,6 +4,7 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.Operation;
@@ -62,7 +63,10 @@ public class ProgressiveSearchController {
                     + "ai.chat-model, sonst Regeln): zuerst mit allen Begriffen, dann schrittweise weniger. Die "
                     + "Varianten laufen in Wellen, jeder Fund wird gegen q bewertet (Cross-Encoder mit "
                     + "ai.rerank-model, nur Quellen in external-processing-sources) und nach Quelle und Seiten-ID "
-                    + "zusammengeführt. mode=quality (Standard) endet, sobald minRelevantHits Treffer über minScore "
+                    + "zusammengeführt. ranking=semantic sucht jede Suchanfrage über die Vektoren im Cache: Die "
+                    + "Variante findet und lädt nur, Treffer kommen aus der Vektorsuche mit q, bewertet nach der "
+                    + "Kosinusähnlichkeit zu q (ohne Embedding-Modell 503 semantic-search-unavailable, kein Rückfall; "
+                    + "20 s je Suchanfrage, Zeitbudget 60 s). mode=quality (Standard) endet, sobald minRelevantHits Treffer über minScore "
                     + "liegen; mode=all-variants arbeitet alle Varianten ab, etwa für einen Recherche-Agenten. Zeit- "
                     + "und Abfragebudget begrenzen beides. Ohne wait antwortet der Dienst sofort mit 202 und dem Stand; "
                     + "GET auf Location fragt nach. Mit wait=true wartet die Anfrage bis zum Abschluss (höchstens "
@@ -75,6 +79,9 @@ public class ProgressiveSearchController {
     @ApiResponse(responseCode = "202", description = "Die Suche läuft; Location nennt den Stand")
     @ApiResponse(responseCode = "400", description = "Ungültige Anfrage, etwa ohne q oder mit Werten außerhalb der "
             + "Grenzen (invalid-request)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
+            schema = @Schema(implementation = ProblemDetail.class)))
+    @ApiResponse(responseCode = "503", description = "ranking=semantic ohne verfügbares Embedding-Modell "
+            + "(semantic-search-unavailable)", content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
             schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "429", description = "Zu viele laufende Suchen (too-many-searches)",
             content = @Content(mediaType = MediaType.APPLICATION_PROBLEM_JSON_VALUE,
@@ -162,6 +169,14 @@ public class ProgressiveSearchController {
                 default -> throw new InvalidQueryException("expansion kennt nur ai und rules");
             };
         }
+        if (request.ranking() != null) {
+            defaults = switch (request.ranking()) {
+                case "keyword" -> defaults.withRanking(SearchProfile.Ranking.KEYWORD);
+                // Mehr Zeit je Suchanfrage: Sie lädt und bettet erst ein; einzeln überschreibbar bleibt das Budget.
+                case "semantic" -> SemanticVariantSearch.profile(defaults);
+                default -> throw new InvalidQueryException("ranking kennt nur keyword und semantic");
+            };
+        }
         Duration timeBudget = defaults.timeBudget();
         if (request.timeBudgetMs() != null) {
             if (request.timeBudgetMs() < 1 || request.timeBudgetMs() > MAX_TIME_BUDGET.toMillis()) {
@@ -175,7 +190,8 @@ public class ProgressiveSearchController {
                     or(request.minRelevantHits(), defaults.minRelevantHits()),
                     request.minScore() == null ? defaults.minScore() : request.minScore(), timeBudget,
                     or(request.searchBudget(), defaults.searchBudget()),
-                    or(request.limitPerSearch(), defaults.limitPerSearch()), defaults.execution(), expansion);
+                    or(request.limitPerSearch(), defaults.limitPerSearch()), defaults.execution(), expansion,
+                    defaults.ranking());
         } catch (IllegalArgumentException e) {
             // Die Meldung stammt aus der Prüfung des Profils und nennt nur die Grenze.
             throw new InvalidQueryException(e.getMessage());
@@ -202,6 +218,8 @@ public class ProgressiveSearchController {
      * @param searchBudget     höchstens so viele Suchanfragen, q eingeschlossen (Standard 12)
      * @param limitPerSearch   Treffer je Suchanfrage, 1 bis 100 (Standard 20)
      * @param expansion        {@code ai} (Standard; ohne Chat-Modell wie {@code rules}) oder {@code rules}
+     * @param ranking          {@code keyword} (Standard, Schlagwortsuche) oder {@code semantic} (Vektoren im Cache,
+     *                         ADR 0013; ohne Embedding-Modell 503 {@code semantic-search-unavailable})
      * @param waitForResult    JSON {@code wait}: bis zum Abschluss warten und die fertige Liste liefern
      */
     public record ProgressiveRequest(
@@ -214,6 +232,7 @@ public class ProgressiveSearchController {
             @Schema(nullable = true) Double minScore, @Schema(nullable = true) Long timeBudgetMs,
             @Schema(nullable = true) Integer searchBudget, @Schema(nullable = true) Integer limitPerSearch,
             @Schema(nullable = true, allowableValues = {"ai", "rules"}) String expansion,
+            @Schema(nullable = true, allowableValues = {"keyword", "semantic"}) String ranking,
             @JsonProperty("wait") @Schema(name = "wait", nullable = true) Boolean waitForResult) {
     }
 
@@ -227,6 +246,7 @@ public class ProgressiveSearchController {
      *                  Qualitätsziel sei erreicht
      * @param mode      {@code quality} oder {@code all-variants}
      * @param expansion woher die Varianten kommen
+     * @param ranking   {@code keyword} oder {@code semantic}; semantisch ist {@code score} die Kosinusähnlichkeit zu q
      * @param hits      Treffer, nach Bewertung sortiert, beste zuerst; unbewertete danach
      * @param variants  alle Suchanfragen, q zuerst (Priorität 0)
      * @param loads     nach dem Abschluss die Kennungen des Ladens in den Cache für
@@ -240,13 +260,14 @@ public class ProgressiveSearchController {
                                       String reason,
                                       @Schema(allowableValues = {"quality", "all-variants"}) String mode,
                                       @Schema(allowableValues = {"ai", "rules"}) String expansion,
+                                      @Schema(allowableValues = {"keyword", "semantic"}) String ranking,
                                       List<ProgressiveHitResponse> hits, List<VariantResponse> variants,
                                       List<String> loads, long elapsedMs) {
 
         static ProgressiveResponse of(ProgressiveSearches.Snapshot snapshot) {
             return new ProgressiveResponse(snapshot.id(), snapshot.done() ? "done" : "running", snapshot.done(),
                     snapshot.reason() == null ? null : name(snapshot.reason()), name(snapshot.profile().mode()),
-                    name(snapshot.profile().expansion()),
+                    name(snapshot.profile().expansion()), name(snapshot.profile().ranking()),
                     snapshot.hits().stream().map(ProgressiveHitResponse::of).toList(),
                     snapshot.variants().stream().map(VariantResponse::of).toList(), snapshot.loads(),
                     snapshot.elapsed().toMillis());
@@ -260,7 +281,8 @@ public class ProgressiveSearchController {
      * @param snippet   Textauszug als Klartext, leer, wenn es keinen gibt
      * @param score     Bewertung gegen q, höher ist besser; {@code null} ohne Bewertung
      * @param foundBy   Priorität der Suchanfrage, die ihn zuerst fand (0 = q)
-     * @param confirmed ob er aus dem Volltextindex des Caches stammt, nicht nur aus der Suche der Quelle
+     * @param confirmed ob er aus dem Cache stammt (Volltextindex, semantisch die Vektoren), nicht nur aus der Suche
+     *                  der Quelle
      */
     public record ProgressiveHitResponse(String sourceId, String pageId, @Schema(nullable = true) String spaceKey,
                                          String title, String snippet, @Schema(nullable = true) URI url,

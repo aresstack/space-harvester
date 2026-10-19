@@ -520,7 +520,9 @@ die ursprüngliche Anfrage sofort und erzeugt gleichzeitig Varianten (zuerst mit
 weniger). Die Varianten laufen in Wellen, und jeder Fund wird gegen die ursprüngliche Anfrage bewertet. Die Suche
 endet am Qualitätsziel des `SearchProfile` oder an Zeit- und Abfragebudget. `searchAsync` liefert die sortierte
 Liste mit Abschlussgrund, ein `ProgressiveSearchListener` meldet unterwegs Varianten und die neu geordnete Liste.
-Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
+Mit `SearchProfile.Ranking.SEMANTIC` (Standard von `Harvester.searchProfile()`, sobald ein Embedding-Modell da ist)
+finden die Varianten nur; die Treffer kommen aus der Vektorsuche mit der ursprünglichen
+Anfrage, bewertet nach Kosinusähnlichkeit (ADR 0013, ohne Fusion). Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 [ADR 0016](docs/adr/0016-auswahl-beschaffung-hintergrund.md).
 
 Über REST startet `POST /api/v1/search/progressive` dieselbe Suche, mit einem JSON-Körper: `q` (Pflicht, höchstens
@@ -528,12 +530,14 @@ Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 `mode` (`quality`, Standard, oder `all-variants` für einen Agenten, der alle Varianten will), `maxVariants` (0 bis 32,
 Standard 8), `minRelevantHits` (Standard 5), `minScore` (Standard 0,5), `timeBudgetMs` (bis 120000, Standard 30000),
 `searchBudget` (Standard 12), `limitPerSearch` (1 bis 100, Standard 20), `expansion` (`ai`, Standard, ohne
-`ai.chat-model` wie `rules`; oder `rules`) und `wait`. Ohne `wait` antwortet der Dienst sofort mit 202, `Location` und
+`ai.chat-model` wie `rules`; oder `rules`), `ranking` (`keyword`, Standard, oder `semantic`: Treffer aus den Vektoren
+im Cache, `score` ist die Kosinusähnlichkeit zu `q`, 20 s je Suchanfrage und 60 s Zeitbudget; ohne Embedding-Modell
+503 `semantic-search-unavailable`) und `wait`. Ohne `wait` antwortet der Dienst sofort mit 202, `Location` und
 dem Stand; `GET /api/v1/search/progressive/{id}` fragt nach, bis `done` wahr ist, `DELETE` bricht ab (204, danach
 `reason: cancelled`). Mit `wait: true` wartet die Anfrage bis zum Abschluss (höchstens Zeitbudget plus 5 s) und
 antwortet mit 200; delegierte Benutzer warten immer. Der Stand nennt `id`, `status` (`running`, `done`), `done`,
 `reason` (`null`, solange die Suche läuft; dann `quality-reached`, `all-variants-done`, `budget-exhausted`,
-`cancelled` oder `failed`), `mode`, `expansion`, `hits` (je Treffer `sourceId`, `pageId`, `spaceKey`, `title`,
+`cancelled` oder `failed`), `mode`, `expansion`, `ranking`, `hits` (je Treffer `sourceId`, `pageId`, `spaceKey`, `title`,
 `snippet`, `url`, `version`, `modifiedAt`, `parentPageId`, `score` oder `null` ohne Bewertung, `foundBy` als Priorität
 der findenden Suchanfrage, `confirmed`), `variants` (`text`, `priority`, `status`, `newHits`), `loads` (nach dem
 Abschluss die Kennungen für `/api/v1/search/progress/{id}`) und `elapsedMs`. Jede Suche gehört ihrem Aufrufer; ein

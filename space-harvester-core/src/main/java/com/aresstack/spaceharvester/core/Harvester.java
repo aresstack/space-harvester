@@ -70,6 +70,7 @@ import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
@@ -397,12 +398,6 @@ public final class Harvester implements AutoCloseable {
             AiServiceSettings fixedAi = builder.ai;
             this.variantModels = new VariantModels(() -> liveAi ? this.settings.ai() : fixedAi, catalog,
                     trustBundles, builder.userAgent);
-            RuleBasedExpansion rules = new RuleBasedExpansion();
-            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
-                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts), runLog);
-            opened.add(orchestrator);
-            this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -420,6 +415,14 @@ public final class Harvester implements AutoCloseable {
                     renewal, reranker, textIndex, preparation, runLog);
             // #182: Fakten aus den Anreicherungen, Rechte je Seite an ihrem Space im Cache.
             this.facts = new PageFacts(catalog, access, pages, enrichments, enrichmentStore, cache::findHeader);
+            // ADR 0017 mit ADR 0013: semantisch findet jede Variante nur, Treffer kommen aus den Vektoren.
+            RuleBasedExpansion rules = new RuleBasedExpansion();
+            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
+                    new SemanticVariantSearch(relevance, textIndex),
+                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
+                    HitScorer.of(excerpts), runLog);
+            opened.add(orchestrator);
+            this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
@@ -800,10 +803,18 @@ public final class Harvester implements AutoCloseable {
     /**
      * Das Standardprofil der progressiven Suche: Varianten vom Chat-Modell ({@link SearchProfile.Expansion#AI}), wenn
      * die wirksame Konfiguration eines hat, sonst nach Regeln.
+     *
+     * <p>Dieses Profil ist der Haken „Semantische Suche“ (ADR 0013): semantisch
+     * ({@link SearchProfile.Ranking#SEMANTIC}), wenn ein Embedding-Modell verfügbar ist, sonst wie bei den Varianten die
+     * wirksame Wahl, also die Schlagwortsuche. Semantisch finden die Varianten nur, und die Treffer kommen aus der
+     * Vektorsuche mit der ursprünglichen Anfrage; jede Suchanfrage hat dafür {@link SemanticVariantSearch#VARIANT_TIMEOUT}
+     * und die Suche {@link SemanticVariantSearch#TIME_BUDGET}. Eine ausdrücklich semantische Suche ohne Modell scheitert mit
+     * {@link com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException}.
      */
     public SearchProfile searchProfile() {
-        return SearchProfile.defaults().withExpansion(variantModels.get().isPresent() ? SearchProfile.Expansion.AI
-                : SearchProfile.Expansion.RULES);
+        SearchProfile profile = SearchProfile.defaults().withExpansion(variantModels.get().isPresent()
+                ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES);
+        return relevance.semantic() ? SemanticVariantSearch.profile(profile) : profile;
     }
 
     /**

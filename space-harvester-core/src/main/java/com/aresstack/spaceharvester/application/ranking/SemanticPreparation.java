@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -62,15 +63,25 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
 
     @Override
     public int prepare(AccessContext caller, PageSearchQuery query, String text) {
-        return prepare(caller, query, text, null);
+        return prepare(caller, query, text, Set.of(), null);
     }
 
-    /** Die Schlagwortsuche der Vorbereitung ist ein Teillauf von {@code partOf} im Suchlauf-Protokoll (#182). */
+    /** Seiten aus {@code excludedSpaceKeys} findet und lädt die Schlagwortsuche gar nicht erst. */
     @Override
-    public int prepare(AccessContext caller, PageSearchQuery query, String text, SearchRunId partOf) {
+    public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys) {
+        return prepare(caller, query, text, excludedSpaceKeys, null);
+    }
+
+    /**
+     * Die Schlagwortsuche der Vorbereitung ist ein Teillauf von {@code partOf} im Suchlauf-Protokoll (#182); Seiten aus
+     * {@code excludedSpaceKeys} findet und lädt sie gar nicht erst.
+     */
+    @Override
+    public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                       SearchRunId partOf) {
         long deadline = System.nanoTime() + wait.toNanos();
         KeywordSearch.Query keywordQuery = new KeywordSearch.Query(shortened(text), query.sourceId(),
-                query.sourceIds(), query.spaceKeys());
+                query.sourceIds(), query.spaceKeys(), excludedSpaceKeys);
         KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         if (awaitLoading(found.progress(), deadline)) {
             // Die Schlagwortsuche wartet nicht aufs Laden; erst danach findet der Volltextindex die Seiten.

@@ -17,10 +17,12 @@ import java.util.Objects;
  * @param execution        Wellen, Parallelität, Fristen, Wiederholung
  * @param expansion        {@link Expansion#AI} (Standard) lässt das Chat-Modell des KI-Dienstes Varianten
  *                         formulieren, mit den Regeln als Rückfall; {@link Expansion#RULES} nutzt nur die Regeln
+ * @param ranking          {@link Ranking#KEYWORD} (Standard) sucht jede Suchanfrage in der Schlagwortsuche,
+ *                         {@link Ranking#SEMANTIC} über die Vektoren im Cache (ADR 0013, Haken)
  */
 public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
                             int searchBudget, int limitPerSearch, SearchExecutionPolicy execution,
-                            Expansion expansion) {
+                            Expansion expansion, Ranking ranking) {
 
     public enum Mode {
         QUALITY,
@@ -31,6 +33,22 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
     public enum Expansion {
         AI,
         RULES
+    }
+
+    /**
+     * Woher Treffer und Bewertung einer Suchanfrage kommen; nie gemischt (ADR 0013).
+     *
+     * <ul>
+     *   <li>{@link #KEYWORD}: die Schlagwortsuche über den Cache; bewertet nach Titel und Auszug
+     *       ({@link HitScorer}).</li>
+     *   <li>{@link #SEMANTIC}: Die Variante findet nur, also lädt Seiten in den Cache und berechnet ihre Embeddings.
+     *       Treffer kommen allein aus der Vektorsuche mit der ursprünglichen Anfrage, bewertet nach ihrer
+     *       Kosinusähnlichkeit; {@link SearchProfile#minScore()} gilt dann für diese Ähnlichkeit.</li>
+     * </ul>
+     */
+    public enum Ranking {
+        KEYWORD,
+        SEMANTIC
     }
 
     public static final int DEFAULT_MAX_VARIANTS = 8;
@@ -44,6 +62,7 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(execution, "execution");
         Objects.requireNonNull(expansion, "expansion");
+        Objects.requireNonNull(ranking, "ranking");
         Objects.requireNonNull(timeBudget, "timeBudget");
         if (maxVariants < 0 || maxVariants > 32) {
             throw new IllegalArgumentException("maxVariants muss zwischen 0 und 32 liegen");
@@ -65,36 +84,48 @@ public record SearchProfile(Mode mode, int maxVariants, int minRelevantHits, dou
         }
     }
 
-    /** Qualitätsgesteuert mit den Standardwerten. */
+    /** Mit der Schlagwortsuche ({@link Ranking#KEYWORD}). */
+    public SearchProfile(Mode mode, int maxVariants, int minRelevantHits, double minScore, Duration timeBudget,
+                         int searchBudget, int limitPerSearch, SearchExecutionPolicy execution, Expansion expansion) {
+        this(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget, limitPerSearch, execution,
+                expansion, Ranking.KEYWORD);
+    }
+
+    /** Qualitätsgesteuert mit den Standardwerten, über die Schlagwortsuche. */
     public static SearchProfile defaults() {
         return new SearchProfile(Mode.QUALITY, DEFAULT_MAX_VARIANTS, DEFAULT_MIN_RELEVANT_HITS, DEFAULT_MIN_SCORE,
                 DEFAULT_TIME_BUDGET, DEFAULT_SEARCH_BUDGET, DEFAULT_LIMIT_PER_SEARCH,
-                SearchExecutionPolicy.defaults(), Expansion.AI);
+                SearchExecutionPolicy.defaults(), Expansion.AI, Ranking.KEYWORD);
     }
 
     public SearchProfile withMode(Mode next) {
         return new SearchProfile(next, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, expansion);
+                limitPerSearch, execution, expansion, ranking);
     }
 
     public SearchProfile withExecution(SearchExecutionPolicy next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, next, expansion);
+                limitPerSearch, next, expansion, ranking);
     }
 
     public SearchProfile withBudget(Duration time, int searches) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, time, searches, limitPerSearch,
-                execution, expansion);
+                execution, expansion, ranking);
     }
 
     public SearchProfile withQuality(int hits, double score) {
         return new SearchProfile(mode, maxVariants, hits, score, timeBudget, searchBudget, limitPerSearch,
-                execution, expansion);
+                execution, expansion, ranking);
     }
 
     public SearchProfile withExpansion(Expansion next) {
         return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
-                limitPerSearch, execution, next);
+                limitPerSearch, execution, next, ranking);
+    }
+
+    public SearchProfile withRanking(Ranking next) {
+        return new SearchProfile(mode, maxVariants, minRelevantHits, minScore, timeBudget, searchBudget,
+                limitPerSearch, execution, expansion, next);
     }
 
     /** Die Qualitätsregel dieses Profils. */

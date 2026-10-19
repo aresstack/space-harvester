@@ -23,9 +23,12 @@ import java.util.function.Predicate;
  *                   Veröffentlichen, damit ein entzogenes Recht oder eine abgelaufene Anmeldung nichts veröffentlicht
  * @param rootPageId Startseite eines Teilbaum-Exports: exportiert werden nur sie und ihre Unterseiten nach den
  *                   Elternbeziehungen des Cache; {@code null} für den ganzen Space
+ * @param depth      nur mit Startseite: wie viele Ebenen unter ihr mitkommen; {@code 0} für die Startseite allein ohne
+ *                   Unterseiten (Einzelseite, wie „Seite exportieren“ im Enterprise AI Client), {@code null} für alle
  */
 public record ExportRequest(String sourceId, String spaceKey, String owner, List<String> formats, boolean refresh,
-                            Predicate<PageHeader> visible, BooleanSupplier authorized, String rootPageId) {
+                            Predicate<PageHeader> visible, BooleanSupplier authorized, String rootPageId,
+                            Integer depth) {
 
     public ExportRequest {
         Objects.requireNonNull(sourceId, "sourceId");
@@ -36,6 +39,18 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
         if (rootPageId != null && rootPageId.isBlank()) {
             throw new IllegalArgumentException("rootPageId darf nicht leer sein");
         }
+        if (depth != null && depth < 0) {
+            throw new IllegalArgumentException("depth darf nicht negativ sein");
+        }
+        if (depth != null && rootPageId == null) {
+            throw new IllegalArgumentException("depth gibt es nur mit rootPageId");
+        }
+    }
+
+    /** Teilbaum ohne Tiefenbeschränkung. */
+    public ExportRequest(String sourceId, String spaceKey, String owner, List<String> formats, boolean refresh,
+                         Predicate<PageHeader> visible, BooleanSupplier authorized, String rootPageId) {
+        this(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, null);
     }
 
     /** Export des ganzen Space. */
@@ -50,15 +65,15 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
     }
 
     public ExportRequest withRefresh(boolean refresh) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
     }
 
     public ExportRequest withVisible(Predicate<PageHeader> visible) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
     }
 
     public ExportRequest withAuthorized(BooleanSupplier authorized) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
     }
 
     /**
@@ -67,6 +82,22 @@ public record ExportRequest(String sourceId, String spaceKey, String owner, List
      * @param rootPageId Startseite im Space oder {@code null} für den ganzen Space
      */
     public ExportRequest withRoot(String rootPageId) {
-        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId);
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId,
+                rootPageId == null ? null : depth);
+    }
+
+    /**
+     * Derselbe Teilbaum, beschränkt auf {@code depth} Ebenen unter der Startseite.
+     *
+     * @param depth {@code 0} für die Startseite allein, {@code null} für alle Ebenen
+     * @throws IllegalArgumentException ohne Startseite oder bei negativer Tiefe
+     */
+    public ExportRequest withDepth(Integer depth) {
+        return new ExportRequest(sourceId, spaceKey, owner, formats, refresh, visible, authorized, rootPageId, depth);
+    }
+
+    /** Derselbe Auftrag für eine einzelne Seite ohne Unterseiten ({@code withRoot(pageId).withDepth(0)}). */
+    public ExportRequest withPage(String pageId) {
+        return withRoot(Objects.requireNonNull(pageId, "pageId")).withDepth(0);
     }
 }

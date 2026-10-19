@@ -85,14 +85,18 @@ public final class MarkdownConverter implements ExportConverter {
         MarkdownExportWriter markdown = new MarkdownExportWriter(graphics, links);
         Writer writer = new OutputStreamWriter(out, StandardCharsets.UTF_8);
         String title = ExportChapters.title(input);
-        writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, version), List.of(), 1));
+        ExportChapters.Layout layout = ExportChapters.layout(input);
+        if (ExportChapters.spaceChapter(input)) {
+            writer.write(markdown.chapter(escape(title), null, ExportChapters.rootText(input, version), List.of(), 1));
+        }
         try {
             input.forEachPage(page -> {
                 try {
                     ExportChapters.Figures figures = ExportChapters.figures(page, parser, input);
                     figures.notices().forEach(input::report);
                     writer.write(markdown.chapter(escape(ExportChapters.title(page)), PageLinks.anchor(page.pageId()),
-                            figures.markdown(), figures.images(), ExportChapters.depth(page)));
+                            layout.text(input, page, figures.markdown(), version), figures.images(),
+                            layout.depth(page)));
                     ExportChapters.mermaidNotices(page, graphics.takeMermaidFailures()).forEach(input::report);
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
