@@ -126,7 +126,8 @@ class BackgroundFillTest {
         BackgroundFill.FillQueue queue = BackgroundFill.FillQueue.inMemory();
         BackgroundFill fill = fill(scheduler(2), queue, catalog(GAPS), true);
 
-        eventually(() -> loaded.size() == 2 && queue.size() == 0);
+        // Der Zähler steigt erst nach dem Austragen aus der Warteschlange: auf beides warten.
+        eventually(() -> loaded.size() == 2 && queue.size() == 0 && fill.status().loaded() == 2);
         // „other“ ist nicht zugelassen (etwa ohne technische Zugangsdaten): nichts von dort.
         assertThat(loaded).containsExactlyInAnyOrder("new-1", "old-1");
         assertThat(fill.status().loaded()).isEqualTo(2);
