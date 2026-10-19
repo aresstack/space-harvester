@@ -49,12 +49,16 @@ class HarvesterEacSourcesTest {
     void theHarvesterListsItsSourceTypesWithDisplayNames() {
         try (Harvester harvester = Harvester.builder().dataDirectory(data).build()) {
             assertThat(harvester.sourceTypes()).containsExactly(
-                    new SourceType("confluence", "Confluence", false), new SourceType("files", "Ordner", false),
-                    new SourceType("ftp", "FTP", false), new SourceType("jes", "JES", true),
-                    new SourceType("ndv", "NDV", true), new SourceType("sharepoint", "SharePoint", false),
-                    new SourceType("betaview", "BetaView", true), new SourceType("outlook", "Outlook", false),
-                    new SourceType("mediawiki", "MediaWiki", false),
-                    new SourceType("git", "Git-Repository", false));
+                    new SourceType("confluence", "Confluence", false, null),
+                    new SourceType("files", "Ordner", false, "directory"),
+                    new SourceType("ftp", "FTP", false, "host"),
+                    new SourceType("jes", "JES", true, "host"),
+                    new SourceType("ndv", "NDV", true, "host"),
+                    new SourceType("sharepoint", "SharePoint", false, "siteUrl"),
+                    new SourceType("betaview", "BetaView", true, "baseUrl"),
+                    new SourceType("outlook", "Outlook", false, "mailbox"),
+                    new SourceType("mediawiki", "MediaWiki", false, "apiUrl"),
+                    new SourceType("git", "Git-Repository", false, "url"));
         }
     }
 
