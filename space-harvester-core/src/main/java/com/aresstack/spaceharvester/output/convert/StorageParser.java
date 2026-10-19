@@ -204,7 +204,7 @@ public final class StorageParser {
      * Anzeigenamen der Benutzererwähnungen wie im Enterprise AI Client, der den Linktext der Lese-Ansicht übernimmt.
      * Zuordnung über {@code ri:username} bzw. {@code ri:account-id} zu {@code data-username} bzw.
      * {@code data-account-id}; sonst (etwa nur {@code ri:userkey}) über die Reihenfolge, aber nur wenn Storage und Ansicht
-     * gleich viele Erwähnungen haben. Erwähnungen in Makros, die ihren Inhalt aus der Ansicht nehmen, und Unsichtbares zählen nicht mit.
+     * gleich viele Erwähnungen haben. Erwähnungen in eingebundenen Seiten und Unsichtbares zählen nicht mit, solche in berechneten Makros nur über die Kennung.
      */
     private static Map<Element, String> mentions(Element storage, String view) {
         List<Element> shown = new ArrayList<>();
@@ -212,40 +212,50 @@ public final class StorageParser {
         Element body = Jsoup.parse(view).body();
         body.select("script, style, noscript, .hidden, [hidden], [style~=(?i)display\\s*:\\s*none]").remove();
         for (Element mention : body.select("a.user-mention")) {
-            boolean included = false;
-            for (Element parent = mention.parent(); parent != null && !included; parent = parent.parent()) {
-                included = fromView(parent.attr("data-macro-name").toLowerCase(Locale.ROOT));
+            boolean foreign = false;
+            boolean computed = false;
+            for (Element parent = mention.parent(); parent != null && !foreign; parent = parent.parent()) {
+                String macro = parent.attr("data-macro-name").toLowerCase(Locale.ROOT);
+                foreign = RENDERED_MACROS.contains(macro);
+                computed |= fromView(macro);
             }
             String name = collapse(mention.text()).trim();
-            if (included || name.isEmpty()) {
+            if (foreign || name.isEmpty()) {
                 continue;
             }
-            shown.add(mention);
+            // Erwähnungen in berechneten Makros zählen nicht für die Reihenfolge, wohl aber für die Kennung: Ein
+            // ungepaartes Makro fällt auf seinen Körper im Storage zurück.
+            if (!computed) {
+                shown.add(mention);
+            }
             for (String attribute : List.of("data-username", "data-account-id")) {
                 if (!mention.attr(attribute).isEmpty()) {
                     byName.put(attribute + "=" + mention.attr(attribute), name);
                 }
             }
         }
-        List<Element> links = new ArrayList<>();
-        for (Element link : storage.select("ac|link")) {
-            if (link.selectFirst("ri|user") != null && !nested(link, StorageParser::fromViewMacro)) {
-                links.add(link);
-            }
-        }
+        List<Element> ordered = new ArrayList<>();
         Map<Element, String> names = new IdentityHashMap<>();
-        for (int i = 0; i < links.size(); i++) {
-            Element user = links.get(i).selectFirst("ri|user");
-            String name = byName.get("data-username=" + user.attr("ri:username"));
-            if (name == null || user.attr("ri:username").isEmpty()) {
-                name = user.attr("ri:account-id").isEmpty() ? null
-                        : byName.get("data-account-id=" + user.attr("ri:account-id"));
+        for (Element link : storage.select("ac|link")) {
+            Element user = link.selectFirst("ri|user");
+            if (user == null) {
+                continue;
             }
-            if (name == null && links.size() == shown.size()) {
-                name = collapse(shown.get(i).text()).trim();
+            String name = user.attr("ri:username").isEmpty() ? null
+                    : byName.get("data-username=" + user.attr("ri:username"));
+            if (name == null && !user.attr("ri:account-id").isEmpty()) {
+                name = byName.get("data-account-id=" + user.attr("ri:account-id"));
             }
             if (name != null) {
-                names.put(links.get(i), name);
+                names.put(link, name);
+            }
+            if (!nested(link, StorageParser::fromViewMacro)) {
+                ordered.add(link);
+            }
+        }
+        if (ordered.size() == shown.size()) {
+            for (int i = 0; i < ordered.size(); i++) {
+                names.putIfAbsent(ordered.get(i), collapse(shown.get(i).text()).trim());
             }
         }
         return names;

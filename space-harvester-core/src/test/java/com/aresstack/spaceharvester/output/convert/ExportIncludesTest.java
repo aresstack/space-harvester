@@ -265,6 +265,22 @@ class ExportIncludesTest {
         assertThat(alone).contains("@557058:aa");
     }
 
+    /**
+     * Bleibt ein berechnetes Makro ungepaart (hier zählt die Ansicht zwei, der Storage eines), fällt es auf seinen Körper
+     * zurück; dessen Erwähnung findet ihren Namen über die Kennung, zählt aber nicht für die Reihenfolge.
+     */
+    @Test
+    void mentionsInUnpairedComputedMacrosKeepTheirNameByUsername() throws Exception {
+        String storage = "<p><ac:link><ri:user ri:userkey=\"k1\" /></ac:link></p>"
+                + "<ac:structured-macro ac:name=\"my-user-macro\"><ac:rich-text-body><p>"
+                + "<ac:link><ri:user ri:username=\"anna\" /></ac:link></p></ac:rich-text-body></ac:structured-macro>";
+        String view = "<p><a class=\"user-mention\" data-username=\"k\">Klaus Kern</a></p>"
+                + "<div data-macro-name=\"my-user-macro\"><a class=\"user-mention\" data-username=\"anna\">"
+                + "Anna Schmidt</a></div><div data-macro-name=\"my-user-macro\">Zweites</div>";
+        assertThat(text(new MarkdownConverter(), input(storage, available(view))))
+                .contains("Klaus Kern", "Anna Schmidt").doesNotContain("@anna", "@k1");
+    }
+
     @Test
     void computedMacrosTakeTheirContentFromTheStoredReadingView() throws Exception {
         for (ExportConverter converter : CONVERTERS) {
