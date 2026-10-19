@@ -119,6 +119,89 @@ class NavigationProcessorTest {
                 .isEqualTo(PagePassages.State.MISSING);
     }
 
+    /** Ein Benenner, der zählt, was ihn erreicht. */
+    private final class Labeler implements NavigationLabelModel {
+
+        final List<List<String>> calls = new ArrayList<>();
+        String model = "gpt-x";
+        boolean down;
+        boolean approvedSource = true;
+
+        @Override
+        public String version() {
+            return "test:" + model;
+        }
+
+        @Override
+        public boolean available() {
+            return model != null;
+        }
+
+        @Override
+        public boolean mayLabel(String sourceId) {
+            return approvedSource;
+        }
+
+        @Override
+        public Labels labels(String documentTitle, List<String> sectionTexts) {
+            calls.add(sectionTexts);
+            if (down) {
+                return new Labels(java.util.Collections.nCopies(sectionTexts.size(), null), false);
+            }
+            List<String> names = new ArrayList<>();
+            for (int i = 0; i < sectionTexts.size(); i++) {
+                names.add("Thema " + (i + 1));
+            }
+            return new Labels(names, true);
+        }
+    }
+
+    @Test
+    void theChatModelNamesTheTopicSectionsAndItsChangeRecomputes() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        EnrichmentOutput output = named.process(KEY, text);
+        DocumentNavigationView view = read(output, named);
+
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
+        assertThat(view.chapters().getFirst().children().getFirst().label()).isEqualTo("Thema 1");
+        assertThat(labeler.calls).hasSize(1);
+        String before = named.version();
+        labeler.model = "gpt-y";
+        assertThat(named.version()).isNotEqualTo(before);
+        assertThat(read(output, named).state()).isEqualTo(PagePassages.State.STALE);
+    }
+
+    @Test
+    void anUnreachableChatModelKeepsTheAnalysisLabelsAndIsRetried() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        labeler.down = true;
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        DocumentNavigationView view = read(named.process(KEY, text), named);
+
+        assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.SEMANTIC);
+        assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_MODEL_UNAVAILABLE);
+        assertThat(view.state()).isEqualTo(PagePassages.State.STALE);
+        assertThat(view.chapters().getFirst().children().getFirst().label()).doesNotStartWith("Thema");
+    }
+
+    @Test
+    void noTextOfAnUnapprovedSourceReachesTheChatModel() {
+        storeEmbeddings();
+        Labeler labeler = new Labeler();
+        labeler.approvedSource = false;
+        NavigationProcessor named = new NavigationProcessor(builder, embedding, key -> stored, labeler);
+
+        DocumentNavigationView view = read(named.process(KEY, text), named);
+
+        assertThat(labeler.calls).isEmpty();
+        assertThat(view.chapters().getFirst().children().getFirst().label()).doesNotStartWith("Thema");
+    }
+
     private void storeEmbeddings() {
         EnrichmentOutput vectors = embedding.process(text);
         stored.add(new Enrichment(KEY, embedding.id(), vectors.version() != null ? vectors.version()
@@ -127,9 +210,15 @@ class NavigationProcessorTest {
     }
 
     private DocumentNavigationView read(EnrichmentOutput output) {
-        Enrichment result = enrichment(output);
+        return read(output, processor);
+    }
+
+    private DocumentNavigationView read(EnrichmentOutput output, NavigationProcessor by) {
+        Enrichment result = new Enrichment(KEY, NavigationProcessor.ID, output.version() != null ? output.version()
+                : by.version(), text.inputSha256(), "1", Enrichment.Status.OK, output.payloadJson(),
+                output.warnings(), null, Instant.EPOCH);
         return DocumentNavigationView.read(KEY, List.of(new Enrichments.View(result,
-                result.freshness(text.inputSha256(), processor.version()))), text, builder);
+                result.freshness(text.inputSha256(), by.version()))), text, builder);
     }
 
     private Enrichment enrichment(EnrichmentOutput output) {
