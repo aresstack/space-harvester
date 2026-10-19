@@ -149,7 +149,7 @@ final class AiSettingsPanel {
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
-        pickVision.addActionListener(e -> pick(pickVision, visionModel, null));
+        pickVision.addActionListener(e -> pick(pickVision, visionModel, AiModel.VISION));
         rows.add("Freigegeben", released, "Je Quelle im Formular unter Wissensquellen › Bearbeiten …; ohne Freigabe "
                 + "keine Embeddings und kein Reranking");
         root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die "
@@ -644,7 +644,7 @@ final class AiSettingsPanel {
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
-        pickVision.setEnabled(!choices(null).isEmpty());
+        pickVision.setEnabled(!choices(AiModel.VISION).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

@@ -332,6 +332,10 @@ public final class AppRuntime implements AutoCloseable {
             // Der Cross-Encoder ordnet nur die Trefferliste aus dem Cache neu (ADR 0013); ohne ihn bleibt sie.
             service = service.withRerankModel(ai.rerankModel());
         }
+        if (ai.visionModel() != null) {
+            // Bildbeschreibungen nur auf Abruf im Reiter „Bilder“ (ADR 0021); ohne Modell nennt er den Grund.
+            service = service.withVisionModel(ai.visionModel());
+        }
         if (service.embeddingModel() != null && service.embeddingDimensions() == null) {
             // Die Dimension steht in keinem Modellkatalog; der Reiter „KI“ misst sie mit Harvester#aiEmbeddingDimension.
             LOG.log(System.Logger.Level.WARNING, "Dimension des Embedding-Modells fehlt; die semantische Suche bleibt "

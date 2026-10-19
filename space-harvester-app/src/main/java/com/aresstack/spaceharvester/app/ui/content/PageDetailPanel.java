@@ -19,6 +19,8 @@ import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.images.ImagePayload;
+import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -33,6 +35,7 @@ import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProje
 
 import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
+import javax.swing.Icon;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
@@ -81,6 +84,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String REFERENCES = "Verweise";
     private static final String TERMS = "Begriffe";
     private static final String PASSAGES = "Absätze";
+    private static final String IMAGES = "Bilder";
     private static final String ADVANCED = "Erweitert";
     private static final String ANALYSIS = "Analyse";
     private static final String RAW = "Originaldaten";
@@ -98,6 +102,7 @@ public final class PageDetailPanel extends JPanel {
     private final References references = new References();
     private final TermsTab terms = new TermsTab();
     private final PassagesTab passages = new PassagesTab();
+    private final ImagesTab images = new ImagesTab();
     private final JLabel state = Comic.muted(" ");
     private final Feedback feedback = new Feedback();
     private final JTextPane reader = new JTextPane() {
@@ -145,6 +150,7 @@ public final class PageDetailPanel extends JPanel {
     private boolean assetsLoaded;
     private boolean readingLoaded;
     private boolean referencesLoaded;
+    private boolean imagesLoaded;
     private final ReadingPane readingPane = new ReadingPane();
     private List<Enrichments.View> views = List.of();
     private ReaderDocument shown;
@@ -228,6 +234,7 @@ public final class PageDetailPanel extends JPanel {
                 .tab(REFERENCES, references)
                 .tab(TERMS, terms)
                 .tab(PASSAGES, passages)
+                .tab(IMAGES, images)
                 .tab(ADVANCED, advanced);
         tabs.onSelect(name -> {
             if (ATTACHMENTS.equals(name)) {
@@ -239,11 +246,15 @@ public final class PageDetailPanel extends JPanel {
             if (REFERENCES.equals(name)) {
                 loadReferences();
             }
+            if (IMAGES.equals(name)) {
+                loadImages();
+            }
         });
         breadcrumbs.onOpen(id -> load(sourceId, id, false));
         references.onOpen(id -> load(sourceId, id, false));
         terms.onJump(this::jumpTo);
         passages.onJump(this::jumpTo);
+        images.onDescribe(this::describeImages);
 
         refresh.addActionListener(e -> load(sourceId, pageId, true));
         saveRaw.addActionListener(e -> saveRaw());
@@ -297,6 +308,7 @@ public final class PageDetailPanel extends JPanel {
         assetsLoaded = false;
         readingLoaded = false;
         referencesLoaded = false;
+        imagesLoaded = false;
         readingPane.clear(" ");
         breadcrumbs.clear();
         references.message(" ");
@@ -337,6 +349,7 @@ public final class PageDetailPanel extends JPanel {
         this.assetsLoaded = false;
         this.readingLoaded = false;
         this.referencesLoaded = false;
+        this.imagesLoaded = false;
         this.page = null;
         readingPane.clear(" ");
         breadcrumbs.clear();
@@ -377,6 +390,9 @@ public final class PageDetailPanel extends JPanel {
             }
             if (REFERENCES.equals(tabs.selected())) {
                 loadReferences();
+            }
+            if (IMAGES.equals(tabs.selected())) {
+                loadImages();
             }
             loadPosition();
         }, error -> {
@@ -706,6 +722,90 @@ public final class PageDetailPanel extends JPanel {
         });
     }
 
+    /** Liest die gespeicherten Bildbeschreibungen der Seite (#362) samt Vorschau aus der Ablage; beschreibt nichts. */
+    private void loadImages() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null || imagesLoaded) {
+            return;
+        }
+        imagesLoaded = true;
+        images.show(PassagesTab.State.MISSING, null, List.of());
+        String source = sourceId;
+        DeliveredPage shown = page;
+        Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
+            if (shown == page) {
+                images.show(found.state(), found.reason(), found.images());
+            }
+        }, error -> {
+            if (shown == page) {
+                imagesLoaded = false;
+                feedback.problem(error, Problems.Step.PAGE);
+            }
+        });
+    }
+
+    /** „Bilder beschreiben“: nur auf Abruf, im Hintergrund, mit dem Vision-Modell des Core. */
+    private void describeImages() {
+        AppRuntime runtime = context.runtime();
+        if (runtime == null || page == null) {
+            return;
+        }
+        String source = sourceId;
+        String id = pageId;
+        DeliveredPage shown = page;
+        images.describing(true);
+        feedback.working("Bilder werden beschrieben …");
+        Background.run(() -> imageRows(runtime, source, runtime.workspace().describeImages(source, id)), found -> {
+            if (shown != page) {
+                return;
+            }
+            images.describing(false);
+            images.show(found.state(), found.reason(), found.images());
+            feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
+                    : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
+        }, error -> {
+            if (shown != page) {
+                return;
+            }
+            images.describing(false);
+            feedback.problem(error, Problems.Step.PAGE);
+        });
+    }
+
+    /** Die Bilder für den Reiter; Vorschauen nur aus der Ablage, außerhalb des EDT. */
+    private static ImageRows imageRows(AppRuntime runtime, String sourceId, PageImages found) {
+        List<ImagesTab.Image> rows = new ArrayList<>();
+        for (ImagePayload.Entry entry : found.images()) {
+            Icon preview = runtime.workspace().storedImage(sourceId, entry).map(PageDetailPanel::thumbnail)
+                    .orElse(null);
+            String name = entry.title().isBlank() ? entry.filename().isBlank() ? "Bild " + (entry.index() + 1)
+                    : entry.filename() : entry.title();
+            rows.add(new ImagesTab.Image(name, ImagesTab.Status.valueOf(entry.status().name()), entry.description(),
+                    entry.reason(), preview));
+        }
+        return new ImageRows(PassagesTab.State.valueOf(found.state().name()), found.reason(), List.copyOf(rows),
+                found.describedCount());
+    }
+
+    /** Ein Vorschaubild höchstens 96 × 72 groß; {@code null}, wenn sich die Bytes nicht lesen lassen. */
+    static Icon thumbnail(byte[] bytes) {
+        try {
+            java.awt.image.BufferedImage image = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+            if (image == null) {
+                return null;
+            }
+            double scale = Math.min(1d, Math.min(96d / image.getWidth(), 72d / image.getHeight()));
+            int width = Math.max(1, (int) Math.round(image.getWidth() * scale));
+            int height = Math.max(1, (int) Math.round(image.getHeight() * scale));
+            return new javax.swing.ImageIcon(image.getScaledInstance(width, height, java.awt.Image.SCALE_SMOOTH));
+        } catch (java.io.IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    private record ImageRows(PassagesTab.State state, String reason, List<ImagesTab.Image> images, int described) {
+    }
+
     private void harvestAssets() {
         AppRuntime runtime = context.runtime();
         if (runtime == null || page == null) {
@@ -990,6 +1090,10 @@ public final class PageDetailPanel extends JPanel {
 
     PassagesTab passages() {
         return passages;
+    }
+
+    ImagesTab images() {
+        return images;
     }
 
     TermsTab terms() {

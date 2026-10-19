@@ -11,6 +11,8 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
+import com.aresstack.spaceharvester.application.images.ImagePayload;
+import com.aresstack.spaceharvester.application.images.PageImages;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
 import com.aresstack.spaceharvester.application.export.ExportDatasetInfo;
 import com.aresstack.spaceharvester.application.jobs.JobEvent;
@@ -292,6 +294,28 @@ public final class Workspace {
         Enrichments.Run run = harvester.enrichments().recompute(page.snapshot(), processor);
         harvester.enrichments().flush();
         return run;
+    }
+
+    /** Gespeicherte Bilder und Beschreibungen einer gelieferten Seite ({@code GET …/images}); beschreibt nichts. */
+    public PageImages images(DeliveredPage page) {
+        return harvester.imageAnalysis().read(page.snapshot());
+    }
+
+    /**
+     * Die Bilder einer Seite vom Vision-Modell beschreiben lassen ({@code POST …/images}, #362); braucht wie im Dienst
+     * die sync-Freigabe. Läuft im aufrufenden Thread, nie auf dem EDT.
+     */
+    public PageImages describeImages(String sourceId, String pageId) {
+        DeliveredPage page = harvester.pages().page(caller, sourceId, pageId, false);
+        access.require(caller, ResourceScope.space(sourceId, page.header().metadata().partitionKey()), AccessKind.SYNC);
+        PageImages images = harvester.imageAnalysis().describe(page.snapshot());
+        harvester.enrichments().flush();
+        return images;
+    }
+
+    /** Die abgelegten Bytes eines beschriebenen Bildes, ohne die Quelle zu fragen; leer, wenn nichts abgelegt ist. */
+    public Optional<byte[]> storedImage(String sourceId, ImagePayload.Entry image) {
+        return harvester.assets().stored(sourceId, image.assetId(), null, image.sha256());
     }
 
     public List<String> enrichmentProcessors() {
