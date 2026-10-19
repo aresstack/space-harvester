@@ -23,7 +23,8 @@ import java.util.function.Function;
  * oder wenn sie gescheitert sind, bleiben die Überschriften (FA-01) mit Grund, wie die Rückfälle von
  * {@code BuildDocumentNavigationUseCase}. Fehlende und gescheiterte Embeddings tragen eine Version, die sofort
  * veraltet: Die nächste Anreicherung oder der nächste Abruf versucht es wieder, ohne dass etwas an den KI-Dienst geht.
- * Der Titel der Seite geht wie im Client in die Anweisung an das Chat-Modell ein.
+ * Die übrigen Rückfälle gelten, bis Text, Modell oder Verfahren wechseln; eine später freigegebene Quelle reiht das
+ * Freigabe-Ereignis der Konfiguration neu ein. Der Titel der Seite geht wie im Client in die Anweisung an das Chat-Modell ein.
  */
 public final class NavigationProcessor implements EnrichmentProcessor {
 
