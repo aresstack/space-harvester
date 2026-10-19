@@ -68,7 +68,7 @@ entsteht die Datei erst beim Klick.
                               "errorCode": null, "payload": { … } },
                 "outline":  { "state": "MISSING", "processorVersion": null, …, "payload": null } },
               "facts": [{ "id": "…", "type": "ACRONYM_DEFINITION", "role": "DEFINES", "origin": "AUTOMATIC",
-                          "review": "UNREVIEWED", "processorId": "acronyms",
+                          "review": "UNREVIEWED", "state": "CURRENT", "processorId": "acronyms",
                           "processorVersion": "2", "inputSha256": "sha256:…", "revision": "3",
                           "payload": { … }, "arguments": [{ "role": "SHORT_FORM", "ordinal": 0, "value": "api" }],
                           "anchor": { "section": null, "charStart": 4, "charEnd": 7 } }] }] }
@@ -88,7 +88,9 @@ entsteht die Datei erst beim Klick.
   verändert; fehlende Ergebnisse berechnet der übliche Anreicherungslauf.
 - **Fakten** (#182) sind die aus den Ergebnissen abgeleiteten `MetadataFact`s der Seite mit Herkunft
   (`processorId`, `processorVersion`, `inputSha256`, `revision`), dazu manuelle (`origin` `MANUAL`, `processorId`
-  `manual`) und der Prüfstatus `review` wie im Faktenblatt.
+  `manual`) und der Prüfstatus `review` wie im Faktenblatt. Sie kommen aus dem heutigen Faktenspeicher; `state` sagt
+  wie bei den Abschnitten, ob ein Fakt zur exportierten Version gehört (`CURRENT`: gleicher `inputSha256`) oder aus
+  einer anderen Fassung stammt (`STALE`, etwa nach einem neueren Abgleich).
 - Die Lese-Ansicht (`reading-view`) ist keine Analyse und fehlt; Suchläufe und Begriffsbeziehungen sind nicht
   seitenbezogen und gehören nicht in diese Datei.
 - Anders als die übrigen Formate hängt die Datei außer vom Datenbestand vom Stand der Anreicherungen ab: Gleicher

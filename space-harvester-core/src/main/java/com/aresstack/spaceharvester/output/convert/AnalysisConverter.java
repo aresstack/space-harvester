@@ -25,8 +25,8 @@ import tools.jackson.databind.json.JsonMapper;
  *               "rawSha256", "inputSha256",
  *               "enrichments": { "&lt;Prozessor&gt;": { "state", "processorVersion", "currentProcessorVersion",
  *                                "inputSha256", "revision", "computedAt", "warnings", "errorCode", "payload" } },
- *               "facts": [{ "id", "type", "role", "origin", "review", "processorId", "processorVersion",
- *                           "inputSha256", "revision", "payload", "arguments", "anchor" }] }] }
+ *               "facts": [{ "id", "type", "role", "origin", "review", "state", "processorId",
+ *                           "processorVersion", "inputSha256", "revision", "payload", "arguments", "anchor" }] }] }
  * </pre>
  *
  * Seiten linear in Baumreihenfolge wie {@link JsonArrayConverter}; die Hierarchie steht nur in {@code parentPageId}.
@@ -34,7 +34,9 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code inputSha256} ist der Eingabe-Hash dieser Version, gegen den der {@code state} jedes Abschnitts bestimmt ist
  * ({@code CURRENT}, {@code STALE}, {@code FAILED}, {@code MISSING}). Je Prozessor ein Abschnitt; die Payload kommt
  * unverändert aus der Ablage. Nichts wird nachgerechnet. Fakten mit {@code origin} {@code AUTOMATIC} oder
- * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}).
+ * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}). Die Fakten
+ * kommen wie die Abschnitte aus dem heutigen Speicher; ihr {@code state} sagt, ob sie zur exportierten Version gehören
+ * ({@code CURRENT}: gleicher {@code inputSha256}) oder aus einer anderen stammen ({@code STALE}).
  */
 public final class AnalysisConverter implements ExportConverter {
 
@@ -112,7 +114,7 @@ public final class AnalysisConverter implements ExportConverter {
                 generator.writeName("facts");
                 generator.writeStartArray();
                 for (MetadataFact fact : analysis.facts()) {
-                    fact(generator, fact);
+                    fact(generator, fact, analysis.inputSha256());
                 }
                 generator.writeEndArray();
                 generator.writeEndObject();
@@ -142,13 +144,16 @@ public final class AnalysisConverter implements ExportConverter {
         generator.writeEndObject();
     }
 
-    private void fact(JsonGenerator generator, MetadataFact fact) {
+    /** @param pageInput Eingabe-Hash der exportierten Version, gegen den der {@code state} des Fakts bestimmt ist */
+    private void fact(JsonGenerator generator, MetadataFact fact, String pageInput) {
         generator.writeStartObject();
         generator.writeStringProperty("id", fact.id());
         generator.writeStringProperty("type", fact.type());
         generator.writeStringProperty("role", fact.role());
         generator.writeStringProperty("origin", fact.origin().name());
         generator.writeStringProperty("review", fact.review().name());
+        generator.writeStringProperty("state", pageInput != null && pageInput.equals(fact.provenance().inputSha256())
+                ? "CURRENT" : "STALE");
         generator.writeStringProperty("processorId", fact.provenance().processorId());
         generator.writeStringProperty("processorVersion", fact.provenance().processorVersion());
         generator.writeStringProperty("inputSha256", fact.provenance().inputSha256());
