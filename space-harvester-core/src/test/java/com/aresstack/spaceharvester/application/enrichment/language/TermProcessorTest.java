@@ -57,6 +57,28 @@ class TermProcessorTest {
     }
 
     @Test
+    void identifiersOfTheAcronymRulesAreIdentifiersOnce() {
+        String text = "Der Wert MAX_SIZE wird gesetzt. Danach gilt MAX_SIZE für die Muster GmbH.";
+        List<TermPayload.Entry> terms = terms(text);
+
+        assertThat(entry(terms, "max_size", TermKind.IDENTIFIER).count()).isEqualTo(2);
+        assertThat(terms).filteredOn(entry -> entry.normalized().equals("max_size")).hasSize(1);
+        assertThat(entry(terms, "gmbh", TermKind.ACRONYM).count()).isEqualTo(1);
+    }
+
+    @Test
+    void dottedAndPlainSpellingsAreOneAcronymWithTheEacSearchForm() {
+        String text = "Die U.S.A. und die USA sind dasselbe.";
+        List<TermPayload.Entry> terms = terms(text);
+
+        assertThat(terms).filteredOn(entry -> entry.kind() == TermKind.ACRONYM).singleElement()
+                .satisfies(entry -> {
+                    assertThat(entry.normalized()).isEqualTo("usa");
+                    assertThat(entry.occurrences()).hasSize(2);
+                });
+    }
+
+    @Test
     void acronymsInNonGermanSentencesAreStillFound() {
         String text = "The RSL is configured by the operator.";
 

@@ -81,9 +81,9 @@ class ReaderAcronymsTest {
 
         assertThat(shown.acronyms().state()).isEqualTo(PageAcronyms.State.CURRENT);
         assertThat(shown.acronyms().result().processorId()).isEqualTo("acronyms");
-        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("3");
+        assertThat(shown.acronyms().result().processorVersion()).isEqualTo("4;sentences=opennlp-de");
         assertThat(shown.acronyms().result().key().sourceId()).isEqualTo("wiki");
-        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 3")
+        assertThat(onEdt(panel::acronymHint)).contains("Core-Analyse „acronyms“ Version 4")
                 .contains("Fundstellen markiert");
         String text = onEdt(() -> panel.reader().getDocument().getText(0, panel.reader().getDocument().getLength()));
         assertThat(text).isEqualTo(shown.text().text());
@@ -97,7 +97,7 @@ class ReaderAcronymsTest {
 
         List<String> marked = shown.marks().stream()
                 .map(mark -> text.substring(mark.occurrence().start(), mark.occurrence().end())).toList();
-        assertThat(marked).containsExactly("API", "REST", "API", "APIs", "SSO", "RAPID", "API", "ÜBV");
+        assertThat(marked).containsExactly("API", "REST", "API", "APIs", "SSO", "RAPID", "xAPI", "API", "ÜBV");
         assertThat(acronym(shown, "API").count()).isEqualTo(4);
         assertThat(acronym(shown, "API").expansion()).isEqualTo("Application Programming Interface");
         assertThat(acronym(shown, "SSO").expansion()).isEqualTo("Single Sign-On");
@@ -112,9 +112,9 @@ class ReaderAcronymsTest {
                         .as("markiert bei %d", offset).isTrue();
             }
         }
+        // Gemischte Schreibung wie im EAC: xAPI ist ein eigenes Akronym, kein API-Treffer.
         int xApi = text.indexOf("xAPI") + 1;
-        assertThat(shown.markAt(xApi)).isNull();
-        assertThat(StyleConstants.isUnderline(document.getCharacterElement(xApi).getAttributes())).isFalse();
+        assertThat(shown.markAt(xApi).acronym().acronym()).isEqualTo("xAPI");
         int heading = text.indexOf("Schnittstellen");
         assertThat(StyleConstants.isBold(document.getCharacterElement(heading).getAttributes())).isTrue();
 

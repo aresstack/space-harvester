@@ -101,7 +101,7 @@ class AnalysisConverterTest {
         assertThat(analysis.path("sourceId").asString()).isEqualTo("confluence");
         assertThat(analysis.path("spaceKey").asString()).isEqualTo("DEV");
         assertThat(analysis.path("processors").valueStream().map(p -> p.path("id").asString() + "@"
-                + p.path("version").asString()).toList()).containsExactly("acronyms@3", "outline@1", "broken@1");
+                + p.path("version").asString()).toList()).containsExactly("acronyms@4;sentences=splitter", "outline@1", "broken@1");
         JsonNode pages = analysis.path("pages");
         assertThat(pages.valueStream().map(p -> p.path("pageId").asString()).toList()).containsExactly("100", "101");
 

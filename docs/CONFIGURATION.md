@@ -122,7 +122,8 @@ Protokoll als eigener Lucene-Index in `search-runs/`, sonst im Speicher; in der 
 **Fakten** entstehen beim Speichern einer Anreicherung aus ihrem Ergebnis, im selben Lucene-Index (`enrichments/`,
 Schema `enrichment-store/v4`; ein v1/v2/v3-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
 ersetzt und gelöscht. Typen nach
-dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
+dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE`, `ACRONYM_DEFINITION` (je unterschiedlicher
+Ausschreibung) und `TECHNICAL_IDENTIFIER_CANDIDATE` (aus `acronyms`, Erkennung wie `AcronymExtractor` im Client), `MENTION`
 (aus `entities`), `PROPERTY` (aus `properties`), `EVENT` (aus `activities`) und `RELATION` (aus `relations`);
 `MENTION`, `EVENT` und `RELATION` auch aus der Satzanalyse `statements` (unten);
 Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`, `OBJECT`, `VALUE`, `PREDICATE`, Rollen wie `ACTOR`,

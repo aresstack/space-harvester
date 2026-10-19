@@ -50,6 +50,21 @@ module_classes=(
   # Dokumentnavigation (#181): Benennung der Themenabschnitte über den Chat-Port, wie im Upstream
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/SectionLabeler
   astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/navigation/ChatSectionLabeler
+  # Akronymerkennung (#182, ADR 0019): der AcronymExtractor mit Schreibregeln, Wortzerlegung und Ausschreibungen,
+  # wie im Upstream; der Prozessor acronyms ruft ihn auf
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymExtractor
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymForms
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/TermScanner
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/LongFormMatcher
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymSettings
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymAnalysis
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymFinding
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/AcronymDefinition
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/FindingStatus
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/TermKind
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/textmining/TextSpan
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/chat/linguistics/TermShape
+  astu/acropolis:com/aresstack/enterpriseai/astu/acropolis/passage/SentenceSegmenter
   proasteion/application:com/aresstack/enterpriseai/proasteion/application/knowledge/DocumentSourceFileTextExtractor
   # MediaWiki (#187): Brücke vom SecretProvider zur Anmeldung am Wiki, wie AdapterAssembly.sourceProviders im Upstream
   proasteion/application:com/aresstack/enterpriseai/proasteion/application/security/SecretBackedMediaWikiCredentialsProvider

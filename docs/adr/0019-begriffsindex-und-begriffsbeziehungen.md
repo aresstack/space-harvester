@@ -127,15 +127,19 @@ und Sperrlisten überleben einen Neuaufbau des Caches.
 - Je Seite höchstens 50 000 Fundstellen und 10 000 Begriffe; `count` zählt weiter alles, eine Warnung nennt die
   Kürzung.
 - Nominalgruppen nur aus Sätzen, die die Satzanalyse als deutsch erkennt; Akronyme aus jedem Text.
-- Ausschreibungen nur in Klammern direkt daneben, ausgerichtet wie im EAC (`LongFormMatcher`, Schwartz und Hearst):
-  Buchstaben und Ziffern des Akronyms in Reihenfolge, das erste an einem Wortanfang, im selben Satz, Klammertext bis
-  zum ersten Komma (seit `acronyms` 3, `terms` 2). So gilt auch `Zentrale Datenverarbeitung (ZDV)` oder
-  `Rückmeldeschlüssel (RSL)`. Ohne Klammer bleibt `RSL` → `Rückmeldeschlüssel` eine Beziehung aus #120 oder ein
-  Vorschlag aus #122.
-- Gegenüber dem EAC noch offen (`AcronymExtractor`, `AcronymForms`, `TermScanner`): gemischte Schreibung (`GmbH`,
-  `IoT`), Punkt-Akronyme (`U.S.A.`), Kennungen mit mehr als zwei Ziffern oder Unterstrich als eigene Art,
-  Ausblenden von Versalzeilen, Code, URLs, Mailadressen und Dateinamen, mehrere Ausschreibungen je Akronym. Jede
-  davon hebt die Version von `acronyms` und `terms`.
+- Akronyme, Kennungen und Ausschreibungen erkennt seit `acronyms` 4 und `terms` 4 der `AcronymExtractor` des EAC,
+  unverändert übernommen (`enterprise-ai-sources`, mit `AcronymForms`, `TermScanner`, `LongFormMatcher`): gemischte
+  Schreibung (`GmbH`, `IoT`), Punkt-Akronyme (`U.S.A.`), Kennungen mit mehr als zwei Ziffern oder Unterstrich als
+  eigene Art (Fakt `TECHNICAL_IDENTIFIER_CANDIDATE`, im Begriffsindex `identifier`), keine Akronyme in Versalzeilen,
+  Code, Adressen, Linkzielen, Pfaden und Dateinamen, jede unterschiedliche Ausschreibung ein `ACRONYM_DEFINITION`.
+  Ausschreibungen stehen nur in Klammern direkt daneben im selben Satz; ohne Klammer bleibt `RSL` →
+  `Rückmeldeschlüssel` eine Beziehung aus #120 oder ein Vorschlag aus #122. Gewollt anders: die Schwellen
+  (`AcronymSettings`: zehn Buchstaben, Versalzeile ab 60 % und drei Wörtern) sind fest, im EAC einstellbar; der
+  Begriffsindex und die Leseansicht zeigen die erste Ausschreibung, die Fakten alle. Die Versionen nennen die
+  Satzgrenzen (`4;sentences=opennlp-de`, ohne Satzmodell `splitter`; `terms` mit der ganzen Akronymversion,
+  `4;acronyms=4;sentences=…`), ein Wechsel veraltet die Ergebnisse. Der Begriffsindex sucht Akronyme unter der
+  Suchform des EAC (`U.S.A.` und `USA` ein Eintrag `usa`). Weil Fakt-Kennungen positional sind, bleiben beim Sprung geprüfte Akronym-Fakten als veraltete Kopie
+  stehen und dieselbe Aussage erscheint daneben ungeprüft unter neuer Kennung.
 - Kein Fachglossar und keine KI in Index und Abfragen.
 
 ## Folgen

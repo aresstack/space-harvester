@@ -72,9 +72,11 @@ class EnrichmentConfiguration {
                             ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences,
                             ObjectProvider<NavigationLabelModel> labels,
                             ObjectProvider<StatementProcessor> statements) {
-        List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
+        // Akronyme mit denselben Satzgrenzen wie die Absätze (EAC: OpenNLP, sonst Splitter).
+        AcronymProcessor acronyms = new AcronymProcessor(sentences);
+        List<EnrichmentProcessor> processors = new ArrayList<>(List.of(acronyms, new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
-                new TermProcessor()));
+                new TermProcessor(acronyms)));
         // Embeddings über den KI-Dienst (AiConfiguration, ADR 0011), im Hintergrund; ohne Modell bettet er nichts ein
         embedding.ifAvailable(processors::add);
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
