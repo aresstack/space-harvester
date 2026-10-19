@@ -92,6 +92,44 @@ class SyncConfiguration {
     }
 
     /**
+     * Regelmäßige Bestandsinventur (ADR 0014 Punkt 1) der Spaces aus {@code space-harvester.sync.spaces} im Abstand
+     * {@code space-harvester.sync.inventory-interval} bzw. dem ihrer Quelle; ohne Abstand keine. Anders als das
+     * Nachholen listet sie die Metadaten des ganzen Space und findet so auch Löschungen und Verschiebungen. Ein
+     * Konfigurationswechsel ersetzt den Zeitplan wie beim Nachholen.
+     */
+    @Bean(destroyMethod = "close")
+    InventorySchedule inventorySchedule(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live) {
+        Reconciliation inventories = Reconciliation.inventories(syncJobs, null, Clock.systemUTC());
+        if (!syncJobs.available()) {
+            if (!ConfiguredSchedules.planInventories(live.current(), catalog, false).isEmpty()) {
+                LOG.warn("Bestandsinventur konfiguriert, aber Cache-Speicher oder Inhaltsabruf fehlen; "
+                        + "sie startet nicht");
+            }
+            return new InventorySchedule(inventories);
+        }
+        ConfiguredSchedules schedules = new ConfiguredSchedules(inventories);
+        schedules.replace(ConfiguredSchedules.planInventories(live.current(), catalog, false));
+        live.listen(change -> {
+            if (!change.syncChanged()) {
+                return ConfigurationListener.Preparation.NOTHING;
+            }
+            List<ConfiguredSchedules.Planned> planned = ConfiguredSchedules.planInventories(change.next(), catalog,
+                    true);
+            return () -> schedules.replace(planned);
+        });
+        return new InventorySchedule(inventories);
+    }
+
+    /** Die eingeplanten Bestandsinventuren; eigener Typ, damit {@link Reconciliation} eindeutig bleibt. */
+    record InventorySchedule(Reconciliation inventories) implements AutoCloseable {
+
+        @Override
+        public void close() {
+            inventories.close();
+        }
+    }
+
+    /**
      * Holt vor jeder Suche die Änderungen ihrer Quellen nach, wo {@code space-harvester.sync.before-search} (global oder
      * je Quelle) es verlangt; die Regel folgt der wirksamen Konfiguration (ADR 0015).
      */

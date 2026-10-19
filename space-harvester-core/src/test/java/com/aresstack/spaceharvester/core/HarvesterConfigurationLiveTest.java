@@ -193,6 +193,30 @@ class HarvesterConfigurationLiveTest {
     }
 
     @Test
+    void theInventoryScheduleFollowsTheConfigurationAtRuntime() {
+        ConfigurationManager manager = new ConfigurationManager(schedule(null, List.of("wiki/DEV")));
+        try (Harvester harvester = harvester(manager)) {
+            assertThat(harvester.inventories()).isEmpty();
+
+            // ADR 0015: sync.inventory-interval je Quelle plant die Inventur ein, ohne den Harvester neu zu bauen;
+            // unabhängig vom Nachholen nach sync.interval.
+            HarvesterConfiguration next = schedule(Duration.ofMinutes(10), List.of("wiki/DEV", "wiki/QA"));
+            next = next.withSync(next.sync().withSource("wiki", new SourceSyncOverride(null, Duration.ofDays(7), null,
+                    null, null, SyncMode.SYNC_CACHE, null, null, null)));
+            assertThat(manager.apply(next).activated()).isTrue();
+            assertThat(harvester.inventories()).extracting(Reconciliation.Schedule::spaceKey,
+                    Reconciliation.Schedule::interval, Reconciliation.Schedule::mode).containsExactly(
+                    tuple("DEV", Duration.ofDays(7), SyncMode.SYNC_CACHE),
+                    tuple("QA", Duration.ofDays(7), SyncMode.SYNC_CACHE));
+            assertThat(harvester.reconciliations()).extracting(Reconciliation.Schedule::interval)
+                    .containsOnly(Duration.ofMinutes(10));
+
+            assertThat(manager.apply(schedule(Duration.ofMinutes(10), List.of("wiki/DEV"))).activated()).isTrue();
+            assertThat(harvester.inventories()).isEmpty();
+        }
+    }
+
+    @Test
     void aRejectedConfigurationLeavesScheduleAndVersionUnchanged() {
         ConfigurationManager manager = new ConfigurationManager(schedule(Duration.ofMinutes(10), List.of("wiki/DEV")));
         try (Harvester harvester = harvester(manager)) {

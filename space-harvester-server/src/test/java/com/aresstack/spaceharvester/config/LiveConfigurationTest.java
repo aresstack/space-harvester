@@ -54,6 +54,9 @@ class LiveConfigurationTest {
     @Autowired
     private Reconciliation reconciliation;
 
+    @Autowired
+    private SyncConfiguration.InventorySchedule inventory;
+
     @Test
     void rulesPerSourceAndTheReleaseToTheAiServiceFollowTheConfiguration() {
         assertThat(live.freshnessFor("wiki").maxAge()).isEqualTo(Duration.ZERO);
@@ -100,6 +103,22 @@ class LiveConfigurationTest {
                 manager.current().configuration(), Map.of("sync.spaces", List.of("nope/X"))).orThrow());
         assertThat(rejected.activated()).isFalse();
         assertThat(reconciliation.schedules()).extracting(Reconciliation.Schedule::spaceKey).containsExactly("DEV");
+    }
+
+    @Test
+    void theInventoryScheduleFollowsTheConfiguration() {
+        assertThat(inventory.inventories().schedules()).isEmpty();
+
+        activate(Map.of("sync.spaces", List.of("wiki/DEV"), "sync.sources.wiki.inventory-interval", "P7D"));
+        assertThat(inventory.inventories().schedules()).singleElement().satisfies(schedule -> {
+            assertThat(schedule.spaceKey()).isEqualTo("DEV");
+            assertThat(schedule.interval()).isEqualTo(Duration.ofDays(7));
+        });
+        // Ohne sync.interval holt kein Zeitplan nach; die Inventur ist unabhängig davon.
+        assertThat(reconciliation.schedules()).isEmpty();
+
+        activate(Map.of("sync.spaces", List.of()));
+        assertThat(inventory.inventories().schedules()).isEmpty();
     }
 
     private void activate(Map<String, ?> values) {

@@ -70,7 +70,8 @@ und `space-harvester.network.*`.
   Betriebsart je Quelle; `catch-up-on-start` je Quelle beim Bauen; Webhooks (`sync.events`) bei jedem Aufruf; Proxy
   und TLS (`network.*`), solange am Builder weder `proxy` noch `trust` gesetzt ist (die App setzt beide);
   `search.prefetch-hits` für den nächsten Stapel der Schlagwortsuche, solange am Builder `prefetchSearchHits` nicht
-  danach fest gesetzt ist; `before-search` je Quelle bei jeder Suche. Noch nicht live: Bestandsinventur-Zeitplan.
+  danach fest gesetzt ist; `before-search` je Quelle bei jeder Suche; die Bestandsinventur aus `sync.spaces` mit
+  `inventory-interval` und Betriebsart je Quelle (`Harvester.inventories()`).
 - Im Server wirkt eine aktivierte Version ebenso sofort (`LiveConfiguration`): Aktualität (`cache.*`,
   `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
   beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
@@ -80,8 +81,8 @@ und `space-harvester.network.*`.
   einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf, `search.prefetch-hits` für den nächsten Stapel der
   Schlagwortsuche, `before-search` je Quelle bei jeder Suche und `catch-up-on-start` je Quelle beim Start. Das Embedding-Modell wechselt live,
   schaltet ab und lässt sich auch erstmals einschalten, ohne Neustart: Die Kette (Prozessor, Hintergrund,
-  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Noch nicht live im Server: Bestandsinventur-Zeitplan
-  und `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
+  Neuberechnung bei geänderter Freigabe) steht immer und bettet ohne Modell nichts ein. Ebenso der Zeitplan der
+  Bestandsinventur (`sync.spaces` mit `inventory-interval` je Quelle). Noch nicht live im Server: `search.semantic` (die Suche wird beim Start gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
 ## Suchlauf-Protokoll und Fakten (#182)
 
@@ -257,7 +258,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
 | Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
-| Regelmäßige Bestandsinventur (nur Metadaten) | `sync.inventory-interval` (ohne: keine) | ja |
+| Regelmäßige Bestandsinventur (nur Metadaten) der Spaces aus `sync.spaces`: listet den ganzen Space und findet so auch Löschungen und Verschiebungen; Betriebsart wie beim Nachholen, `full` höchstens als `sync-cache` | `sync.inventory-interval` (mindestens `PT1M`, ohne: keine) | ja, Scheduler neu gesetzt |
 | Hintergrundfüllung: Katalogseiten ohne oder mit veraltetem Inhalt in Leerlaufzeit laden (ADR 0016) | `sync.background-fill` (Standard `true`) | ja |
 | Parallelität der Hintergrundfüllung | `sync.background-parallelism` (Standard `2`, `1` bis `16`) | ja |
 | Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |

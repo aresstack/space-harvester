@@ -183,6 +183,27 @@ class SpaceSyncJobsTest {
     }
 
     @Test
+    void aScheduledInventoryListsTheWholeSpace() {
+        syncs.start("wiki", "DOC", "client:a");
+        runQueued();
+        source.remove("2");
+
+        try (Reconciliation inventories = Reconciliation.inventories(syncs, null, FakeSource.CLOCK)) {
+            inventories.schedule("wiki", "DOC", Duration.ofDays(7), SyncMode.FULL);
+            inventories.due(inventories.entry("wiki", "DOC"));
+            runQueued();
+
+            Reconciliation.Schedule done = inventories.schedules().get(0);
+            assertThat(done.lastOutcome()).isEqualTo(Reconciliation.Outcome.STARTED);
+            // Die Inventur sieht, dass Seite 2 fehlt; das Nachholen der Änderungen sähe es nicht (ADR 0014).
+            SpaceSyncJobs.SyncJob job = syncs.status(done.lastJobId(), null);
+            assertThat(job.status().state()).isEqualTo(JobState.COMPLETED);
+            assertThat(job.summary().withheld()).isEqualTo(1);
+            assertThat(job.summary().generation()).isEqualTo(2);
+        }
+    }
+
+    @Test
     void aReconcileIntervalBelowOneMinuteIsRejected() {
         try (Reconciliation reconciliation = new Reconciliation(syncs, null, FakeSource.CLOCK)) {
             assertThatThrownBy(() -> reconciliation.schedule("wiki", "DOC",

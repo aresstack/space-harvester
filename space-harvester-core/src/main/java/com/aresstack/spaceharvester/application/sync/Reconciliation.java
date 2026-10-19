@@ -70,6 +70,7 @@ public final class Reconciliation implements AutoCloseable {
     private final String owner;
     private final Clock clock;
     private final ScheduledExecutorService scheduler;
+    private final boolean inventory;
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
 
     /** @param owner Auftraggeber der gestarteten Abgleiche oder {@code null} für einen Hintergrundabgleich */
@@ -79,10 +80,35 @@ public final class Reconciliation implements AutoCloseable {
     }
 
     Reconciliation(SpaceSyncJobs syncs, String owner, Clock clock, ScheduledExecutorService scheduler) {
+        this(syncs, owner, clock, scheduler, false);
+    }
+
+    private Reconciliation(SpaceSyncJobs syncs, String owner, Clock clock, ScheduledExecutorService scheduler,
+                           boolean inventory) {
+        this.inventory = inventory;
         this.syncs = Objects.requireNonNull(syncs, "syncs");
         this.owner = owner;
         this.clock = Objects.requireNonNull(clock, "clock");
         this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
+    }
+
+    /**
+     * Ein Zeitplan für die regelmäßige Bestandsinventur ({@code sync.inventory-interval}, ADR 0014 Punkt 1): Jeder
+     * Termin startet einen {@link SpaceSyncJobs#start(String, String, String, SyncMode) Abgleich mit Inventur}, der die
+     * Metadaten des ganzen Space listet und so auch Löschungen und Verschiebungen findet, statt nur die Änderungen
+     * nachzuholen. Die Betriebsart gilt wie beim Nachholen, {@link SyncMode#FULL} höchstens als
+     * {@link SyncMode#SYNC_CACHE}: Eine Inventur lädt nie den ganzen Space.
+     *
+     * @param owner wie im Konstruktor
+     */
+    public static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock) {
+        return inventories(syncs, owner, clock, Executors.newSingleThreadScheduledExecutor(
+                Thread.ofVirtual().name("inventory").factory()));
+    }
+
+    static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock,
+                                      ScheduledExecutorService scheduler) {
+        return new Reconciliation(syncs, owner, clock, scheduler, true);
     }
 
     /**
@@ -143,9 +169,15 @@ public final class Reconciliation implements AutoCloseable {
         String jobId = entry.lastJobId;
         try {
             // Ohne Erstbefüllung genügt das Nachholen der Änderungen, wo die Quelle sie meldet (ADR 0014).
-            JobStatus started = entry.mode == SyncMode.FULL
-                    ? syncs.start(entry.sourceId, entry.spaceKey, owner, SyncMode.FULL)
-                    : syncs.catchUp(entry.sourceId, entry.spaceKey, owner, null, entry.mode);
+            JobStatus started;
+            if (inventory) {
+                started = syncs.start(entry.sourceId, entry.spaceKey, owner,
+                        entry.mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : entry.mode);
+            } else {
+                started = entry.mode == SyncMode.FULL
+                        ? syncs.start(entry.sourceId, entry.spaceKey, owner, SyncMode.FULL)
+                        : syncs.catchUp(entry.sourceId, entry.spaceKey, owner, null, entry.mode);
+            }
             outcome = Outcome.STARTED;
             jobId = started.id();
         } catch (SyncAlreadyRunningException e) {
