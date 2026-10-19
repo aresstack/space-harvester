@@ -152,6 +152,12 @@ zählt er als groß. Ein weiterer Aufruf wartet höchstens die Wartezeit und sch
 `source-rate-limited` (REST 429); der Anhang gilt dabei nie als defekt, die nächste Ernte versucht es erneut. Die
 bisherige Grenze von 4 gleichzeitigen Downloads gilt unverändert daneben.
 
+Die Schranke begrenzt Laden, Lesen aus der Ablage, Extraktion und Bildbeschreibung, noch nicht die Auslieferung: Bei
+REST-Abrufen von Inhalt und Vorschau sowie im Export ist der Platz frei, sobald die Datei gelesen ist, die Bytes liegen
+danach bis zum Ende der Antwort bzw. Konvertierung im Speicher. Bilder der Lese-Ansicht nennen ihre Größe erst nach
+dem Download; sie werden ohne Platz geladen (begrenzt durch die 4 Downloads und `max-size`) und erst beim Ablegen von
+der Schranke erfasst.
+
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
 | `space-harvester.assets.max-size` | `100MB` | Größte einzelne Datei; größere werden weder geladen noch gekürzt abgelegt (`asset-too-large`) |
