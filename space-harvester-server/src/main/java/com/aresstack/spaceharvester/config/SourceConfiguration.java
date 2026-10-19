@@ -7,7 +7,9 @@ import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.ConfluenceDelegatedAccess;
 import com.aresstack.spaceharvester.source.ConfluenceSourceAdapter;
 import com.aresstack.spaceharvester.source.EacSourceAdapters;
+import com.aresstack.spaceharvester.source.KnowledgeSourceProviderAdapter;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
+import com.aresstack.spaceharvester.source.MediaWikiSources;
 import com.aresstack.spaceharvester.source.SourceAdapter;
 import com.aresstack.spaceharvester.source.SourceDiagnostics;
 import com.aresstack.spaceharvester.source.TrustBundles;
@@ -45,6 +47,12 @@ class SourceConfiguration {
         return new LocalFilesSourceAdapter();
     }
 
+    /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
+    @Bean
+    KnowledgeSourceProviderAdapter mediaWikiSourceAdapter() {
+        return MediaWikiSources.adapter();
+    }
+
     /** Kopien aus dem Enterprise AI Client ohne eigenen Ordner (#187); Zugangsdaten über den SecretProvider (#188). */
     @Bean
     SourceAdapter ftpSourceAdapter() {
@@ -64,6 +72,16 @@ class SourceConfiguration {
     @Bean
     SourceAdapter sharePointSourceAdapter() {
         return EacSourceAdapters.sharePoint();
+    }
+
+    @Bean
+    SourceAdapter betaViewSourceAdapter() {
+        return EacSourceAdapters.betaView();
+    }
+
+    @Bean
+    SourceAdapter outlookSourceAdapter() {
+        return EacSourceAdapters.outlook();
     }
 
     /**

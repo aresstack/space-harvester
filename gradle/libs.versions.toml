@@ -45,6 +45,8 @@ jgraphx = "4.2.2"
 jgit = "5.13.5.202508271544-r"
 # FTP/JES-Quelle (source-ftp, #187): dieselbe Fassung wie im Enterprise AI Client
 commonsNet = "3.9.0"
+# Outlook-Quelle (source-outlook, #187): dieselbe Fassung wie im Enterprise AI Client
+javaLibpst = "0.9.3"
 junit4 = "4.13.2"
 # Word-Ausgabe (:docx-export, Kopie aus enterprise-ai-client): Markdown-Parser in derselben Fassung wie dort,
 # Apache POI in der aktuellen 5.x (dort 5.2.3 wegen Tika 2.9; hier dieselbe 5.5.1 wie Tika 3.3.2)
@@ -69,6 +71,7 @@ jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
 jgraphx = { module = "com.github.vlsi.mxgraph:jgraphx", version.ref = "jgraphx" }
 jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
 commons-net = { module = "commons-net:commons-net", version.ref = "commonsNet" }
+java-libpst = { module = "com.pff:java-libpst", version.ref = "javaLibpst" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 tika-core = { module = "org.apache.tika:tika-core", version.ref = "tika" }
 tika-parsers-standard = { module = "org.apache.tika:tika-parsers-standard-package", version.ref = "tika" }

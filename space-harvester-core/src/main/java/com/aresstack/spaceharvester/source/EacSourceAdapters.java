@@ -5,9 +5,13 @@ import com.aresstack.enterpriseai.adyton.SecretProvider;
 import com.aresstack.enterpriseai.adyton.SecretUnavailableException;
 import com.aresstack.enterpriseai.astu.security.SecretRef;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCredentials;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCredentialsProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.JesSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.outlook.OutlookSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentials;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
@@ -15,13 +19,15 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePoi
 /**
  * Quellentypen aus den Kopien des Enterprise AI Client ohne Seitenliste je Partition (#187), über
  * {@link ContextualSourceAdapter} als eine Partition je Quelle: {@code ftp} (MVS-Datensätze und Member), {@code jes}
- * (Spool), {@code ndv} (Natural Development Server) und {@code sharepoint} (Dokumentbibliotheken). Die Einstellungen
+ * (Spool), {@code ndv} (Natural Development Server), {@code sharepoint} (Dokumentbibliotheken) und {@code betaview}
+ * (Listen und Reports eines Favoriten) sowie {@code outlook} (lokale Postfachdateien .pst/.ost unter
+ * {@code options.mailbox}, ohne Zugangsdaten). Die Einstellungen
  * stehen unter {@code options} mit den Schlüsseln des Upstream-Typs.
  *
  * <p>{@code options.credentialRef} löst der {@code SecretProvider} des Katalogs auf, also der Anbieter des einbettenden
- * Programms (#188, {@code Harvester.builder().secretProvider}); ohne ihn gibt es keine Zugangsdaten, und {@code jes}
- * und {@code ndv}, die einen Eintrag verlangen, scheitern beim ersten Zugriff mit {@code ACCESS_DENIED}. {@code auth},
- * {@code base-url} und eigene Zertifikate kennt dieser Weg nicht. SharePoint geht über die Proxy-Route je Ziel; ohne
+ * Programms (#188, {@code Harvester.builder().secretProvider}); ohne ihn gibt es keine Zugangsdaten, und {@code jes},
+ * {@code ndv} und {@code betaview}, die einen Eintrag verlangen, scheitern beim ersten Zugriff mit {@code ACCESS_DENIED}. {@code auth},
+ * {@code base-url} und eigene Zertifikate kennt dieser Weg nicht. SharePoint und BetaView gehen über die Proxy-Route je Ziel; ohne
  * Eintrag meldet es sich mit der Windows-Anmeldung des JDK an, wie im Enterprise AI Client.
  */
 public final class EacSourceAdapters {
@@ -59,6 +65,20 @@ public final class EacSourceAdapters {
         });
     }
 
+    public static SourceAdapter betaView() {
+        return new ContextualSourceAdapter(BetaViewSourceProvider.TYPE_ID, "BetaView", true, context -> {
+            SecretProvider secrets = secrets(context);
+            return new BetaViewSourceProvider(ref -> betaViewCredentials(secrets, ref),
+                    context == null ? null : context.routes(), null, context == null ? null : context.userAgent(),
+                    DocumentExtraction.detector(), DocumentExtraction.registry());
+        });
+    }
+
+    public static SourceAdapter outlook() {
+        return new ContextualSourceAdapter(OutlookSourceProvider.TYPE_ID, "Outlook", false,
+                context -> new OutlookSourceProvider());
+    }
+
     private static SecretProvider secrets(SourceAdapter.Context context) {
         return context == null || context.secrets() == null ? NO_SECRETS : context.secrets();
     }
@@ -68,6 +88,14 @@ public final class EacSourceAdapters {
         return () -> {
             try (SecretMaterial material = secrets.resolve(ref)) {
                 return new SharePointCredentials(material.principal(), material.copySecret());
+            }
+        };
+    }
+
+    private static BetaViewCredentialsProvider betaViewCredentials(SecretProvider secrets, SecretRef ref) {
+        return () -> {
+            try (SecretMaterial material = secrets.resolve(ref)) {
+                return new BetaViewCredentials(material.principal(), material.copySecret());
             }
         };
     }
