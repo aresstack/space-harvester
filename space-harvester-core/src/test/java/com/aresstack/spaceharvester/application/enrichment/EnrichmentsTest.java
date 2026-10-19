@@ -45,7 +45,7 @@ class EnrichmentsTest {
         assertThat(store.find(page.key())).extracting(Enrichment::processorId, Enrichment::processorVersion,
                 Enrichment::revision, Enrichment::status, Enrichment::computedAt)
                 .containsExactly(
-                        org.assertj.core.groups.Tuple.tuple("acronyms", "2", "3", Enrichment.Status.OK,
+                        org.assertj.core.groups.Tuple.tuple("acronyms", "3", "3", Enrichment.Status.OK,
                                 CLOCK.instant()),
                         org.assertj.core.groups.Tuple.tuple("outline", "1", "3", Enrichment.Status.OK,
                                 CLOCK.instant()));
