@@ -130,6 +130,18 @@ class EnrichmentFactsTest {
     }
 
     @Test
+    void aResultWithMoreFactsThanTheLimitIsCutAndSaysSo() {
+        Enrichment full = FactTestResults.many(PAGE, EnrichmentFacts.ENTITIES, EnrichmentFacts.MAX_PER_RESULT);
+        Enrichment over = FactTestResults.many(PAGE, EnrichmentFacts.ENTITIES, EnrichmentFacts.MAX_PER_RESULT + 1);
+
+        assertThat(EnrichmentFacts.of(full)).hasSize(EnrichmentFacts.MAX_PER_RESULT);
+        assertThat(EnrichmentFacts.truncated(full)).isFalse();
+        assertThat(EnrichmentFacts.of(over)).hasSize(EnrichmentFacts.MAX_PER_RESULT);
+        assertThat(EnrichmentFacts.truncated(over)).isTrue();
+        assertThat(EnrichmentFacts.truncated(FactTestResults.acronyms(PAGE, FactTestResults.TEXT))).isFalse();
+    }
+
+    @Test
     void conditionsAreNormalizedLikeArguments() {
         assertThat(ArgumentCondition.parse("short_form: API ")).isEqualTo(new ArgumentCondition("SHORT_FORM",
                 "api"));

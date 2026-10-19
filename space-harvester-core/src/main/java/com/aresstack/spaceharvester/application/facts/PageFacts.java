@@ -22,6 +22,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 
@@ -89,12 +90,16 @@ public final class PageFacts {
         DeliveredPage page = pages.page(caller, sourceId, pageId, false);
         Map<String, Enrichment.Freshness> freshness = new HashMap<>();
         String input = null;
+        Set<String> truncated = new TreeSet<>();
         if (enrichments != null) {
             Enrichments.Inspection inspection = enrichments.inspect(page.snapshot());
             input = inspection.inputSha256();
             for (Enrichments.View view : inspection.stored()) {
                 freshness.put(view.enrichment().processorId() + '\u0000' + view.enrichment().inputSha256(),
                         view.freshness());
+                if (EnrichmentFacts.truncated(view.enrichment())) {
+                    truncated.add(view.enrichment().processorId());
+                }
             }
         }
         List<Entry> entries = new ArrayList<>();
@@ -110,7 +115,7 @@ public final class PageFacts {
                 entries.add(new Entry(fact, current, revision));
             }
         }
-        return new Sheet(sourceId, pageId, page.header().metadata().partitionKey(), entries);
+        return new Sheet(sourceId, pageId, page.header().metadata().partitionKey(), entries, List.copyOf(truncated));
     }
 
     /**
@@ -242,10 +247,15 @@ public final class PageFacts {
     }
 
     /** Das Faktenblatt einer Seite. */
-    public record Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts) {
+    public record Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts, List<String> truncated) {
 
         public Sheet {
             facts = List.copyOf(facts);
+            truncated = List.copyOf(truncated);
+        }
+
+        public Sheet(String sourceId, String pageId, String spaceKey, List<Entry> facts) {
+            this(sourceId, pageId, spaceKey, facts, List.of());
         }
     }
 

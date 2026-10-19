@@ -58,4 +58,24 @@ public final class FactTestResults {
                 Enrichment.Status.OK, output.payloadJson(), output.warnings(), null,
                 Instant.parse("2026-10-18T08:00:00Z"));
     }
+
+    /** Ein Ergebnis von {@code processorId} mit {@code count} gleichförmigen Einträgen, je Eintrag ein Fakt. */
+    public static Enrichment many(PageKey key, String processorId, int count) {
+        StringBuilder entries = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                entries.append(',');
+            }
+            entries.append(switch (processorId) {
+                case EnrichmentFacts.ACRONYMS -> "{\"acronym\":\"A" + i + "\",\"count\":1}";
+                case EnrichmentFacts.ENTITIES -> "{\"term\":\"T" + i + "\",\"normalized\":\"t" + i + "\",\"count\":1}";
+                case EnrichmentFacts.PROPERTIES -> "{\"subject\":\"S" + i + "\",\"subjectNormalized\":\"s" + i
+                        + "\",\"property\":\"frei\",\"normalized\":\"frei\"}";
+                case EnrichmentFacts.RELATIONS -> "{\"type\":\"IS_A\",\"subject\":\"S" + i + "\",\"object\":\"O\"}";
+                default -> throw new IllegalArgumentException(processorId);
+            });
+        }
+        return new Enrichment(key, processorId, "1", "sha256:many", "7", Enrichment.Status.OK,
+                "{\"" + processorId + "\":[" + entries + "]}", List.of(), null, Instant.parse("2026-10-18T08:00:00Z"));
+    }
 }
