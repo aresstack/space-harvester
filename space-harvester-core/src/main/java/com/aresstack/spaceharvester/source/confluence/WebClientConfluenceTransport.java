@@ -20,6 +20,7 @@ import io.netty.resolver.NoopAddressResolverGroup;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.PasswordAuthentication;
+import java.net.SocketAddress;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.security.NoSuchAlgorithmException;
@@ -48,6 +49,7 @@ import reactor.core.publisher.SynchronousSink;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 import reactor.netty.http.client.HttpClient;
+import reactor.netty.resources.ConnectionPoolMetrics;
 import reactor.netty.resources.ConnectionProvider;
 import reactor.netty.transport.ProxyProvider;
 
@@ -98,8 +100,8 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
     private volatile boolean disposed;
     /** Clients, deren Pool in {@link #retire} auf das verzögerte Schließen wartet; {@link #close()} schließt sie sofort. */
     private final Set<Client> retiring = ConcurrentHashMap.newKeySet();
-    /** Ausgegebene Clients (für Tests: eine Anfrage hält ihren Client und damit dessen Pool). */
-    private final AtomicInteger handedOut = new AtomicInteger();
+    /** Zustand der Pools je Ziel (für Tests, die auf eine Anfrage im Pool warten). */
+    private final Map<String, ConnectionPoolMetrics> poolMetrics = new ConcurrentHashMap<>();
 
     private WebClientConfluenceTransport(Builder builder) {
         this.routes = builder.routes == null ? HttpRoutePort.direct() : builder.routes;
@@ -332,7 +334,6 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 // danach schließt; neue Anfragen weist schon der Einstieg ab.
                 Client late = create(key);
                 retire(late);
-                handedOut.incrementAndGet();
                 return late.web();
             }
             client = clients.get(key);
@@ -349,7 +350,6 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         if (evicted != null) {
             retire(evicted);
         }
-        handedOut.incrementAndGet();
         return client.web();
     }
 
@@ -359,6 +359,18 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .pendingAcquireMaxCount(maxPending)
                 .pendingAcquireTimeout(connectTimeout.plus(readTimeout))
                 .maxIdleTime(Duration.ofSeconds(30))
+                .metrics(true, () -> new ConnectionProvider.MeterRegistrar() {
+                    @Override
+                    public void registerMetrics(String pool, String id, SocketAddress target,
+                                                ConnectionPoolMetrics metrics) {
+                        poolMetrics.put(id, metrics);
+                    }
+
+                    @Override
+                    public void deRegisterMetrics(String pool, String id, SocketAddress target) {
+                        poolMetrics.remove(id);
+                    }
+                })
                 .build();
         // Über einen Proxy bleibt der Zielname unaufgelöst: im Unternehmensnetz kennt oft nur der Proxy externe Namen,
         // eine lokale Auflösung endete dort in einer UnknownHostException, obwohl die PAC-Route stimmte.
@@ -441,9 +453,9 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
                 .subscribe(ignored -> { }, failure -> { });
     }
 
-    /** Anzahl an Anfragen ausgegebener Clients (für Tests, die auf eine Anfrage im Pool warten). */
-    int clientsHandedOut() {
-        return handedOut.get();
+    /** Anfragen, die gerade auf eine Verbindung eines Pools warten (für Tests). */
+    int pendingAcquires() {
+        return poolMetrics.values().stream().mapToInt(ConnectionPoolMetrics::pendingAcquireSize).sum();
     }
 
     /** Anzahl gerade gehaltener Clients (für Tests der Pool-Trennung). */
