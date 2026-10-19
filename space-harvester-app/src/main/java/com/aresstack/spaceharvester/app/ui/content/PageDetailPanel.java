@@ -564,18 +564,18 @@ public final class PageDetailPanel extends JPanel {
     }
 
     /**
-     * Hängt die Dokumentnavigation des Core an, wenn sie zum gezeigten Text gehört; sonst bleibt der Banner aus. Die
-     * Positionen des Core beziehen sich auf den Text des Cache, den der Reiter „Text“ zeigt.
+     * Hängt die Dokumentnavigation des Core an, wenn sie zum gezeigten Text gehört ({@code inputSha256}); sonst bleibt
+     * der Banner aus. Die Positionen des Core beziehen sich auf den Text des Cache, den der Reiter „Text“ zeigt.
      */
     private static void navigation(AppRuntime runtime, ReaderDocument document, String sourceId, String pageId) {
         if (document.text() == null) {
             return;
         }
         try {
-            Navigation navigation = Navigation.of(runtime.workspace().documentNavigation(sourceId, pageId));
-            int length = document.text().text().length();
-            if (navigation.flatten().stream().allMatch(section -> section.end() <= length)) {
-                document.withNavigation(navigation);
+            var view = runtime.workspace().documentNavigation(sourceId, pageId);
+            // Wie die Capture-ID im Client: nur eine Antwort zu genau dem gezeigten Text gilt.
+            if (document.text().inputSha256().equals(view.inputSha256())) {
+                document.withNavigation(Navigation.of(view));
             }
         } catch (RuntimeException e) {
             // Die Navigation ist eine Zugabe; ohne sie zeigt der Reiter „Text“ den Lesetext allein.
