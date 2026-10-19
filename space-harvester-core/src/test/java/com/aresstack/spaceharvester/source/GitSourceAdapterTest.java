@@ -10,6 +10,8 @@ import com.aresstack.enterpriseai.astu.security.SecretRef;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitCredentials;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.Auth;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig.AuthType;
+import com.aresstack.spaceharvester.application.sources.SourceField;
+import com.aresstack.spaceharvester.application.sources.SourceType;
 import java.nio.file.Path;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -81,6 +83,15 @@ class GitSourceAdapterTest {
                 .containsExactly("options.credentialRef passt nicht zu auth.type pat; es gilt auth");
         assertThat(String.join(" ", adapter.check(config(new Auth(AuthType.PAT, "angelo", "geheim", "pat-123"),
                 withRef)))).doesNotContain("geheim", "pat-123", REF.id());
+    }
+
+    @Test
+    void theFormOffersTokenAndTheOwnReference() {
+        GitSourceAdapter adapter = new GitSourceAdapter(clones);
+
+        assertThat(adapter.authModes()).containsExactly(SourceType.AuthMode.NONE, SourceType.AuthMode.BASIC,
+                SourceType.AuthMode.PAT);
+        assertThat(adapter.fields()).extracting(SourceField::key).contains("url", "credentialRef");
     }
 
     @Test
