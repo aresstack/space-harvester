@@ -127,6 +127,14 @@ public interface PageTextIndex {
             this(sourceId, pageId, spaceKey, title, snippet, null, null);
         }
 
+        /**
+         * Derselbe Treffer mit anderem Auszug; Seite, Rang und Anhang bleiben. Hüllen um den Index (etwa Auszüge aus
+         * Absätzen) ersetzen den Auszug nur hierüber, damit ein Anhangstreffer nicht zum Seitentreffer wird.
+         */
+        public Match withSnippet(String snippet) {
+            return new Match(sourceId, pageId, spaceKey, title, snippet, attachmentId, attachmentTitle);
+        }
+
         /** Ob der Treffer im Text eines Anhangs liegt. */
         public boolean inAttachment() {
             return attachmentId != null;

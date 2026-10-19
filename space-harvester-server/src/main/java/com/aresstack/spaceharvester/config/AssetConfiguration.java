@@ -40,6 +40,7 @@ class AssetConfiguration {
     Assets assets(SourceCatalog catalog, AssetStore store, ObjectProvider<ImageDescriber> describer,
                   ObjectProvider<PageTextIndex> texts,
                   @Value("${space-harvester.assets.max-size:50MB}") DataSize maxSize) {
+        // Der Index-Bean selbst, nie eine Hülle der Suche (etwa Auszüge aus Absätzen): Assets schreibt Anhänge hinein.
         return new Assets(catalog, store, maxSize.toBytes(), Clock.systemUTC(), describer.getIfAvailable(),
                 TikaDocumentText.shared(), texts.getIfAvailable());
     }
