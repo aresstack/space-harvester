@@ -3,6 +3,7 @@ package com.aresstack.spaceharvester.application.configuration;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
 import com.aresstack.spaceharvester.application.query.CacheFreshness;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -30,16 +31,24 @@ import java.util.regex.Pattern;
  * @param sync    Synchronisierungsstrategie und Zeitplan
  * @param network Proxy und TLS
  * @param storage Speicherort; nur nach Neustart wirksam
+ * @param localFiles freigegebene Ordner für lokale Dateien
  */
 public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
-                                     NetworkSettings network, StorageSettings storage) {
+                                     NetworkSettings network, StorageSettings storage, LocalFileSettings localFiles) {
 
     /** Präfix aller Properties in Server und App. */
     public static final String PREFIX = "space-harvester.";
 
     /** Ohne KI-Dienst, Schlagwortsuche, bedarfsgesteuerter Abgleich, ohne Proxy. */
     public static final HarvesterConfiguration DEFAULT = new HarvesterConfiguration(AiServiceSettings.NONE,
-            SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT);
+            SearchSettings.DEFAULT, SyncSettings.DEFAULT, NetworkSettings.DEFAULT, StorageSettings.DEFAULT,
+            LocalFileSettings.DEFAULT);
+
+    /** Ohne freigegebene Ordner ({@link LocalFileSettings#DEFAULT}); {@link #withLocalFiles} ergänzt sie. */
+    public HarvesterConfiguration(AiServiceSettings ai, SearchSettings search, SyncSettings sync,
+                                  NetworkSettings network, StorageSettings storage) {
+        this(ai, search, sync, network, storage, LocalFileSettings.DEFAULT);
+    }
 
     public HarvesterConfiguration {
         ai = ai == null ? AiServiceSettings.NONE : ai;
@@ -47,6 +56,7 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
         sync = sync == null ? SyncSettings.DEFAULT : sync;
         network = network == null ? NetworkSettings.DEFAULT : network;
         storage = storage == null ? StorageSettings.DEFAULT : storage;
+        localFiles = localFiles == null ? LocalFileSettings.DEFAULT : localFiles;
     }
 
     /** Ob die semantische Suche tatsächlich läuft: Haken gesetzt und Embedding-Modell eingestellt. */
@@ -80,23 +90,27 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     }
 
     public HarvesterConfiguration withAi(AiServiceSettings value) {
-        return new HarvesterConfiguration(value, search, sync, network, storage);
+        return new HarvesterConfiguration(value, search, sync, network, storage, localFiles);
     }
 
     public HarvesterConfiguration withSearch(SearchSettings value) {
-        return new HarvesterConfiguration(ai, value, sync, network, storage);
+        return new HarvesterConfiguration(ai, value, sync, network, storage, localFiles);
     }
 
     public HarvesterConfiguration withSync(SyncSettings value) {
-        return new HarvesterConfiguration(ai, search, value, network, storage);
+        return new HarvesterConfiguration(ai, search, value, network, storage, localFiles);
     }
 
     public HarvesterConfiguration withNetwork(NetworkSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, value, storage);
+        return new HarvesterConfiguration(ai, search, sync, value, storage, localFiles);
     }
 
     public HarvesterConfiguration withStorage(StorageSettings value) {
-        return new HarvesterConfiguration(ai, search, sync, network, value);
+        return new HarvesterConfiguration(ai, search, sync, network, value, localFiles);
+    }
+
+    public HarvesterConfiguration withLocalFiles(LocalFileSettings value) {
+        return new HarvesterConfiguration(ai, search, sync, network, storage, value);
     }
 
     /**
@@ -178,6 +192,16 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                         "Jeder Eintrag hat die Form <Quelle>/<Space-Key>, nicht „" + space + "“"));
             }
         }
+        for (Path root : localFiles.roots()) {
+            // Nie den Pfad nennen; ein fehlender Ordner gewährt wie im Client nichts, bis er da ist.
+            if (!root.isAbsolute()) {
+                problems.add(new ConfigurationProblem(LocalFileSettings.ROOTS,
+                        "Jeder freigegebene Ordner braucht einen absoluten Pfad"));
+            } else if (Files.exists(root) && !Files.isDirectory(root)) {
+                problems.add(new ConfigurationProblem(LocalFileSettings.ROOTS,
+                        "Ein freigegebener Ordner muss ein Verzeichnis sein"));
+            }
+        }
         return problems.stream().distinct().toList();
     }
 
@@ -188,9 +212,9 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
     }
 
     /**
-     * Liest KI-Dienst, Suche, Synchronisierung und Speicherort aus flachen Properties mit oder ohne
-     * {@link #PREFIX}, so wie Spring sie bindet und die App sie in ihre YAML-Datei schreibt. Proxy und TLS übergeben
-     * die Adapter typisiert ({@link #withNetwork}), weil Server und App sie schon so lesen. Anders als die einzelnen
+     * Liest KI-Dienst, Suche, Synchronisierung, Speicherort und freigegebene Ordner aus flachen Properties mit oder
+     * ohne {@link #PREFIX}, so wie Spring sie bindet und die App sie in ihre YAML-Datei schreibt. Proxy und TLS
+     * übergeben die Adapter typisiert ({@link #withNetwork}), weil Server und App sie schon so lesen. Anders als die einzelnen
      * Records sammelt das alle Fehler statt beim ersten abzubrechen.
      */
     public static Parsed fromProperties(Properties properties) {
@@ -243,8 +267,10 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 sourceOverrides(properties, problems), read.bool(SyncSettings.BACKGROUND_FILL, true),
                 read.integer(SyncSettings.BACKGROUND_PARALLELISM, SyncSettings.DEFAULT_BACKGROUND_PARALLELISM));
         StorageSettings storage = new StorageSettings(read.path(StorageSettings.DATA_DIRECTORY));
+        LocalFileSettings localFiles = new LocalFileSettings(read.bool(LocalFileSettings.ALLOW_ALL, false),
+                read.paths(LocalFileSettings.ROOTS));
         HarvesterConfiguration configuration = new HarvesterConfiguration(ai, search, sync, NetworkSettings.DEFAULT,
-                storage);
+                storage, localFiles);
         problems.addAll(configuration.validate());
         List<ConfigurationProblem> all = problems.stream().distinct().toList();
         return new Parsed(all.isEmpty() ? configuration : null, all);
@@ -436,6 +462,32 @@ public record HarvesterConfiguration(AiServiceSettings ai, SearchSettings search
                 values.add(item);
             }
             return values;
+        }
+
+        /** Pfade getrennt durch {@code ;} oder als {@code key[0]}, …; ungültige sind Probleme. */
+        List<Path> paths(String key) {
+            List<String> values = new ArrayList<>();
+            String value = value(key);
+            if (value != null) {
+                Arrays.stream(value.split(LocalFileSettings.SEPARATOR)).map(String::strip).filter(v -> !v.isEmpty())
+                        .forEach(values::add);
+            }
+            for (int i = 0; ; i++) {
+                String item = value(key + "[" + i + "]");
+                if (item == null) {
+                    break;
+                }
+                values.add(item);
+            }
+            List<Path> paths = new ArrayList<>();
+            for (String item : values) {
+                try {
+                    paths.add(Path.of(item));
+                } catch (InvalidPathException e) {
+                    problems.add(new ConfigurationProblem(key, "Kein gültiger Pfad"));
+                }
+            }
+            return paths;
         }
 
         Path path(String key) {
