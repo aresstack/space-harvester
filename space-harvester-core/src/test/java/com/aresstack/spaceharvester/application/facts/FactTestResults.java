@@ -5,8 +5,10 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentOutput;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.time.Instant;
 import java.util.List;
@@ -18,6 +20,13 @@ public final class FactTestResults {
             + "Die API liefert Daten. Der Dienst bleibt verfügbar.";
     /** Zwei Eigenschaften, eine verneint. */
     public static final String PROPERTIES = "Der Server ist nicht verfügbar. Der Dienst bleibt verfügbar.";
+
+    /** Eine Handlung mit Modalverb, eine verneinte. */
+    public static final String ACTIVITIES = "Der Administrator muss den Dienst neu starten. "
+            + "Der Client ruft die Seite nicht auf.";
+    /** Zwei Oberbegriffe, einer verneint, und ein Teil. */
+    public static final String RELATIONS = "Ein Antrag ist ein Dokument mit Unterschrift. Der Entwurf ist kein Antrag. "
+            + "Der Index ist ein Teil des Caches.";
 
     private FactTestResults() {
     }
@@ -32,6 +41,14 @@ public final class FactTestResults {
 
     public static Enrichment properties(PageKey key, String text) {
         return result(key, new PropertyProcessor(), text);
+    }
+
+    public static Enrichment activities(PageKey key, String text) {
+        return result(key, new ActivityProcessor(), text);
+    }
+
+    public static Enrichment relations(PageKey key, String text) {
+        return result(key, new RelationProcessor(), text);
     }
 
     public static Enrichment result(PageKey key, EnrichmentProcessor processor, String text) {
