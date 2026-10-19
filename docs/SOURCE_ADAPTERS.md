@@ -10,7 +10,8 @@ Confluence-Client gibt es nicht.
 
 `ConfiguredSourceCatalog` baut aus `space-harvester.sources[*]` je Eintrag eine Quelle. `type` wählt den Adapter
 (`ConfiguredSourceCatalog.TYPES`, heute `confluence` über `ConfluenceSourceProvider` und `files` über
-`LocalFilesSourceProvider`; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
+`LocalFilesSourceProvider`, dazu `git` über `GitSourceAdapter` mit den Kopien der Repositorys unter
+`<dataDirectory>/git`, im Dienst unter `space-harvester.cache.directory`/git und nur mit diesem Verzeichnis; weitere Typen hängt ein einbettendes Programm mit `Harvester.builder().sourceAdapter` ein). Unbekannte Typen,
 fehlerhafte Optionen, Zertifikate oder Proxy-Einstellungen verhindern den Start, und alle Fehler werden gemeinsam
 gemeldet. Konfiguration siehe README, „Quellen konfigurieren“.
 
@@ -135,8 +136,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    Änderungen an `KnowledgeSourcePort.load()`.
 2. Die Kopie mit `enterprise-ai-sources/sync-from-upstream.sh sync <commit>` übernehmen; die Kopie wird nie lokal
    geändert (`verifyUpstreamCopy` prüft das im Build).
-   Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
-   `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
+   Registriert: `source-git` als Typ `git` (`GitSourceAdapter`, ein Ref, aktueller Stand; Optionen `url` (HTTPS oder
+   lokaler Pfad), `ref`, `startPoints`, `include`, `exclude`, `maxFileMegabytes`, `maxResources`, `maxDepth`; HTTPS
+   über die Proxy-Route je Ziel; ohne `credentialRef`, `auth` und eigene Zertifikate bis #188, also nur öffentliche und
+   lokale Repositorys). Übernommen, aber im Core noch nicht registriert: `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
    Commons Net, #187), `source-ndv` (Natural Development Server, #187), `source-sharepoint` (SharePoint-Dokumentbibliotheken, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
    ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
@@ -151,6 +154,8 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `HarvesterDiscoveredSourceTest`: dieselbe Fake-Quelle ohne Partitionen und ohne Suche über
   `KnowledgeSourceProviderAdapter` durch Abgleich, Katalog, Cache, Volltextsuche und Markdown-Export; nicht lesbare
   Seiten fehlen in Liste und Suche.
+- `HarvesterGitSourceTest`: ein lokales Repository als Typ `git` durch Abgleich, Cache und Volltextsuche;
+  `credentialRef` wird abgelehnt.
 - `LocalFileGrantsTest`: Links aus dem Verzeichnis nur in freigegebene Ordner, Freigaben ohne Neustart.
 - `PageMetadataApiTest`, `SinglePageMetadataApiTest`, `NativeSnapshotSourceTest`: alle Wege über echtes HTTP gegen
   die Fake-Confluence aus den Test-Fixtures der Kopie.

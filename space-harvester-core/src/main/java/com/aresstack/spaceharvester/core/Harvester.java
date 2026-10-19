@@ -110,6 +110,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.GitSourceAdapter;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
@@ -1328,7 +1329,8 @@ public final class Harvester implements AutoCloseable {
 
         /**
          * Ein weiterer Quellentyp des einbettenden Programms (#188), z. B. MediaWiki; ein Typ, den der Core schon kennt
-         * ({@link ConfiguredSourceCatalog#TYPES}), wird durch ihn ersetzt. Ein Typ zweimal ist ein Fehler beim Bauen.
+         * ({@link ConfiguredSourceCatalog#TYPES} und {@code git} mit Kopien unter {@code <dataDirectory>/git}), wird
+         * durch ihn ersetzt. Ein Typ zweimal ist ein Fehler beim Bauen.
          */
         public Builder sourceAdapter(SourceAdapter adapter) {
             sourceAdapters.add(Objects.requireNonNull(adapter, "adapter"));
@@ -1380,7 +1382,10 @@ public final class Harvester implements AutoCloseable {
         /** Die Quellentypen: die des Core, ersetzt oder ergänzt um die eigenen. */
         private List<SourceAdapter> adapters() {
             List<SourceAdapter> adapters = new ArrayList<>();
-            for (SourceAdapter adapter : ConfiguredSourceCatalog.DEFAULT_ADAPTERS) {
+            List<SourceAdapter> defaults = new ArrayList<>(ConfiguredSourceCatalog.DEFAULT_ADAPTERS);
+            // Git braucht einen Ordner für die Kopien der Repositorys (#187).
+            defaults.add(new GitSourceAdapter(dataDirectory.resolve("git")));
+            for (SourceAdapter adapter : defaults) {
                 if (sourceAdapters.stream().noneMatch(own -> own.type().equals(adapter.type()))) {
                     adapters.add(adapter);
                 }
