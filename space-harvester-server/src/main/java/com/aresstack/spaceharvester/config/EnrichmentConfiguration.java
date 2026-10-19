@@ -12,6 +12,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageTextProjector;
+import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.enrichment.language.ActivityProcessor;
@@ -33,17 +34,23 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.snapshot.SnapshotRepository;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
+import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.confluence.ConfluenceStorageTextProjector;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -135,5 +142,23 @@ class EnrichmentConfiguration {
         List<Consumer<String>> followUps = rule == null ? List.of() : List.of(rule::refresh);
         return new EnrichmentsAfterSync(enrichments, snapshots.getIfAvailable(), jobs.getIfAvailable(),
                 texts.getIfAvailable(), followUps);
+    }
+    /**
+     * Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der Dienst
+     * nach dem Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten; die Prozessoren über den
+     * KI-Dienst bleiben bei der Neuberechnung nach Freigabe.
+     */
+    @Bean(destroyMethod = "close")
+    VersionRecomputation versionRecomputation(Enrichments enrichments, ObjectProvider<LucenePageCache> cache) {
+        LucenePageCache pages = cache.getIfAvailable();
+        return new VersionRecomputation(enrichments,
+                sourceId -> pages == null ? Collections.emptyIterator() : pages.snapshots(sourceId));
+    }
+
+    @Bean
+    ApplicationListener<ApplicationReadyEvent> versionReconciliationOnStart(VersionRecomputation versions,
+                                                                           ConfiguredSourceCatalog catalog) {
+        return event -> versions.reconcileOnStart(
+                catalog.configs().stream().map(SourceSettingsConfig::id).toList());
     }
 }

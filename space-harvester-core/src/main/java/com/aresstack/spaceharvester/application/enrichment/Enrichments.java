@@ -130,6 +130,12 @@ public class Enrichments {
         return processor != null && processor.appliesTo(key);
     }
 
+    /** Ob es den Prozessor gibt und er ohne Netz rechnet ({@link EnrichmentProcessor#background()} {@code false}). */
+    public boolean local(String processorId) {
+        EnrichmentProcessor processor = processors.get(processorId);
+        return processor != null && !processor.background();
+    }
+
     /** Die aktuelle Version des Prozessors ({@link EnrichmentProcessor#version()}); leer, wenn es ihn nicht gibt. */
     public Optional<String> version(String processorId) {
         EnrichmentProcessor processor = processors.get(processorId);

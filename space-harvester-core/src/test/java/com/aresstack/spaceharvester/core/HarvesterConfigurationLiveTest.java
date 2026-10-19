@@ -122,6 +122,12 @@ class HarvesterConfigurationLiveTest {
                     .withSync(manager.current().configuration().sync().withSource("wiki", before));
             assertThat(manager.apply(next).activated()).isTrue();
             harvester.keywordSearch().search(harvester.caller(), query, null, 10);
+            // Das Nachholen reiht die Suche außerhalb ihres Threads ein.
+            long deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
+            while (syncJobs(harvester) < 2) {
+                assertThat(System.nanoTime()).as("kein Nachholen nach 30 s").isLessThan(deadline);
+                Thread.sleep(10);
+            }
             assertThat(syncJobs(harvester)).isEqualTo(2);
 
             // Gleich danach holt eine weitere Suche nicht erneut nach.

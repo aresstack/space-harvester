@@ -116,6 +116,9 @@ Protokoll als eigener Lucene-Index in `search-runs/`, sonst im Speicher; in der 
   Vektorkandidaten der Relevanzsuche zählen nie.
 - Die Kandidatenliste je Lauf, Vertiefen und der Trichter für den Chat bleiben im Client.
 
+**Neue Prozessorversionen** nach einem Update rechnet der Start für die lokalen Prozessoren (ohne KI-Dienst, etwa
+`acronyms` und `terms`) einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten (ADR 0015, Nachtrag).
+
 **Fakten** entstehen beim Speichern einer Anreicherung aus ihrem Ergebnis, im selben Lucene-Index (`enrichments/`,
 Schema `enrichment-store/v4`; ein v1/v2/v3-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
 ersetzt und gelöscht. Typen nach

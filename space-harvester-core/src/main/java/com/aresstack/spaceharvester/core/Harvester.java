@@ -30,6 +30,7 @@ import com.aresstack.spaceharvester.application.enrichment.EnrichingCacheFill;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.ReleaseRecomputation;
+import com.aresstack.spaceharvester.application.enrichment.VersionRecomputation;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentsAfterSync;
 import com.aresstack.spaceharvester.application.enrichment.OutlineProcessor;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
@@ -460,6 +461,11 @@ public final class Harvester implements AutoCloseable {
             } else {
                 this.releaseRecomputation = null;
             }
+            // Ergebnisse lokaler Prozessoren einer älteren Version (etwa nach geänderter Akronymerkennung) rechnet der
+            // Start einmal aus dem Cache neu, gedrosselt und ohne den Start aufzuhalten.
+            VersionRecomputation versions = new VersionRecomputation(enrichments, cache::snapshots);
+            opened.add(versions);
+            versions.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList());
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
