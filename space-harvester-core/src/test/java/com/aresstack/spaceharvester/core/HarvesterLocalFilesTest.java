@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceType;
 import com.aresstack.spaceharvester.source.LocalFilesSourceAdapter;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
+import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -74,6 +76,19 @@ class HarvesterLocalFilesTest {
         try (Harvester harvester = Harvester.builder().dataDirectory(data)
                 .sourceAdapter(new LocalFilesSourceAdapter()).build()) {
             assertThat(harvester.sourceTypes()).extracting(SourceType::id).containsExactlyElementsOf(standard);
+        }
+    }
+
+    @Test
+    void theTextOfAFolderPageComesFromTheSameProjectorsAsTheIndex() throws IOException {
+        Files.writeString(directory.resolve("notiz.md"), "Wartung am Freitag", StandardCharsets.UTF_8);
+        try (Harvester harvester = Harvester.builder().source(docs()).dataDirectory(data).build()) {
+            String id = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    "notiz.md".getBytes(StandardCharsets.UTF_8));
+            PageSnapshot snapshot = harvester.pages().page(harvester.caller(), "docs", id, false).snapshot();
+
+            assertThat(harvester.pageText(snapshot)).map(PageText::text).hasValueSatisfying(text ->
+                    assertThat(text).contains("Wartung am Freitag"));
         }
     }
 
