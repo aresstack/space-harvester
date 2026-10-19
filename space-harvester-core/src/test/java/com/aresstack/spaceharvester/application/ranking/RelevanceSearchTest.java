@@ -19,6 +19,8 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.PassageChunking;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
+import com.aresstack.spaceharvester.application.passages.PassageId;
+import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
 import com.aresstack.spaceharvester.application.query.PageTextIndex;
@@ -132,6 +134,22 @@ class RelevanceSearchTest {
         assertThat(best.charEnd()).isEqualTo(20);
         assertThat(best.freshness()).isEqualTo(RelevanceSearch.Freshness.CURRENT);
         assertThat(embeddedQueries).containsExactly("nächtlicher Betrieb");
+    }
+
+    @Test
+    void aHitNamesThePassageIdOfThePassageHoldingItsBestChunkOnlyForTheSameText() {
+        // Wie passage: je Treffer im Client (EAC-Lücke 5), allein aus dem gespeicherten Ergebnis der Absätze.
+        String textSha256 = "sha256:" + "a".repeat(64);
+        passages("11", EMBEDDED, textSha256);
+        passages("12", "sha256:" + "2".repeat(64), textSha256);
+
+        RelevanceSearch.RelevanceResults results = search(ALLOW_ALL).search(CALLER, query(null), "nächtlicher Betrieb",
+                10);
+
+        assertThat(results.hits().get(1).relevance().passageId()).isEqualTo(PassageId.of("wiki", "11",
+                "a".repeat(64), 1, PassageId.versionTag("passages;eac"), PassageId.versionTag("axes")).value());
+        assertThat(results.hits().get(2).relevance().passageId()).as("Absätze eines anderen Textes").isNull();
+        assertThat(results.hits().get(3).relevance().passageId()).as("ohne Absätze").isNull();
     }
 
     @Test
@@ -489,6 +507,17 @@ class RelevanceSearchTest {
         store.save(new Enrichment(new PageKey("wiki", pageId), "embedding", processor.version(),
                 EMBEDDED, revision, Enrichment.Status.OK, json.append("]}").toString(), List.of(),
                 null, Instant.parse("2026-10-17T07:00:00Z")));
+    }
+
+    /** Zwei Absätze [0, 10) und [10, 20), aus dem Text mit {@code inputSha256}. */
+    private void passages(String pageId, String inputSha256, String textSha256) {
+        String passage = ",\"firstSentence\":0,\"sentences\":1,\"section\":null,\"kind\":\"paragraph\","
+                + "\"boundary\":\"topic\",\"similarity\":null}";
+        store.save(new Enrichment(new PageKey("wiki", pageId), PassageProcessor.ID, "passages@1", inputSha256, "1",
+                Enrichment.Status.OK, "{\"mode\":\"semantic\",\"reason\":null,\"model\":\"axes\","
+                        + "\"segmentation\":\"passages;eac\",\"sentences\":2,\"textSha256\":\"" + textSha256
+                        + "\",\"passages\":[{\"start\":0,\"end\":10" + passage + ",{\"start\":10,\"end\":20"
+                        + passage + "]}", List.of(), null, Instant.parse("2026-10-17T07:00:00Z")));
     }
 
     private static PageSnapshot page(String space, String pageId, String title, String version) {

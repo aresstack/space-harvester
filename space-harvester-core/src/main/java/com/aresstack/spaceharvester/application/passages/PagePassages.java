@@ -126,6 +126,47 @@ public record PagePassages(State state, Enrichment result, PassagePayload.Mode m
                 passages, result.warnings());
     }
 
+    /**
+     * Die Passage-ID des Absatzes, der den Bereich {@code [start, end)} ganz enthält, allein aus dem schon geladenen
+     * Ergebnis {@code result} (für Treffer der semantischen Suche, wie {@code passage:} je Treffer im Client): ohne Text,
+     * die Capture steht im Ergebnis. {@code null}, wenn {@code result} kein erfolgreiches Ergebnis von
+     * {@value PassageProcessor#ID} für genau diese Seite und denselben Text ({@code inputSha256}) ist, es keine Capture
+     * kennt (Format 1) oder kein Absatz den Bereich enthält.
+     *
+     * @param inputSha256 Eingabe-Hash der Textprojektion, aus der der Bereich stammt
+     */
+    public static String idAt(PageKey key, Enrichment result, String inputSha256, int start, int end) {
+        if (result == null || !PassageProcessor.ID.equals(result.processorId()) || !key.equals(result.key())
+                || result.status() != Enrichment.Status.OK || inputSha256 == null
+                || !inputSha256.equals(result.inputSha256())) {
+            return null;
+        }
+        PassagePayload.Parsed parsed;
+        try {
+            parsed = PassagePayload.parse(result.payloadJson());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (parsed.textSha256() == null) {
+            return null;
+        }
+        List<PassageSegmentation.Passage> passages = parsed.passages();
+        for (int index = 0; index < passages.size(); index++) {
+            PassageSegmentation.Passage passage = passages.get(index);
+            if (passage.start() <= start && end <= passage.end()) {
+                try {
+                    return PassageId.of(key.sourceId(), key.pageId(), PassageId.captureOf(parsed.textSha256()), index,
+                            PassageId.versionTag(parsed.segmentation()),
+                            PassageId.versionTag(parsed.model() == null ? PassageId.NO_MODEL : parsed.model()))
+                            .value();
+                } catch (IllegalArgumentException e) {
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
     private static PagePassages empty(State state, Enrichment result) {
         return new PagePassages(state, result, null, null, null, null, List.of(),
                 result == null ? List.of() : result.warnings());
