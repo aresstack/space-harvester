@@ -341,6 +341,14 @@ public final class ParityComparison {
         return sourceFiles("sharepoint", eac, core);
     }
 
+    /**
+     * BetaView-Quelle (#193) wie {@link #git}: die Dokumente der Ergebnisliste (Core ⊇ EAC), der Titel je Dokument
+     * (gleich) und die Sätze im Inhalt je Dokument (Core ⊇ EAC).
+     */
+    public static List<Finding> betaView(Map<String, String> eac, Map<String, String> core) {
+        return sourceFiles("betaview", eac, core);
+    }
+
     private static List<Finding> sourceFiles(String format, Map<String, String> eac, Map<String, String> core) {
         List<Finding> findings = new ArrayList<>();
         for (Map.Entry<String, String> entry : eac.entrySet()) {

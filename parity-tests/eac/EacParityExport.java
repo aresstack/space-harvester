@@ -29,6 +29,7 @@ import com.aresstack.enterpriseai.astu.embedding.EmbeddingModelIdentity;
 import com.aresstack.enterpriseai.astu.embedding.EmbeddingVector;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunker;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeChunkingPolicy;
+import com.aresstack.enterpriseai.astu.knowledge.KnowledgeDocument;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResource;
 import com.aresstack.enterpriseai.astu.knowledge.KnowledgeResourceId;
 import com.aresstack.enterpriseai.astu.knowledge.SourceAddress;
@@ -47,6 +48,9 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.GitSourceProvid
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.git.ParityGit;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.ParityFiles;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewCredentials;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.ParityBetaView;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.ParityFtp;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.ParitySharePoint;
@@ -140,6 +144,7 @@ public final class EacParityExport {
         files(new File(out, "files.properties"));
         ftp(new File(out, "ftp.properties"));
         sharePoint(new File(out, "sharepoint.properties"));
+        betaView(new File(out, "betaview.properties"));
     }
 
     /**
@@ -379,6 +384,60 @@ public final class EacParityExport {
             out.println(String.format(key, "title") + "=" + entry.getValue().title());
             out.println(String.format(key, "sentences") + "=" + (found.isEmpty() ? "-" : join(found)));
         }
+    }
+
+    /**
+     * BetaView-Quelle (#193) über {@link ParityBetaView}: Ergebnisliste des Favoriten {@link ParityBetaView#FAVORITE_ID},
+     * angemeldet mit Testdaten (die Oberfläche nimmt jedes nicht leere Passwort); je Dokument-ID der Titel des geladenen
+     * Dokuments und welche
+     * Sätze aus {@link ParityBetaView#SENTENCES} (Index ab 0) der geladene Text enthält.
+     */
+    private static void betaView(File target) throws Exception {
+        ParityBetaView server = ParityBetaView.start();
+        PrintWriter out = new PrintWriter(target, "UTF-8");
+        try {
+            BetaViewSourceProvider provider = new BetaViewSourceProvider(
+                    ref -> () -> new BetaViewCredentials("paritaet", "nur-fuer-den-test".toCharArray()),
+                    HttpRoutePort.direct(), null, null, DocumentExtraction.detector(), DocumentExtraction.registry());
+            Map<String, String> values = new java.util.HashMap<String, String>();
+            values.put("baseUrl", server.baseUrl());
+            values.put("credentialRef", "keepass:paritaet");
+            values.put("favoriteId", ParityBetaView.FAVORITE_ID);
+            SourceSettings settings = SourceSettings.of(values);
+            KnowledgeSourcePort source = provider.open(SourceAddress.of("betaview", provider.locator(settings)),
+                    settings);
+            java.util.TreeMap<String, KnowledgeResource> byId = new java.util.TreeMap<String, KnowledgeResource>();
+            for (KnowledgeResource resource : source.discover(provider.scope(settings))) {
+                byId.put(betaViewDocument(resource.title()), resource);
+            }
+            out.println("betaview.all.documents=" + join(new ArrayList<String>(byId.keySet())));
+            for (Map.Entry<String, KnowledgeResource> entry : byId.entrySet()) {
+                KnowledgeDocument document = source.load(entry.getValue().id());
+                String text = document.text();
+                List<String> found = new ArrayList<String>();
+                for (int i = 0; i < ParityBetaView.SENTENCES.length; i++) {
+                    if (text != null && text.contains(ParityBetaView.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                // Titel des geladenen Dokuments wie im Index des EAC; die Liste zeigt davor das Datum aus der Ergebniszeile
+                out.println("betaview.all.title." + entry.getKey() + "=" + document.resource().title());
+                out.println("betaview.all.sentences." + entry.getKey() + "=" + (found.isEmpty() ? "-" : join(found)));
+            }
+        } finally {
+            out.close();
+            server.close();
+        }
+    }
+
+    /** Dokument-ID zum Titel; auf der Paritäts-Oberfläche enthält jeder Titel genau einen aus {@code TITLES}. */
+    static String betaViewDocument(String title) {
+        for (int i = 0; i < ParityBetaView.TITLES.length; i++) {
+            if (title != null && title.contains(ParityBetaView.TITLES[i])) {
+                return ParityBetaView.DOCUMENT_IDS[i];
+            }
+        }
+        return String.valueOf(title);
     }
 
     /** Serverrelativer Pfad ab {@link ParitySharePoint#SITE_PATH}; der Port wechselt je Lauf. */

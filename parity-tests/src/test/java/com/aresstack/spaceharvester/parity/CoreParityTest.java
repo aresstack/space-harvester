@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.parity;
 
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.ParityBetaView;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
@@ -26,6 +27,7 @@ import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.searchrun.SearchRun;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
+import com.aresstack.spaceharvester.source.SourceSecrets;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.core.Harvester;
@@ -50,6 +52,7 @@ import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TreeMap;
@@ -96,6 +99,7 @@ class CoreParityTest {
     private static final Map<String, String> CORE_FILES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_FTP = new LinkedHashMap<>();
     private static final Map<String, String> CORE_SHAREPOINT = new LinkedHashMap<>();
+    private static final Map<String, String> CORE_BETAVIEW = new LinkedHashMap<>();
     @TempDir
     static Path gitData;
     @TempDir
@@ -156,6 +160,7 @@ class CoreParityTest {
         files();
         ftp();
         sharePoint();
+        betaView();
     }
 
     /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
@@ -404,6 +409,53 @@ class CoreParityTest {
         }
     }
 
+    /**
+     * BetaView-Quelle (#193) wie {@code EacParityExport.betaView}: die Oberfläche {@link ParityBetaView} als Typ
+     * {@code betaview}, angemeldet über einen Test-Anbieter des Einbetters (die Oberfläche nimmt jedes nicht leere
+     * Passwort); je Dokument-ID Titel und Sätze im abgelegten Inhalt.
+     */
+    private static void betaView() throws Exception {
+        SourceSecrets secrets = ref -> Optional.of(new SourceSecrets.Credential("paritaet",
+                "nur-fuer-den-test".toCharArray()));
+        try (ParityBetaView server = ParityBetaView.start();
+             Harvester harvester = Harvester.builder().secretProvider(secrets)
+                     .source(new SourceSettingsConfig("parity", "betaview", "Parität", null, null,
+                             Map.of("baseUrl", server.baseUrl(), "credentialRef", "keepass:paritaet",
+                                     "favoriteId", ParityBetaView.FAVORITE_ID)))
+                     .dataDirectory(gitData.resolve("data-betaview"))
+                     .build()) {
+            JobStatus sync = harvester.await(harvester.sync("parity", "parity").id(), Duration.ofSeconds(60));
+            assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
+            Map<String, ListedPage> byId = new TreeMap<>();
+            for (ListedPage page : harvester.pages().pages(harvester.caller(), "parity", "parity", null, 100).pages()) {
+                byId.put(betaViewDocument(page.header().metadata().title()), page);
+            }
+            CORE_BETAVIEW.put("betaview.all.documents", String.join(",", byId.keySet()));
+            byId.forEach((id, page) -> {
+                String text = new String(harvester.pages().page(harvester.caller(), "parity",
+                        page.header().key().pageId(), false).snapshot().payload().bytes(), StandardCharsets.UTF_8);
+                List<String> found = new ArrayList<>();
+                for (int i = 0; i < ParityBetaView.SENTENCES.length; i++) {
+                    if (text.contains(ParityBetaView.SENTENCES[i])) {
+                        found.add(String.valueOf(i));
+                    }
+                }
+                CORE_BETAVIEW.put("betaview.all.title." + id, page.header().metadata().title());
+                CORE_BETAVIEW.put("betaview.all.sentences." + id, found.isEmpty() ? "-" : String.join(",", found));
+            });
+        }
+    }
+
+    /** Dokument-ID zum Titel wie {@code EacParityExport.betaViewDocument}. */
+    private static String betaViewDocument(String title) {
+        for (int i = 0; i < ParityBetaView.TITLES.length; i++) {
+            if (title != null && title.contains(ParityBetaView.TITLES[i])) {
+                return ParityBetaView.DOCUMENT_IDS[i];
+            }
+        }
+        return String.valueOf(title);
+    }
+
     /** Pfad im Repository aus der Seiten-ID ({@code …/parity[@<ref>]/<pfad>}), wie {@code EacParityExport.gitPath}. */
     private static String gitPath(String pageId) {
         String value = new String(Base64.getUrlDecoder().decode(pageId), StandardCharsets.UTF_8);
@@ -641,6 +693,9 @@ class CoreParityTest {
                 CORE_SHAREPOINT);
         report.append('\n').append(ParityReport.section("SharePoint-Quelle", sharePoint, gaps));
         factsAndRuns.addAll(sharePoint);
+        List<Finding> betaView = ParityComparison.betaView(eacProperties("betaview.properties"), CORE_BETAVIEW);
+        report.append('\n').append(ParityReport.section("BetaView-Quelle", betaView, gaps));
+        factsAndRuns.addAll(betaView);
         for (Finding finding : factsAndRuns) {
             if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
                 regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
