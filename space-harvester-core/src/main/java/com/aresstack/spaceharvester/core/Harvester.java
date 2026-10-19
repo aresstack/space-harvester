@@ -61,6 +61,7 @@ import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmente
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -123,6 +124,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
@@ -403,6 +405,10 @@ public final class Harvester implements AutoCloseable {
                         cache::snapshots, embedding::covers,
                         List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
                 opened.add(recomputation);
+                // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
+                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten.
+                recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                        embedding::available, PassagePayload.REASON_NOT_APPROVED);
                 this.releaseRecomputation = recomputation;
             } else {
                 this.releaseRecomputation = null;
@@ -452,7 +458,8 @@ public final class Harvester implements AutoCloseable {
             this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
                     key -> cache.find(key).flatMap(projector::project), termRelations,
                     new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
-                            builder.userAgent), jobs, new TermProcessor().version(), clock);
+                            builder.userAgent), new FileResolutionCache(builder.dataDirectory.resolve("term-relations")),
+                    jobs, new TermProcessor().version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
