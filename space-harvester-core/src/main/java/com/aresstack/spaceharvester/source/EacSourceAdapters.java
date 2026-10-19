@@ -11,6 +11,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.betaview.BetaViewSo
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.FtpSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ftp.JesSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.ndv.NdvSourceProvider;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.outlook.OutlookSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentials;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointCredentialsProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePointSourceProvider;
@@ -19,7 +20,8 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.sharepoint.SharePoi
  * Quellentypen aus den Kopien des Enterprise AI Client ohne Seitenliste je Partition (#187), über
  * {@link ContextualSourceAdapter} als eine Partition je Quelle: {@code ftp} (MVS-Datensätze und Member), {@code jes}
  * (Spool), {@code ndv} (Natural Development Server), {@code sharepoint} (Dokumentbibliotheken) und {@code betaview}
- * (Listen und Reports eines Favoriten). Die Einstellungen
+ * (Listen und Reports eines Favoriten) sowie {@code outlook} (lokale Postfachdateien .pst/.ost unter
+ * {@code options.mailbox}, ohne Zugangsdaten). Die Einstellungen
  * stehen unter {@code options} mit den Schlüsseln des Upstream-Typs.
  *
  * <p>{@code options.credentialRef} löst der {@code SecretProvider} des Katalogs auf, also der Anbieter des einbettenden
@@ -70,6 +72,11 @@ public final class EacSourceAdapters {
                     context == null ? null : context.routes(), null, context == null ? null : context.userAgent(),
                     DocumentExtraction.detector(), DocumentExtraction.registry());
         });
+    }
+
+    public static SourceAdapter outlook() {
+        return new ContextualSourceAdapter(OutlookSourceProvider.TYPE_ID, "Outlook", false,
+                context -> new OutlookSourceProvider());
     }
 
     private static SecretProvider secrets(SourceAdapter.Context context) {

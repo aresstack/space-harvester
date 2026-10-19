@@ -120,7 +120,8 @@ class SourcesApiTest {
                 .contains("{\"id\":\"ftp\",\"displayName\":\"FTP\",\"needsCredentials\":false}")
                 .contains("{\"id\":\"jes\",\"displayName\":\"JES\",\"needsCredentials\":true}")
                 .contains("{\"id\":\"sharepoint\",\"displayName\":\"SharePoint\",\"needsCredentials\":false}")
-                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true}");
+                .contains("{\"id\":\"betaview\",\"displayName\":\"BetaView\",\"needsCredentials\":true}")
+                .contains("{\"id\":\"outlook\",\"displayName\":\"Outlook\",\"needsCredentials\":false}");
     }
 
     @Test
