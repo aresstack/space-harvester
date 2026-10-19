@@ -206,7 +206,7 @@ final class ImagesTab extends JPanel {
     static final String PAGE_CHANGED = "Die Quelle ist weiter als der gespeicherte Stand; erst nach dem Abgleich der "
             + "Quelle gelten neue Beschreibungen („Aktualität prüfen“ zeigt den Unterschied).";
     /** Hinweis bei {@code attachment-changed}. */
-    static final String ATTACHMENT_CHANGED = "Ein Bild wurde seither ersetzt; „" + DESCRIBE
+    static final String ATTACHMENT_CHANGED = "Ein Bild wurde seither ersetzt oder entfernt; „" + DESCRIBE
             + "“ erneuert die Beschreibungen.";
 
     /** Wie {@link #hint(PassagesTab.State, int)}, bei STALE mit dem genauen Grund des Core. */

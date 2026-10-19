@@ -129,6 +129,23 @@ class AttachmentViewerPanelTest {
     }
 
     @Test
+    void aCutAfterAMultibyteCharacterKeepsUtf8() {
+        int n = AttachmentViewerPanel.MAX_TEXT_CHARS * 4;
+        byte[] text = new byte[n + 10];
+        java.util.Arrays.fill(text, (byte) 'a');
+        text[0] = (byte) 0xC3; // „ä“ am Anfang: kippte die Erkennung, stünde dort „Ã¤“
+        text[1] = (byte) 0xA4;
+        // „ä“ endet vor einer ungeraden Schnittstelle, „€“ (3 Bytes) liegt auf ihr
+        text[n - 3] = (byte) 0xC3;
+        text[n - 2] = (byte) 0xA4;
+        text[n - 1] = (byte) 0xE2;
+        text[n] = (byte) 0x82;
+        text[n + 1] = (byte) 0xAC;
+        String shown = AttachmentViewerPanel.decodeText(text, null);
+        assertThat(shown).startsWith("äaa").doesNotContain("Ã").contains("[… gekürzt");
+    }
+
+    @Test
     void anUnknownTypeShowsNameTypeSizeAndNoPreviewWithoutLoading() throws Exception {
         byte[] bin = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
         FakeLoader loader = new FakeLoader().file("att-bin", bin);

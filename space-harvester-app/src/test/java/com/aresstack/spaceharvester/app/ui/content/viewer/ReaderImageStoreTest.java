@@ -29,6 +29,15 @@ public class ReaderImageStoreTest {
         assertThat(ReaderImageStore.Loaded.of(small).ok()).isTrue();
     }
 
+    @Test
+    void neitherPathDecodesAnImageAboveTheLimit() {
+        byte[] huge = png(40_000, 40_000);
+        assertThat(ReaderImageStore.decode(huge)).as("auch nicht über den Toolkit-Weg").isNull();
+        // Den Toolkit-Weg selbst: er liest die Größe vor den Pixeln.
+        assertThat(ReaderImageStore.toolkitDimensions(png(4, 3))).containsExactly(4, 3);
+        assertThat(ReaderImageStore.decode(png(4, 3))).isNotNull();
+    }
+
     /**
      * Ein PNG mit der Größe {@code width} × {@code height} im Kopf; die Pixeldaten sind die eines 1 × 1-Bildes, sodass
      * nur das Lesen des Kopfes gelingt (die CRC des Kopfes prüft ImageIO beim Lesen der Größe nicht).

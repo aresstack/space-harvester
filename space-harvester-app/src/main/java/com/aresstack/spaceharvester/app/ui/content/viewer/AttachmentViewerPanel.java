@@ -895,7 +895,10 @@ public final class AttachmentViewerPanel extends JPanel {
             while (end > offset && (bytes[end] & 0xC0) == 0x80) {
                 end--; // nicht mitten in einer UTF-8-Folge abschneiden
             }
-            end -= (end - offset) % 2; // und nicht mitten in einem UTF-16-Zeichen
+            if (charset != null && charset.name().startsWith("UTF-16")) {
+                end -= (end - offset) % 2; // und nicht mitten in einem UTF-16-Zeichen (bei UTF-8 nie: das träfe
+                                           // wieder eine Folge und kippte die Erkennung nach Windows-1252)
+            }
         }
         String text;
         if (charset != null) {

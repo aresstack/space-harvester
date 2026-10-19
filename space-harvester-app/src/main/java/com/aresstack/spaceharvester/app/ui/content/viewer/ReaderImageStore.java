@@ -53,6 +53,38 @@ public final class ReaderImageStore {
         }
     }
 
+    /** Die Größe über das Toolkit, sobald der Kopf gelesen ist (ohne auf die Pixel zu warten); sonst {@code null}. */
+    static int[] toolkitDimensions(byte[] data) {
+        java.awt.Image image = java.awt.Toolkit.getDefaultToolkit().createImage(data);
+        java.util.concurrent.CountDownLatch known = new java.util.concurrent.CountDownLatch(1);
+        java.awt.image.ImageObserver observer = (img, flags, x, y, w, h) -> {
+            if ((flags & (java.awt.image.ImageObserver.WIDTH | java.awt.image.ImageObserver.HEIGHT))
+                    == (java.awt.image.ImageObserver.WIDTH | java.awt.image.ImageObserver.HEIGHT)
+                    || (flags & (java.awt.image.ImageObserver.ERROR | java.awt.image.ImageObserver.ABORT)) != 0) {
+                known.countDown();
+                return false;
+            }
+            return true;
+        };
+        try {
+            int w = image.getWidth(observer);
+            int h = image.getHeight(observer);
+            if (w < 0 || h < 0) {
+                if (!known.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    return null;
+                }
+                w = image.getWidth(null);
+                h = image.getHeight(null);
+            }
+            return w <= 0 || h <= 0 ? null : new int[] {w, h};
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return null;
+        } finally {
+            image.flush();
+        }
+    }
+
     /** Ob das Bild laut Kopf mehr als {@link #MAX_PIXELS} Pixel hat; solche Bilder dekodiert die App nicht. */
     public static boolean tooLarge(byte[] data) {
         int[] size = data == null ? null : dimensions(data);
@@ -133,6 +165,9 @@ public final class ReaderImageStore {
      * manchen GIFs) über {@link ImageIcon} und {@link PixelGrabber}; animierte GIFs liefern ihr erstes Bild.
      */
     static BufferedImage decode(byte[] data) {
+        if (tooLarge(data)) {
+            return null; // auch nicht über den Toolkit-Weg
+        }
         try {
             BufferedImage image = ImageIO.read(new ByteArrayInputStream(data));
             if (image != null) {
@@ -140,6 +175,11 @@ public final class ReaderImageStore {
             }
         } catch (Exception ignored) {
             // weiter mit dem Toolkit-Weg
+        }
+        // Kennt ImageIO das Format nicht, die Größe vom Toolkit holen, bevor ImageIcon alle Pixel dekodiert.
+        int[] size = toolkitDimensions(data);
+        if (size == null || (long) size[0] * size[1] > MAX_PIXELS) {
+            return null;
         }
         ImageIcon icon = new ImageIcon(data);
         int w = icon.getIconWidth();
