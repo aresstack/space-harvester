@@ -516,7 +516,10 @@ public final class Harvester implements AutoCloseable {
             opened.add(scheduler);
             this.acquisition = scheduler;
             SearchHitPrefetch prefetch = null;
-            if (builder.prefetchSearchHits) {
+            // ADR 0015: Folgt das Vorabladen der Konfiguration, gibt es den Lader immer; ob ein Stapel lädt, liest die
+            // Suche je Stapel aus search.prefetch-hits.
+            boolean prefetchFollows = manager != null && !builder.prefetchSearchHitsFixed;
+            if (builder.prefetchSearchHits || prefetchFollows) {
                 // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
                         key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
@@ -547,7 +550,8 @@ public final class Harvester implements AutoCloseable {
             }
             this.keywordSearch = new KeywordSearch(catalog, access,
                     new PassageSnippets(textIndex, enrichmentStore::find), prefetch, builder.discoveryQueries,
-                    excerpts, builder.selection(), runLog, findings);
+                    excerpts, builder.selection(), runLog, findings,
+                    prefetchFollows ? () -> this.settings.search().prefetchHits() : () -> true);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -1488,6 +1492,7 @@ public final class Harvester implements AutoCloseable {
         private Duration searchTimeout = Duration.ofSeconds(5);
         private int maxTreeNodes = 50_000;
         private boolean prefetchSearchHits = true;
+        private boolean prefetchSearchHitsFixed;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
         private boolean excerptRanking = true;
         private boolean searchRuns = true;
@@ -1567,6 +1572,7 @@ public final class Harvester implements AutoCloseable {
             this.cacheFreshness = current.search().cacheFreshness();
             this.withheldRetention = current.sync().withheldRetention();
             this.prefetchSearchHits = current.search().prefetchHits();
+            this.prefetchSearchHitsFixed = false;
             this.aiFixed = false;
             this.freshnessFixed = false;
             this.retentionFixed = false;
@@ -1876,10 +1882,12 @@ public final class Harvester implements AutoCloseable {
 
         /**
          * Ob die Schlagwortsuche gefundene Seiten in den Cache lädt, bevor sie dort sucht (ADR 0013); Standard
-         * {@code true}. Ohne findet sie nur, was schon im Cache liegt.
+         * {@code true}. Ohne findet sie nur, was schon im Cache liegt. Mit {@link #configuration} folgt sie
+         * {@code search.prefetch-hits}, bis dieser Aufruf sie danach fest einstellt.
          */
         public Builder prefetchSearchHits(boolean prefetchSearchHits) {
             this.prefetchSearchHits = prefetchSearchHits;
+            this.prefetchSearchHitsFixed = configuration != null;
             return this;
         }
 
