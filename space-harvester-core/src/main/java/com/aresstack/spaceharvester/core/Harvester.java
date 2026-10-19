@@ -15,6 +15,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationListe
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
+import com.aresstack.spaceharvester.application.acquisition.FindingCataloging;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -35,6 +36,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.ActivityProc
 import com.aresstack.spaceharvester.application.enrichment.language.EntityProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
+import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
 import com.aresstack.spaceharvester.application.export.ExportArtifact;
 import com.aresstack.spaceharvester.application.export.ExportAssetCollection;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
@@ -88,6 +90,7 @@ import com.aresstack.spaceharvester.application.sync.SpaceSync;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
+import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
 import com.aresstack.spaceharvester.output.convert.JsonPackageConverter;
@@ -101,6 +104,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneFindingStore;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
@@ -135,6 +139,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -205,6 +210,7 @@ public final class Harvester implements AutoCloseable {
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final TermQueries terms;
     private final SearchRuns searchRuns;
     private final PageFacts facts;
     private final Jobs jobs;
@@ -312,7 +318,7 @@ public final class Harvester implements AutoCloseable {
             }
             List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(),
                     new OutlineProcessor(), new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(),
-                    new RelationProcessor()));
+                    new RelationProcessor(), new TermProcessor()));
             if (embedding != null) {
                 processors.add(embedding);
             }
@@ -339,8 +345,22 @@ public final class Harvester implements AutoCloseable {
                     builder.maxTreeNodes, freshnessRule(builder), clock);
             this.addresses = new PageAddresses(catalog, access, pages);
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
-            this.navigation = new PageNavigation(catalog, reader, access);
+            // ADR 0016: Funde der Quellensuche technischer Aufrufer als Kopfdaten in den Katalog, im Hintergrund; die
+            // Füllung erfährt die neuen Lücken, auch in Spaces ohne bestätigte Generation.
+            AtomicReference<BackgroundFill> filling = new AtomicReference<>();
+            FindingCataloging findings = new FindingCataloging(catalog, access, new LuceneFindingStore(cache),
+                    gaps -> {
+                        BackgroundFill fill = filling.get();
+                        if (fill != null) {
+                            fill.offer(gaps);
+                        }
+                    }, clock);
+            opened.add(findings);
+            this.navigation = new PageNavigation(catalog, reader, access, findings);
             this.search = new PageSearch(catalog, index, access);
+            // #119: Begriffsindex in der Anreicherungsablage, Rechte je Seite wie die Suche.
+            this.terms = new TermQueries(catalog, enrichmentStore, access, cache::findHeader, cache::find, projector,
+                    new TermProcessor().version());
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -394,7 +414,7 @@ public final class Harvester implements AutoCloseable {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
-                    excerpts, builder.selection(), runLog);
+                    excerpts, builder.selection(), runLog, findings);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
@@ -471,6 +491,7 @@ public final class Harvester implements AutoCloseable {
                         fillFollows ? settings.sync().backgroundFillAnywhere() : builder.backgroundFill);
                 opened.add(fill);
                 this.backgroundFill = fill;
+                filling.set(fill);
             } else {
                 this.backgroundFill = null;
             }
@@ -755,6 +776,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageNavigation navigation() {
         return navigation;
+    }
+
+    /**
+     * Begriffsindex (#119, ADR 0019): Akronyme und Bezeichner aller berechtigten Seiten mit Fundstellen und Snippets auf
+     * Abruf; für eine einzelne Seite {@link com.aresstack.spaceharvester.application.terms.PageTerms#read}.
+     */
+    public TermQueries terms() {
+        return terms;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */

@@ -149,6 +149,10 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
    Änderungen an `KnowledgeSourcePort.load()`.
 2. Die Kopie mit `enterprise-ai-sources/sync-from-upstream.sh sync <commit>` übernehmen; die Kopie wird nie lokal
    geändert (`verifyUpstreamCopy` prüft das im Build).
+   Übernommen, aber im Core noch nicht registriert: `source-git` (Git, ein Ref, aktueller Stand, mit
+   `PageNavigationSource`; JGit wie im Upstream, #187), `source-ftp` (FTP für MVS-Datensätze und JES-Spool über Apache
+   Commons Net, #187), `source-ndv` (Natural Development Server, #187). Die Registrierung folgt über den allgemeinen Pfad für Quellen
+   ohne Partitionen.
 3. Den Typ in `ConfiguredSourceCatalog` registrieren, für einen Upstream-Provider ohne Seitenliste über
    `KnowledgeSourceProviderAdapter`. `KnowledgeSourceHarvestSource` bildet jeden `KnowledgeSourcePort` mit seinen
    Fähigkeiten ab, ohne `PartitionListingSource` über `discover`/`load` (siehe oben).
@@ -170,4 +174,4 @@ wie im Upstream, weil der Space Harvester PDFBox 3 und POI 5.5 nutzt; flexmark i
 - `AttachmentPreviewTest`: Vorschauen über die Confluence-Kopie mit der Fake-Confluence (Pfad der
   Dokumentkonvertierung, Reihenfolge, Ablage je Version, Anmeldeseite, 202, Grenze); `AttachmentPreviewApiTest`: die
   Route über echtes HTTP, Rechte wie beim Inhalt, nicht lesbare Seiten bleiben unsichtbar.
-- Upstream: `ConfluenceStoredContentTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.
+- Upstream: `ConfluenceStoredContentTest`, `GitKnowledgeSourceTest`, `GitKnowledgeSourceContractTest` und die übrigen Adaptertests laufen in `:enterprise-ai-sources:test` mit.

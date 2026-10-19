@@ -1,7 +1,6 @@
 package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
@@ -9,6 +8,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConf
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CacheMissException;
+import com.aresstack.spaceharvester.application.query.ListedPage;
 import com.aresstack.spaceharvester.application.sources.HarvestSource.PageNode;
 import com.aresstack.spaceharvester.application.sources.SourceCapability;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -18,8 +18,10 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -74,10 +76,32 @@ class HarvesterTitleSearchTest {
                             tuple("200", "OPS", "Bereitschaft im NACHTLAUF"));
             assertThat(matches.truncated()).isFalse();
             assertThat(lastCql()).isEqualTo("siteSearch ~ \"nachtlauf\" AND type=page");
-            // Reine Navigation: nichts landet im Cache, keine Seite wird geladen.
-            assertThatThrownBy(() -> harvester.pages().pages(harvester.caller(), "wiki", "DEV", null, 10))
-                    .isInstanceOf(CacheMissException.class);
+            // ADR 0016: Die Treffer kommen im Hintergrund als Kopfdaten in den Katalog, ohne Inhalt; keine Seite wird
+            // geladen.
+            assertThat(cataloguedWithoutContent(harvester, "DEV")).containsExactly("102");
+            assertThat(cataloguedWithoutContent(harvester, "OPS")).containsExactly("200");
             assertThat(CONFLUENCE.requests()).noneMatch(uri -> String.valueOf(uri.getQuery()).contains("body."));
+        }
+    }
+
+    /** Die Seiten eines Space im Katalog, sobald er sie kennt (höchstens 10 s), alle ohne Inhalt. */
+    private static List<String> cataloguedWithoutContent(Harvester harvester, String spaceKey) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            try {
+                List<ListedPage> pages = harvester.pages()
+                        .pages(harvester.caller(), "wiki", spaceKey, null, 10).pages();
+                assertThat(pages).allSatisfy(page -> assertThat(page.rawSha256()).isNull());
+                return pages.stream().map(page -> page.header().key().pageId()).toList();
+            } catch (CacheMissException e) {
+                assertThat(System.nanoTime()).as("Space nach 10 s nicht im Katalog").isLessThan(deadline);
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(interrupted);
+                }
+            }
         }
     }
 

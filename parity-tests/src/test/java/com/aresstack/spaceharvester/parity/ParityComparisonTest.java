@@ -129,6 +129,34 @@ class ParityComparisonTest {
     }
 
     @Test
+    void aMissingAcronymOrDefinitionIsAGapAndMoreIsMore() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("facts.glossar.md.candidates", "API,LAN");
+        eac.put("facts.glossar.md.definitions", "API=application programming interface");
+        eac.put("facts.kantine.txt.candidates", "-");
+        eac.put("facts.urlaub.txt.candidates", "-");
+        Map<String, String> core = new LinkedHashMap<>();
+        core.put("facts.glossar.md.candidates", "API");
+        core.put("facts.glossar.md.definitions", "API=application programming interface,LAN=local area network");
+        core.put("facts.kantine.txt.candidates", "-");
+
+        assertThat(ParityComparison.facts(eac, core)).extracting(Finding::verdict).containsExactly(
+                Verdict.CORE_WENIGER, Verdict.CORE_MEHR, Verdict.GLEICH, Verdict.CORE_WENIGER);
+    }
+
+    @Test
+    void aSearchRunDiffersOnlyWhereTheCoreLoggedSomethingElse() {
+        Map<String, String> eac = new LinkedHashMap<>();
+        eac.put("run.live.query", "Architektur");
+        eac.put("run.live.sources", "1");
+        eac.put("run.live.candidates", "2");
+        Map<String, String> core = Map.of("run.live.query", "Architektur", "run.live.sources", "1");
+
+        assertThat(ParityComparison.searchRuns(eac, core)).extracting(Finding::verdict).containsExactly(
+                Verdict.GLEICH, Verdict.GLEICH, Verdict.CORE_WENIGER);
+    }
+
+    @Test
     void anotherTypeMissingWordsOrNoTextAreGaps() {
         Map<String, String> eacTypes = Map.of("a.docx.content-type", "application/msword", "b.pdf.content-type",
                 "application/pdf", "c.rtf.content-type", "application/rtf");

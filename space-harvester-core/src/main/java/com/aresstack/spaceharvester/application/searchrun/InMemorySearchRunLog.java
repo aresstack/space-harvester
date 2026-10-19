@@ -55,13 +55,13 @@ public final class InMemorySearchRunLog implements SearchRunLog {
 
     @Override
     public synchronized Optional<SearchRun> find(SearchRunId id) {
-        return Optional.ofNullable(runs.get(Objects.requireNonNull(id, "id")));
+        return Optional.ofNullable(runs.get(Objects.requireNonNull(id, "id"))).filter(this::current);
     }
 
     @Override
     public synchronized List<SearchRun> parts(SearchRunId id) {
         Objects.requireNonNull(id, "id");
-        return runs.values().stream().filter(run -> id.equals(run.partOf()))
+        return runs.values().stream().filter(run -> id.equals(run.partOf())).filter(this::current)
                 .sorted(Comparator.comparing(SearchRun::startedAt)).limit(MAX_PARTS).toList();
     }
 
@@ -71,7 +71,7 @@ public final class InMemorySearchRunLog implements SearchRunLog {
             throw new IllegalArgumentException("limit muss zwischen 1 und " + MAX_LIMIT + " liegen");
         }
         List<SearchRun> all = new ArrayList<>(runs.values());
-        return all.stream().filter(run -> owner == null || owner.equals(run.owner()))
+        return all.stream().filter(run -> owner == null || owner.equals(run.owner())).filter(this::current)
                 .sorted(Comparator.comparing(SearchRun::startedAt).reversed()).limit(limit).toList();
     }
 
@@ -81,5 +81,10 @@ public final class InMemorySearchRunLog implements SearchRunLog {
         int size = runs.size();
         runs.values().removeIf(run -> run.startedAt().isBefore(before));
         return size - runs.size();
+    }
+
+    /** Abgelaufene Läufe gibt es nicht mehr, auch wenn seitdem nichts geschrieben wurde. */
+    private boolean current(SearchRun run) {
+        return maxAge == null || !run.startedAt().isBefore(clock.instant().minus(maxAge));
     }
 }
