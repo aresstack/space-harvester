@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.api.ConfigurationResponse;
 import com.aresstack.spaceharvester.api.NetworkDescription;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.SearchSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
@@ -91,8 +92,9 @@ class ConfigurationManagerConfiguration {
             SyncSettings.BACKGROUND_FILL, SyncSettings.BACKGROUND_PARALLELISM, SearchSettings.CACHE_REFRESH_STRATEGY);
 
     /**
-     * Ergänzt Änderungsquellen, Betriebsart, Bestandsinventur, Aktualisierungsstrategie und die Regeln je Quelle
-     * ({@code space-harvester.sync.sources.<Quelle>.*}) aus dem Environment, gelesen wie in
+     * Ergänzt Änderungsquellen, Betriebsart, Bestandsinventur, Aktualisierungsstrategie, die Regeln je Quelle
+     * ({@code space-harvester.sync.sources.<Quelle>.*}) und die freigegebenen Ordner ({@code local-files.*}) aus dem
+     * Environment, gelesen wie in
      * {@link HarvesterConfiguration#fromProperties}.
      *
      * @throws com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException bei ungültigen
@@ -106,11 +108,23 @@ class ConfigurationManagerConfiguration {
             binder.bind(HarvesterConfiguration.PREFIX + key, String.class)
                     .ifBound(value -> properties.setProperty(key, value));
         }
+        binder.bind(HarvesterConfiguration.PREFIX + LocalFileSettings.ALLOW_ALL, String.class)
+                .ifBound(value -> properties.setProperty(LocalFileSettings.ALLOW_ALL, value));
+        // Als Liste (YAML) oder als Text mit ; wie im Client; Spring teilt einen Text an Kommas, die in Pfaden vorkommen.
+        binder.bind(HarvesterConfiguration.PREFIX + LocalFileSettings.ROOTS, String.class).ifBound(value ->
+                properties.setProperty(LocalFileSettings.ROOTS, value));
+        binder.bind(HarvesterConfiguration.PREFIX + LocalFileSettings.ROOTS, Bindable.listOf(String.class))
+                .ifBound(roots -> {
+                    if (!properties.containsKey(LocalFileSettings.ROOTS)) {
+                        properties.setProperty(LocalFileSettings.ROOTS,
+                                String.join(LocalFileSettings.SEPARATOR, roots));
+                    }
+                });
         binder.bind(HarvesterConfiguration.PREFIX + SyncSettings.SOURCES, SOURCE_RULES).ifBound(rules ->
                 rules.forEach((id, fields) -> fields.forEach((field, value) ->
                         properties.setProperty(SourceSyncOverride.key(id, field), value))));
         HarvesterConfiguration read = HarvesterConfiguration.fromProperties(properties).orThrow();
-        return base.withSync(read.sync()).withSearch(read.search());
+        return base.withSync(read.sync()).withSearch(read.search()).withLocalFiles(read.localFiles());
     }
 
     private static final Bindable<Map<String, Map<String, String>>> SOURCE_RULES = Bindable.of(

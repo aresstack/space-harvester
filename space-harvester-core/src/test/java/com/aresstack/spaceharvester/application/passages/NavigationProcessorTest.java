@@ -230,7 +230,7 @@ class NavigationProcessorTest {
     }
 
     @Test
-    void failedEmbeddingsAreTheirOwnReasonAndAreRetried() {
+    void failedEmbeddingsAreTheirOwnReasonAndStayUntilTextOrModelChange() {
         stored.add(new Enrichment(KEY, embedding.id(), embedding.version(), text.inputSha256(), "1",
                 Enrichment.Status.FAILED, "{}", List.of(), Enrichments.PROCESSOR_ERROR, Instant.EPOCH));
 
@@ -238,7 +238,8 @@ class NavigationProcessorTest {
 
         assertThat(view.reason()).isEqualTo(NavigationPayload.REASON_INDEXING_FAILED);
         assertThat(view.analysis()).isEqualTo(DocumentNavigationBuilder.Analysis.HEADINGS);
-        assertThat(view.state()).isEqualTo(PagePassages.State.STALE);
+        // Ein gescheitertes Embedding wird nicht von selbst neu berechnet; jeder Abruf rechnete sonst umsonst neu.
+        assertThat(view.state()).isEqualTo(PagePassages.State.CURRENT);
     }
 
     @Test

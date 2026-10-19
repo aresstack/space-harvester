@@ -21,9 +21,9 @@ import java.util.function.Function;
  *
  * <p>Ohne Modell, ohne Satzmodell, ohne Freigabe der Quelle, solange die Embeddings je Absatz für diesen Text fehlen
  * oder wenn sie gescheitert sind, bleiben die Überschriften (FA-01) mit Grund, wie die Rückfälle von
- * {@code BuildDocumentNavigationUseCase}. Fehlende und gescheiterte Embeddings tragen eine Version, die sofort
- * veraltet: Die nächste Anreicherung oder der nächste Abruf versucht es wieder, ohne dass etwas an den KI-Dienst geht.
- * Die übrigen Rückfälle gelten, bis Text, Modell oder Verfahren wechseln; eine später freigegebene Quelle reiht das
+ * {@code BuildDocumentNavigationUseCase}. Fehlende Embeddings tragen eine Version, die sofort veraltet: Die nächste
+ * Anreicherung oder der nächste Abruf versucht es wieder, ohne dass etwas an den KI-Dienst geht. Die übrigen Rückfälle,
+ * auch gescheiterte Embeddings, gelten wie diese, bis Text, Modell oder Verfahren wechseln; eine später freigegebene Quelle reiht das
  * Freigabe-Ereignis der Konfiguration neu ein. Der Titel der Seite geht wie im Client in die Anweisung an das Chat-Modell ein.
  */
 public final class NavigationProcessor implements EnrichmentProcessor {
@@ -127,7 +127,8 @@ public final class NavigationProcessor implements EnrichmentProcessor {
                         && e.freshness(text.inputSha256(), embedding.version()) == Enrichment.Freshness.CURRENT)
                 .findFirst().orElse(null);
         if (current != null && current.status() == Enrichment.Status.FAILED) {
-            return headings(text, NavigationPayload.REASON_INDEXING_FAILED, version + "+pending");
+            // Ein gescheitertes Embedding bleibt bis zum Wechsel von Text oder Modell; sonst rechnete jeder Abruf neu.
+            return headings(text, NavigationPayload.REASON_INDEXING_FAILED, version);
         }
         Enrichment vectors = current != null && current.status() == Enrichment.Status.OK ? current : null;
         if (vectors == null) {

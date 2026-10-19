@@ -28,10 +28,13 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
         return new ConfigurationResponse(snapshot.version(), snapshot.activatedAt().toString(),
                 new Configuration(Ai.of(c.ai()), Search.of(c), Sync.of(c.sync()), network.describe(c.network()),
                         new Storage(c.storage().dataDirectory() == null ? null
-                                : c.storage().dataDirectory().toString())));
+                                : c.storage().dataDirectory().toString()),
+                        new LocalFiles(c.localFiles().allowAll(),
+                                c.localFiles().roots().stream().map(Object::toString).toList())));
     }
 
-    public record Configuration(Ai ai, Search search, Sync sync, Network network, Storage storage) {
+    public record Configuration(Ai ai, Search search, Sync sync, Network network, Storage storage,
+                                LocalFiles localFiles) {
     }
 
     /**
@@ -105,6 +108,15 @@ public record ConfigurationResponse(long version, String activatedAt, Configurat
      * @param dataDirectory Speicherort ({@code cache.directory}) oder {@code null}
      */
     public record Storage(String dataDirectory) {
+    }
+
+    /**
+     * Freigegebene Ordner für lokale Dateien ({@code local-files.*}).
+     *
+     * @param allowAll ob alles freigegeben ist, was das Konto des Dienstes lesen darf
+     * @param roots    weitere freigegebene Ordner
+     */
+    public record LocalFiles(boolean allowAll, List<String> roots) {
     }
 
     /** Schema, Host, Port und Pfad; ohne Zugangsdaten, Query und Fragment, die Geheimnisse tragen könnten. */
