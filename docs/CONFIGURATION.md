@@ -174,6 +174,14 @@ dort fest 30 s.
   mehr bei vielen gleichzeitigen Nutzern); Download, Hash, Ablage und Auslieferung arbeiten auf demselben
   `byte[]`, die Textextraktion braucht zusätzlich Platz für den Text (begrenzt durch die Grenzen der Extraktion).
   Wer `max-size` oder `max-concurrent-large-files` erhöht, erhöht den Heap entsprechend.
+- **Kopien:** Der Confluence-Transport legt einen erfolgreichen Körper gleich in der angekündigten Länge an, das
+  JSON-Paket liest jede Datei erst beim Schreiben, und Export-Bilder übernehmen ihre Bytes ohne Kopie. Eine Kopie
+  bleibt in `ConfluenceHttpResponse` aus dem Enterprise AI Client (Konstruktor und `body()`; Vorschlag als
+  Upstream-Patch 08).
+- **Textextraktion:** Tika liest nur Anhänge bis 20 MiB (`TikaDocumentText.DEFAULT_MAX_BYTES`), größere bekommen
+  keinen Text. Die Textlänge wird erst nach der Extraktion auf `maxChars` (1 Mio. Zeichen) gekürzt, weil der
+  Extraktor aus dem Enterprise AI Client den ganzen Text als String liefert; eine Grenze schon beim Schreiben des
+  Textes bräuchte eine Änderung dort.
 
 ## Reihenfolge der Quellen
 

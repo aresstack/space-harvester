@@ -153,7 +153,7 @@ public final class ExportGraphics {
                 problems.add(name + ": " + image.failure());
                 return null;
             }
-            bytes = image.bytes();
+            bytes = image.shared();
         }
         Graphic graphic = decode(bytes, svg);
         if (graphic == null) {
@@ -181,7 +181,7 @@ public final class ExportGraphics {
         }
         ExportImage given = known.get(mermaidAddress(code));
         if (given != null && given.ok()) {
-            Graphic graphic = decode(given.bytes(), svg);
+            Graphic graphic = decode(given.shared(), svg);
             if (graphic != null) {
                 decoded.put(key, graphic);
                 return graphic;
