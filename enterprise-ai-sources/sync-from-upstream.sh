@@ -27,6 +27,7 @@ modules=(
   proasteion/emporion/holkas/source-ftp
   proasteion/emporion/holkas/source-ndv
   proasteion/emporion/holkas/source-sharepoint
+  proasteion/emporion/holkas/source-betaview
   embedding-api
   embedding-openai
   chat-api

@@ -66,6 +66,11 @@ class SourceConfiguration {
         return EacSourceAdapters.sharePoint();
     }
 
+    @Bean
+    SourceAdapter betaViewSourceAdapter() {
+        return EacSourceAdapters.betaView();
+    }
+
     /**
      * Vertrauen der Quellen und des KI-Dienstes: {@code trust-bundle} aus {@code spring.ssl.bundle.*}, ohne Bundle
      * {@code space-harvester.network.tls} (#189). Eine Bean, damit die Windows-Speicher nur einmal gelesen werden.
