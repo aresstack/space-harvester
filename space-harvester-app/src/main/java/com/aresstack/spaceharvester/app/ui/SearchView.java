@@ -984,7 +984,8 @@ public final class SearchView implements View {
 
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt(),
-                    hit.attachment() == null ? null : hit.attachment().title());
+                    hit.attachment() == null ? null : hit.attachment().title().isBlank()
+                            ? hit.attachment().attachmentId() : hit.attachment().title());
         }
     }
 

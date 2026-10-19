@@ -82,12 +82,12 @@ public final class Workspace {
 
     // ------------------------------------------------------------------ Wissensquellen
 
-    /** Sichtbare Quellen ({@code GET /api/v1/sources}). */
     /** Die Quellentypen des Core ({@code GET /api/v1/sources/types}, #375) für das Quellenformular. */
     public List<com.aresstack.spaceharvester.application.sources.SourceType> sourceTypes() {
         return harvester.sourceTypes();
     }
 
+    /** Sichtbare Quellen ({@code GET /api/v1/sources}). */
     public List<HarvestSource> sources() {
         return access.filter(caller, harvester.sources().sources(), AccessKind.METADATA,
                 source -> ResourceScope.source(source.id()));
@@ -134,7 +134,6 @@ public final class Workspace {
                 null, limit, null));
     }
 
-    /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
     /**
      * Die Dokumentnavigation einer Seite ({@code GET …/pages/{pageId}/navigation}): Überschriften und erkannte
      * Themenabschnitte zum Text des Cache, sonst sofort die Überschriften.
@@ -144,6 +143,7 @@ public final class Workspace {
         return harvester.documentNavigation().page(caller, sourceId, pageId);
     }
 
+    /** Die nicht abgelehnten Beziehungen, die einen der Begriffe einer Seite berühren. */
     public List<TermRelation> termRelationsFor(java.util.Collection<String> normalized, String sourceId,
                                                String spaceKey) {
         return harvester.termRelations().forTerms(caller, normalized, sourceId, spaceKey);

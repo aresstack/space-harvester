@@ -88,6 +88,20 @@ final class ImagesTab extends JPanel {
         describe.setEnabled(!running);
     }
 
+    /** Solange die gespeicherten Beschreibungen laden: kein Stand, keine Bilder, „Bilder beschreiben“ gesperrt. */
+    void loading() {
+        describing(true);
+        state.setText("Wird geladen …");
+        state.setForeground(Comic.MUTED);
+        state.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Comic.MUTED, 1, true),
+                BorderFactory.createEmptyBorder(2, 8, 2, 8)));
+        list.removeAll();
+        lines.clear();
+        hint.setText(" ");
+        list.revalidate();
+        list.repaint();
+    }
+
     /**
      * Zeigt die Bilder; außer bei {@link PassagesTab.State#CURRENT} ist {@code images} leer.
      *

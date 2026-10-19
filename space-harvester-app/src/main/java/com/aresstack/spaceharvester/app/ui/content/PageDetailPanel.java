@@ -342,10 +342,6 @@ public final class PageDetailPanel extends JPanel {
         return pageId == null;
     }
 
-    /**
-     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
-     * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
-     */
     /** Lädt die gezeigte Seite aus dem Bestand neu; ohne gezeigte Seite nichts. EDT. */
     void reloadShown() {
         if (sourceId != null && pageId != null) {
@@ -353,6 +349,10 @@ public final class PageDetailPanel extends JPanel {
         }
     }
 
+    /**
+     * Lädt eine Seite. Ohne {@code refresh} aus dem Bestand; fehlt sie dort, holt der Core sie bei der Quelle, legt sie
+     * im Bestand ab und liefert sie aus. Mit {@code refresh} wird sie live geprüft und, wenn sie neuer ist, live geladen.
+     */
     public void load(String sourceId, String pageId, boolean refresh) {
         AppRuntime runtime = context.runtime();
         if (runtime == null || sourceId == null || pageId == null) {
@@ -793,15 +793,17 @@ public final class PageDetailPanel extends JPanel {
             return;
         }
         imagesLoaded = true;
-        images.show(PassagesTab.State.MISSING, null, List.of());
+        images.loading();
         String source = sourceId;
         DeliveredPage shown = page;
         Background.run(() -> imageRows(runtime, source, runtime.workspace().images(shown)), found -> {
             if (shown == page) {
+                images.describing(false);
                 images.show(found.state(), found.reason(), found.images());
             }
         }, error -> {
             if (shown == page) {
+                images.describing(false);
                 imagesLoaded = false;
                 feedback.problem(error, Problems.Step.PAGE);
             }
@@ -820,18 +822,19 @@ public final class PageDetailPanel extends JPanel {
         images.describing(true);
         feedback.working("Bilder werden beschrieben …");
         Background.run(() -> imageRows(runtime, source, runtime.workspace().describeImages(source, id)), found -> {
+            // Der Reiter gehört allen Seiten: auch nach einem Seitenwechsel wieder freigeben.
+            images.describing(false);
             if (shown != page) {
                 return;
             }
-            images.describing(false);
             images.show(found.state(), found.reason(), found.images());
             feedback.success(found.images().isEmpty() ? "Keine Bilder auf dieser Seite"
                     : "Bilder beschrieben: " + found.described() + " von " + found.images().size());
         }, error -> {
+            images.describing(false);
             if (shown != page) {
                 return;
             }
-            images.describing(false);
             feedback.problem(error, Problems.Step.PAGE);
         });
     }

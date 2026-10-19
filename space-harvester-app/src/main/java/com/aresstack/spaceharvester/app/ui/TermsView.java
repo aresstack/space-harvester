@@ -203,8 +203,11 @@ public final class TermsView implements View {
         List<String> cells = relations.visibleRow(model);
         // Die Tabelle filtert nur ohne Core-Suche; die Zuordnung geht über die gezeigten Zellen.
         for (Relation relation : shownRelations) {
+            // Stand und Herkunft gehören dazu: dasselbe Paar kann abgelehnt und neu vorgeschlagen dastehen.
             if (cells.get(0).equals(relation.fromTerm()) && cells.get(2).equals(relation.toTerm())
-                    && cells.get(1).equals(Relation.typeText(relation.type()))) {
+                    && cells.get(1).equals(Relation.typeText(relation.type()))
+                    && cells.get(3).equals(Relation.statusText(relation.status()))
+                    && cells.get(4).equals(Relation.originText(relation.origin()))) {
                 return relation;
             }
         }

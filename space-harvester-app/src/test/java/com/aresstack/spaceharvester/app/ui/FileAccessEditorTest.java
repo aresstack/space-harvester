@@ -125,6 +125,22 @@ class FileAccessEditorTest {
         });
     }
 
+    /** Die Datei hält die Pfade normalisiert; nach dem Speichern gilt die Platte trotzdem als unverändert. */
+    @Test
+    void aFolderTypedWithDotsCountsAsSavedAfterSaving() throws Exception {
+        String typed = home.resolve("wissen").toString() + java.io.File.separator + ".";
+        FileAccessEditor[] editor = new FileAccessEditor[1];
+        SwingUtilities.invokeAndWait(() -> {
+            editor[0] = new FileAccessEditor(context, parent -> true);
+            editor[0].path.setText(typed);
+            editor[0].add.doClick();
+            editor[0].save();
+        });
+        await(() -> editor[0].feedback.text().contains("Dateizugriff übernommen"));
+        assertThat(context.settings().localFiles().roots()).containsExactly(home.resolve("wissen"));
+        await(() -> !editor[0].changed());
+    }
+
     private static void await(java.util.function.BooleanSupplier condition) throws Exception {
         long until = System.currentTimeMillis() + 30_000;
         boolean[] met = {false};

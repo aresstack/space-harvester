@@ -127,7 +127,24 @@ final class FileAccessEditor {
 
     /** Ob seit dem letzten Speichern etwas freigegeben, entfernt oder umgeschaltet wurde. */
     boolean changed() {
-        return !roots.equals(savedRoots()) || allowAll.isSelected() != savedAllowAll();
+        // Die Datei hält die Pfade normalisiert; so vergleicht auch die Platte, sonst bliebe „/x/“ für immer geändert.
+        return !normalized(roots).equals(savedRoots()) || allowAll.isSelected() != savedAllowAll();
+    }
+
+    private static List<String> normalized(List<String> folders) {
+        List<String> result = new java.util.ArrayList<>();
+        for (String folder : folders) {
+            String path;
+            try {
+                path = Path.of(folder).normalize().toString();
+            } catch (java.nio.file.InvalidPathException e) {
+                path = folder;
+            }
+            if (!result.contains(path)) {
+                result.add(path);
+            }
+        }
+        return result;
     }
 
     /** Gibt einen Ordner frei, außer er ist leer oder schon freigegeben. */
