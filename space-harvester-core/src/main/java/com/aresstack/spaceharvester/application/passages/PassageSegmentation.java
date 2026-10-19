@@ -119,6 +119,11 @@ public final class PassageSegmentation {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
     }
 
+    /** Ob ein Satzmodell die Sätze trennt, nicht der Regel-Splitter ({@link SentenceSegmenter#splitter}). */
+    public boolean sentenceModel() {
+        return !"splitter".equals(sentences.id());
+    }
+
     /**
      * Was die Passagen bestimmt (Verfahren, Parameter, Satzmodell), z. B.
      * {@code semantic-v2;window=3;threshold=0.35;min=2;max=8;maxTokens=350;sentences=opennlp-de}, wie im Client.

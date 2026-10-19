@@ -55,7 +55,8 @@ public final class NavigationQueries {
     }
 
     private DocumentNavigationView read(DeliveredPage page, PageText text) {
-        return DocumentNavigationView.read(page.snapshot().key(), enrichments.view(page.snapshot()), text, builder);
+        return DocumentNavigationView.read(page.snapshot().key(), page.snapshot().metadata().title(),
+                enrichments.view(page.snapshot()), text, builder);
     }
 
     private PageText text(DeliveredPage page) {

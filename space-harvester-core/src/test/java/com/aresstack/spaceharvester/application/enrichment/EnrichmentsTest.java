@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingPr
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
+import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmenter;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -248,8 +249,8 @@ class EnrichmentsTest {
                 throw new AssertionError("nicht freigegeben");
             }
         }, 1000, KnowledgeTextSegmentation.defaults(), sourceId -> sourceId.equals("approved"))
-                .withPassages(new PassageChunks(new PassageSegmentation(
-                        SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults()),
+                .withPassages(new PassageChunks(new PassageSegmentation(OpenNlpSentenceSegmenter.german(
+                        SentenceSegmenter.splitter(KnowledgeTextSegmentation.defaults())),
                         KnowledgeTextSegmentation.defaults())));
         NavigationProcessor navigation = new NavigationProcessor(new DocumentNavigationBuilder(), embedding,
                 store::find);

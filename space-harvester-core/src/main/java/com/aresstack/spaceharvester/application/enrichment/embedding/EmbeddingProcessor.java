@@ -120,6 +120,11 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
         return passages != null;
     }
 
+    /** Ob die Absätze ({@link #passages}) Sätze aus einem Satzmodell bilden statt aus dem Regel-Splitter. */
+    public boolean sentenceModel() {
+        return passages != null && passages.sentenceModel();
+    }
+
     private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
         check(Objects.requireNonNull(provider, "provider"));
         return () -> provider;
