@@ -19,8 +19,9 @@ import java.util.regex.Pattern;
  *
  * @param type                        {@code confluence}, {@code files} oder ein anderer Typ des Core
  *                                    ({@code Harvester.sourceTypes()}, #375)
- * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); bei anderen Typen außer
- *                                    {@code files} die Adresse unter {@code options} ({@link #addressOption})
+ * @param baseUrl                     Adresse der Confluence-Instanz (ohne {@code /rest}); nur bei {@code confluence},
+ *                                    andere Typen tragen ihre Adresse unter {@code options} ({@code extraOptions},
+ *                                    Schlüssel aus {@code SourceType.addressOption})
  * @param directory                   Ordner; nur bei {@code files}
  * @param include                     Dateimuster, z. B. {@code *.md, *.pdf}, oder leer für den Standard
  * @param secretVariable              Umgebungsvariable mit Passwort bzw. Token; nur bei {@code basic} und {@code pat}
@@ -40,13 +41,6 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
 
     public static final String CONFLUENCE = "confluence";
     public static final String FILES = "files";
-
-    /**
-     * Unter welchem Schlüssel von {@code options} die Kopien des Enterprise AI Client ihre Adresse erwarten (#187);
-     * unbekannte Typen nehmen {@code url}.
-     */
-    private static final Map<String, String> ADDRESS_OPTIONS = Map.of("ftp", "host", "jes", "host", "ndv", "host",
-            "sharepoint", "siteUrl", "git", "url", "betaview", "baseUrl", "outlook", "mailbox");
 
     /** Wie {@code ConfiguredSourceCatalog}; andere IDs weist der Core beim Start ab. */
     private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,62}");
@@ -126,7 +120,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         boolean files = FILES.equals(type);
         String directory = files ? options.remove("directory") : null;
         String include = files ? options.remove("include") : null;
-        String address = confluence ? text(raw, "base-url") : files ? null : options.remove(addressOption(type));
+        String address = confluence ? text(raw, "base-url") : null;
 
         List<String> plaintext = new ArrayList<>();
         SourceSettingsConfig.AuthType authType = SourceSettingsConfig.AuthType.NONE;
@@ -221,11 +215,6 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
         return type != null && !confluence() && !FILES.equals(type);
     }
 
-    /** Der Schlüssel der Adresse unter {@code options} für {@code type}. */
-    public static String addressOption(String type) {
-        return ADDRESS_OPTIONS.getOrDefault(type, "url");
-    }
-
     /** Vorschlag für die Umgebungsvariable des Geheimnisses, z. B. {@code WIKI_TOKEN} für die Quelle {@code wiki}. */
     public static String suggestedVariable(String id, SourceSettingsConfig.AuthType authType) {
         String base = trim(id) == null ? "CONFLUENCE" : id.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]+", "_");
@@ -275,11 +264,7 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 problems.add("Der Ordner fehlt.");
             }
         } else if (generic()) {
-            if (baseUrl == null) {
-                problems.add("Die Adresse fehlt.");
-            } else if (baseUrl.contains("${")) {
-                problems.add("Die Adresse darf keinen Platzhalter enthalten.");
-            }
+            // Die Adresse steht unter options; welcher Schlüssel, weiß der Typ des Core (das Formular prüft sie).
         } else {
             problems.add("Die Art der Quelle fehlt.");
         }
@@ -335,12 +320,9 @@ public record SourceDraft(String id, String type, String title, String baseUrl, 
                 yaml.append(in).append("trust-bundle: ").append(scalar(trustBundle)).append('\n');
             }
         }
-        if (!confluence() || !extraOptions.isEmpty()) {
+        if (FILES.equals(type) || !extraOptions.isEmpty()) {
             yaml.append(in).append("options:\n");
-            if (generic()) {
-                yaml.append(in).append("  ").append(addressOption(type)).append(": ").append(scalar(baseUrl))
-                        .append('\n');
-            } else if (!confluence()) {
+            if (FILES.equals(type)) {
                 yaml.append(in).append("  directory: ").append(scalar(directory)).append('\n');
                 if (include != null) {
                     yaml.append(in).append("  include: ").append(scalar(include)).append('\n');

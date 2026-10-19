@@ -281,15 +281,37 @@ final class SourceForm {
         boolean pkcs12 = certificateType == SourceSettingsConfig.CertificateStoreType.PKCS12;
         String bundle = String.valueOf(trust.getSelectedItem());
         return new SourceDraft(id.getText(), type,
-                title.getText(), confluence ? address() : files ? null : baseUrl.getText(),
+                title.getText(), confluence ? address() : null,
                 files ? directory.getText() : null, files ? include.getText() : null, authType,
                 authType == SourceSettingsConfig.AuthType.BASIC ? username.getText() : null,
                 authType == SourceSettingsConfig.AuthType.NONE ? null : variable.getText(), certificateType,
                 pkcs12 ? certificatePath.getText() : null, pkcs12 ? certificatePasswordVariable.getText() : null,
                 certificateType == null ? null : alias.getText(),
                 certificateType == null ? null : thumbprint.getText(),
-                !confluence || NETWORK_TRUST.equals(bundle) ? null : bundle,
-                editing == null ? null : editing.draft().extraOptions());
+                !confluence || NETWORK_TRUST.equals(bundle) ? null : bundle, options(confluence || files));
+    }
+
+    /**
+     * Die übrigen {@code options}; bei Arten ohne eigenes Formular kommt die Adresse unter den Schlüssel, den der Core
+     * für den Typ nennt ({@code SourceType.addressOption}, #387).
+     */
+    private Map<String, String> options(boolean ownForm) {
+        Map<String, String> options = new java.util.TreeMap<>(editing == null ? Map.of()
+                : editing.draft().extraOptions());
+        String key = addressOption();
+        if (!ownForm && key != null) {
+            options.remove(key);
+            if (!baseUrl.getText().isBlank()) {
+                options.put(key, baseUrl.getText().strip());
+            }
+        }
+        return options;
+    }
+
+    /** Der {@code options}-Schlüssel der Adresse für die gewählte Art oder {@code null}. */
+    private String addressOption() {
+        SourceType type = types.get(String.valueOf(kind.getSelectedItem()));
+        return type == null ? null : type.addressOption();
     }
 
     /** Der Typ des Core zur gewählten Art, etwa {@code confluence}, {@code files} oder {@code git}. */
@@ -314,8 +336,8 @@ final class SourceForm {
                 // Ohne Liste bleiben die beiden Arten mit eigenem Formular.
             }
         }
-        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false),
-                new SourceType(SourceDraft.FILES, "Ordner", false));
+        return List.of(new SourceType(SourceDraft.CONFLUENCE, "Confluence", false, null),
+                new SourceType(SourceDraft.FILES, "Ordner", false, "directory"));
     }
 
     /** Confluence und Ordner mit den bisherigen Worten, sonst der Anzeigename des Core. */
@@ -498,7 +520,7 @@ final class SourceForm {
                 .map(Map.Entry::getKey).findFirst().orElse(null);
         if (label == null) {
             // Ein Typ, den diese Laufzeit nicht anbietet, bleibt beim Bearbeiten stehen.
-            SourceType unknown = new SourceType(source.type(), source.type(), false);
+            SourceType unknown = new SourceType(source.type(), source.type(), false, null);
             label = label(unknown);
             types.put(label, unknown);
             kind.addItem(label);
@@ -508,7 +530,9 @@ final class SourceForm {
         id.setText(source.id());
         id.setEditable(false);
         title.setText(source.title() == null ? "" : source.title());
-        baseUrl.setText(source.baseUrl() == null ? "" : source.baseUrl());
+        String address = source.generic() && addressOption() != null ? source.extraOptions().get(addressOption())
+                : source.baseUrl();
+        baseUrl.setText(address == null ? "" : address);
         directory.setText(source.directory() == null ? "" : source.directory());
         include.setText(source.include() == null ? "" : source.include());
         auth.setSelectedItem(switch (source.authType()) {
@@ -568,6 +592,14 @@ final class SourceForm {
     private List<String> problems() {
         SourceDraft source = draft();
         List<String> problems = new ArrayList<>(source.problems());
+        if (source.generic() && addressOption() != null) {
+            String address = source.extraOptions().get(addressOption());
+            if (address == null) {
+                problems.add("Die Adresse fehlt.");
+            } else if (address.contains("${")) {
+                problems.add("Die Adresse darf keinen Platzhalter enthalten.");
+            }
+        }
         if (source.confluence() && !secretAvailable(source)) {
             problems.add(source.authType() == SourceSettingsConfig.AuthType.PAT ? "Das Token fehlt."
                     : "Das Passwort fehlt.");
@@ -812,10 +844,10 @@ final class SourceForm {
         SourceType type = types.get(String.valueOf(kind.getSelectedItem()));
         boolean files = SourceDraft.FILES.equals(typeId());
         boolean generic = !confluence && !files;
-        form.visible(baseUrl, !files);
+        form.visible(baseUrl, confluence || generic && addressOption() != null);
         baseUrl.setPlaceholder(confluence ? DEFAULT_URL : "");
         form.hint(baseUrl, confluence ? "Startadresse von Confluence ohne /rest; leer lassen für die Confluence-Hilfe"
-                : "Adresse der Quelle (in der Datei options." + SourceDraft.addressOption(typeId()) + ")");
+                : "Adresse der Quelle (in der Datei options." + addressOption() + ")");
         form.visible(directory, files);
         form.visible(include, files);
         form.visible(credentialsNote, generic && type != null && type.needsCredentials());
