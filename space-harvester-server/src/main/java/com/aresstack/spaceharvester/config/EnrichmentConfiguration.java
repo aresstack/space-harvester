@@ -19,6 +19,7 @@ import com.aresstack.spaceharvester.application.enrichment.language.EntityProces
 import com.aresstack.spaceharvester.application.enrichment.language.PropertyProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.RelationProcessor;
 import com.aresstack.spaceharvester.application.enrichment.language.TermProcessor;
+import com.aresstack.spaceharvester.application.enrichment.statements.StatementProcessor;
 import com.aresstack.spaceharvester.application.jobs.Jobs;
 import com.aresstack.spaceharvester.application.passages.DocumentNavigationBuilder;
 import com.aresstack.spaceharvester.application.passages.NavigationLabelModel;
@@ -49,7 +50,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Verdrahtet die deterministischen Anreicherungen (#29): Confluence-Textprojektion, die Prozessoren {@code acronyms},
  * {@code outline}, {@code entities}, {@code properties}, {@code activities}, {@code relations}, {@code terms}
- * (Begriffsindex, #119) und {@code passages} (semantische Absätze, ADR 0020) und die Ablage
+ * (Begriffsindex, #119), {@code passages} (semantische Absätze, ADR 0020), eingeschaltet {@code statements}
+ * (Satzanalyse über das Chat-Modell, #108) und die Ablage
  * (Lucene unter {@code enrichments/}, ohne Cache-Verzeichnis flüchtig). Nach jedem bestätigten Abgleich werden sie
  * nachgezogen,
  * als eigener Auftrag {@code ENRICHMENT}.
@@ -61,7 +63,8 @@ class EnrichmentConfiguration {
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
                             ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences,
-                            ObjectProvider<NavigationLabelModel> labels) {
+                            ObjectProvider<NavigationLabelModel> labels,
+                            ObjectProvider<StatementProcessor> statements) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -77,6 +80,8 @@ class EnrichmentConfiguration {
                 enrichmentStore::find, labels.getIfAvailable()));
         // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
         processors.add(new ImageProcessor(describer::getIfAvailable));
+        // #108: Satzanalyse über das Chat-Modell, nur eingeschaltet (AiConfiguration), im Hintergrund
+        statements.ifAvailable(processors::add);
         return new Enrichments(projector(), processors,
                 enrichmentStore, Clock.systemUTC(), background.getIfAvailable());
     }

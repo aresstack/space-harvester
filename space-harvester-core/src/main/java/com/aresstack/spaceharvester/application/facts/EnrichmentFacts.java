@@ -21,9 +21,12 @@ import tools.jackson.databind.node.ObjectNode;
  * Leitet die Fakten einer Seite aus einem gespeicherten Anreicherungsergebnis ab, deterministisch und ohne Quelle oder
  * Text: dasselbe Ergebnis ergibt dieselben Fakten mit denselben Kennungen. Nur Ergebnisse mit
  * {@link Enrichment.Status#OK} der Prozessoren {@value #ACRONYMS}, {@value #ENTITIES}, {@value #PROPERTIES},
- * {@value #ACTIVITIES} und {@value #RELATIONS} tragen
+ * {@value #ACTIVITIES}, {@value #RELATIONS} und {@value #STATEMENTS} tragen
  * Fakten (Aufbau: {@link FactTypes}); ein Ergebnis, das sich nicht lesen lässt, trägt keine. Die Ergebnisformate
- * (Prozessorversionen) bleiben unverändert.
+ * (Prozessorversionen) bleiben unverändert. {@value #STATEMENTS} (Satzanalyse über das Chat-Modell, #108) ergibt
+ * dieselben Typen wie der regelbasierte Weg ({@code MENTION}, {@code EVENT}, {@code RELATION}) mit denselben
+ * Argumentrollen; {@code STATUS} ist dort der Extraktionsstatus des Client ({@code extracted}, {@code model_validated},
+ * {@code uncertain}, {@code unresolved_reference}), und die Herkunft nennt Prozessor und Version mit Chat-Modell.
  */
 public final class EnrichmentFacts {
 
@@ -32,9 +35,12 @@ public final class EnrichmentFacts {
     public static final String PROPERTIES = "properties";
     public static final String ACTIVITIES = "activities";
     public static final String RELATIONS = "relations";
+    /** Satzanalyse über das Chat-Modell ({@code StatementProcessor}, #108). */
+    public static final String STATEMENTS = "statements";
 
     /** Prozessoren, deren Ergebnisse Fakten tragen. */
-    public static final Set<String> PROCESSORS = Set.of(ACRONYMS, ENTITIES, PROPERTIES, ACTIVITIES, RELATIONS);
+    public static final Set<String> PROCESSORS = Set.of(ACRONYMS, ENTITIES, PROPERTIES, ACTIVITIES, RELATIONS,
+            STATEMENTS);
 
     /** Höchstens so viele Fakten je Ergebnis, also je Prozessor und Seite; was darüber liegt, meldet {@link #truncated}. */
     public static final int MAX_PER_RESULT = 2_000;
@@ -80,6 +86,7 @@ public final class EnrichmentFacts {
                 case PROPERTIES -> properties(enrichment.key(), payload, provenance, facts);
                 case ACTIVITIES -> activities(enrichment.key(), payload, provenance, facts);
                 case RELATIONS -> relations(enrichment.key(), payload, provenance, facts);
+                case STATEMENTS -> statements(enrichment.key(), payload, provenance, facts);
                 default -> {
                     return List.of();
                 }
@@ -262,6 +269,137 @@ public final class EnrichmentFacts {
             qualifiers(arguments, negated, false);
             facts.add(fact(key, FactTypes.RELATION, null, value, provenance,
                     anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+    }
+
+    /**
+     * Die Aussagen der Satzanalyse (#108) wie {@code FactCatalogStatements} im Client: je Erwähnung ein {@code MENTION},
+     * je Handlung ein {@code EVENT}, je Eigenschaft oder Folge ein {@code RELATION}. Pronomen ohne aufgelösten Bezug
+     * werden kein Suchwert ({@code TERM}, Rolle), wie bei {@code activities}. Erwähnungen kommen zuletzt, damit sie an
+     * der Grenze {@value #MAX_PER_RESULT} nicht Handlungen und Relationen verdrängen.
+     */
+    private static void statements(PageKey key, JsonNode payload, MetadataFact.Provenance provenance,
+                                   List<MetadataFact> facts) {
+        for (JsonNode entry : payload.path("events")) {
+            String predicate = text(entry, "predicate");
+            String normalized = text(entry, "normalized");
+            String status = text(entry, "status");
+            if (predicate == null || normalized == null || status == null) {
+                continue;
+            }
+            String section = text(entry, "section");
+            ObjectNode value = JSON.createObjectNode();
+            value.put("predicate", predicate);
+            value.put("lemma", normalized);
+            ArrayNode participants = value.putArray("participants");
+            Arguments arguments = new Arguments();
+            arguments.add(FactTypes.PREDICATE, normalized);
+            for (JsonNode participant : entry.path("participants")) {
+                String role = text(participant, "role");
+                String term = text(participant, "term");
+                String participantNormalized = text(participant, "normalized");
+                if (role == null || term == null) {
+                    continue;
+                }
+                boolean pronoun = participant.path("pronoun").asBoolean();
+                ObjectNode copy = participants.addObject();
+                copy.put("role", role);
+                copy.put("term", term);
+                putNullable(copy, "normalized", participantNormalized);
+                copy.put("pronoun", pronoun);
+                if (!pronoun && participantNormalized != null) {
+                    arguments.add(role, participantNormalized);
+                }
+            }
+            boolean negated = contextText(entry, "negation", value);
+            boolean modal = contextText(entry, "modality", value);
+            boolean conditional = contextText(entry, "condition", value);
+            value.put("status", status);
+            putNullable(value, "section", section);
+            arguments.add(FactTypes.STATUS, status);
+            qualifiers(arguments, negated, modal, conditional);
+            facts.add(fact(key, FactTypes.EVENT, null, value, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+        for (JsonNode entry : payload.path("relations")) {
+            String kind = text(entry, "kind");
+            String subject = text(entry.path("subject"), "term");
+            String subjectNormalized = text(entry.path("subject"), "normalized");
+            String literal = text(entry, "value");
+            String normalized = text(entry, "normalized");
+            String status = text(entry, "status");
+            if (kind == null || subject == null || subjectNormalized == null || literal == null || normalized == null
+                    || status == null) {
+                continue;
+            }
+            String object = text(entry.path("object"), "term");
+            String objectNormalized = text(entry.path("object"), "normalized");
+            String section = text(entry, "section");
+            ObjectNode value = JSON.createObjectNode();
+            value.put("kind", kind.toLowerCase(java.util.Locale.ROOT));
+            value.put("subject", subject);
+            value.put("subjectNormalized", subjectNormalized);
+            putNullable(value, "object", object);
+            putNullable(value, "objectNormalized", objectNormalized);
+            value.put("value", literal);
+            value.put("normalized", normalized);
+            boolean negated = contextText(entry, "negation", value);
+            boolean modal = contextText(entry, "modality", value);
+            boolean conditional = contextText(entry, "condition", value);
+            value.put("status", status);
+            putNullable(value, "section", section);
+            Arguments arguments = new Arguments();
+            arguments.add(FactTypes.KIND, kind);
+            arguments.add(FactTypes.SUBJECT, subjectNormalized);
+            if (objectNormalized != null) {
+                arguments.add(FactTypes.OBJECT, objectNormalized);
+            }
+            arguments.add(FactTypes.VALUE, normalized);
+            arguments.add(FactTypes.STATUS, status);
+            qualifiers(arguments, negated, modal, conditional);
+            facts.add(fact(key, FactTypes.RELATION, null, value, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+        // Erwähnungen zuletzt: Endet ein Ergebnis an der Grenze von MAX_PER_RESULT Fakten, fallen sie vor
+        // Handlungen und Relationen weg.
+        for (JsonNode entry : payload.path("mentions")) {
+            String surface = text(entry, "surface");
+            String normalized = text(entry, "normalized");
+            String status = text(entry, "status");
+            if (surface == null || normalized == null || status == null) {
+                continue;
+            }
+            boolean pronoun = entry.path("pronoun").asBoolean();
+            String section = text(entry, "section");
+            ObjectNode mention = JSON.createObjectNode();
+            mention.put("term", surface);
+            mention.put("normalized", normalized);
+            putNullable(mention, "lemmaCandidate", text(entry.path("lemmaCandidate"), "value"));
+            mention.put("pronoun", pronoun);
+            mention.put("status", status);
+            putNullable(mention, "section", section);
+            Arguments arguments = new Arguments();
+            if (!pronoun) {
+                arguments.add(FactTypes.TERM, normalized);
+            }
+            arguments.add(FactTypes.STATUS, status);
+            facts.add(fact(key, FactTypes.MENTION, FactTypes.MENTIONS, mention, provenance,
+                    anchor(section, entry, "charStart", "charEnd"), facts.size(), arguments.list));
+        }
+    }
+
+    /** Übernimmt den Wortlaut eines Kontextteils ({@code negation}, …) und sagt, ob es ihn gibt. */
+    private static boolean contextText(JsonNode entry, String field, ObjectNode value) {
+        String words = text(entry.path(field), "text");
+        putNullable(value, field, words);
+        return words != null;
+    }
+
+    /** Wie {@link #qualifiers(Arguments, boolean, boolean)}, dazu {@code conditional} wie im Client. */
+    private static void qualifiers(Arguments arguments, boolean negated, boolean modal, boolean conditional) {
+        qualifiers(arguments, negated, modal);
+        if (conditional) {
+            arguments.add(FactTypes.QUALIFIER, "conditional");
         }
     }
 
