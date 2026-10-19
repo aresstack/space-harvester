@@ -93,6 +93,7 @@ public final class PageDetailPanel extends JPanel {
     private static final String TECHNICAL = "Technische Angaben";
     private static final String EMPTY = "empty";
     private static final String PAGE = "page";
+    private static final int READER_PADDING_TOP = 10;
 
     private final AppContext context;
     private final JLabel title = new JLabel(" ");
@@ -113,6 +114,8 @@ public final class PageDetailPanel extends JPanel {
             return acronymTooltip(event.getPoint());
         }
     };
+    /** Reiter „Text“: der Lesetext mit dem Navigationsbanner der Dokumentnavigation darüber (Kopie aus dem EAC). */
+    private final NavigableDocumentPage readerPage;
     private final JLabel acronymHint = Comic.muted(" ");
     private final JLabel acronymDetail = Comic.muted(" ");
     private final ComposerButton recomputeReader = Comic.button("Analyse neu berechnen",
@@ -168,7 +171,7 @@ public final class PageDetailPanel extends JPanel {
         title.setForeground(Comic.INK);
 
         reader.setEditable(false);
-        reader.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
+        reader.setBorder(BorderFactory.createEmptyBorder(READER_PADDING_TOP, 12, 10, 12));
         reader.setFont(Comic.regular(13.5f));
         reader.getCaret().setVisible(true);
         ToolTipManager.sharedInstance().registerComponent(reader);
@@ -184,7 +187,9 @@ public final class PageDetailPanel extends JPanel {
         acronymBar.add(acronymHint, BorderLayout.CENTER);
         acronymBar.add(Comic.row(recomputeReader), BorderLayout.EAST);
         readerPanel.add(acronymBar, BorderLayout.NORTH);
-        readerPanel.add(Comic.scroll(reader), BorderLayout.CENTER);
+        // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
+        readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
+        readerPanel.add(readerPage, BorderLayout.CENTER);
         readerPanel.add(acronymDetail, BorderLayout.SOUTH);
 
         JPanel attachmentList = new JPanel(new BorderLayout(0, 6));
@@ -501,6 +506,12 @@ public final class PageDetailPanel extends JPanel {
 
     /** Zeigt einen fertig gebauten Lesetext; {@code null} leert ihn samt Markierungen. */
     private void showReader(ReaderDocument document, boolean live) {
+        // Neu berechnet bei gleichem Text: die Navigation gilt weiter; sonst gehörte sie zum vorigen Text.
+        boolean sameText = shown != null && document != null && shown.text() != null && document.text() != null
+                && shown.text().text().equals(document.text().text());
+        if (!sameText) {
+            showNavigation(null);
+        }
         shown = document;
         terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
         passages.show(document == null ? null : document.passages());
@@ -513,6 +524,7 @@ public final class PageDetailPanel extends JPanel {
         }
         reader.setStyledDocument(document.document());
         reader.setCaretPosition(0);
+        readerPage.contentChanged();
         acronymHint.setText(document.hint(live));
         recomputeReader.setVisible(document.text() != null && !live
                 && document.acronyms().state() != PageAcronyms.State.CURRENT);
@@ -591,6 +603,7 @@ public final class PageDetailPanel extends JPanel {
         tabs.select(READ);
         reader.requestFocusInWindow();
         reader.select(target.start(), target.end());
+        readerPage.revealBelowSky(target.start());
         showAcronymAt(target.start());
     }
 
@@ -604,6 +617,7 @@ public final class PageDetailPanel extends JPanel {
         PageAcronyms.Mark mark = forward ? document.next(caret) : document.previous(caret);
         if (mark != null) {
             reader.select(mark.occurrence().start(), mark.occurrence().end());
+            readerPage.revealBelowSky(mark.occurrence().start());
             showAcronymAt(mark.occurrence().start());
         }
     }
@@ -1143,6 +1157,26 @@ public final class PageDetailPanel extends JPanel {
 
     JTextPane reader() {
         return reader;
+    }
+
+    /**
+     * Zeigt die Dokumentnavigation der angezeigten Seite als Wolkenbanner über dem Reiter „Text“; {@code null} oder
+     * leer blendet ihn aus. Die Positionen beziehen sich auf den angezeigten Lesetext. Noch ruft niemand den Core dafür
+     * auf: {@code harvester.documentNavigation().page(caller, sourceId, pageId)} folgt mit dem Core-PR von V, dann
+     * bildet die App dessen {@code DocumentNavigationView} auf {@link Navigation} ab. EDT.
+     */
+    void showNavigation(Navigation navigation) {
+        readerPage.setNavigation(navigation == null || navigation.isEmpty() ? null : navigation);
+    }
+
+    /** Für Tests: der Navigationsbanner über dem Lesetext. */
+    DocumentNavigationSky navigationSky() {
+        return readerPage.sky();
+    }
+
+    /** Für Tests: der Lesetext mit dem Banner darüber. */
+    NavigableDocumentPage readerPage() {
+        return readerPage;
     }
 
     String acronymHint() {
