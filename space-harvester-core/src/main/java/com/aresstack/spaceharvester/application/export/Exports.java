@@ -27,6 +27,7 @@ import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import com.aresstack.spaceharvester.application.sync.SyncUnavailableException;
 import com.aresstack.spaceharvester.application.tree.PageTree;
 import com.aresstack.spaceharvester.application.tree.PageTreeBuilder;
+import com.aresstack.spaceharvester.application.tree.SiblingPosition;
 import com.aresstack.spaceharvester.application.tree.TreeEntry;
 import java.io.FilterOutputStream;
 import java.io.IOException;
@@ -390,6 +391,7 @@ public class Exports {
         List<TreeEntry> entries = new ArrayList<>();
         List<PageFailure> failures = new ArrayList<>();
         Map<String, ListedPage> exported = new HashMap<>();
+        Map<String, Long> positions = new HashMap<>();
         Set<String> hidden = new HashSet<>();
         // Nur lesbare gescheiterte Seiten zählen, auch solche, die nie in den Cache kamen und deshalb in keiner
         // Seitenliste stehen.
@@ -427,14 +429,15 @@ public class Exports {
                         context.discovered(1);
                     }
                     failedIds.remove(listed.pageId());
-                    PageFailure failure = exportPage(session, listed, generation);
+                    PageFailure failure = exportPage(session, listed, generation, positions);
                     if (!prepared.counted()) {
                         context.processed(1);
                     }
                     if (failure == null) {
                         // Die Startseite ist die Wurzel des Teilbaums; ihre Elternseite gehört nicht zum Export.
                         entries.add(new TreeEntry(listed.pageId(), listed.pageId().equals(request.rootPageId())
-                                ? null : listed.parentPageId()));
+                                ? null : listed.parentPageId(), positions.get(listed.pageId()),
+                                listed.header().metadata().title()));
                         exported.put(listed.pageId(), listed);
                         context.written(1);
                     } else {
@@ -572,7 +575,7 @@ public class Exports {
 
     /** @return {@code null}, wenn die Seite geschrieben wurde, sonst warum nicht */
     private PageFailure exportPage(ExportArtifactWriter.Session session, ListedPage listed,
-                                          CacheGeneration generation) {
+                                          CacheGeneration generation, Map<String, Long> positions) {
         if (listed.rawSha256() == null) {
             return new PageFailure(listed.pageId(), "PAYLOAD_MISSING",
                     "Für Seite " + listed.pageId() + " liegt noch keine Payload im Cache");
@@ -589,6 +592,11 @@ public class Exports {
                     "Seite " + listed.pageId() + " wurde während des Exports im Cache geändert");
         }
         session.page(listed.header(), page.snapshot());
+        // Reihenfolge unter den Geschwistern wie in Confluence; gehört zu keinem Hash.
+        Long position = SiblingPosition.of(page.snapshot().payload());
+        if (position != null) {
+            positions.put(listed.pageId(), position);
+        }
         return null;
     }
 
