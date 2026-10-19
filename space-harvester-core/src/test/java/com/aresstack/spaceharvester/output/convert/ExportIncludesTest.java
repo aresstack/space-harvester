@@ -31,8 +31,9 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Ausgeführte Makros ({@code include}, {@code excerpt-include}, {@code children}) in Word, PDF und Markdown: der Inhalt
- * kommt aus der abgelegten Lese-Ansicht (#218), nie von der Quelle; ohne Ansicht bleibt der Hinweis, gemeldet als
+ * Ausgeführte Makros ({@code include}, {@code excerpt-include}, {@code children}, {@code toc}, Jira-Abfragen,
+ * unbekannte Makros) in Word, PDF und Markdown: der Inhalt kommt aus der abgelegten Lese-Ansicht (#218), nie von der
+ * Quelle; ohne Ansicht oder bei abweichender Zahl der Makros bleibt der Hinweis, gemeldet als
  * {@link Kind#OMITTED_CONTENT}.
  */
 class ExportIncludesTest {
@@ -103,6 +104,29 @@ class ExportIncludesTest {
             pages.forEach(action);
         }
     }
+
+    /** Makros, die Confluence beim Rendern berechnet und die der Parser nicht selbst abbildet. */
+    private static final String COMPUTED = "<h1>Kapitel Eins</h1>"
+            + "<ac:structured-macro ac:name=\"toc\" />"
+            + "<ac:structured-macro ac:name=\"contentbylabel\"><ac:parameter ac:name=\"labels\">doku"
+            + "</ac:parameter></ac:structured-macro>"
+            + "<p>Offen: <ac:structured-macro ac:name=\"jira\"><ac:parameter ac:name=\"jqlQuery\">project = DEV"
+            + "</ac:parameter></ac:structured-macro> Ende</p>"
+            + "<p>Siehe <ac:structured-macro ac:name=\"jira\"><ac:parameter ac:name=\"key\">DEV-1</ac:parameter>"
+            + "</ac:structured-macro></p>"
+            + "<ac:structured-macro ac:name=\"my-user-macro\"><ac:rich-text-body><p>Rohtext Kilo</p>"
+            + "</ac:rich-text-body></ac:structured-macro>";
+
+    private static final String COMPUTED_VIEW = "<h1 id=\"KapitelEins\">Kapitel Eins</h1>"
+            + "<div class=\"toc-macro\" data-macro-name=\"toc\"><ul><li><a href=\"#KapitelEins\">Verzeichnis Eins</a>"
+            + "</li></ul></div>"
+            + "<ul class=\"content-by-label\" data-macro-name=\"contentbylabel\"><li>"
+            + "<a href=\"/display/DEV/Lima\">Seite Lima</a></li></ul>"
+            + "<p>Offen: </p><div class=\"jira-table\" data-macro-name=\"jira\"><table><tr><th>Schlüssel</th>"
+            + "<th>Titel</th></tr><tr><td>DEV-7</td><td>Fehler Mike</td></tr></table></div><p> Ende</p>"
+            + "<p>Siehe <span class=\"jira-issue\" data-macro-name=\"jira\">DEV-1 Vorgang Oscar</span></p>"
+            + "<div data-macro-name=\"my-user-macro\"><p>Berechnet November</p>"
+            + "<p><img src=\"/download/attachments/100/bild.png\" alt=\"Bild\"></p></div>";
 
     private static Input input(Optional<ExportReadingView> view) {
         return input(STORAGE, view);
@@ -239,5 +263,73 @@ class ExportIncludesTest {
         String alone = text(new MarkdownConverter(), input(
                 "<p><ac:link><ri:user ri:account-id=\"557058:aa\" /></ac:link></p>", Optional.empty()));
         assertThat(alone).contains("@557058:aa");
+    }
+
+    /**
+     * Bleibt ein berechnetes Makro ungepaart (hier zählt die Ansicht zwei, der Storage eines), fällt es auf seinen Körper
+     * zurück; dessen Erwähnung findet ihren Namen über die Kennung, zählt aber nicht für die Reihenfolge.
+     */
+    @Test
+    void mentionsInUnpairedComputedMacrosKeepTheirNameByUsername() throws Exception {
+        String storage = "<p><ac:link><ri:user ri:userkey=\"k1\" /></ac:link></p>"
+                + "<ac:structured-macro ac:name=\"my-user-macro\"><ac:rich-text-body><p>"
+                + "<ac:link><ri:user ri:username=\"anna\" /></ac:link></p></ac:rich-text-body></ac:structured-macro>";
+        String view = "<p><a class=\"user-mention\" data-username=\"k\">Klaus Kern</a></p>"
+                + "<div data-macro-name=\"my-user-macro\"><a class=\"user-mention\" data-username=\"anna\">"
+                + "Anna Schmidt</a></div><div data-macro-name=\"my-user-macro\">Zweites</div>";
+        assertThat(text(new MarkdownConverter(), input(storage, available(view))))
+                .contains("Klaus Kern", "Anna Schmidt").doesNotContain("@anna", "@k1");
+    }
+
+    @Test
+    void computedMacrosTakeTheirContentFromTheStoredReadingView() throws Exception {
+        for (ExportConverter converter : CONVERTERS) {
+            Input input = input(COMPUTED, available(COMPUTED_VIEW));
+            String text = text(converter, input);
+            assertThat(text).as(converter.format())
+                    .contains("Verzeichnis Eins", "Seite Lima", "DEV-7", "Fehler Mike", "Offen", "Ende",
+                            "Berechnet November", "Jira DEV-1")
+                    .doesNotContain("nicht unterstützt", "in Confluence berechnet", "Rohtext Kilo", "Vorgang Oscar");
+            if (converter.format().equals("md")) {
+                // Die Jira-Abfrage wird ein eigener Block (Tabelle), der Absatz teilt sich um sie
+                assertThat(text).contains("| DEV-7 | Fehler Mike |").doesNotContain("Offen: Jira");
+            }
+            // Das Bild des unbekannten Makros geht den Weg der Bilder aus der Ansicht
+            assertThat(input.reported()).as(converter.format()).containsExactly(new ConversionNotice("100",
+                    Kind.MISSING_IMAGE, "https://wiki.example/download/attachments/100/bild.png", "not-collected"));
+        }
+    }
+
+    @Test
+    void computedMacrosWithoutAReadingViewKeepTheirHintsAsBefore() throws Exception {
+        for (ExportConverter converter : CONVERTERS) {
+            Input restricted = input(COMPUTED, Optional.of(ExportReadingView.without("100", "1", Status.RESTRICTED,
+                    "foreign-content")));
+            assertThat(text(converter, restricted)).as(converter.format())
+                    .contains("„toc“ wird in Confluence berechnet", "„contentbylabel“ wird in Confluence berechnet",
+                            "„my-user-macro“ nicht unterstützt", "Rohtext Kilo", "Jira DEV-1")
+                    .doesNotContain("Verzeichnis Eins", "Fehler Mike", "Berechnet November");
+            assertThat(restricted.reported()).as(converter.format()).isEmpty();
+        }
+    }
+
+    @Test
+    void aDifferentNumberOfMacrosInTheViewIsReportedAsCountMismatch() throws Exception {
+        String twoTocs = COMPUTED.replace("<h1>Kapitel Eins</h1>",
+                "<h1>Kapitel Eins</h1><ac:structured-macro ac:name=\"toc\" />");
+        String withoutLabels = COMPUTED_VIEW.replace(" data-macro-name=\"contentbylabel\"", "");
+        for (ExportConverter converter : CONVERTERS) {
+            Input input = input(twoTocs, available(withoutLabels));
+            assertThat(text(converter, input)).as(converter.format())
+                    .contains("„toc“ wird in Confluence berechnet", "„contentbylabel“ wird in Confluence berechnet",
+                            "Fehler Mike", "Berechnet November")
+                    .doesNotContain("Verzeichnis Eins");
+            assertThat(input.reported()).as(converter.format()).containsExactly(
+                    new ConversionNotice("100", Kind.OMITTED_CONTENT, "toc", "view-count-mismatch"),
+                    new ConversionNotice("100", Kind.OMITTED_CONTENT, "toc", "view-count-mismatch"),
+                    new ConversionNotice("100", Kind.OMITTED_CONTENT, "contentbylabel", "not-rendered"),
+                    new ConversionNotice("100", Kind.MISSING_IMAGE,
+                            "https://wiki.example/download/attachments/100/bild.png", "not-collected"));
+        }
     }
 }

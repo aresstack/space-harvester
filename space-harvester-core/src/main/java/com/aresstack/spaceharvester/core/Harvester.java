@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -20,6 +21,7 @@ import com.aresstack.spaceharvester.application.configuration.ConfigurationManag
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
+import com.aresstack.spaceharvester.application.configuration.NetworkSettings;
 import com.aresstack.spaceharvester.application.configuration.Swappable;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.convert.ExportConverters;
@@ -61,6 +63,7 @@ import com.aresstack.spaceharvester.application.passages.OpenNlpSentenceSegmente
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 import com.aresstack.spaceharvester.application.passages.PassageQueries;
 import com.aresstack.spaceharvester.application.passages.PassageSnippets;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
@@ -112,6 +115,7 @@ import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.application.terms.TermQueries;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.output.convert.AnalysisConverter;
 import com.aresstack.spaceharvester.output.convert.DocxConverter;
 import com.aresstack.spaceharvester.output.convert.JsonArrayConverter;
@@ -148,6 +152,7 @@ import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
+import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.images.ImageProcessor;
@@ -248,6 +253,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFacts facts;
     private final TermRelations termRelations;
     private final AcronymRelationRule acronymRelationRule;
+    private final AcronymResolution acronymResolution;
     private final FactEdits factEdits;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
@@ -263,6 +269,8 @@ public final class Harvester implements AutoCloseable {
     private final SourceManagement sourceManagement;
     private final TrustBundles trustBundles;
     private final String userAgent;
+    /** Ob Proxy und Vertrauen ohne Bundle der Konfiguration folgen ({@code network.*}, ADR 0015). */
+    private final boolean networkFollows;
     /** Die wirksame Konfiguration, wenn der Builder einen {@link ConfigurationManager} bekam (ADR 0015). */
     private volatile HarvesterConfiguration settings;
     /** Austauschbares Embedding-Modell; {@code null}, wenn es fest eingestellt ist. */
@@ -277,8 +285,11 @@ public final class Harvester implements AutoCloseable {
     private Harvester(Builder builder) {
         List<AutoCloseable> opened = new ArrayList<>();
         try {
-            TrustBundles trustBundles = TrustBundles.withDefault(builder.trustBundles,
-                    TrustPolicy.defaultTrust(builder.trust));
+            this.networkFollows = builder.configuration != null && !builder.networkFixed;
+            // Folgt das Netzwerk der Konfiguration, liest das Vertrauen ohne Bundle die Regel je Handshake.
+            TrustBundles trustBundles = networkFollows
+                    ? TrustBundles.reconfigurable(builder.trustBundles, builder.trust)
+                    : TrustBundles.withDefault(builder.trustBundles, TrustPolicy.defaultTrust(builder.trust));
             ConfiguredSourceCatalog catalog = ConfiguredSourceCatalog.of(builder.sources, builder.userAgent,
                     trustBundles, builder.proxy, builder.asyncTransport, builder.adapters(),
                     builder.secretProvider);
@@ -386,6 +397,7 @@ public final class Harvester implements AutoCloseable {
                             builder.userAgent);
             processors.add(new ImageProcessor(() -> describer));
             Predicate<String> statementsReleased = null;
+            StatementProcessor statementProcessor = null;
             if (builder.statements.enabled()) {
                 // #108: Satzanalyse über das Chat-Modell (ai.chat-model) der wirksamen Konfiguration, zusätzlich zu
                 // entities/activities/relations, im Hintergrund und nur für Quellen in external-processing-sources.
@@ -393,7 +405,8 @@ public final class Harvester implements AutoCloseable {
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
                 statementsReleased = chats.mayProcessExternally();
-                processors.add(new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased));
+                statementProcessor = new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased);
+                processors.add(statementProcessor);
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
@@ -420,6 +433,14 @@ public final class Harvester implements AutoCloseable {
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                         cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
+                // Was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach, gleicht der Start
+                // einmal ab, im selben Hintergrund und ohne den Start aufzuhalten; mit Satzanalyse auch nur mit
+                // Chat-Modell.
+                StatementProcessor statementsOnStart = statementProcessor;
+                recomputation.reconcileOnStart(catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                        () -> embeddings != null && embeddings.available()
+                                || statementsOnStart != null && statementsOnStart.available(),
+                        PassagePayload.REASON_NOT_APPROVED);
                 this.releaseRecomputation = recomputation;
             } else {
                 this.releaseRecomputation = null;
@@ -465,6 +486,11 @@ public final class Harvester implements AutoCloseable {
                     cache::findHeader, clock);
             this.acronymRelationRule = new AcronymRelationRule(catalog, enrichmentStore, access, cache::findHeader,
                     termRelations, new TermProcessor().version(), clock);
+            // #122: KI-Akronymauflösung über das Chat-Modell der wirksamen Konfiguration, nur für freigegebene Quellen.
+            this.acronymResolution = new AcronymResolution(catalog, enrichmentStore, access, cache::findHeader,
+                    key -> cache.find(key).flatMap(projector::project), termRelations,
+                    new ChatAcronymExpansionModel(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
+                            builder.userAgent), jobs, new TermProcessor().version(), clock);
             // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
             // endet, wenn sie zu ist.
             // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
@@ -579,7 +605,8 @@ public final class Harvester implements AutoCloseable {
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared(), textIndex);
+                    TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
+                            builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT));
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
@@ -677,10 +704,15 @@ public final class Harvester implements AutoCloseable {
     /**
      * Bereitet einen Wechsel der Konfiguration vor (ADR 0015): baut Embedding-Modell, Reranker und Zeitplan neu, wo
      * sich etwas geändert hat, und tauscht erst beim Aktivieren. Regeln je Quelle (Aktualität, Frist, Betriebsart)
-     * liest jeder Abruf und jeder Lauf aus der dann wirksamen Konfiguration; laufende Aufträge enden mit ihren.
+     * liest jeder Abruf und jeder Lauf aus der dann wirksamen Konfiguration; laufende Aufträge enden mit ihren. Proxy
+     * und Vertrauen ohne Bundle ({@code network.*}) prüft sie hier und stellt der Katalog beim Aktivieren um.
      */
     private ConfigurationListener.Preparation prepare(ConfigurationChange change) {
         HarvesterConfiguration next = change.next();
+        NetworkSettings network = networkFollows && change.networkChanged() ? next.network() : null;
+        if (network != null && !network.problems().isEmpty()) {
+            throw new ConfigurationRejectedException(network.problems());
+        }
         List<ConfiguredSchedule> planned = change.syncChanged() ? plannedSchedules(next, true) : null;
         EmbeddingGeneration model = null;
         if (embeddingModel != null && change.embeddingChanged()) {
@@ -707,6 +739,10 @@ public final class Harvester implements AutoCloseable {
                 ? ConfigurationListener.Preparation.NOTHING : releaseRecomputation.prepare(change);
         return () -> {
             settings = next;
+            if (network != null) {
+                // Vor dem Austausch der Modelle; die schon gebauten halten Route und Vertrauen über den Katalog.
+                catalog.reconfigure(network);
+            }
             if (backgroundFill != null && fillFollows) {
                 // Regeln je Quelle liest die Füllung beim Einreihen und Laden; wake() sucht danach neu im Katalog.
                 backgroundFill.enabled(next.sync().backgroundFillAnywhere());
@@ -943,6 +979,11 @@ public final class Harvester implements AutoCloseable {
     /** Regelvorschläge aus den Akronym-Ausschreibungen des Begriffsindex, je Quelle ({@code sync}). */
     public AcronymRelationRule acronymRelationRule() {
         return acronymRelationRule;
+    }
+
+    /** KI-Akronymauflösung als Vorschlagslauf je Quelle (#122). */
+    public AcronymResolution acronymResolution() {
+        return acronymResolution;
     }
 
     /** Titel- und Metadatensuche im Index (Bestand); für die Suche über Titel und Inhalt {@link #keywordSearch()}. */
@@ -1463,7 +1504,9 @@ public final class Harvester implements AutoCloseable {
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
-        private long maxAssetBytes = 50L * 1024 * 1024;
+        private long maxAssetBytes = 100L * 1024 * 1024;
+        private long largeAssetThresholdBytes = LargeFileGate.DEFAULT_THRESHOLD_BYTES;
+        private int maxConcurrentLargeAssets = LargeFileGate.DEFAULT_MAX_CONCURRENT;
         private Duration signInWait = Duration.ZERO;
         private boolean changeEvents;
         private final Map<String, char[]> webhookSecrets = new HashMap<>();
@@ -1480,6 +1523,7 @@ public final class Harvester implements AutoCloseable {
         private SearchReranker reranker = SearchReranker.NONE;
         private ConfigurationManager configuration;
         private boolean aiFixed;
+        private boolean networkFixed;
         private boolean freshnessFixed;
         private boolean retentionFixed;
 
@@ -1499,7 +1543,11 @@ public final class Harvester implements AutoCloseable {
          *     {@code embedding}, {@code passages} und {@code navigation} im Hintergrund neu, mit bzw. ohne Modell;</li>
          *     <li>Zeitplan aus {@code sync.spaces} mit Abstand und Betriebsart je Quelle; eigene Einplanungen über
          *     {@link Harvester#reconcile} bleiben;</li>
-         *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach.</li>
+         *     <li>beim Bauen holt jede Quelle mit {@code catch-up-on-start} ihre bestätigten Spaces nach;</li>
+         *     <li>Proxy und Vertrauen ohne Bundle ({@code network.*}): neue Verbindungen nehmen die neue Route und
+         *     prüfen nach dem neuen Vertrauen, der PAC-Cache wird verworfen, alle Quellen öffnen neu (Trust-Bundles und
+         *     Client-Zertifikate neu gelesen). Das gilt nur, solange weder {@link #proxy} noch {@link #trust} gesetzt
+         *     ist, gleich ob vor oder nach diesem Aufruf; dann bleibt das Netzwerk fest.</li>
          * </ul>
          * Was nach diesem Aufruf mit {@link #ai}, {@link #cacheFreshness}, {@link #withheldRetention},
          * {@link #embeddings} oder {@link #reranker} fest eingestellt wird, bleibt fest und folgt der Konfiguration
@@ -1509,6 +1557,10 @@ public final class Harvester implements AutoCloseable {
             this.configuration = Objects.requireNonNull(manager, "manager");
             HarvesterConfiguration current = manager.current().configuration();
             this.ai = current.ai();
+            if (!networkFixed) {
+                this.proxy = current.network().proxy();
+                this.trust = current.network().trust();
+            }
             this.cacheFreshness = current.search().cacheFreshness();
             this.withheldRetention = current.sync().withheldRetention();
             this.prefetchSearchHits = current.search().prefetchHits();
@@ -1644,9 +1696,33 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Größte einzelne Datei, die als Asset abgelegt wird; Standard 50 MiB wie im Server. */
+        /**
+         * Größte einzelne Datei, die als Asset abgelegt wird; Standard 100 MiB wie im Server und wie
+         * {@code READER_MAX_BYTES} im Enterprise AI Client.
+         */
         public Builder maxAssetBytes(long maxAssetBytes) {
             this.maxAssetBytes = maxAssetBytes;
+            return this;
+        }
+
+        /**
+         * Ab welcher Größe (ausschließlich) eine Datei als groß gilt und unter die gemeinsame Schranke fällt
+         * ({@link LargeFileGate}); Standard 20 MiB.
+         */
+        public Builder largeAssetThresholdBytes(long largeAssetThresholdBytes) {
+            if (largeAssetThresholdBytes < 0) {
+                throw new IllegalArgumentException("largeAssetThresholdBytes darf nicht negativ sein");
+            }
+            this.largeAssetThresholdBytes = largeAssetThresholdBytes;
+            return this;
+        }
+
+        /** Wie viele große Dateien höchstens gleichzeitig verarbeitet werden ({@link LargeFileGate}); Standard 2. */
+        public Builder maxConcurrentLargeAssets(int maxConcurrentLargeAssets) {
+            if (maxConcurrentLargeAssets < 1) {
+                throw new IllegalArgumentException("maxConcurrentLargeAssets muss positiv sein");
+            }
+            this.maxConcurrentLargeAssets = maxConcurrentLargeAssets;
             return this;
         }
 
@@ -1732,9 +1808,13 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Proxy und PAC wie {@code space-harvester.network.proxy}; Standard ohne Proxy. */
+        /**
+         * Proxy und PAC wie {@code space-harvester.network.proxy}; Standard ohne Proxy. Gesetzt bleibt das Netzwerk
+         * fest und folgt {@link #configuration} nicht.
+         */
         public Builder proxy(ProxySettings proxy) {
             this.proxy = Objects.requireNonNull(proxy, "proxy");
+            this.networkFixed = true;
             return this;
         }
 
@@ -1747,7 +1827,7 @@ public final class Harvester implements AutoCloseable {
         /**
          * Vertrauen für Quellen und KI-Dienst ohne eigenes {@code trust-bundle} wie {@code space-harvester.network.tls}
          * (#189); Standard nur der JVM-Truststore. Die Windows-Speicher werden erst bei der ersten TLS-Verbindung
-         * gelesen.
+         * gelesen. Gesetzt bleibt das Netzwerk fest und folgt {@link #configuration} nicht.
          *
          * @throws IllegalArgumentException mit den Problemen, etwa einer unlesbaren CA-Datei
          */
@@ -1758,6 +1838,7 @@ public final class Harvester implements AutoCloseable {
                 throw new IllegalArgumentException(String.join("; ", problems));
             }
             this.trust = trust;
+            this.networkFixed = true;
             return this;
         }
 

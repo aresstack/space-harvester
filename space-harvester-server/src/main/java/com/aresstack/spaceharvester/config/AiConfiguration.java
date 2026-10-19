@@ -15,18 +15,22 @@ import com.aresstack.spaceharvester.application.enrichment.statements.StatementS
 import com.aresstack.spaceharvester.application.enrichment.embedding.TextSegmentation;
 import com.aresstack.spaceharvester.application.passages.NavigationProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageChunks;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 import com.aresstack.spaceharvester.application.passages.PassageProcessor;
 import com.aresstack.spaceharvester.application.passages.PassageSegmentation;
 import com.aresstack.spaceharvester.application.passages.SentenceSegmenter;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.terms.AcronymExpansionModel;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
+import com.aresstack.spaceharvester.source.SourceSettingsConfig;
 import com.aresstack.spaceharvester.source.TrustBundles;
 import com.aresstack.spaceharvester.source.ai.RemoteAi;
 import com.aresstack.spaceharvester.source.ai.StatementChatModels;
+import com.aresstack.spaceharvester.source.ai.ChatAcronymExpansionModel;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
@@ -201,6 +205,17 @@ class AiConfiguration {
         return new ChatNavigationLabeler(() -> live.current().ai(), catalog, trust, userAgent(build));
     }
 
+    /**
+     * Akronymauflösung über das Chat-Modell (#122): folgt {@code ai.chat-model}, {@code base-url} und
+     * {@code external-processing-sources} der wirksamen Konfiguration; ohne Modell antwortet
+     * {@code POST /api/v1/term-relations/refresh} mit {@code ai-unavailable}.
+     */
+    @Bean
+    AcronymExpansionModel acronymExpansions(ConfiguredSourceCatalog catalog, TrustBundles trust,
+                                            ObjectProvider<BuildProperties> build, LiveConfiguration live) {
+        return new ChatAcronymExpansionModel(() -> live.current().ai(), catalog, trust, userAgent(build));
+    }
+
     /** Hintergrund für das Nachladen neuerer Versionen von Relevanztreffern (ADR 0011, Punkt 7). */
     @Bean(destroyMethod = "shutdownNow")
     @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
@@ -273,5 +288,28 @@ class AiConfiguration {
                 released, processorIds);
         live.listen(recomputation);
         return recomputation;
+    }
+
+    /**
+     * Gleicht beim Start einmal ab, was die Freigabe verpasste, während der Dienst nicht lief oder ein Lauf abbrach:
+     * Seiten, deren gespeicherte Ergebnisse nicht zur Freigabe passen, rechnen im Hintergrund der Neuberechnung neu,
+     * ohne den Start aufzuhalten.
+     */
+    @Bean
+    @ConditionalOnExpression("'${space-harvester.ai.embedding-model:}' != '' "
+            + "or '${space-harvester.enrichment.statements.enabled:false}' == 'true'")
+    org.springframework.context.ApplicationListener<org.springframework.boot.context.event.ApplicationReadyEvent>
+            releaseReconciliationOnStart(ReleaseRecomputation recomputation,
+                                         ObjectProvider<EmbeddingProcessor> embedding,
+                                         ObjectProvider<StatementProcessor> statements,
+                                         ConfiguredSourceCatalog catalog) {
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        StatementProcessor statementProcessor = statements.getIfAvailable();
+        // Mit Satzanalyse (#108) auch nur mit Chat-Modell.
+        return event -> recomputation.reconcileOnStart(
+                catalog.configs().stream().map(SourceSettingsConfig::id).toList(),
+                () -> embeddings != null && embeddings.available()
+                        || statementProcessor != null && statementProcessor.available(),
+                PassagePayload.REASON_NOT_APPROVED);
     }
 }

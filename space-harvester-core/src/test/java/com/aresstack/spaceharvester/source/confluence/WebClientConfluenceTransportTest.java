@@ -358,6 +358,27 @@ class WebClientConfluenceTransportTest {
     }
 
     @Test
+    void aRequestInFlightEndsNormallyWhenClientsAreDiscardedOrTheTransportClosesGracefully() throws Exception {
+        WebClientConfluenceTransport transport = transport();
+        CompletableFuture<ConfluenceHttpResponse> running =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 1);
+
+        transport.discardClients();
+        assertThat(transport.clientCount()).isZero();
+        CompletableFuture<ConfluenceHttpResponse> second =
+                transport.getAsync(base.resolve("/slow"), HEADERS, 1024).toCompletableFuture();
+        waitFor(() -> requests.get() == 2);
+        transport.closeGracefully();
+
+        release.countDown();
+        assertThat(running.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(second.get(5, TimeUnit.SECONDS).status()).isEqualTo(200);
+        assertThat(failure(transport.getAsync(base.resolve("/status/200"), HEADERS, 1024)))
+                .isInstanceOf(IOException.class).hasMessageContaining("geschlossen");
+    }
+
+    @Test
     void invalidLimitsAreRejected() {
         assertThatThrownBy(() -> WebClientConfluenceTransport.builder().maxConnections(0))
                 .isInstanceOf(IllegalArgumentException.class);

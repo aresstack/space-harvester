@@ -146,6 +146,56 @@ class HarvesterReleaseChangeTest {
         }
     }
 
+    @Test
+    void aRevocationWhileStoppedTakesEffectAtTheNextStartWithoutTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung mit Modell");
+        }
+        calls.set(0);
+
+        // Entzug, während der Dienst nicht läuft: Der Start gleicht aus den gespeicherten Ergebnissen ab.
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id)
+                    && withoutEmbedding(harvester, id) && navigationNotApproved(harvester, id)), "Rückfall beim Start");
+            assertThat(calls).hasValue(0);
+        }
+    }
+
+    @Test
+    void aReleaseWhileStoppedTakesEffectAtTheNextStartWithTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> notApproved(harvester, id)), "Absätze nach Struktur");
+        }
+        assertThat(calls).hasValue(0);
+
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung beim Start");
+            assertThat(calls.get()).isGreaterThanOrEqualTo(PAGES.size());
+        }
+    }
+
+    @Test
+    void atTheStartOnlyPagesThatDoNotFitTheReleaseCallTheModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            load(harvester);
+            awaitTrue(() -> PAGES.stream().allMatch(id -> withModel(harvester, id)), "Anreicherung mit Modell");
+            // Wie ein abgebrochener Lauf: einer Seite fehlt das Embedding.
+            harvester.enrichments().store().remove(new PageKey("wiki", PAGES.getLast()), "embedding");
+        }
+        calls.set(0);
+        calledPages.clear();
+
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            // Der Abgleich geht die Seiten in ihrer Reihenfolge durch; ist die letzte neu gerechnet, ist über die
+            // anderen entschieden.
+            awaitTrue(() -> withModel(harvester, PAGES.getLast()), "Neuberechnung der unvollständigen Seite");
+            assertThat(calledPages).isNotEmpty().containsOnly(PAGES.getLast());
+            assertThat(PAGES).allMatch(id -> withModel(harvester, id));
+        }
+    }
+
     private Harvester harvester(ConfigurationManager manager) {
         return Harvester.builder().source(wiki()).dataDirectory(data).configuration(manager).build();
     }

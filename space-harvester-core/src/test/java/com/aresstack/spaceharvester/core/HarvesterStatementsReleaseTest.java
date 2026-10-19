@@ -105,6 +105,29 @@ class HarvesterStatementsReleaseTest {
         }
     }
 
+    @Test
+    void aReleaseWhileStoppedIsReconciledOnStartWithOnlyAChatModel() throws InterruptedException {
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            for (String id : PAGES) {
+                harvester.pages().page(harvester.caller(), "wiki", id, false);
+            }
+            harvester.enrichments().flush();
+            assertThat(PAGES).noneMatch(id -> statements(harvester, id));
+        }
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of("wiki"))))) {
+            awaitTrue(() -> PAGES.stream().allMatch(id -> statements(harvester, id)), "Satzanalyse nach dem Start");
+        }
+        try (Harvester harvester = harvester(new ConfigurationManager(configuration(Set.of())))) {
+            awaitTrue(() -> PAGES.stream().noneMatch(id -> statements(harvester, id)), "Entzug beim Start");
+        }
+    }
+
+    private Harvester harvester(ConfigurationManager manager) {
+        return Harvester.builder().source(wiki()).dataDirectory(data).configuration(manager)
+                .statements(new StatementSettings(true, false, StatementSettings.DEFAULT_MAX_PARAGRAPHS,
+                        StatementSettings.DEFAULT_MAX_PARAGRAPH_CHARS)).build();
+    }
+
     private static SourceSettingsConfig wiki() {
         return new SourceSettingsConfig("wiki", "confluence", "Wiki", SERVER.baseUrl(),
                 new SourceSettingsConfig.Auth(SourceSettingsConfig.AuthType.PAT, null, null, "token"),

@@ -89,6 +89,11 @@ public final class AsyncSnapshotTransports implements AutoCloseable {
         return transports.size();
     }
 
+    /** Verwirft die Clients aller gebauten Transporte ({@link WebClientConfluenceTransport#discardClients()}). */
+    public void discardClients() {
+        transports.forEach(WebClientConfluenceTransport::discardClients);
+    }
+
     @Override
     public void close() {
         transports.forEach(WebClientConfluenceTransport::close);

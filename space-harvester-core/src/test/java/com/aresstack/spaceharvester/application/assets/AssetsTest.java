@@ -54,6 +54,11 @@ class AssetsTest {
     }
 
     private Assets assets(long maxBytes, ImageDescriber imageDescriber, DocumentText documents) {
+        return assets(maxBytes, imageDescriber, documents, LargeFileGate.defaults());
+    }
+
+    private Assets assets(long maxBytes, ImageDescriber imageDescriber, DocumentText documents,
+                          LargeFileGate gate) {
         SourceCatalog catalog = new SourceCatalog() {
             @Override
             public List<HarvestSource> all() {
@@ -66,7 +71,7 @@ class AssetsTest {
             }
         };
         return new Assets(catalog, new FileSystemAssetStore(directory), maxBytes, Clock.fixed(NOW, ZoneOffset.UTC),
-                imageDescriber, documents);
+                imageDescriber, documents, null, gate);
     }
 
     @Test
@@ -277,6 +282,75 @@ class AssetsTest {
                 .isInstanceOf(AssetTooLargeException.class);
         assertThat(assets.overview(list(attachment("att1", "a", "text/plain", "1"))).entries().get(0).stored())
                 .isNull();
+    }
+
+    @Test
+    void aDeclaredSizeAboveTheConfiguredLimitIsRefusedWithoutDownload() {
+        Assets assets = assets(3);
+        source.file("att1", "1", "vier");
+        PageAttachment declared = new PageAttachment("att1", "test:wiki/attachment/att1", "a", "text/plain", 4L, "1",
+                null, null);
+
+        assertThat(assets.harvest(list(declared)).entries().get(0).code()).isEqualTo("asset-too-large");
+        assertThatThrownBy(() -> assets.content(list(declared), "att1")).isInstanceOf(AssetTooLargeException.class);
+        assertThat(source.downloads).as("die angegebene Größe genügt").isZero();
+    }
+
+    @Test
+    void aThirdLargeFileWaitsAtTheGateAndFailsTransientlyWhileTwoAreHeld() throws Exception {
+        LargeFileGate gate = new LargeFileGate(4, 2, java.time.Duration.ofMillis(200));
+        Assets assets = assets(1000, null, null, gate);
+        source.file("att1", "1", "gross-1");
+        source.file("att2", "1", "ok");
+        PageAttachment unknownSize = attachment("att1", "a.txt", "text/plain", "1");
+        PageAttachment small = new PageAttachment("att2", "test:wiki/attachment/att2", "b.txt", "text/plain", 2L,
+                "1", null, null);
+        CountDownLatch held = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 2; i++) {
+                pool.submit(() -> {
+                    try (LargeFileGate.Permit permit = gate.enter("wiki", 5L)) {
+                        held.countDown();
+                        release.await(5, TimeUnit.SECONDS);
+                    }
+                    return null;
+                });
+            }
+            assertThat(held.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Unbekannte Größe zählt als groß: wartet, scheitert vorübergehend und lädt nichts.
+            assertThatThrownBy(() -> assets.content(list(unknownSize), "att1"))
+                    .isInstanceOfSatisfying(SourceAccessException.class,
+                            e -> assertThat(e.reason()).isEqualTo(SourceAccessException.Reason.RATE_LIMITED));
+            assertThat(source.downloads).isZero();
+            AssetHarvest harvest = assets.harvest(list(unknownSize));
+            assertThat(harvest.entries().get(0).status()).isEqualTo(AssetHarvest.Status.FAILED);
+            assertThat(harvest.entries().get(0).code()).isEqualTo("source-rate-limited");
+            assertThat(assets.overview(list(unknownSize)).entries().get(0).stored()).isNull();
+            // Kleine Dateien laufen an der Schranke vorbei.
+            assertThat(assets.content(list(small), "att2").content()).isEqualTo("ok".getBytes(StandardCharsets.UTF_8));
+        } finally {
+            release.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+
+        // Freigegeben: dieselbe Datei wird jetzt abgelegt, nichts ist dauerhaft als defekt gemerkt.
+        assertThat(assets.harvest(list(unknownSize)).entries().get(0).status()).isEqualTo(AssetHarvest.Status.STORED);
+    }
+
+    @Test
+    void nestedUseOfTheGateInOneThreadTakesOnlyOnePlace() {
+        LargeFileGate gate = new LargeFileGate(0, 1, java.time.Duration.ZERO);
+        try (LargeFileGate.Permit outer = gate.enter("wiki", 10L);
+             LargeFileGate.Permit inner = gate.enter("wiki", 10L)) {
+            assertThat(gate.large(10L)).isTrue();
+        }
+        try (LargeFileGate.Permit again = gate.enter("wiki", 10L)) {
+            assertThat(gate.large(0L)).isFalse();
+        }
     }
 
     @Test

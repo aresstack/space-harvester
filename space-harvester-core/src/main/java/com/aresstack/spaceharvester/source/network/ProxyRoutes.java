@@ -50,6 +50,8 @@ import org.slf4j.LoggerFactory;
  *   <li>Jede Auflösung läuft auf einem eigenen Pool von höchstens {@value #MAX_RESOLVER_THREADS} Threads mit der Frist
  *       {@link ProxySettings#resolveTimeout()}; ist der Pool voll oder die Frist überschritten, ist die Route
  *       UNAVAILABLE. Die erste Auflösung geschieht bei der ersten Anfrage, nie beim Start.</li>
+ *   <li>{@link #reconfigure} stellt Einstellungen und Resolver zur Laufzeit um (ADR 0015) und verwirft alle gemerkten
+ *       Routen; wer diese Instanz hält, bekommt beim nächsten Verbindungsaufbau die neue Route.</li>
  * </ul>
  */
 public final class ProxyRoutes implements HttpRoutePort {
@@ -73,8 +75,8 @@ public final class ProxyRoutes implements HttpRoutePort {
     private static final Logger LOG = LoggerFactory.getLogger(ProxyRoutes.class);
     private static final AtomicInteger THREADS = new AtomicInteger();
 
-    private final ProxySettings settings;
-    private final Resolver resolver;
+    /** Einstellungen und Resolver; {@link #reconfigure} ersetzt beide zusammen unter der Sperre des Caches. */
+    private volatile State state;
     private final LongSupplier clock;
     private final ThreadPoolExecutor pool;
     private final Map<String, Entry> cache = new LinkedHashMap<>(16, 0.75f, true) {
@@ -85,8 +87,7 @@ public final class ProxyRoutes implements HttpRoutePort {
     };
 
     private ProxyRoutes(ProxySettings settings, Resolver resolver, LongSupplier clock) {
-        this.settings = settings;
-        this.resolver = resolver;
+        this.state = new State(settings, resolver);
         this.clock = clock;
         this.pool = new ThreadPoolExecutor(0, MAX_RESOLVER_THREADS, 30, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(64), runnable -> {
@@ -102,12 +103,48 @@ public final class ProxyRoutes implements HttpRoutePort {
      * @throws InvalidNetworkConfigurationException mit allen gefundenen Problemen
      */
     public static ProxyRoutes from(ProxySettings settings) {
-        List<String> problems = validationProblems(settings, isWindows());
+        return create(settings, library(settings), System::currentTimeMillis);
+    }
+
+    /**
+     * Probleme der Einstellungen auf diesem System, leer wenn {@link #from} und {@link #reconfigure} sie annehmen; ohne
+     * etwas aufzulösen.
+     */
+    public static List<String> problems(ProxySettings settings) {
+        return validationProblems(settings, isWindows());
+    }
+
+    /**
+     * Stellt auf neue Einstellungen um (ADR 0015): prüft sie, baut den Resolver der Bibliothek neu und verwirft alle
+     * gemerkten Routen samt PAC-Ergebnissen. Laufende Auflösungen enden mit den bisherigen Einstellungen, ihr Ergebnis
+     * wird nicht mehr gemerkt; die nächste Anfrage löst neu auf. Eine nicht bestimmbare Route bleibt UNAVAILABLE.
+     *
+     * @throws InvalidNetworkConfigurationException mit allen gefundenen Problemen; dann bleibt alles unverändert
+     */
+    public void reconfigure(ProxySettings settings) {
+        reconfigure(settings, library(settings));
+    }
+
+    /** Wie {@link #reconfigure(ProxySettings)} mit eigenem Resolver, ohne Prüfung der Einstellungen (Tests). */
+    void reconfigure(ProxySettings settings, Resolver resolver) {
+        if (settings == null || resolver == null) {
+            throw new IllegalArgumentException("settings and resolver must not be null");
+        }
+        synchronized (cache) {
+            state = new State(settings, resolver);
+            cache.clear();
+        }
+        LOG.info("Proxy-Route umgestellt, Modus {}", modeName(settings.mode()));
+    }
+
+    /** Prüft die Einstellungen und baut den Resolver der Bibliothek. */
+    private static Resolver library(ProxySettings settings) {
+        List<String> problems = problems(settings);
         if (!problems.isEmpty()) {
             throw new InvalidNetworkConfigurationException(problems);
         }
         WindowsProxyResolver library = new WindowsProxyResolver(libraryConfiguration(settings));
-        return create(settings, new Resolver() {
+        return new Resolver() {
             @Override
             public ProxyResult resolve(String url) {
                 return library.resolve(url);
@@ -117,7 +154,7 @@ public final class ProxyRoutes implements HttpRoutePort {
             public ProxyDiagnostics diagnose(String url) {
                 return library.diagnose(url);
             }
-        }, System::currentTimeMillis);
+        };
     }
 
     /** Mit eigenem Resolver und eigener Zeitquelle, ohne Prüfung der Einstellungen (Tests). */
@@ -225,23 +262,28 @@ public final class ProxyRoutes implements HttpRoutePort {
         if (target == null) {
             throw new IllegalArgumentException("target must not be null");
         }
-        HttpRoute fixed = fixedRoute(target.getHost());
+        State current = state;
+        ProxySettings settings = current.settings();
+        HttpRoute fixed = fixedRoute(settings, target.getHost());
         if (fixed != null) {
             return fixed;
         }
         String url = resolutionUrl(target);
         long now = clock.getAsLong();
         synchronized (cache) {
-            Entry cached = cache.get(url);
+            Entry cached = state == current ? cache.get(url) : null;
             if (cached != null && cached.expiresAt > now) {
                 return cached.route;
             }
         }
-        HttpRoute route = resolve(url);
+        HttpRoute route = resolve(current, url);
         String shown = displayUrl(url);
         long ttl = (route.isUnavailable() ? settings.failureTtl() : settings.cacheTtl()).toMillis();
         synchronized (cache) {
-            cache.put(url, new Entry(route, now + ttl));
+            // Nach einem Wechsel nie die Route der alten Einstellungen merken.
+            if (state == current) {
+                cache.put(url, new Entry(route, now + ttl));
+            }
         }
         if (route.isUnavailable()) {
             LOG.warn("Proxy-Route für {} ({}) nicht bestimmbar: {}", shown, modeName(settings.mode()), route.describe());
@@ -263,31 +305,33 @@ public final class ProxyRoutes implements HttpRoutePort {
      * Zeile, zuletzt {@code Result: ...}. Für Betrieb und Fehlersuche, siehe {@link ProxyDiagnosticsMain}.
      */
     public List<String> diagnose(URI target) {
+        State current = state;
+        ProxySettings settings = current.settings();
         List<String> lines = new ArrayList<>();
         String url = resolutionUrl(target);
         lines.add("Resolving " + displayUrl(url) + " ...");
         lines.add("Mode: " + modeName(settings.mode()));
-        HttpRoute fixed = fixedRoute(target.getHost());
+        HttpRoute fixed = fixedRoute(settings, target.getHost());
         if (fixed != null) {
             lines.add("Result: " + fixed.describe());
             return lines;
         }
         HttpRoute route;
         try {
-            ProxyDiagnostics diagnostics = withTimeout(() -> resolver.diagnose(url));
-            diagnostics.getSteps().forEach(step -> lines.add("- " + scrub(step, url)));
+            ProxyDiagnostics diagnostics = withTimeout(settings, () -> current.resolver().diagnose(url));
+            diagnostics.getSteps().forEach(step -> lines.add("- " + scrub(settings, step, url)));
             if (diagnostics.getFailureDetail() != null && !diagnostics.getFailureDetail().isEmpty()) {
-                lines.add("Failure: " + scrub(diagnostics.getFailureDetail(), url));
+                lines.add("Failure: " + scrub(settings, diagnostics.getFailureDetail(), url));
             }
-            route = scrub(toRoute(diagnostics.getResult()), url);
+            route = scrub(settings, toRoute(diagnostics.getResult()), url);
             lines.add("Result: " + route.describe() + " [" + diagnostics.getDurationMillis() + " ms]");
             return lines;
         } catch (TimeoutException e) {
-            route = HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail());
+            route = HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail(settings));
         } catch (RejectedExecutionException e) {
             route = HttpRoute.unavailable(REASON_BUSY, busyDetail());
         } catch (Exception e) {
-            route = HttpRoute.unavailable(REASON_RESOLVER_FAILED, scrub(failureDetail(e), url));
+            route = HttpRoute.unavailable(REASON_RESOLVER_FAILED, scrub(settings, failureDetail(e), url));
         }
         lines.add("Result: " + route.describe());
         return lines;
@@ -295,6 +339,7 @@ public final class ProxyRoutes implements HttpRoutePort {
 
     /** Konfiguration in einer Zeile für das Startprotokoll, ohne etwas aufzulösen. */
     public String describe() {
+        ProxySettings settings = state.settings();
         StringBuilder text = new StringBuilder(modeName(settings.mode()));
         switch (settings.mode()) {
             case MANUAL_PROXY -> text.append(' ').append(settings.proxyHost()).append(':').append(settings.proxyPort());
@@ -320,11 +365,11 @@ public final class ProxyRoutes implements HttpRoutePort {
         return "ProxyRoutes[" + describe() + "]";
     }
 
-    private HttpRoute fixedRoute(String host) {
+    private static HttpRoute fixedRoute(ProxySettings settings, String host) {
         if (isLoopback(host)) {
             return HttpRoute.direct(REASON_LOOPBACK);
         }
-        if (matchesNonProxyHost(host)) {
+        if (matchesNonProxyHost(settings, host)) {
             return HttpRoute.direct(REASON_NON_PROXY_HOST);
         }
         if (settings.mode() == ProxySettings.Mode.DISABLED) {
@@ -333,16 +378,17 @@ public final class ProxyRoutes implements HttpRoutePort {
         return null;
     }
 
-    private HttpRoute resolve(String url) {
+    private HttpRoute resolve(State current, String url) {
+        ProxySettings settings = current.settings();
         try {
-            return scrub(toRoute(withTimeout(() -> resolver.resolve(url))), url);
+            return scrub(settings, toRoute(withTimeout(settings, () -> current.resolver().resolve(url))), url);
         } catch (TimeoutException e) {
-            return HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail());
+            return HttpRoute.unavailable(REASON_TIMEOUT, timeoutDetail(settings));
         } catch (RejectedExecutionException e) {
             return HttpRoute.unavailable(REASON_BUSY, busyDetail());
         } catch (Exception e) {
             // Ohne Stacktrace: Ausnahmemeldungen der Bibliothek können die Ziel-URL samt Query enthalten.
-            String detail = scrub(failureDetail(e), url);
+            String detail = scrub(settings, failureDetail(e), url);
             LOG.warn("Proxy-Auflösung für {} gescheitert: {}", displayUrl(url), detail);
             return HttpRoute.unavailable(REASON_RESOLVER_FAILED, detail);
         }
@@ -364,7 +410,7 @@ public final class ProxyRoutes implements HttpRoutePort {
         };
     }
 
-    private <T> T withTimeout(Callable<T> work) throws Exception {
+    private <T> T withTimeout(ProxySettings settings, Callable<T> work) throws Exception {
         Future<T> future = pool.submit(work);
         try {
             return future.get(settings.resolveTimeout().toMillis(), TimeUnit.MILLISECONDS);
@@ -431,7 +477,7 @@ public final class ProxyRoutes implements HttpRoutePort {
     }
 
     /** Entfernt Ziel-URL und PAC-URL samt Query aus einem Text der Bibliothek. */
-    private String scrub(String text, String url) {
+    private static String scrub(ProxySettings settings, String text, String url) {
         if (text == null || text.isEmpty()) {
             return text == null ? "" : text;
         }
@@ -455,14 +501,14 @@ public final class ProxyRoutes implements HttpRoutePort {
         return result;
     }
 
-    private HttpRoute scrub(HttpRoute route, String url) {
+    private static HttpRoute scrub(ProxySettings settings, HttpRoute route, String url) {
         if (!route.isUnavailable()) {
             return route;
         }
-        return HttpRoute.unavailable(scrub(route.reason(), url), scrub(route.detail(), url));
+        return HttpRoute.unavailable(scrub(settings, route.reason(), url), scrub(settings, route.detail(), url));
     }
 
-    private boolean matchesNonProxyHost(String host) {
+    private static boolean matchesNonProxyHost(ProxySettings settings, String host) {
         if (host == null) {
             return false;
         }
@@ -499,7 +545,7 @@ public final class ProxyRoutes implements HttpRoutePort {
         return mode.name().toLowerCase(Locale.ROOT).replace('_', '-');
     }
 
-    private String timeoutDetail() {
+    private static String timeoutDetail(ProxySettings settings) {
         return "keine Antwort der Proxy-Auflösung innerhalb von " + settings.resolveTimeout().toMillis()
                 + " ms (space-harvester.network.proxy.resolve-timeout)";
     }
@@ -518,5 +564,8 @@ public final class ProxyRoutes implements HttpRoutePort {
     }
 
     private record Entry(HttpRoute route, long expiresAt) {
+    }
+
+    private record State(ProxySettings settings, Resolver resolver) {
     }
 }

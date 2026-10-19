@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BinaryOperator;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
@@ -169,6 +170,36 @@ public final class RemoteAi {
             try {
                 return adapter.complete(new ChatRequest(
                         List.of(ChatMessage.system(instructions), ChatMessage.user(question)), options)).content();
+            } catch (ChatCompletionException e) {
+                throw chatFailure(e);
+            }
+        };
+    }
+
+    /** Obergrenze der Antwort des Chat-Modells für Akronym-Ausschreibungen in Tokens (#122). */
+    static final int MAX_EXPANSION_TOKENS = 4096;
+    /** Eigene Frist je Anfrage der Akronymauflösung, unabhängig von {@code ai.timeout} (#122). */
+    public static final Duration EXPANSION_TIMEOUT = Duration.ofSeconds(90);
+
+    /**
+     * Das Chat-Modell als Ausschreiber von Akronymen ({@code POST /chat/completions}, #122) über den unveränderten
+     * {@code OpenAiCompatibleChatAdapter}, mit eigener Frist ({@link #EXPANSION_TIMEOUT}). An den Dienst gehen nur die
+     * kurzen Fundstellen, die der Auftrag freigegebener Quellen zusammenstellt; geprüft wird die Antwort dort. Scheitert
+     * ein Aufruf, meldet das Modell {@link AiServiceException} ohne Text, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Chat-Modell
+     */
+    public BinaryOperator<String> acronymExpansions() {
+        if (!settings.chat()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Chat-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.chatModel(),
+                (int) EXPANSION_TIMEOUT.toMillis()));
+        ChatOptions options = ChatOptions.builder().temperature(0.0).maxTokens(MAX_EXPANSION_TOKENS).build();
+        return (instructions, input) -> {
+            try {
+                return adapter.complete(new ChatRequest(
+                        List.of(ChatMessage.system(instructions), ChatMessage.user(input)), options)).content();
             } catch (ChatCompletionException e) {
                 throw chatFailure(e);
             }
