@@ -50,6 +50,10 @@ class ApiRouteCoverageTest {
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
     // Das Suchlauf-Protokoll (#182) zeigt nur eigene Läufe, Fakten (#182) nur lesbarer Seiten: 200 mit leerer Liste.
     private static final String FACTS = "/api/v1/facts";
+    // Eine Passage-ID (EAC-Lücke 5) nennt ihre Quelle und Seite; ohne Freigabe wie eine unbekannte Seite (404).
+    private static final String PASSAGES = "/api/v1/passages";
+    private static final String PASSAGE_ID = java.net.URLEncoder.encode("wiki:x1@" + "0".repeat(64) + "#p0@aa-bb",
+            java.nio.charset.StandardCharsets.UTF_8);
     // Die Quellentypen (#187) sind Teil des Programms, keine Daten einer Quelle: 200 mit der Typenliste.
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
@@ -148,14 +152,16 @@ class ApiRouteCoverageTest {
                     parameter.initParameterNameDiscovery(new DefaultParameterNameDiscoverer());
                     name = parameter.getParameterName();
                 }
-                pairs.add(name + "=" + ("sourceId".equals(name) ? "wiki" : "x1"));
+                pairs.add(name + "=" + ("sourceId".equals(name) ? "wiki"
+                        : PASSAGES.equals(route.path()) && "id".equals(name) ? PASSAGE_ID : "x1"));
             }
         }
         return pairs.isEmpty() ? "" : "?" + String.join("&", pairs);
     }
 
     private static boolean takesSourceId(Route route) {
-        return route.path().contains("{sourceId}") || query(route).contains("sourceId=");
+        return route.path().contains("{sourceId}") || query(route).contains("sourceId=")
+                || PASSAGES.equals(route.path());
     }
 
     private record Route(String method, String path, HandlerMethod handler) {
