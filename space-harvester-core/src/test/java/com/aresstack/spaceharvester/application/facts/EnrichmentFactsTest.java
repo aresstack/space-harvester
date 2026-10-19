@@ -53,6 +53,59 @@ class EnrichmentFactsTest {
     }
 
     @Test
+    void activitiesBecomeEventsWithPredicateRolesStatusAndQualifiers() {
+        List<MetadataFact> facts = EnrichmentFacts.of(FactTestResults.activities(PAGE, FactTestResults.ACTIVITIES));
+
+        assertThat(facts).extracting(MetadataFact::type).containsOnly(FactTypes.EVENT);
+        MetadataFact restart = facts.stream().filter(f -> f.values(FactTypes.PREDICATE).contains("starten"))
+                .findFirst().orElseThrow();
+        assertThat(restart.values("ACTOR")).containsExactly("administrator");
+        assertThat(restart.values("AFFECTED_OBJECT")).containsExactly("dienst");
+        assertThat(restart.values(FactTypes.STATUS)).containsExactly("asserted");
+        assertThat(restart.values(FactTypes.QUALIFIER)).containsExactly("modal");
+        assertThat(restart.payloadJson()).contains("\"modal\":\"muss\"").contains("\"participants\":[");
+        assertThat(restart.anchor().charStart()).isZero();
+        assertThat(restart.anchor().charEnd()).isGreaterThan(FactTestResults.ACTIVITIES.indexOf("starten"));
+        assertThat(restart.provenance().processorId()).isEqualTo(EnrichmentFacts.ACTIVITIES);
+        MetadataFact call = facts.stream().filter(f -> f.values(FactTypes.PREDICATE).contains("aufrufen"))
+                .findFirst().orElseThrow();
+        assertThat(call.values(FactTypes.STATUS)).containsExactly("negated");
+        assertThat(call.values(FactTypes.QUALIFIER)).containsExactly("negated");
+    }
+
+    @Test
+    void relationsKeepKindSubjectObjectAndNegation() {
+        List<MetadataFact> facts = EnrichmentFacts.of(FactTestResults.relations(PAGE, FactTestResults.RELATIONS));
+
+        assertThat(facts).extracting(MetadataFact::type).containsOnly(FactTypes.RELATION);
+        assertThat(facts).extracting(fact -> fact.values(FactTypes.KIND).getFirst() + ":"
+                + fact.values(FactTypes.SUBJECT).getFirst() + ">" + fact.values(FactTypes.OBJECT).getFirst() + "/"
+                + fact.values(FactTypes.STATUS).getFirst())
+                .contains("is_a:antrag>dokument/asserted", "is_a:entwurf>antrag/negated");
+        assertThat(facts).anySatisfy(fact -> assertThat(fact.values(FactTypes.KIND)).containsExactly("part_of"));
+        assertThat(facts.getFirst().payloadJson()).contains("\"kind\":\"is_a\"");
+    }
+
+    @Test
+    void repeatedRolesCountTheirOrdinal() {
+        Instant at = Instant.parse("2026-10-18T08:00:00Z");
+        List<MetadataFact> facts = EnrichmentFacts.of(new Enrichment(PAGE, "activities", "1", "sha256:x", null,
+                Enrichment.Status.OK, "{\"activities\":[{\"predicate\":\"prüfen\",\"lemma\":\"prüfen\","
+                + "\"negated\":true,\"modal\":\"soll\",\"participants\":[{\"role\":\"ACTOR\",\"term\":\"A\","
+                + "\"normalized\":\"a\",\"pronoun\":false},{\"role\":\"ACTOR\",\"term\":\"B\","
+                + "\"normalized\":\"b\",\"pronoun\":false},{\"role\":\"ACTOR\",\"term\":\"er\","
+                + "\"normalized\":\"er\",\"pronoun\":true}]}]}", List.of(), null, at));
+
+        assertThat(facts.getFirst().arguments()).filteredOn(argument -> argument.role().equals("ACTOR"))
+                .extracting(MetadataFact.Argument::ordinal, MetadataFact.Argument::value)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(0, "a"), org.assertj.core.groups.Tuple.tuple(1, "b"));
+        assertThat(facts.getFirst().arguments()).filteredOn(argument -> argument.role().equals(FactTypes.QUALIFIER))
+                .extracting(MetadataFact.Argument::ordinal, MetadataFact.Argument::value)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(0, "negated"),
+                        org.assertj.core.groups.Tuple.tuple(1, "modal"));
+    }
+
+    @Test
     void theSameResultGivesTheSameFactsWithStableIdsThatHideThePage() {
         Enrichment result = FactTestResults.acronyms(PAGE, FactTestResults.TEXT);
 

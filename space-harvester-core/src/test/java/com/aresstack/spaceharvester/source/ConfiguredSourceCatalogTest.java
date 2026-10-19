@@ -49,7 +49,7 @@ class ConfiguredSourceCatalogTest {
     void reportsAllProblemsOfAllSourcesAtOnce() {
         assertThatThrownBy(() -> ConfiguredSourceCatalog.of(List.of(
                 new SourceSettingsConfig("Bad Id", "confluence", null, BASE, null, Map.of()),
-                new SourceSettingsConfig("wiki", "sharepoint", null, null, null, Map.of()),
+                new SourceSettingsConfig("wiki", "gopher", null, null, null, Map.of()),
                 source("basic", new Auth(AuthType.BASIC, "harvester", null, null)),
                 source("pat", new Auth(AuthType.PAT, "harvester", null, "token")),
                 source("none", new Auth(AuthType.NONE, null, "secret", null)),
@@ -61,7 +61,8 @@ class ConfiguredSourceCatalogTest {
                         "sources[0] (id=Bad Id): id fehlt oder ist ungültig (erlaubt: Kleinbuchstaben, Ziffern, "
                                 + "Bindestrich; z. B. 'confluence')",
                         // Ohne bekannten Typ gibt es keine typeigenen Prüfungen (base-url gehört zu confluence).
-                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files)",
+                        "sources[1] (id=wiki): type fehlt oder ist unbekannt (bekannt: confluence, files, ftp, jes, ndv, "
+                                + "sharepoint)",
                         "sources[2] (id=basic): auth.type basic braucht auth.username und auth.password",
                         "sources[3] (id=pat): auth.username/auth.password passen nicht zu auth.type pat",
                         "sources[4] (id=none): auth.type ist none, aber Zugangsdaten sind gesetzt; auth.type basic "
