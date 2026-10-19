@@ -175,6 +175,11 @@ public final class Workspace {
         return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
+    /** Der Stand der Hintergrundbefüllung (ADR 0016, {@code Harvester.acquisitionStatus}); nicht auf dem EDT. */
+    public java.util.Optional<Acquisition> acquisition() {
+        return java.util.Optional.of(Acquisition.of(harvester.acquisitionStatus()));
+    }
+
     /**
      * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
      * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
