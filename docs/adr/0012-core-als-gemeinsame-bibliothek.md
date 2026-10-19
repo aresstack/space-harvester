@@ -103,8 +103,9 @@ der Enterprise AI Client den Core als Bibliothek im eigenen Prozess verwenden ka
 Migrationsschritt 2 auf Java 21 gehoben; dort fällt dann `Java8CompatibilityTest` für die betroffenen Module weg.
 Java-8-Anwendungen ohne diesen Schritt (MainframeMate, askai-java8) binden weiter über die REST-API an.
 
-Diese Festlegung ist die Empfehlung von Strang S und wartet auf Angelos Bestätigung; eine abweichende Antwort
-(Client bleibt Java 8 und nutzt den Core über REST) ersetzt diesen Punkt und Schritt 2 unten.
+Festgeschrieben am 19.10.2026 auf der Kartenempfehlung „Java 21“: Angelo hat am 19.10. (11:21) entschieden, dass
+die Arbeit ohne Rückfragen autonom weiterläuft; die Karte selbst bleibt offen. Widerspricht Angelo dort (Client
+bleibt Java 8 und nutzt den Core über REST), ersetzt diese Antwort den Punkt und Schritt 2 unten.
 
 ### 6. Migrationsreihenfolge
 
