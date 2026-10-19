@@ -1358,7 +1358,6 @@ public class Assets {
         return catalog.find(sourceId).orElseThrow(() -> new UnknownSourceException(sourceId));
     }
 
-    /** Ein Anhang mit seinen Bytes; die Bytes erscheinen nie in {@link #toString()}. */
     /**
      * Ein Anhang als Strom; {@link #close()} schließt den Strom und gibt einen belegten Platz an der Schranke frei,
      * mehrfaches Schließen ist harmlos.
@@ -1395,6 +1394,7 @@ public class Assets {
         }
     }
 
+    /** Ein Anhang mit seinen Bytes; die Bytes erscheinen nie in {@link #toString()}. */
     public record AssetContent(Asset asset, byte[] content) {
 
         @Override

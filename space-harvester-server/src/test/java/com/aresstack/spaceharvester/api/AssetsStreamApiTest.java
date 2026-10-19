@@ -100,6 +100,7 @@ class AssetsStreamApiTest {
         assertThat(whole.body()).isEqualTo(CONTENT);
         assertThat(whole.headers().firstValue("Content-Disposition")).hasValueSatisfying(
                 value -> assertThat(value).startsWith("attachment"));
+        assertThat(whole.headers().firstValue("Content-Length")).isEmpty();
         assertThat(whole.headers().firstValue("Content-Type")).hasValueSatisfying(
                 value -> assertThat(value).startsWith("text/plain"));
 

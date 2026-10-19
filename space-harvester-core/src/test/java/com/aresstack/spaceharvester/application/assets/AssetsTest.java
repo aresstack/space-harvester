@@ -373,6 +373,18 @@ class AssetsTest {
         try (LargeFileGate.Permit permit = gate.enter("wiki", 5L)) {
             assertThat(permit).isNotNull();
         }
+
+        // Fehlt die Datei in der Ablage, scheitert stream und gibt den Platz sofort wieder frei.
+        try (java.util.stream.Stream<java.nio.file.Path> blobs = java.nio.file.Files.walk(directory.resolve("blobs"))) {
+            for (java.nio.file.Path blob : blobs.filter(java.nio.file.Files::isRegularFile).toList()) {
+                java.nio.file.Files.delete(blob);
+            }
+        }
+        assertThatThrownBy(() -> assets.stream(list(large), "att1", false, null))
+                .isInstanceOf(AssetStoreException.class);
+        try (LargeFileGate.Permit permit = gate.enter("wiki", 5L)) {
+            assertThat(permit).isNotNull();
+        }
     }
 
     @Test
