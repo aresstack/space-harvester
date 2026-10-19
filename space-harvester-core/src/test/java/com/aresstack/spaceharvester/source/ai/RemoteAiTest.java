@@ -174,6 +174,25 @@ class RemoteAiTest {
     }
 
     @Test
+    void asksTheChatModelForAcronymExpansionsAndFollowsTheReleasePerSource() {
+        AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null,
+                Set.of("wiki"));
+        ChatAcronymExpansionModel model = new ChatAcronymExpansionModel(() -> settings, this::remote);
+
+        String answer = model.complete("Schreibe Akronyme aus.", "{\"acronyms\":[]}");
+
+        assertThat(answer).isNotBlank();
+        assertThat(bodies).singleElement().asString().contains("\"model\":\"gpt-x\"")
+                .contains("Schreibe Akronyme aus.");
+        assertThat(model.available()).isTrue();
+        assertThat(model.mayProcess("wiki")).isTrue();
+        assertThat(model.mayProcess("intern")).isFalse();
+        assertThat(model.version()).startsWith(ChatAcronymExpansionModel.ID + ":gpt-x@")
+                .doesNotContain(base().getHost());
+        assertThat(new ChatAcronymExpansionModel(() -> AiServiceSettings.NONE, this::remote).available()).isFalse();
+    }
+
+    @Test
     void describesAnImageWithTheVisionModelAndThePromptOfTheEnterpriseAiClient() {
         AiServiceSettings settings = new AiServiceSettings(base(), KEY, "gpt-x", null, null, null, null, Set.of(),
                 null, "qwen-vl");

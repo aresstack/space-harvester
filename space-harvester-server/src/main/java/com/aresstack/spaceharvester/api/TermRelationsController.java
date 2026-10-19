@@ -1,8 +1,15 @@
 package com.aresstack.spaceharvester.api;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.jobs.JobError;
+import com.aresstack.spaceharvester.application.jobs.JobProgress;
+import com.aresstack.spaceharvester.application.jobs.JobStatus;
+import com.aresstack.spaceharvester.application.jobs.JobType;
+import com.aresstack.spaceharvester.application.jobs.Jobs;
+import com.aresstack.spaceharvester.application.jobs.UnknownJobException;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.terms.AcronymRelationRule;
+import com.aresstack.spaceharvester.application.terms.AcronymResolution;
 import com.aresstack.spaceharvester.application.terms.RelationEvidence;
 import com.aresstack.spaceharvester.application.terms.RelationOrigin;
 import com.aresstack.spaceharvester.application.terms.RelationScope;
@@ -13,8 +20,10 @@ import com.aresstack.spaceharvester.application.terms.TermRelationStore;
 import com.aresstack.spaceharvester.application.terms.TermRelations;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
@@ -41,12 +50,19 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Begriffe", description = "Begriffsindex: Akronyme, Bezeichner und ihre Fundstellen über alle Quellen")
 public class TermRelationsController {
 
+    private static final String REFRESH_JOBS = ApiPaths.V1 + "/term-relations/refresh-jobs";
+
     private final TermRelations relations;
     private final AcronymRelationRule acronymRule;
+    private final AcronymResolution resolution;
+    private final Jobs jobs;
 
-    public TermRelationsController(TermRelations relations, AcronymRelationRule acronymRule) {
+    public TermRelationsController(TermRelations relations, AcronymRelationRule acronymRule,
+                                   AcronymResolution resolution, Jobs jobs) {
         this.relations = relations;
         this.acronymRule = acronymRule;
+        this.resolution = resolution;
+        this.jobs = jobs;
     }
 
     @GetMapping
@@ -177,6 +193,63 @@ public class TermRelationsController {
         return new ProposalRunResponse(run.added(), run.updated(), run.withdrawn(), run.suppressed(), run.stale());
     }
 
+    @PostMapping("/refresh")
+    @Operation(summary = "KI-Akronymauflösung einer Quelle starten (#122)",
+            description = "Asynchroner Vorschlagslauf: Je Akronym gehen wenige kurze Fundstellen aus dem Cache an das "
+                    + "Chat-Modell; jede Ausschreibung muss in einer Fundstelle wörtlich stehen. Ergebnis sind nur "
+                    + "Vorschläge (ai, proposed); bestätigte, manuelle und Regelbeziehungen bleiben, abgelehnte kommen "
+                    + "nie wieder. Läuft als Auftrag ENRICHMENT der Quelle ohne Space; scheitert er, bleibt der Stand "
+                    + "des letzten Laufs. Nur für Quellen in external-processing-sources.")
+    @ApiResponse(responseCode = "202", description = "RefreshJobResponse; Location nennt den Auftrag")
+    @ApiResponse(responseCode = "400", description = "kind ist nicht acronym (invalid-request)")
+    @ApiResponse(responseCode = "403", description = "Keine sync-Freigabe auf die Quelle (access-denied)")
+    @ApiResponse(responseCode = "404", description = "Unbekannte Quelle (source-not-found)")
+    @ApiResponse(responseCode = "409", description = "Quelle nicht für den KI-Dienst freigegeben "
+            + "(external-processing-not-allowed)")
+    @ApiResponse(responseCode = "503", description = "Kein Chat-Modell eingestellt (ai-unavailable)")
+    public ResponseEntity<RefreshJobResponse> refresh(@Parameter(hidden = true) AccessContext caller,
+                                                      @RequestParam String sourceId,
+                                                      @RequestBody(required = false) RefreshRequest request) {
+        String kind = request == null ? null : blankToNull(request.kind());
+        if (kind != null && !"acronym".equals(kind)) {
+            throw new InvalidQueryException("kind muss acronym sein");
+        }
+        JobStatus job = resolution.start(caller, sourceId.trim());
+        return ResponseEntity.accepted().location(URI.create(REFRESH_JOBS + "/" + job.id()))
+                .body(RefreshJobResponse.of(job));
+    }
+
+    @GetMapping("/refresh-jobs/{jobId}")
+    @Operation(summary = "Stand eines eigenen Laufs der KI-Akronymauflösung",
+            description = "Zustand, Fortschritt (discovered = gefragte Akronyme, processed = beantwortete, written = "
+                    + "neue oder geänderte Vorschläge) und Fehler.")
+    @ApiResponse(responseCode = "200", description = "RefreshJobResponse")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Auftrag mit dieser ID (job-not-found)")
+    public RefreshJobResponse refreshJob(@Parameter(hidden = true) AccessContext caller,
+                                         @PathVariable String jobId) {
+        return RefreshJobResponse.of(ownRefresh(caller, jobId));
+    }
+
+    @DeleteMapping("/refresh-jobs/{jobId}")
+    @Operation(summary = "Lauf der KI-Akronymauflösung abbrechen",
+            description = "Bis dahin wird nichts abgeglichen; der Stand des letzten Laufs bleibt.")
+    @ApiResponse(responseCode = "202", description = "RefreshJobResponse")
+    @ApiResponse(responseCode = "404", description = "Kein eigener Auftrag mit dieser ID (job-not-found)")
+    public ResponseEntity<RefreshJobResponse> cancelRefresh(@Parameter(hidden = true) AccessContext caller,
+                                                            @PathVariable String jobId) {
+        ownRefresh(caller, jobId);
+        return ResponseEntity.accepted().body(RefreshJobResponse.of(jobs.cancel(jobId, caller.jobOwner())));
+    }
+
+    /** Nur eigene Aufträge der Anreicherung ohne Space; andere gelten als unbekannt. */
+    private JobStatus ownRefresh(AccessContext caller, String jobId) {
+        JobStatus job = jobs.status(jobId, caller.jobOwner());
+        if (job.type() != JobType.ENRICHMENT || job.partitionKey() != null) {
+            throw new UnknownJobException(jobId);
+        }
+        return job;
+    }
+
     private static <T> T parse(String value, Function<String, T> parser, String name) {
         if (value == null || value.isBlank()) {
             return null;
@@ -226,6 +299,25 @@ public class TermRelationsController {
 
     /** Ein Stapel Beziehungen; weiter mit nextCursor, bis er null ist. */
     public record RelationListResponse(List<RelationEntry> relations, String nextCursor) {
+    }
+
+    /** Art des Vorschlagslaufs; ohne Angabe acronym, heute die einzige. */
+    public record RefreshRequest(@Schema(allowableValues = {"acronym"}, nullable = true) String kind) {
+    }
+
+    /** Ein Lauf der KI-Akronymauflösung. */
+    public record RefreshJobResponse(String id, String sourceId,
+                                     @Schema(allowableValues = {"queued", "running", "completed", "failed",
+                                             "cancelled"}) String state, JobProgress progress,
+                                     @Schema(nullable = true) JobError error, boolean cancelRequested,
+                                     Instant createdAt, @Schema(nullable = true) Instant startedAt,
+                                     @Schema(nullable = true) Instant finishedAt) {
+
+        static RefreshJobResponse of(JobStatus job) {
+            return new RefreshJobResponse(job.id(), job.sourceId(), job.state().name().toLowerCase(Locale.ROOT),
+                    job.progress(), job.error(), job.cancelRequested(), job.createdAt(), job.startedAt(),
+                    job.finishedAt());
+        }
     }
 
     /** Ausgang eines Vorschlagslaufs. */
