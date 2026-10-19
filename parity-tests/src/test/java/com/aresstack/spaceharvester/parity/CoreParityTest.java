@@ -724,6 +724,8 @@ class CoreParityTest {
             List<Finding> findings = new ArrayList<>(ParityComparison.compare(eac, core));
             findings.add(ParityComparison.macros(extension, eac, core, List.of(ParityConfluence.MACRO_SENTENCES),
                     CORE_OMITTED.get(extension)));
+            findings.add(ParityComparison.chapterOrder(extension, eac, core, POSITIONS));
+            findings.add(ParityComparison.mentions(extension, eac, core, mentionNames(), mentionsAbsent()));
             report.append('\n').append(ParityReport.section(extension.toUpperCase(), findings, gaps));
             for (Finding finding : findings) {
                 if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
@@ -992,6 +994,31 @@ class CoreParityTest {
     private static Path reportFile() {
         return Path.of(System.getProperty("parity.report", "build/reports/parity/parity-report.md"))
                 .toAbsolutePath();
+    }
+
+    /**
+     * Ob der Fake die Position unter Geschwistern liefert (Upstream-Patch 09, {@code FakePage.position}); erst dann
+     * ist der Vergleich der Kapitelreihenfolge scharf. Wer den Patch übernimmt, setzt im Paritäts-Space Positionen.
+     */
+    static final boolean POSITIONS = java.util.Arrays.stream(FakeConfluence.FakePage.class.getMethods())
+            .anyMatch(method -> method.getName().equals("position"));
+
+    private static List<String> mentionNames() {
+        List<String> names = new ArrayList<>();
+        for (String[] mention : ParityConfluence.MENTIONS) {
+            names.add(mention[1]);
+        }
+        names.add(ParityConfluence.INCLUDED_MENTION);
+        return names;
+    }
+
+    private static List<String> mentionsAbsent() {
+        List<String> absent = new ArrayList<>();
+        for (String[] mention : ParityConfluence.MENTIONS) {
+            absent.add(mention[0]);
+        }
+        absent.add(ParityConfluence.HIDDEN_MENTION);
+        return absent;
     }
 
     static Map<String, String> knownGaps() throws IOException {
