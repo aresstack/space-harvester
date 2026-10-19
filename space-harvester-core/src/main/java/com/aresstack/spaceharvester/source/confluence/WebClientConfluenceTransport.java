@@ -401,6 +401,19 @@ public final class WebClientConfluenceTransport implements ConfluenceAsyncHttpTr
         routeScheduler.dispose();
     }
 
+    /**
+     * Schließt wie {@link #close()} für neue Anfragen, lässt laufende aber zu Ende laufen, etwa wenn die Quelle nach
+     * geänderten Netzwerkeinstellungen neu geöffnet wird (ADR 0015): Die Pools schließen über {@code disposeLater},
+     * der Scheduler der Routenwahl über {@code disposeGracefully}.
+     */
+    public void closeGracefully() {
+        if (!closed.compareAndSet(false, true)) {
+            return;
+        }
+        discardClients();
+        routeScheduler.disposeGracefully().subscribe();
+    }
+
     @Override
     public String toString() {
         return "WebClientConfluenceTransport[routes=" + routes + ", maxConnections=" + maxConnections + "]";

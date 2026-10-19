@@ -95,6 +95,13 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
                 delegated.close();
             }
         }
+
+        /** Wie {@link #close()}, laufende delegierte Aufrufe enden noch normal. */
+        void closeGracefully() {
+            if (delegated != null) {
+                delegated.closeGracefully();
+            }
+        }
     }
 
     private ConfiguredSourceCatalog(Map<String, SourceAdapter> adapters, ConfiguredSecrets secrets,
@@ -421,6 +428,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
      * @throws UnknownSourceException wenn es keine Quelle mit dieser ID gibt
      */
     public synchronized SourceSettingsConfig replace(SourceSettingsConfig config) {
+        return replace(config, false);
+    }
+
+    /** @param graceful ob laufende delegierte Aufrufe der bisherigen Instanz noch zu Ende laufen */
+    private SourceSettingsConfig replace(SourceSettingsConfig config, boolean graceful) {
         Opened previous = opened.get(Objects.requireNonNull(config, "config").id());
         if (previous == null) {
             throw new UnknownSourceException(config.id());
@@ -438,7 +450,11 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         Map<String, Opened> next = new LinkedHashMap<>(opened);
         next.put(config.id(), source.enabled(previous.enabled()));
         opened = Collections.unmodifiableMap(next);
-        previous.close();
+        if (graceful) {
+            previous.closeGracefully();
+        } else {
+            previous.close();
+        }
         return previous.config();
     }
 
@@ -510,8 +526,9 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
     /**
      * Stellt Proxy, Proxy-Anmeldung und Vertrauen ohne Bundle zur Laufzeit um (ADR 0015) und öffnet danach alle Quellen
      * über {@link #replace} neu: Trust-Bundles und Client-Zertifikate werden dabei neu gelesen, die bisherigen
-     * Instanzen schließen, sobald die neuen offen sind. Laufende Anfragen enden über ihre bisherigen Verbindungen; die
-     * Pools des WebClient-Transports schließen, wenn ihre letzte Verbindung zurückkommt. Eine Quelle, die sich nicht
+     * Instanzen schließen, sobald die neuen offen sind. Laufende Anfragen enden über ihre bisherigen Verbindungen, auch
+     * delegierte mit dem Token des Nutzers; die Pools des WebClient-Transports schließen, wenn ihre letzte Verbindung
+     * zurückkommt. Eine Quelle, die sich nicht
      * neu öffnen lässt (etwa eine inzwischen unlesbare PKCS#12-Datei), behält ihre bisherige Instanz; das Protokoll
      * nennt nur Quelle und Art des Fehlers.
      *
@@ -527,11 +544,14 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         }
         routes.reconfigure(network.proxy());
         context.proxyCredentials().reconfigure(network.proxy().authentication());
-        ProxyAuthenticator previous = authenticator;
-        if (previous != null) {
-            previous.uninstall();
+        // Der Authenticator liest die umstellbare Anmeldung je Anfrage: nur ein- oder austragen, nie neu setzen, damit
+        // keine HttpURLConnection zwischendurch ohne Anmeldung eine 407 erhält.
+        if (authenticator == null) {
+            authenticator = ProxyAuthenticator.install(context.proxyCredentials());
+        } else if (!context.proxyCredentials().configured()) {
+            authenticator.uninstall();
+            authenticator = null;
         }
-        authenticator = ProxyAuthenticator.install(context.proxyCredentials());
         if (!context.trustBundles().reconfigure(network.trust()) && !network.trust().jvmOnly()) {
             LOG.warn("Vertrauen ohne trust-bundle bleibt unverändert: die Vertrauensquellen dieses Katalogs lassen "
                     + "sich nicht umstellen");
@@ -542,7 +562,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         }
         for (Opened source : opened.values()) {
             try {
-                replace(source.config());
+                replace(source.config(), true);
             } catch (RuntimeException e) {
                 LOG.warn("Quelle {} nach geänderten Netzwerkeinstellungen nicht neu geöffnet, die bisherige bleibt "
                         + "({})", source.config().id(), e.getClass().getSimpleName());
