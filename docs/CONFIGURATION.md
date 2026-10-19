@@ -72,7 +72,8 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
   `sync.sources.<Quelle>.max-age`/`refresh-strategy`) beim nächsten Seitenabruf, Frist für gesperrte Seiten je Quelle
   beim nächsten Lauf, Freigabe an den KI-Dienst je Quelle (`ai.external-processing-sources`) für Embeddings und
   Reranker, Reranker an, aus oder neues Modell (`ai.rerank-model`, `ai.base-url`, `search.rerank`) für neue Suchen,
-  der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
+  das Vision-Modell (`ai.vision-model`, ADR 0021) für die nächste Bildbeschreibung, auch erstmals eingeschaltet (ein
+  Wechsel macht vorhandene Bildanalysen veraltet), der Zeitplan aus `sync.spaces` mit Abstand und Betriebsart je Quelle (eine unbekannte Quelle oder ein Abstand unter
   einer Minute lehnt die Änderung ab), Webhooks (`sync.events`) bei jedem Aufruf und `catch-up-on-start` je Quelle
   beim Start. Das Embedding-Modell wechselt live
   oder schaltet ab, wenn beim Start eines eingestellt war; **Embeddings erstmals einschalten braucht einen Neustart**
@@ -153,7 +154,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Einstellung | Schlüssel (`space-harvester.`…) | Zur Laufzeit |
 | --- | --- | --- |
 | KI-Dienst, Adresse, API-Key, Frist | `ai.base-url`, `ai.api-key`, `ai.timeout`, `ai.trust-bundle` | ja, neue Client-Instanzen |
-| Modelle je Funktion, global für alle Quellen | `ai.chat-model`, `ai.embedding-model`, `ai.embedding-dimensions`, `ai.rerank-model` | ja, neue Anfragen |
+| Modelle je Funktion, global für alle Quellen | `ai.chat-model`, `ai.embedding-model`, `ai.embedding-dimensions`, `ai.rerank-model`, `ai.vision-model` | ja, neue Anfragen |
 | Freigabe für externe Verarbeitung | `ai.external-processing-sources` | ja |
 | Semantische Suche (Haken, Standard aus) | `search.semantic` | ja; ohne Embedding-Modell bleibt sie aus |
 | Reranking, wenn ein Modell eingestellt ist | `search.rerank` (Standard `true`) | ja |
@@ -172,6 +173,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
+| Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
 ### Regeln je Quelle
 

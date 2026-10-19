@@ -1,5 +1,9 @@
 package com.aresstack.spaceharvester.config;
 
+import com.aresstack.spaceharvester.application.assets.Assets;
+import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.images.ImageProcessor;
+import com.aresstack.spaceharvester.application.images.PageImageAnalysis;
 import com.aresstack.spaceharvester.application.enrichment.AcronymProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentProcessor;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
@@ -50,7 +54,7 @@ class EnrichmentConfiguration {
     @Bean
     Enrichments enrichments(ObjectProvider<EnrichmentStore> store, ObjectProvider<EmbeddingProcessor> embedding,
                             @Qualifier("enrichmentBackground") ObjectProvider<ExecutorService> background,
-                            SentenceSegmenter sentences) {
+                            ObjectProvider<ImageDescriber> describer, SentenceSegmenter sentences) {
         List<EnrichmentProcessor> processors = new ArrayList<>(List.of(new AcronymProcessor(), new OutlineProcessor(),
                 new EntityProcessor(), new PropertyProcessor(), new ActivityProcessor(), new RelationProcessor(),
                 new TermProcessor()));
@@ -59,6 +63,8 @@ class EnrichmentConfiguration {
         // #181: semantische Absätze mit dem Modell von embedding, ohne es nach Struktur (ADR 0020)
         TextSegmentation rules = KnowledgeTextSegmentation.defaults();
         processors.add(new PassageProcessor(sentences, rules, embedding.getIfAvailable()));
+        // ADR 0021: rechnet nie selbst, bestimmt nur, wann eine Bildanalyse gilt (Modellwechsel macht sie alt)
+        processors.add(new ImageProcessor(describer::getIfAvailable));
         return new Enrichments(projector(), processors,
                 store.getIfAvailable(InMemoryEnrichmentStore::new), Clock.systemUTC(), background.getIfAvailable());
     }
@@ -71,6 +77,12 @@ class EnrichmentConfiguration {
 
     static SentenceSegmenter sentences(TextSegmentation rules) {
         return OpenNlpSentenceSegmenter.german(SentenceSegmenter.splitter(rules));
+    }
+
+    /** Bildanalyse auf Abruf (ADR 0021, #362). */
+    @Bean
+    PageImageAnalysis pageImageAnalysis(Assets assets, Enrichments enrichments) {
+        return new PageImageAnalysis(assets, enrichments, Clock.systemUTC());
     }
 
     /** Semantische Absätze einer Seite für {@code GET …/passages} (ADR 0020). */

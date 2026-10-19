@@ -1,5 +1,8 @@
 package com.aresstack.spaceharvester.source.ai;
 
+import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysis;
+import com.aresstack.enterpriseai.astu.acropolis.image.ImageAnalysisCache;
+import com.aresstack.enterpriseai.astu.acropolis.image.SourceImageAnalysisUseCase;
 import com.aresstack.enterpriseai.astu.chat.ChatMessage;
 import com.aresstack.enterpriseai.astu.chat.ChatOptions;
 import com.aresstack.enterpriseai.astu.chat.ChatRequest;
@@ -43,7 +46,7 @@ import javax.net.ssl.X509TrustManager;
  * Der externe KI-Dienst über die unveränderten Adapter des Enterprise AI Client (ADR 0011):
  * {@code OpenAiCompatibleEmbeddingAdapter} für {@code POST /embeddings}, {@code KipitzModelCatalogAdapter} für
  * {@code GET /models}, {@code KipitzRerankAdapter} für {@code POST /rerank} und {@code OpenAiCompatibleChatAdapter} für
- * {@code POST /chat/completions} (ADR 0017). Alle verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
+ * {@code POST /chat/completions} (ADR 0017, Bildbeschreibung ADR 0021). Alle verbinden über dieselbe Proxy-Route je Ziel wie die Quellen ({@link HttpRoutePort}: PAC,
  * Proxy, fail-closed) und über das Vertrauen aus {@code trust-bundle} oder der JVM. Der API-Key geht je Anfrage als
  * Bearer-Token mit und wird nie protokolliert; Meldungen der Adapter nennen nur Statuscodes und Pfade.
  */
@@ -164,6 +167,43 @@ public final class RemoteAi {
     }
 
     /**
+     * Beschreibt ein Bild mit dem Vision-Modell ({@code POST /chat/completions} mit Bild, ADR 0021) über die
+     * unveränderte {@code SourceImageAnalysisUseCase} des Enterprise AI Client: derselbe Prompt, dieselbe Anfrage (nur
+     * das Modell gesetzt). Gespeichert wird hier nichts; das übernimmt die Asset-Ablage je SHA-256 und Modell.
+     * Scheitert der Aufruf, meldet er {@link AiServiceException} ohne Bild, Antwort oder Key.
+     *
+     * @throws AiServiceException {@code NOT_CONFIGURED} ohne Dienst oder Vision-Modell
+     */
+    public String describeImage(byte[] image, String mediaType) {
+        if (!settings.vision()) {
+            throw new AiServiceException(AiServiceException.Reason.NOT_CONFIGURED, "KI-Dienst oder Vision-Modell fehlt");
+        }
+        OpenAiCompatibleChatAdapter adapter = new OpenAiCompatibleChatAdapter(chatConfig(settings.visionModel()));
+        String model = settings.visionModel();
+        SourceImageAnalysisUseCase useCase = new SourceImageAnalysisUseCase(List::of, adapter, () -> null,
+                () -> model, NO_CACHE);
+        try {
+            ImageAnalysis analysis = useCase.describe("image", "", "", mediaType, image);
+            return analysis == null ? null : analysis.description();
+        } catch (ChatCompletionException e) {
+            throw chatFailure(e);
+        }
+    }
+
+    /** Kein Zwischenspeicher im Anwendungsfall: Die Asset-Ablage hält die Beschreibungen je Bildbytes und Modell. */
+    private static final ImageAnalysisCache NO_CACHE = new ImageAnalysisCache() {
+        @Override
+        public ImageAnalysis get(String cacheKey) {
+            return null;
+        }
+
+        @Override
+        public void put(String cacheKey, ImageAnalysis analysis) {
+            // nichts
+        }
+    };
+
+    /**
      * Die Modelle des Dienstes ({@code GET /models}).
      *
      * @throws AiServiceException ohne Dienst oder wenn er nicht wie erwartet antwortet
@@ -226,8 +266,12 @@ public final class RemoteAi {
 
     /** Verbindung zum Chat-Modell: Route, TLS, Token und Fristen wie {@link #catalogConfig()}. */
     private OpenAiCompatibleChatConfig chatConfig() {
+        return chatConfig(settings.chatModel());
+    }
+
+    private OpenAiCompatibleChatConfig chatConfig(String model) {
         OpenAiCompatibleChatConfig.Builder config = OpenAiCompatibleChatConfig
-                .builder(settings.baseUrl(), settings.chatModel())
+                .builder(settings.baseUrl(), model)
                 .routes(routes)
                 .userAgent(userAgent)
                 .connectTimeoutMillis(timeoutMillis())

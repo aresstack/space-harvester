@@ -101,4 +101,24 @@ class AcronymProcessorTest {
     private static PageText plain(String text) {
         return new PageText("t/v1", text, List.of());
     }
+
+    @Test
+    void expansionsAreAlignedLikeTheEac() {
+        assertThat(AcronymProcessor.expansion("Die Zentrale Datenverarbeitung (ZDV) rechnet.", "ZDV", 32, 35))
+                .isEqualTo("Zentrale Datenverarbeitung");
+        String bsi = "Das Bundesamt für Sicherheit in der Informationstechnik (BSI) prüft.";
+        assertThat(AcronymProcessor.expansion(bsi, "BSI", bsi.indexOf("BSI"), bsi.indexOf("BSI") + 3))
+                .isEqualTo("Bundesamt für Sicherheit in der Informationstechnik");
+        String api = "Jede API (Application Programming Interface, siehe unten) hat Grenzen.";
+        assertThat(AcronymProcessor.expansion(api, "API", 5, 8)).isEqualTo("Application Programming Interface");
+        // Ziffern müssen wie im EAC in der Ausschreibung vorkommen.
+        String b2b = "Business to Business (B2B) wächst.";
+        assertThat(AcronymProcessor.expansion(b2b, "B2B", b2b.indexOf("B2B"), b2b.indexOf("B2B") + 3)).isNull();
+        // Die Ausschreibung bleibt im selben Satz und enthält das Akronym nicht selbst.
+        String split = "Das ist ein Interface. Neu (API) ist es.";
+        assertThat(AcronymProcessor.expansion(split, "API", split.indexOf("API"), split.indexOf("API") + 3))
+                .isNull();
+        String self = "ABC (ABC Beta Corp) zahlt.";
+        assertThat(AcronymProcessor.expansion(self, "ABC", 0, 3)).isNull();
+    }
 }
