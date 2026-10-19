@@ -58,10 +58,10 @@ public final class PassageSnippets implements PageTextIndex {
         }
         List<Match> refined = new ArrayList<>(matches.size());
         for (Match match : matches) {
-            String snippet = match.snippet() == null || match.snippet().isEmpty() ? null
+            // Ein Anhangstreffer (#183) behält seinen Auszug aus dem Anhang; Absätze gibt es nur für Seiten.
+            String snippet = match.inAttachment() || match.snippet() == null || match.snippet().isEmpty() ? null
                     : passageSnippet(new PageKey(match.sourceId(), match.pageId()), terms).orElse(null);
-            refined.add(snippet == null ? match
-                    : new Match(match.sourceId(), match.pageId(), match.spaceKey(), match.title(), snippet));
+            refined.add(snippet == null ? match : match.withSnippet(snippet));
         }
         return refined;
     }
@@ -161,6 +161,21 @@ public final class PassageSnippets implements PageTextIndex {
     @Override
     public Optional<String> text(PageKey key) {
         return index.text(key);
+    }
+
+    @Override
+    public void putAttachment(AttachmentEntry entry) {
+        index.putAttachment(entry);
+    }
+
+    @Override
+    public Optional<String> attachmentInputSha256(PageKey page, String attachmentId) {
+        return index.attachmentInputSha256(page, attachmentId);
+    }
+
+    @Override
+    public void retainAttachments(PageKey page, Set<String> attachmentIds) {
+        index.retainAttachments(page, attachmentIds);
     }
 
     @Override

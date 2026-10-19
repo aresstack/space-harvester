@@ -41,6 +41,32 @@ class PassageSnippetsTest {
     }
 
     @Test
+    void anAttachmentHitKeepsItsExcerptAndTheWrapperPassesAttachmentsOn() {
+        stored.add(semantic(PassageProcessorTest.TEXT));
+        index.attachmentId = "att-1";
+
+        // Absätze gibt es nur für Seiten: der Auszug aus dem Anhang (#183) bleibt, der Treffer bleibt ein Anhangstreffer.
+        assertThat(snippets.search("server", Set.of("wiki"), null, 10)).singleElement().satisfies(match -> {
+            assertThat(match.inAttachment()).isTrue();
+            assertThat(match.attachmentTitle()).isEqualTo("plan.pdf");
+            assertThat(match.snippet()).isEqualTo(WINDOW);
+        });
+
+        PageTextIndex.AttachmentEntry entry = new PageTextIndex.AttachmentEntry(KEY, "S", "att-1", "plan.pdf", "Text",
+                "sha256:a");
+        snippets.putAttachment(entry);
+        assertThat(index.attachments).containsExactly(entry);
+    }
+
+    @Test
+    void aPageHitWithPassagesStaysAPageHit() {
+        stored.add(semantic(PassageProcessorTest.TEXT));
+
+        assertThat(snippets.search("server nachts", Set.of("wiki"), null, 10)).singleElement()
+                .satisfies(match -> assertThat(match.inAttachment()).isFalse());
+    }
+
+    @Test
     void keepsTheWindowWithoutPassagesForThisText() {
         assertThat(snippets.search("server", Set.of("wiki"), null, 10).getFirst().snippet()).isEqualTo(WINDOW);
 
@@ -97,6 +123,8 @@ class PassageSnippetsTest {
 
         private final String text;
         String window = WINDOW;
+        String attachmentId;
+        final List<AttachmentEntry> attachments = new ArrayList<>();
 
         FakeIndex(String text) {
             this.text = text;
@@ -104,7 +132,13 @@ class PassageSnippetsTest {
 
         @Override
         public List<Match> search(String query, Set<String> sourceIds, SearchSpaces spaces, int limit) {
-            return List.of(new Match(KEY.sourceId(), KEY.pageId(), "S", "Seite", window));
+            return List.of(new Match(KEY.sourceId(), KEY.pageId(), "S", "Seite", window, attachmentId,
+                    attachmentId == null ? null : "plan.pdf"));
+        }
+
+        @Override
+        public void putAttachment(AttachmentEntry entry) {
+            attachments.add(entry);
         }
 
         @Override
