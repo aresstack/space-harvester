@@ -35,6 +35,10 @@ dependencies {
     implementation libs.jsoup
     // PDF-Ausgabe (#30), nur im Paket output.convert
     implementation libs.pdfbox
+    // Satzgrenzen der semantischen Absätze (#181, ADR 0020): nur der Satzdetektor von OpenNLP mit dem deutschen
+    // Satzmodell (UD German GSD, rund 100 KB), dieselben Versionen wie :nlp-parser; Tokens, Wortarten und Parser nicht
+    implementation libs.opennlp.tools
+    runtimeOnly libs.opennlp.models.sentdetect.de
     // Word-Ausgabe: Exporter des Enterprise AI Client mit Inhaltsverzeichnis (Kopie, document-export/UPSTREAM.md)
     implementation project(':document-export')
 
