@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.sources.SourceQueries;
 import com.aresstack.spaceharvester.application.sync.ChangeEvents;
 import com.aresstack.spaceharvester.application.sync.PageContentFetcher;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
+import com.aresstack.spaceharvester.application.sync.InventoryLog;
+import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SpaceSyncJobs;
 import com.aresstack.spaceharvester.application.sync.SyncBeforeSearch;
@@ -98,8 +100,12 @@ class SyncConfiguration {
      * Konfigurationswechsel ersetzt den Zeitplan wie beim Nachholen.
      */
     @Bean(destroyMethod = "close")
-    InventorySchedule inventorySchedule(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live) {
-        Reconciliation inventories = Reconciliation.inventories(syncJobs, null, Clock.systemUTC());
+    InventorySchedule inventorySchedule(SpaceSyncJobs syncJobs, SourceCatalog catalog, LiveConfiguration live,
+                                        CacheProperties cache) {
+        // Bezugspunkte im Cache-Verzeichnis, damit Neustarts den Abstand nicht zurücksetzen; ohne Cache läuft keine.
+        InventoryLog log = cache.directory() == null ? InventoryLog.inMemory()
+                : new FileInventoryLog(cache.directory());
+        Reconciliation inventories = Reconciliation.inventories(syncJobs, null, Clock.systemUTC(), log);
         if (!syncJobs.available()) {
             if (!ConfiguredSchedules.planInventories(live.current(), catalog, false).isEmpty()) {
                 LOG.warn("Bestandsinventur konfiguriert, aber Cache-Speicher oder Inhaltsabruf fehlen; "

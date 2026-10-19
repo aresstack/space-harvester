@@ -258,7 +258,7 @@ neue Route, Anmeldung und das neue Vertrauen ([ADR 0015, Nachtrag](adr/0015-konf
 | Nachholen beim Start | `sync.catch-up-on-start` (Standard `false`) | ja, ab dem nächsten Start |
 | Betriebsart von Zeitplan und Nachholen: nur katalogisieren (Standard), Cache synchronisieren, vollständig | `sync.mode` (`catalog-only`, `sync-cache`, `full`) | ja |
 | Sperrfrist gesperrter Seiten | `sync.withheld-retention` (Standard `30d`) | ja |
-| Regelmäßige Bestandsinventur (nur Metadaten) der Spaces aus `sync.spaces`: listet den ganzen Space und findet so auch Löschungen und Verschiebungen; Betriebsart wie beim Nachholen, `full` höchstens als `sync-cache` | `sync.inventory-interval` (mindestens `PT1M`, ohne: keine) | ja, Scheduler neu gesetzt |
+| Regelmäßige Bestandsinventur (nur Metadaten) der Spaces aus `sync.spaces`: listet den ganzen Space und findet so auch Löschungen und Verschiebungen; Betriebsart wie beim Nachholen, `full` höchstens als `sync-cache`. Fällig einen Abstand nach der letzten Inventur bzw. dem ersten Einplanen (`inventories.properties` im Cache-Verzeichnis), Neustarts und Konfigurationswechsel setzen die Uhr nicht zurück; läuft gerade ein Abgleich, erneut nach einer Minute | `sync.inventory-interval` (mindestens `PT1M`, ohne: keine) | ja, Scheduler neu gesetzt |
 | Hintergrundfüllung: Katalogseiten ohne oder mit veraltetem Inhalt in Leerlaufzeit laden (ADR 0016) | `sync.background-fill` (Standard `true`) | ja |
 | Parallelität der Hintergrundfüllung | `sync.background-parallelism` (Standard `2`, `1` bis `16`) | ja |
 | Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |

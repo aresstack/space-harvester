@@ -127,6 +127,7 @@ import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
 import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
+import com.aresstack.spaceharvester.persistence.files.FileInventoryLog;
 import com.aresstack.spaceharvester.persistence.files.FileResolutionCache;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
@@ -643,7 +644,8 @@ public final class Harvester implements AutoCloseable {
                     exportWriter, clock);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
-            this.inventories = Reconciliation.inventories(syncs, OWNER, clock);
+            // Bezugspunkte der Inventur im Cache, damit Neustarts den Abstand nicht zurücksetzen.
+            this.inventories = Reconciliation.inventories(syncs, OWNER, clock, new FileInventoryLog(cacheDirectory));
             opened.add(inventories);
             if (fillQueue != null) {
                 // ADR 0016, Punkt 5: technisch, mit den Zugangsdaten der Quelle, unabhängig von sync.mode; je Quelle

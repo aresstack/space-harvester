@@ -9,8 +9,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -70,7 +72,8 @@ public final class Reconciliation implements AutoCloseable {
     private final String owner;
     private final Clock clock;
     private final ScheduledExecutorService scheduler;
-    private final boolean inventory;
+    /** Nur für Inventuren: Bezugspunkt je Space über Neustarts hinweg; sonst {@code null}. */
+    private final InventoryLog inventory;
     private final Map<String, Entry> entries = new ConcurrentHashMap<>();
 
     /** @param owner Auftraggeber der gestarteten Abgleiche oder {@code null} für einen Hintergrundabgleich */
@@ -80,11 +83,11 @@ public final class Reconciliation implements AutoCloseable {
     }
 
     Reconciliation(SpaceSyncJobs syncs, String owner, Clock clock, ScheduledExecutorService scheduler) {
-        this(syncs, owner, clock, scheduler, false);
+        this(syncs, owner, clock, scheduler, null);
     }
 
     private Reconciliation(SpaceSyncJobs syncs, String owner, Clock clock, ScheduledExecutorService scheduler,
-                           boolean inventory) {
+                           InventoryLog inventory) {
         this.inventory = inventory;
         this.syncs = Objects.requireNonNull(syncs, "syncs");
         this.owner = owner;
@@ -99,16 +102,22 @@ public final class Reconciliation implements AutoCloseable {
      * nachzuholen. Die Betriebsart gilt wie beim Nachholen, {@link SyncMode#FULL} höchstens als
      * {@link SyncMode#SYNC_CACHE}: Eine Inventur lädt nie den ganzen Space.
      *
+     * <p>Fällig ist eine Inventur einen Abstand nach dem Bezugspunkt in {@code log}: dem Start der letzten oder, solange
+     * keine lief, dem ersten Einplanen. Neustarts und Konfigurationswechsel setzen die Uhr daher nicht zurück. Läuft
+     * für den Space gerade ein Abgleich oder nimmt die Auftragsverwaltung keinen an, versucht sie es nach
+     * {@link #MIN_INTERVAL} erneut, statt einen ganzen Abstand zu verlieren.
+     *
      * @param owner wie im Konstruktor
+     * @param log   Bezugspunkte je Space, etwa {@code FileInventoryLog} im Cache-Verzeichnis
      */
-    public static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock) {
-        return inventories(syncs, owner, clock, Executors.newSingleThreadScheduledExecutor(
+    public static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock, InventoryLog log) {
+        return inventories(syncs, owner, clock, log, Executors.newSingleThreadScheduledExecutor(
                 Thread.ofVirtual().name("inventory").factory()));
     }
 
-    static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock,
+    static Reconciliation inventories(SpaceSyncJobs syncs, String owner, Clock clock, InventoryLog log,
                                       ScheduledExecutorService scheduler) {
-        return new Reconciliation(syncs, owner, clock, scheduler, true);
+        return new Reconciliation(syncs, owner, clock, scheduler, Objects.requireNonNull(log, "log"));
     }
 
     /**
@@ -134,11 +143,40 @@ public final class Reconciliation implements AutoCloseable {
             throw new IllegalArgumentException("Abstand des Abgleichs muss mindestens " + MIN_INTERVAL + " sein");
         }
         cancel(sourceId, spaceKey);
-        Entry entry = new Entry(sourceId, spaceKey, interval, mode, clock.instant().plus(interval));
-        long millis = interval.toMillis();
-        entry.future = scheduler.scheduleWithFixedDelay(() -> due(entry), millis, millis, TimeUnit.MILLISECONDS);
+        Instant now = clock.instant();
+        Instant first = now.plus(interval);
+        if (inventory != null) {
+            Optional<Instant> since = inventory.since(sourceId, spaceKey);
+            if (since.isEmpty()) {
+                inventory.mark(sourceId, spaceKey, now);
+            } else if (since.get().plus(interval).isBefore(first)) {
+                // Überfällige Inventuren starten kurz nach dem Einplanen, nicht alle im selben Augenblick.
+                first = since.get().plus(interval).isAfter(now) ? since.get().plus(interval) : now.plus(CATCH_UP);
+            }
+        }
+        Entry entry = new Entry(sourceId, spaceKey, interval, mode, first);
         entries.put(key(sourceId, spaceKey), entry);
+        arm(entry);
         return entry.view();
+    }
+
+    /** Verzögerung einer beim Einplanen schon überfälligen Inventur. */
+    static final Duration CATCH_UP = Duration.ofSeconds(30);
+
+    /** Plant den nächsten Start zu {@code nextAt}, solange der Eintrag eingeplant ist. */
+    private synchronized void arm(Entry entry) {
+        if (entries.get(key(entry.sourceId, entry.spaceKey)) != entry || scheduler.isShutdown()) {
+            return;
+        }
+        long delay = Math.max(0, Duration.between(clock.instant(), entry.view().nextAt()).toMillis());
+        try {
+            entry.future = scheduler.schedule(() -> {
+                due(entry);
+                arm(entry);
+            }, delay, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+            // geschlossen
+        }
     }
 
     /** Nimmt den Space aus der Einplanung; ein laufender Abgleich läuft zu Ende. */
@@ -147,7 +185,9 @@ public final class Reconciliation implements AutoCloseable {
         if (removed == null) {
             return false;
         }
-        removed.future.cancel(false);
+        if (removed.future != null) {
+            removed.future.cancel(false);
+        }
         return true;
     }
 
@@ -170,7 +210,7 @@ public final class Reconciliation implements AutoCloseable {
         try {
             // Ohne Erstbefüllung genügt das Nachholen der Änderungen, wo die Quelle sie meldet (ADR 0014).
             JobStatus started;
-            if (inventory) {
+            if (inventory != null) {
                 started = syncs.start(entry.sourceId, entry.spaceKey, owner,
                         entry.mode == SyncMode.FULL ? SyncMode.SYNC_CACHE : entry.mode);
             } else {
@@ -190,11 +230,30 @@ public final class Reconciliation implements AutoCloseable {
                     entry.sourceId, entry.spaceKey, e.getClass().getName());
         }
         Instant now = clock.instant();
+        Duration next = entry.interval;
+        if (inventory != null) {
+            if (outcome == Outcome.STARTED) {
+                markQuietly(entry, now);
+            } else if (outcome == Outcome.ALREADY_RUNNING || outcome == Outcome.NO_CAPACITY) {
+                // Ein laufendes Nachholen ersetzt keine Inventur: bald erneut versuchen.
+                next = MIN_INTERVAL;
+            }
+        }
         synchronized (entry) {
             entry.lastAt = now;
             entry.lastOutcome = outcome;
             entry.lastJobId = jobId;
-            entry.nextAt = now.plus(entry.interval);
+            entry.nextAt = now.plus(next);
+        }
+    }
+
+    private void markQuietly(Entry entry, Instant at) {
+        try {
+            inventory.mark(entry.sourceId, entry.spaceKey, at);
+        } catch (RuntimeException e) {
+            // Die Inventur läuft; ohne Vermerk zählt der Abstand nach einem Neustart ab dem Einplanen.
+            LOG.log(System.Logger.Level.WARNING, "Zeitpunkt der Bestandsinventur nicht gespeichert ({0})",
+                    e.getClass().getName());
         }
     }
 
