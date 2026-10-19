@@ -48,7 +48,7 @@ class SourceConfiguration {
      */
     @Bean
     LocalFilesSourceAdapter localFilesSourceAdapter(ConfigurationManager manager) {
-        return new LocalFilesSourceAdapter(() -> manager.current().configuration().localFiles().grants());
+        return LocalFilesSourceAdapter.following(manager);
     }
 
     /** Quellentyp {@code mediawiki}: Seiten einer MediaWiki-Site über die {@code api.php} (#187). */
