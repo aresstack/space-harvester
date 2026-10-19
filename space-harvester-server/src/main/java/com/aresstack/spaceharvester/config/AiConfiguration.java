@@ -30,9 +30,11 @@ import com.aresstack.spaceharvester.source.ai.StatementChatModels;
 import com.aresstack.spaceharvester.source.ai.ChatNavigationLabeler;
 import com.aresstack.spaceharvester.source.ai.VisionImageDescriber;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
+import java.util.function.Predicate;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -242,18 +244,33 @@ class AiConfiguration {
 
     /**
      * Wechselt die Freigabe {@code ai.external-processing-sources} einer Quelle, rechnet der Dienst {@code embedding},
-     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, ohne neuen Abruf und
-     * ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
+     * {@code passages} und {@code navigation} ihrer Seiten im Cache gedrosselt im Hintergrund neu, eingeschaltet auch
+     * {@code statements} (#108), ohne neuen Abruf und ohne neue Version (ADR 0015); nach einem Entzug ohne Modell. Angemeldet nach dem Beobachter des
      * Embedding-Modells, weil {@code covers} die Freigabe so fragt, wie das Modell sie sieht.
      */
     @Bean(destroyMethod = "close")
-    @ConditionalOnProperty(prefix = "space-harvester.ai", name = "embedding-model")
-    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, EmbeddingProcessor embedding,
+    @ConditionalOnExpression("'${space-harvester.ai.embedding-model:}' != '' "
+            + "or '${space-harvester.enrichment.statements.enabled:false}' == 'true'")
+    ReleaseRecomputation releaseRecomputation(Enrichments enrichments, ObjectProvider<EmbeddingProcessor> embedding,
+                                              ObjectProvider<StatementProcessor> statements,
                                               ObjectProvider<LucenePageCache> cache, LiveConfiguration live) {
         LucenePageCache pages = cache.getIfAvailable();
+        EmbeddingProcessor embeddings = embedding.getIfAvailable();
+        boolean withStatements = statements.getIfAvailable() != null;
+        List<String> processorIds = new ArrayList<>();
+        if (embeddings != null) {
+            processorIds.addAll(List.of(embeddings.id(), PassageProcessor.ID, NavigationProcessor.ID));
+        }
+        // #108: Die Satzanalyse hängt ebenso an der Freigabe; ein Entzug entfernt ihre Ergebnisse. Sie fragt die
+        // Freigabe selbst, denn ohne Embedding-Modell bliebe covers beim alten Stand.
+        if (withStatements) {
+            processorIds.add(StatementProcessor.ID);
+        }
+        Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
+                || withStatements && live.current().ai().mayProcessExternally(sourceId);
         ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
                 sourceId -> pages == null ? java.util.Collections.emptyIterator() : pages.snapshots(sourceId),
-                embedding::covers, List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                released, processorIds);
         live.listen(recomputation);
         return recomputation;
     }

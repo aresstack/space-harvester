@@ -384,14 +384,15 @@ public final class Harvester implements AutoCloseable {
                     : new VisionImageDescriber(() -> liveAi ? this.settings.ai() : startAi, catalog, trustBundles,
                             builder.userAgent);
             processors.add(new ImageProcessor(() -> describer));
+            Predicate<String> statementsReleased = null;
             if (builder.statements.enabled()) {
                 // #108: Satzanalyse über das Chat-Modell (ai.chat-model) der wirksamen Konfiguration, zusätzlich zu
                 // entities/activities/relations, im Hintergrund und nur für Quellen in external-processing-sources.
                 StatementSettings statementSettings = builder.statements;
                 StatementChatModels chats = new StatementChatModels(() -> liveAi ? this.settings.ai() : startAi,
                         catalog, trustBundles, builder.userAgent);
-                processors.add(new StatementProcessor(sentences, () -> statementSettings, chats,
-                        chats.mayProcessExternally()));
+                statementsReleased = chats.mayProcessExternally();
+                processors.add(new StatementProcessor(sentences, () -> statementSettings, chats, statementsReleased));
             }
             // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
             // Volltextindex.
@@ -399,11 +400,24 @@ public final class Harvester implements AutoCloseable {
                     new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             // ADR 0015: Wechselt die Freigabe einer Quelle, rechnen embedding, passages und navigation ihre Seiten im
-            // Cache neu; images rechnet nur auf Abruf und prüft die Freigabe dann selbst. Schließt vor dem Hintergrund.
-            if (model != null) {
+            // Cache neu, eingeschaltet auch statements (#108); images rechnet nur auf Abruf und prüft die Freigabe dann
+            // selbst. Schließt vor dem Hintergrund.
+            if (model != null || statementsReleased != null) {
+                List<String> releaseDependent = new ArrayList<>();
+                if (model != null) {
+                    releaseDependent.addAll(List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                }
+                if (statementsReleased != null) {
+                    releaseDependent.add(StatementProcessor.ID);
+                }
+                // Ohne Embedding-Modell tauscht die Generation nicht, covers bliebe beim alten Stand; die Satzanalyse
+                // fragt die Freigabe darum selbst.
+                EmbeddingProcessor embeddings = model != null ? embedding : null;
+                Predicate<String> statementsFollow = statementsReleased;
+                Predicate<String> released = sourceId -> embeddings != null && embeddings.covers(sourceId)
+                        || statementsFollow != null && statementsFollow.test(sourceId);
                 ReleaseRecomputation recomputation = new ReleaseRecomputation(enrichments,
-                        cache::snapshots, embedding::covers,
-                        List.of(embedding.id(), PassageProcessor.ID, NavigationProcessor.ID));
+                        cache::snapshots, released, releaseDependent);
                 opened.add(recomputation);
                 this.releaseRecomputation = recomputation;
             } else {
