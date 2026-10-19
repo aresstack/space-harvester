@@ -25,15 +25,16 @@ import tools.jackson.databind.json.JsonMapper;
  *               "rawSha256", "inputSha256",
  *               "enrichments": { "&lt;Prozessor&gt;": { "state", "processorVersion", "currentProcessorVersion",
  *                                "inputSha256", "revision", "computedAt", "warnings", "errorCode", "payload" } },
- *               "facts": [{ "id", "type", "role", "processorId", "processorVersion", "inputSha256", "revision",
- *                           "payload", "arguments", "anchor" }] }] }
+ *               "facts": [{ "id", "type", "role", "origin", "review", "processorId", "processorVersion",
+ *                           "inputSha256", "revision", "payload", "arguments", "anchor" }] }] }
  * </pre>
  *
  * Seiten linear in Baumreihenfolge wie {@link JsonArrayConverter}; die Hierarchie steht nur in {@code parentPageId}.
  * Zugeordnet wird über {@code sourceId}, {@code pageId} und die exportierte {@code revision} mit {@code rawSha256};
  * {@code inputSha256} ist der Eingabe-Hash dieser Version, gegen den der {@code state} jedes Abschnitts bestimmt ist
  * ({@code CURRENT}, {@code STALE}, {@code FAILED}, {@code MISSING}). Je Prozessor ein Abschnitt; die Payload kommt
- * unverändert aus der Ablage. Nichts wird nachgerechnet.
+ * unverändert aus der Ablage. Nichts wird nachgerechnet. Fakten mit {@code origin} {@code AUTOMATIC} oder
+ * {@code MANUAL} und Prüfstatus {@code review} ({@code UNREVIEWED}, {@code CONFIRMED}, {@code REJECTED}).
  */
 public final class AnalysisConverter implements ExportConverter {
 
@@ -146,6 +147,8 @@ public final class AnalysisConverter implements ExportConverter {
         generator.writeStringProperty("id", fact.id());
         generator.writeStringProperty("type", fact.type());
         generator.writeStringProperty("role", fact.role());
+        generator.writeStringProperty("origin", fact.origin().name());
+        generator.writeStringProperty("review", fact.review().name());
         generator.writeStringProperty("processorId", fact.provenance().processorId());
         generator.writeStringProperty("processorVersion", fact.provenance().processorVersion());
         generator.writeStringProperty("inputSha256", fact.provenance().inputSha256());

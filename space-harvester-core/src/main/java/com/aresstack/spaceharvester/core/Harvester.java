@@ -80,6 +80,8 @@ import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
 import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.facts.EditedFactStore;
+import com.aresstack.spaceharvester.application.facts.FactEdits;
 import com.aresstack.spaceharvester.application.facts.PageFacts;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
@@ -108,6 +110,7 @@ import com.aresstack.spaceharvester.output.convert.MarkdownConverter;
 import com.aresstack.spaceharvester.output.convert.MarkdownPackageConverter;
 import com.aresstack.spaceharvester.output.convert.PdfConverter;
 import com.aresstack.spaceharvester.output.export.FileSystemExportArtifactWriter;
+import com.aresstack.spaceharvester.persistence.files.FileFactEditStore;
 import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.files.FileTermRelationStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
@@ -231,6 +234,7 @@ public final class Harvester implements AutoCloseable {
     private final PageFacts facts;
     private final TermRelations termRelations;
     private final AcronymRelationRule acronymRelationRule;
+    private final FactEdits factEdits;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
@@ -472,8 +476,13 @@ public final class Harvester implements AutoCloseable {
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
                     renewal, reranker, textIndex, preparation, runLog);
-            // #182: Fakten aus den Anreicherungen, Rechte je Seite an ihrem Space im Cache.
-            this.facts = new PageFacts(catalog, access, pages, enrichments, enrichmentStore, cache::findHeader);
+            // #182: Fakten aus den Anreicherungen mit den manuellen und geprüften (außerhalb des Caches), Rechte je
+            // Seite an ihrem Space im Cache.
+            FileFactEditStore factEditStore = new FileFactEditStore(builder.dataDirectory.resolve("facts"));
+            EditedFactStore editedFacts = new EditedFactStore(enrichmentStore, factEditStore);
+            this.facts = new PageFacts(catalog, access, pages, enrichments, editedFacts, cache::findHeader,
+                    factEditStore);
+            this.factEdits = new FactEdits(access, pages, enrichments, editedFacts, factEditStore, clock);
             // ADR 0017 mit ADR 0013: semantisch findet jede Variante nur, Treffer kommen aus den Vektoren.
             RuleBasedExpansion rules = new RuleBasedExpansion();
             SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
@@ -496,7 +505,7 @@ public final class Harvester implements AutoCloseable {
             opened.add(changeEvents);
             FileSystemExportArtifactWriter exportWriter = new FileSystemExportArtifactWriter(builder.exportDirectory());
             ExportConverters exportConverters = new ExportConverters(List.of(new JsonArrayConverter(),
-                    new AnalysisConverter(new EnrichmentAnalyses(enrichments)),
+                    new AnalysisConverter(new EnrichmentAnalyses(enrichments, editedFacts)),
                     new JsonPackageConverter(), new MarkdownConverter(), new MarkdownPackageConverter(), new DocxConverter(), new PdfConverter(builder.pdfFont)),
                     ExportConverters.DEFAULT_MAX_BYTES);
             this.exports = new Exports(jobs, reader, exportWriter, exportConverters, syncs, clock);
@@ -941,6 +950,14 @@ public final class Harvester implements AutoCloseable {
      */
     public PageFacts facts() {
         return facts;
+    }
+
+    /**
+     * Manuelle und geprüfte Fakten (#182): anlegen, bestätigen oder verwerfen, entfernen, Protokoll. Abgelegt unter
+     * {@code <dataDirectory>/facts}, außerhalb des Caches.
+     */
+    public FactEdits factEdits() {
+        return factEdits;
     }
 
     public Assets assets() {

@@ -44,10 +44,9 @@ import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.facts.FactEditStore;
 import com.aresstack.spaceharvester.application.facts.FactStore;
-import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.facts.PageFacts;
-import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
@@ -312,32 +311,19 @@ class QueryConfiguration {
 
     /**
      * Fakten je Seite aus den Anreicherungen (#182), aus derselben Ablage wie die Anreicherungen (Lucene-Cache oder
-     * Speicher). Rechte je Seite an ihrem Space im Cache.
+     * Speicher), mit den manuellen und geprüften. Rechte je Seite an ihrem Space im Cache.
      */
     @Bean
     PageFacts pageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages,
                         ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
-                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader) {
+                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader,
+                        FactEditStore edits) {
         Enrichments available = enrichments.getIfAvailable();
-        FactStore facts = (available == null ? Optional.<FactStore>empty() : available.facts())
-                .orElseGet(() -> store.getIfUnique(() -> NO_FACTS));
+        FactStore facts = FactEditConfiguration.facts(available, store, edits);
         LucenePageCache lucene = cache.getIfAvailable();
         PageCacheReader any = reader.getIfAvailable();
         Function<PageKey, Optional<PageHeader>> headers = lucene != null ? lucene::findHeader
                 : any != null ? key -> any.page(key).map(CachedPage::header) : key -> Optional.empty();
-        return new PageFacts(catalog, access, pages, available, facts, headers);
+        return new PageFacts(catalog, access, pages, available, facts, headers, edits);
     }
-
-    /** Ohne Ablage: keine Fakten. */
-    private static final FactStore NO_FACTS = new FactStore() {
-        @Override
-        public List<MetadataFact> factsOf(PageKey page) {
-            return List.of();
-        }
-
-        @Override
-        public List<MetadataFact> facts(Query query, String after, int limit) {
-            return List.of();
-        }
-    };
 }

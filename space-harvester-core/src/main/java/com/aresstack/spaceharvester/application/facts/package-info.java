@@ -6,11 +6,12 @@
  * werden mit ihm ersetzt und gelöscht, wie die automatischen Fakten eines Extraktors im Client
  * ({@code replaceAutomaticFacts}). Suchbar sind sie nach Typ und nach Argumenten (Rolle und normalisierter Wert).
  *
- * <p>Nicht übernommen: manuelle Fakten, Prüfstatus ({@code FactReview}), Typkatalog zur Laufzeit
- * ({@code registerType}, JSON-Schema), Verweise zwischen Fakten und {@code ExtractionRun}; das ist der Faktenspeicher
- * des Assistenten im Client (ADR 0012, Punkt 4). Gelesen wird nur über
+ * <p>Manuelle Fakten und Prüfstatus ({@code FactOrigin}, {@code FactReview}) liegen außerhalb des Caches in einer
+ * eigenen Prüfablage ({@link com.aresstack.spaceharvester.application.facts.FactEdits},
+ * {@link com.aresstack.spaceharvester.application.facts.EditedFactStore}). Nicht übernommen: Typkatalog zur Laufzeit
+ * ({@code registerType}, JSON-Schema), Verweise zwischen Fakten und {@code ExtractionRun}. Gelesen wird nur über
  * {@link com.aresstack.spaceharvester.application.facts.PageFacts} mit den Rechten des Aufrufers: Fakten einer Seite, die
- * er nicht lesen darf, erscheinen nirgends, auch nicht als Zahl. Fakten sind maschinell abgeleitete Hinweise, keine
- * geprüften Aussagen.
+ * er nicht lesen darf, erscheinen nirgends, auch nicht als Zahl. Automatische Fakten sind maschinell abgeleitete
+ * Hinweise, geprüft erst mit {@code CONFIRMED}.
  */
 package com.aresstack.spaceharvester.application.facts;
