@@ -25,6 +25,17 @@ public interface DocumentText {
     Optional<String> detect(byte[] content);
 
     /**
+     * Wie {@link #detect(byte[])}, mit dem Dateinamen als Hinweis wie im Enterprise AI Client ({@code
+     * TikaContentDetector}, dort immer mit Namen aufgerufen): Er verfeinert nur, was der Inhalt offenlässt (keine
+     * Signatur, bloßer Klartext, bloßer ZIP- oder OLE2-Behälter); eine Signatur gilt immer vor der Endung.
+     *
+     * @param fileName Dateiname oder {@code null}
+     */
+    default Optional<String> detect(String fileName, byte[] content) {
+        return detect(content);
+    }
+
+    /**
      * Der Text eines Dokuments.
      *
      * @param title     Dateiname (nur als Hinweis auf das Format)
