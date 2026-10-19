@@ -5,10 +5,13 @@ import com.aresstack.enterpriseai.astu.source.SourceSettingField;
 import com.aresstack.enterpriseai.astu.source.SourceSettings;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
+import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Quellentyp {@code files}: ein lokales Verzeichnis über {@code LocalFilesSourceProvider} aus
@@ -22,7 +25,8 @@ import java.util.Map;
  * abgelegten Original, mit dessen Größen- und Zeitgrenzen.
  *
  * <p>Einstellungen unter {@code options}: {@code directory} (Pflicht) und die übrigen Felder des Upstream-Typs, etwa
- * {@code include}, {@code exclude}, {@code maxFileMegabytes}.
+ * {@code include}, {@code exclude}, {@code maxFileMegabytes}. Links aus dem Verzeichnis hinaus folgt die Quelle nur in
+ * freigegebene Ordner ({@link LocalFileGrants}, wie {@code LocalFileAccessPolicy} im Enterprise AI Client).
  */
 public final class LocalFilesSourceAdapter implements SourceAdapter {
 
@@ -33,8 +37,26 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
     /** Obergrenze im Dienst: ein Original wird ganz in den Speicher gelesen. */
     static final int MAX_FILE_MEGABYTES = 64;
 
-    private final LocalFilesSourceProvider provider =
-            new LocalFilesSourceProvider(DocumentExtraction.detector(), DocumentExtraction.registry());
+    private final LocalFilesSourceProvider provider;
+
+    /** Nur das Verzeichnis der Quelle ist freigegeben. */
+    public LocalFilesSourceAdapter() {
+        this(LocalFileGrants::none);
+    }
+
+    /**
+     * Mit weiteren freigegebenen Ordnern wie im Enterprise AI Client ({@code FileAccessConfig}); gelesen bei jedem
+     * Dateizugriff, Änderungen gelten ohne Neustart.
+     */
+    public LocalFilesSourceAdapter(Supplier<LocalFileGrants> grants) {
+        Objects.requireNonNull(grants, "grants");
+        this.provider = new LocalFilesSourceProvider(DocumentExtraction.detector(), DocumentExtraction.registry(),
+                () -> {
+                    LocalFileGrants granted = grants.get();
+                    return granted == null ? LocalFileAccessPolicy.none()
+                            : LocalFileAccessPolicy.of(granted.allowAll(), granted.roots());
+                });
+    }
 
     @Override
     public String type() {

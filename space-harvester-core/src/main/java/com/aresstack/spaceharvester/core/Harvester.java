@@ -97,6 +97,7 @@ import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
+import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
 import com.aresstack.spaceharvester.source.KnowledgeTextSegmentation;
 import com.aresstack.spaceharvester.source.LocalFilesTextProjector;
 import com.aresstack.spaceharvester.source.TikaDocumentText;
@@ -285,15 +286,16 @@ public final class Harvester implements AutoCloseable {
             if (embedding != null) {
                 processors.add(embedding);
             }
-            // Auch lokale Dateien bekommen Anreicherungen und Embeddings, wie im Volltextindex.
+            // Auch lokale Dateien und Quellen über discover/load (#187) bekommen Anreicherungen und Embeddings, wie im
+            // Volltextindex.
             PageTextProjector projector = PageTextProjector.firstOf(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector()));
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()));
             this.enrichments = new Enrichments(projector, processors, enrichmentStore, clock, background);
             // #180: Volltext über den Cache, abgeleitet und neu aufbaubar.
             LucenePageTextIndex textIndex = LucenePageTextIndex.open(cacheDirectory.resolve("text"));
             opened.add(textIndex);
             PageTextIndexing texts = new PageTextIndexing(List.of(new ConfluenceStorageTextProjector(),
-                    new LocalFilesTextProjector()), textIndex);
+                    new LocalFilesTextProjector(), new KnowledgeDocumentTextProjector()), textIndex);
 
             this.access = new AccessGuard(builder.accessPolicy);
             LucenePageCacheReader reader = new LucenePageCacheReader(cache);

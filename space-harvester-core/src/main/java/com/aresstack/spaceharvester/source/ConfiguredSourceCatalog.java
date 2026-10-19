@@ -217,7 +217,7 @@ public final class ConfiguredSourceCatalog implements SourceCatalog, AutoCloseab
         boolean http = baseUrl != null && baseUrl.getScheme() != null
                 && List.of("http", "https").contains(baseUrl.getScheme().toLowerCase(Locale.ROOT));
         return new Opened(config, new KnowledgeSourceHarvestSource(config.id(), config.type(), title, source.port(),
-                context.async() == null ? null : context.async().inFlight()), source.delegated(),
+                context.async() == null ? null : context.async().inFlight(), source.scope()), source.delegated(),
                 http ? baseUrl : null, true);
     }
 

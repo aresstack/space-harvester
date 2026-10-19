@@ -333,6 +333,7 @@ final class ExportChapters {
                 == null ? parser.parse(storage, null, null)
                 : parser.parse(storage, available.html(), available.baseUri()));
         List<Block> blocks = parsed.map(StorageParser.Parsed::blocks)
+                .or(() -> DocumentTextBlocks.of(page.snapshot().payload()))
                 .orElse(List.of(new Note("Die Payload enthält keinen Inhalt im Storage-Format")));
         String reason = omittedReason(view);
         parsed.ifPresent(p -> p.omitted().forEach(reference -> omitted.add(new ConversionNotice(page.pageId(),
