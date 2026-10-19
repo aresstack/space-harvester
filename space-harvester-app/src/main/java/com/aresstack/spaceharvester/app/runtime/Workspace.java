@@ -175,6 +175,11 @@ public final class Workspace {
         return harvester.assets().viewImage(header.key().sourceId(), header.key().pageId(), view.version(), image);
     }
 
+    /** Der Stand der Hintergrundbefüllung (ADR 0016, {@code Harvester.acquisitionStatus}); nicht auf dem EDT. */
+    public java.util.Optional<Acquisition> acquisition() {
+        return java.util.Optional.of(Acquisition.of(harvester.acquisitionStatus()));
+    }
+
     /**
      * Das draw.io-Diagramm hinter einem Vorschaubild der Lese-Ansicht als PNG des Core ({@link Assets#viewDiagram},
      * #190); leer, wenn das Bild keine solche Vorschau ist oder sich nicht zeichnen lässt, dann gilt das Bild selbst.
@@ -428,8 +433,18 @@ public final class Workspace {
      * ganzer Space. Eine unbekannte oder nicht lesbare Startseite lässt den Auftrag mit ROOT_NOT_FOUND scheitern.
      */
     public JobStatus startExport(String sourceId, String spaceKey, String rootPageId, List<String> formats) {
+        return startExport(sourceId, spaceKey, rootPageId, null, formats);
+    }
+
+    /**
+     * Wie {@link #startExport(String, String, String, List)}, aber nur bis {@code depth} Ebenen unter der Startseite
+     * ({@code ExportRequest.withDepth}); {@code null} heißt alle, {@code 0} nur die Startseite.
+     */
+    public JobStatus startExport(String sourceId, String spaceKey, String rootPageId, Integer depth,
+                                 List<String> formats) {
         requireExport(sourceId, spaceKey);
-        JobStatus status = harvester.exports().start(sourceId, spaceKey, rootPageId, Harvester.OWNER, formats);
+        JobStatus status = harvester.exports().start(sourceId, spaceKey, rootPageId, depth, Harvester.OWNER,
+                formats);
         activities.remember(status.id());
         return status;
     }

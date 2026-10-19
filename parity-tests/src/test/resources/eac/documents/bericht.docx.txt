@@ -1,0 +1,7 @@
+Betriebsbericht Wartungsfenster
+Die Rufbereitschaft prüft nachts die Überlaufwarteschlange.
+Größere Änderungen brauchen eine Freigabe durch den Änderungsbeirat.
+	Dienst
+	Zuständigkeit
+Abrechnung
+	Fachbereich Finanzen

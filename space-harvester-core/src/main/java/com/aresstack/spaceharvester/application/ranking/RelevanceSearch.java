@@ -18,6 +18,9 @@ import com.aresstack.spaceharvester.application.query.SearchHit;
 import com.aresstack.spaceharvester.application.query.SearchIndexState;
 import com.aresstack.spaceharvester.application.query.SearchScope;
 import com.aresstack.spaceharvester.application.query.SearchSort;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
@@ -25,6 +28,8 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.SourceAccessException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -88,6 +93,10 @@ import java.util.concurrent.Semaphore;
  * Quelle eine neuere Version, wird die Seite über {@link Renewal} nachgeladen und abgelegt, ihr Vektor neu berechnet,
  * und der Treffer heißt bis dahin {@link Freshness#STALE}. Ist ein Kandidat nicht prüfbar, fehlt er, und das Ergebnis
  * ist unvollständig. Der Index bleibt gemeinsam für alle Benutzer.
+ *
+ * <p>Jede Suche ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182) mit Anfrage, Quellen des Umfangs,
+ * ausgelieferten Treffern und noch nicht vorbereiteten Seiten; die Schlagwortsuche der Vorbereitung ist ein Teillauf.
+ * Kandidaten aus der Vektorsuche zählen nicht, weil sie vor der Live-Prüfung ungeprüft sind.
  */
 public class RelevanceSearch {
 
@@ -118,6 +127,7 @@ public class RelevanceSearch {
     private final SearchReranker reranker;
     private final PageTextIndex texts;
     private final Preparation preparation;
+    private final SearchRunLog runs;
 
     /**
      * Ohne Live-Prüfung je Treffer: Rechte nur gegen die Zugriffspolicy und die Kopfdaten im Index. Für Tests und
@@ -176,6 +186,16 @@ public class RelevanceSearch {
     public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
                            EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
                            SearchReranker reranker, PageTextIndex texts, Preparation preparation) {
+        this(catalog, index, access, store, vectors, embedding, renewal, reranker, texts, preparation,
+                SearchRunLog.NONE);
+    }
+
+    /** @param runs Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE} */
+    public RelevanceSearch(SourceCatalog catalog, PageSearchIndex index, AccessGuard access, EnrichmentStore store,
+                           EmbeddingIndex vectors, EmbeddingProcessor embedding, Renewal renewal,
+                           SearchReranker reranker, PageTextIndex texts, Preparation preparation,
+                           SearchRunLog runs) {
+        this.runs = Objects.requireNonNull(runs, "runs");
         this.preparation = preparation;
         this.texts = texts;
         this.renewal = renewal;
@@ -210,6 +230,35 @@ public class RelevanceSearch {
      *                                              es gibt keinen Rückfall auf die Titelsuche (ADR 0011)
      */
     public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, int limit) {
+        return search(caller, query, text, null, Set.of(), limit);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, int)}, aber die {@link Preparation} findet mit einem
+     * anderen Text, etwa einer Variante der progressiven Suche (ADR 0017). Er bestimmt nur, welche Seiten in den Cache
+     * geladen und eingebettet werden; Kandidaten und Reihenfolge kommen weiter allein aus der Vektorsuche mit
+     * {@code text}.
+     *
+     * @param discovery         Text zum Finden in den Quellen oder {@code null}, dann der Anfragetext
+     * @param excludedSpaceKeys ohne Seiten dieser Spaces (#179): Die Vorbereitung lädt sie nicht, und sie sind keine
+     *                          Kandidaten, also füllen erlaubte Treffer das Limit; geprüft am Index und am heutigen
+     *                          Space
+     * @throws InvalidQueryException auch bei zu langem {@code discovery}
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   Set<String> excludedSpaceKeys, int limit) {
+        return search(caller, query, text, discovery, excludedSpaceKeys, limit, null);
+    }
+
+    /**
+     * Wie {@link #search(AccessContext, PageSearchQuery, String, String, Set, int)} als Teil des Laufs {@code partOf}
+     * im Suchlauf-Protokoll (#182), etwa eine Suchanfrage der semantischen progressiven Suche.
+     *
+     * @param partOf der übergeordnete Lauf oder {@code null}
+     */
+    public RelevanceResults search(AccessContext caller, PageSearchQuery query, String text, String discovery,
+                                   Set<String> excludedSpaceKeys, int limit, SearchRunId partOf) {
+        Set<String> excluded = Set.copyOf(excludedSpaceKeys);
         SearchScope scope = SearchScope.authorize(access, catalog, caller, query);
         if (limit < 1 || limit > Reranking.MAX_WINDOW) {
             throw new InvalidQueryException("limit muss zwischen 1 und " + Reranking.MAX_WINDOW + " liegen");
@@ -221,15 +270,24 @@ public class RelevanceSearch {
         if (queryText.length() > MAX_TEXT_LENGTH) {
             throw new InvalidQueryException("q hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
         }
+        String findText = discovery == null || discovery.isBlank() ? queryText : discovery.strip();
+        if (findText.length() > MAX_TEXT_LENGTH) {
+            throw new InvalidQueryException("Suchtext hat höchstens " + MAX_TEXT_LENGTH + " Zeichen");
+        }
         scope.requireKnown(catalog);
         if (!semantic()) {
             // ADR 0011: kein stiller Rückfall auf die Titelsuche.
             throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
         }
+        Instant startedAt = Instant.now();
+        long started = System.nanoTime();
+        SearchRunId runId = runs == SearchRunLog.NONE ? null : SearchRunId.random();
         int preparing = 0;
+        boolean prepared = false;
         if (preparation != null) {
             try {
-                preparing = preparation.prepare(caller, query, queryText);
+                preparing = preparation.prepare(caller, query, findText, excluded, runId);
+                prepared = true;
             } catch (RuntimeException e) {
                 // Ohne Anfragetext im Log; gesucht wird über das, was schon im Cache liegt.
                 LOG.log(System.Logger.Level.INFO, "Vorbereitung der semantischen Suche gescheitert ({0})",
@@ -240,14 +298,15 @@ public class RelevanceSearch {
         SearchIndexState state = scope.state(index).orElse(null);
         if (state == null) {
             // Nur global: keine lesbare Quelle im Index.
-            return new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0);
+            return recorded(new RelevanceResults(null, null, SearchReranker.NONE.id(), List.of(), preparing == 0),
+                    runId, partOf, caller, queryText, scope, startedAt, started, prepared ? preparing : -1);
         }
 
         // Ein Modell für den ganzen Vorgang (ADR 0015): Anfragevektor und gesuchte Vektoren passen zusammen.
         EmbeddingProcessor.Generation model = embedding.current().orElseThrow(
                 () -> new SemanticSearchUnavailableException("Kein Embedding-Modell eingestellt"));
         float[] vector = queryVector(model, queryText);
-        List<SearchHit> window = semanticCandidates(caller, query, scope, state, model, vector);
+        List<SearchHit> window = semanticCandidates(caller, query, excluded, scope, state, model, vector);
 
         Map<SearchHit, Score> scores = new IdentityHashMap<>();
         for (SearchHit hit : window) {
@@ -273,7 +332,8 @@ public class RelevanceSearch {
         // Gesperrte oder verschwundene Treffer fallen weg; dann rücken weitere Kandidaten nach.
         while (hits.size() < limit && next < ordered.size()) {
             int end = Math.min(ordered.size(), next + limit - hits.size());
-            for (Verified verified : verify(caller, query, ordered.subList(next, end), scores, contentRanked)) {
+            for (Verified verified : verify(caller, query, excluded, ordered.subList(next, end), scores,
+                    contentRanked)) {
                 complete &= !verified.failed();
                 if (verified.hit() != null && hits.size() < limit) {
                     hits.add(verified.hit());
@@ -296,7 +356,46 @@ public class RelevanceSearch {
             hits = reranked.stream().map(byHit::get).toList();
             rerankerId = rerankerId + "+" + custom.rerankerId();
         }
-        return new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0);
+        return recorded(new RelevanceResults(query.sourceId(), state, rerankerId, hits, complete && preparing == 0),
+                runId, partOf, caller, queryText, scope, startedAt, started, prepared ? preparing : -1);
+    }
+
+    /**
+     * Legt den Lauf im Suchlauf-Protokoll ab; nur ausgelieferte, also geprüfte Treffer zählen.
+     *
+     * @param pending Seiten der Vorbereitung ohne aktuelles Embedding oder {@code -1}, wenn nicht bekannt
+     */
+    private RelevanceResults recorded(RelevanceResults results, SearchRunId id, SearchRunId partOf,
+                                      AccessContext caller, String text, SearchScope scope, Instant startedAt,
+                                      long started, int pending) {
+        if (id == null) {
+            return results;
+        }
+        List<SearchRun.StageCount> stages = new ArrayList<>();
+        if (pending >= 0) {
+            stages.add(new SearchRun.StageCount(SearchRun.Stage.PENDING, pending));
+        }
+        stages.add(new SearchRun.StageCount(SearchRun.Stage.DELIVERED, results.hits().size()));
+        boolean recorded = SearchRunLog.recordQuietly(runs, new SearchRun(id, partOf, SearchRun.Kind.RELEVANCE,
+                SearchRun.ownerOf(caller), text, startedAt, Duration.ofNanos(System.nanoTime() - started),
+                scope.sourceIds().stream().sorted().map(sourceId -> new SearchRun.SourceOutcome(sourceId,
+                        SearchRun.SourceOutcome.Status.INDEXED, null)).toList(), stages, results.complete(), null));
+        return recorded ? results.withSearchRun(id.value()) : results;
+    }
+
+    /**
+     * Ob eine Suche über {@code query} jetzt möglich ist, in derselben Reihenfolge wie {@link #search}: zuerst die
+     * Rechte am Umfang, dann der Embedding-Dienst. Wer eine genannte Quelle oder einen Space nicht sehen darf, erfährt
+     * so nicht, ob ein Modell eingerichtet ist.
+     *
+     * @throws AccessDeniedException              wie bei {@link #search}
+     * @throws SemanticSearchUnavailableException ohne Embedding-Dienst
+     */
+    public void requireAvailable(AccessContext caller, PageSearchQuery query) {
+        SearchScope.authorize(access, catalog, caller, query).requireKnown(catalog);
+        if (!semantic()) {
+            throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
+        }
     }
 
     /**
@@ -329,7 +428,7 @@ public class RelevanceSearch {
                 SearchSort.TITLE);
         Set<PageKey> fromContent = new LinkedHashSet<>();
         hits.forEach(hit -> fromContent.add(hit.page().header().key()));
-        return verify(caller, any, hits, Map.of(), fromContent).stream()
+        return verify(caller, any, Set.of(), hits, Map.of(), fromContent).stream()
                 .map(verified -> new RelatedSections.Checked(verified.hit() == null ? null : verified.hit().hit(),
                         verified.failed()))
                 .toList();
@@ -341,8 +440,8 @@ public class RelevanceSearch {
      * @param contentRanked Seiten, deren Platz aus dem Volltext stammt; sie brauchen live {@code content} wie Treffer
      *                      mit Ähnlichkeit
      */
-    private List<Verified> verify(AccessContext caller, PageSearchQuery query, List<SearchHit> batch,
-                                  Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
+    private List<Verified> verify(AccessContext caller, PageSearchQuery query, Set<String> excluded,
+                                  List<SearchHit> batch, Map<SearchHit, Score> scores, Set<PageKey> contentRanked) {
         if (renewal == null) {
             return batch.stream().map(hit -> new Verified(ranked(hit, scores.get(hit)), false, indexed(hit))).toList();
         }
@@ -353,7 +452,7 @@ public class RelevanceSearch {
                 futures.add(checks.submit(() -> {
                     slots.acquireUninterruptibly();
                     try {
-                        return verify(caller, query, hit, scores.get(hit),
+                        return verify(caller, query, excluded, hit, scores.get(hit),
                                 contentRanked.contains(hit.page().header().key()));
                     } finally {
                         slots.release();
@@ -380,8 +479,8 @@ public class RelevanceSearch {
      * Wie das Lesen einer Seite: ein Metadatenabruf bei der Quelle liefert Recht und Version in einem Schritt. Die
      * Rechte gelten für den aktuellen Space der Seite, nicht den im Index.
      */
-    private Verified verify(AccessContext caller, PageSearchQuery query, SearchHit hit, Score score,
-                            boolean contentRanked) {
+    private Verified verify(AccessContext caller, PageSearchQuery query, Set<String> excluded, SearchHit hit,
+                            Score score, boolean contentRanked) {
         PageKey key = hit.page().header().key();
         HarvestSource source = catalog.find(key.sourceId()).orElse(null);
         if (source == null) {
@@ -403,7 +502,8 @@ public class RelevanceSearch {
                     key.sourceId(), e.reason());
             return Verified.FAILED;
         }
-        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(live.partitionKey())) {
+        if (!query.spaceKeys().isEmpty() && !query.spaceKeys().contains(live.partitionKey())
+                || excluded.contains(live.partitionKey())) {
             return Verified.DROPPED;
         }
         ResourceScope scope = ResourceScope.page(key.sourceId(), live.partitionKey(), key.pageId());
@@ -470,6 +570,25 @@ public class RelevanceSearch {
          * @return wie viele gefundene Seiten noch ohne aktuelles Embedding sind; dann ist das Ergebnis unvollständig
          */
         int prepare(AccessContext caller, PageSearchQuery query, String text);
+
+        /**
+         * Ohne Seiten dieser Spaces (#179); ohne eigene Umsetzung wie {@link #prepare(AccessContext, PageSearchQuery,
+         * String)}, die Kandidatenauswahl filtert dann trotzdem.
+         */
+        default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys) {
+            return prepare(caller, query, text);
+        }
+
+        /**
+         * Wie {@link #prepare(AccessContext, PageSearchQuery, String, Set)} als Teil des Laufs {@code partOf} im
+         * Suchlauf-Protokoll (#182).
+         *
+         * @param partOf der Lauf der semantischen Suche oder {@code null}
+         */
+        default int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                            SearchRunId partOf) {
+            return prepare(caller, query, text, excludedSpaceKeys);
+        }
     }
 
     @FunctionalInterface
@@ -492,9 +611,9 @@ public class RelevanceSearch {
     }
 
     /** Seiten der ähnlichsten Stücke, nach bester Ähnlichkeit, gefiltert nach Anfrage und Rechten. */
-    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, SearchScope scope,
-                                               SearchIndexState state, EmbeddingProcessor.Generation model,
-                                               float[] vector) {
+    private List<SearchHit> semanticCandidates(AccessContext caller, PageSearchQuery query, Set<String> excluded,
+                                               SearchScope scope, SearchIndexState state,
+                                               EmbeddingProcessor.Generation model, float[] vector) {
         Set<PageKey> pages = new LinkedHashSet<>();
         for (EmbeddingIndex.ChunkHit chunk : vectors.nearest(scope.sourceIds(), model.version(), vector,
                 MAX_CHUNKS)) {
@@ -514,7 +633,8 @@ public class RelevanceSearch {
             }
             PageSearchQuery single = query.with(page.sourceId(), page.pageId(), SearchSort.PAGE_ID);
             for (SearchHit hit : index.search(single, scope.sourceIds(), state.generation(), null, 1)) {
-                if (permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
+                if (!excluded.contains(hit.page().header().metadata().partitionKey())
+                        && permits(caller, hit, AccessKind.METADATA) && permits(caller, hit, AccessKind.CONTENT)) {
                     found.add(hit);
                 }
             }
@@ -650,12 +770,23 @@ public class RelevanceSearch {
      * @param reranker Kennung des Rerankers, {@code none} ohne Modell
      * @param complete {@code false}, wenn die Kopfdaten eines Kandidaten bei der Quelle nicht lesbar waren; er fehlt
      *                 dann, weil ungeprüft nichts ausgeliefert wird
+     * @param searchRun Kennung des Laufs im Suchlauf-Protokoll (#182) oder {@code null}, wenn nicht protokolliert
      */
     public record RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits,
-                                   boolean complete) {
+                                   boolean complete, String searchRun) {
 
         public RelevanceResults {
             hits = List.copyOf(hits);
+        }
+
+        public RelevanceResults(String sourceId, SearchIndexState index, String reranker, List<RankedHit> hits,
+                                boolean complete) {
+            this(sourceId, index, reranker, hits, complete, null);
+        }
+
+        /** Dieselben Treffer mit der Kennung ihres Laufs im Suchlauf-Protokoll. */
+        public RelevanceResults withSearchRun(String id) {
+            return new RelevanceResults(sourceId, index, reranker, hits, complete, id);
         }
 
         /** Ob die Treffer aus allen freigegebenen Quellen stammen. */

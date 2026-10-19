@@ -12,6 +12,9 @@ import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
+import com.aresstack.spaceharvester.application.acquisition.BackgroundFill;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationProblem;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationRejectedException;
@@ -54,6 +57,7 @@ import com.aresstack.spaceharvester.application.query.PageQueries;
 import com.aresstack.spaceharvester.application.query.PageSearch;
 import com.aresstack.spaceharvester.application.query.PageTextIndexing;
 import com.aresstack.spaceharvester.application.query.SearchHitPrefetch;
+import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
 import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
 import com.aresstack.spaceharvester.application.query.progressive.AiQueryExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.QueryVariantModel;
@@ -66,7 +70,11 @@ import com.aresstack.spaceharvester.application.ranking.PageRenewal;
 import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
+import com.aresstack.spaceharvester.application.facts.PageFacts;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.searchrun.SearchRuns;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
 import com.aresstack.spaceharvester.application.signin.SignInRequests;
@@ -91,10 +99,13 @@ import com.aresstack.spaceharvester.persistence.files.FileSystemAssetStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneEnrichmentStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobEventStore;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneJobStore;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneCatalogGaps;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneFillQueue;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCacheReader;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageSearchIndex;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageTextIndex;
+import com.aresstack.spaceharvester.persistence.lucene.LuceneSearchRunLog;
 import com.aresstack.spaceharvester.persistence.lucene.LuceneSyncBaselineStore;
 import com.aresstack.spaceharvester.source.ConfiguredSourceCatalog;
 import com.aresstack.spaceharvester.source.KnowledgeDocumentTextProjector;
@@ -165,6 +176,9 @@ public final class Harvester implements AutoCloseable {
     /** Eigentümer der Aufträge, die über diesen Einstieg entstehen. */
     public static final String OWNER = "space-harvester-core";
 
+    /** So lange bleiben Läufe im Suchlauf-Protokoll, wenn nichts anderes eingestellt ist. */
+    public static final Duration DEFAULT_SEARCH_RUN_MAX_AGE = Duration.ofDays(30);
+
     private static final System.Logger LOG = System.getLogger(Harvester.class.getName());
     private static final Duration POLL = Duration.ofMillis(50);
     /** Gleichzeitige Abrufe, mit denen die Schlagwortsuche gefundene Seiten in den Cache lädt. */
@@ -183,9 +197,16 @@ public final class Harvester implements AutoCloseable {
     private final PageNavigation navigation;
     private final PageSearch search;
     private final KeywordSearch keywordSearch;
+    private final AcquisitionScheduler acquisition;
+    private final BackgroundFill backgroundFill;
+    /** Ob Füllung bzw. ihre Parallelität der Konfiguration folgen (ADR 0015), statt im Builder fest zu sein. */
+    private final boolean fillFollows;
+    private final boolean parallelismFollows;
     private final SearchOrchestrator progressiveSearch;
     private final VariantModels variantModels;
     private final RelevanceSearch relevance;
+    private final SearchRuns searchRuns;
+    private final PageFacts facts;
     private final Jobs jobs;
     private final SpaceSyncJobs syncs;
     private final ChangeEvents changeEvents;
@@ -247,6 +268,15 @@ public final class Harvester implements AutoCloseable {
             Clock clock = Clock.systemUTC();
             LuceneEnrichmentStore enrichmentStore = LuceneEnrichmentStore.open(cacheDirectory.resolve("enrichments"));
             opened.add(enrichmentStore);
+            // #182: Suchlauf-Protokoll neben der Diagnoseablage, nur Lucene.
+            SearchRunLog runLog = SearchRunLog.NONE;
+            if (builder.searchRuns) {
+                LuceneSearchRunLog lucene = LuceneSearchRunLog.open(cacheDirectory.resolve("search-runs"),
+                        builder.searchRunMaxAge, clock);
+                opened.add(lucene);
+                runLog = lucene;
+            }
+            this.searchRuns = new SearchRuns(runLog, builder.searchRunAdministrators);
             EmbeddingProcessor embedding = null;
             ExecutorService background = null;
             Swappable<EmbeddingGeneration> model = null;
@@ -311,15 +341,34 @@ public final class Harvester implements AutoCloseable {
             this.readingViews = new ReadingViews(catalog, pages, access, new ReadingViewStore(enrichmentStore), clock);
             this.navigation = new PageNavigation(catalog, reader, access);
             this.search = new PageSearch(catalog, index, access);
+            // ADR 0016: Die Warteschlange der Hintergrundfüllung schließt erst nach dem Planer, damit kein Abruf mehr
+            // endet, wenn sie zu ist.
+            // Folgt die Füllung der Konfiguration, gibt es die Warteschlange immer, damit sie sich ohne Neustart
+            // einschalten lässt.
+            boolean fillFollows = manager != null && !builder.backgroundFillFixed;
+            this.fillFollows = fillFollows;
+            this.parallelismFollows = manager != null && !builder.backgroundParallelismFixed;
+            LuceneFillQueue fillQueue = builder.backgroundFill || fillFollows
+                    ? LuceneFillQueue.open(cacheDirectory.resolve("fill-queue")) : null;
+            int backgroundParallelism = parallelismFollows
+                    ? settings.sync().backgroundParallelism() : builder.backgroundParallelism;
+            if (fillQueue != null) {
+                opened.add(fillQueue);
+            }
+            // ADR 0016: eine Warteschlange für Suche und Hintergrund, über denselben Beschaffungsweg wie jeder Abruf.
+            AcquisitionScheduler scheduler = new AcquisitionScheduler(pages::acquire,
+                    new AcquisitionScheduler.Limits(SEARCH_FILL_PARALLEL,
+                            fillQueue != null ? backgroundParallelism : 0,
+                            AcquisitionScheduler.Limits.DEFAULT.perSource(), AcquisitionScheduler.Limits.DEFAULT.capacity()),
+                    null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+            opened.add(scheduler);
+            this.acquisition = scheduler;
             SearchHitPrefetch prefetch = null;
             if (builder.prefetchSearchHits) {
                 // ADR 0013: gefundene Seiten mit den Rechten des Aufrufers in den Cache laden, dann dort suchen.
                 prefetch = new SearchHitPrefetch(key -> texts.cachedVersion(key, cache::findHeader, cache::find),
-                        key -> cache.findHeader(key).map(PageHeader::metadata),
-                        (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                        SearchHitPrefetch.background(SEARCH_FILL_PARALLEL, 200), SearchHitPrefetch.DEFAULT_WAIT,
-                        builder.searchWait);
-                opened.add(prefetch);
+                        key -> cache.findHeader(key).map(PageHeader::metadata), scheduler,
+                        SearchHitPrefetch.DEFAULT_WAIT, builder.searchWait);
             }
             SearchReranker reranker = builder.reranker;
             SwappableReranker swappable = null;
@@ -345,18 +394,12 @@ public final class Harvester implements AutoCloseable {
                 excerpts = reranker instanceof ModelReranker cross ? cross.excerptPriority() : ExcerptPriority.off();
             }
             this.keywordSearch = new KeywordSearch(catalog, access, textIndex, prefetch, builder.discoveryQueries,
-                    excerpts, builder.searchLoads);
+                    excerpts, builder.selection(), runLog);
             // ADR 0017: Varianten vom Chat-Modell der wirksamen Konfiguration, ohne Modell oder bei Fehlern nach Regeln;
             // bewertet wird immer gegen die ursprüngliche Anfrage.
             AiServiceSettings fixedAi = builder.ai;
             this.variantModels = new VariantModels(() -> liveAi ? this.settings.ai() : fixedAi, catalog,
                     trustBundles, builder.userAgent);
-            RuleBasedExpansion rules = new RuleBasedExpansion();
-            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
-                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                    HitScorer.of(excerpts));
-            opened.add(orchestrator);
-            this.progressiveSearch = orchestrator;
             PageRenewal renewal = null;
             if (embedding != null) {
                 // ADR 0011, Punkt 7: Relevanztreffer live prüfen, neuere Versionen im Hintergrund nachladen.
@@ -371,7 +414,17 @@ public final class Harvester implements AutoCloseable {
                     : new SemanticPreparation(keywordSearch, key -> reader.page(key).map(CachedPage::snapshot),
                     enrichments, embedding.id(), SemanticPreparation.DEFAULT_WAIT);
             this.relevance = new RelevanceSearch(catalog, index, access, enrichmentStore, enrichmentStore, embedding,
-                    renewal, reranker, textIndex, preparation);
+                    renewal, reranker, textIndex, preparation, runLog);
+            // #182: Fakten aus den Anreicherungen, Rechte je Seite an ihrem Space im Cache.
+            this.facts = new PageFacts(catalog, access, pages, enrichments, enrichmentStore, cache::findHeader);
+            // ADR 0017 mit ADR 0013: semantisch findet jede Variante nur, Treffer kommen aus den Vektoren.
+            RuleBasedExpansion rules = new RuleBasedExpansion();
+            SearchOrchestrator orchestrator = new SearchOrchestrator(VariantSearch.of(keywordSearch),
+                    new SemanticVariantSearch(relevance, textIndex),
+                    new AiQueryExpansion(variantModels, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
+                    HitScorer.of(excerpts), runLog);
+            opened.add(orchestrator);
+            this.progressiveSearch = orchestrator;
             this.liveReranker = swappable;
             this.syncs = new SpaceSyncJobs(jobs, sources, new LuceneSyncBaselineStore(cache), snapshots, clock,
                     List.of(new EnrichmentsAfterSync(enrichments, cache, jobs, texts)), retentionRule(builder));
@@ -406,11 +459,29 @@ public final class Harvester implements AutoCloseable {
                     exportWriter, clock);
             this.reconciliation = new Reconciliation(syncs, OWNER, clock);
             opened.add(reconciliation);
+            if (fillQueue != null) {
+                // ADR 0016, Punkt 5: technisch, mit den Zugangsdaten der Quelle, unabhängig von sync.mode; je Quelle
+                // abschaltbar (sync.sources.<Quelle>.background-fill).
+                AccessContext technical = caller;
+                BackgroundFill fill = new BackgroundFill(scheduler, fillQueue, new LuceneCatalogGaps(cache), technical,
+                        sourceId -> catalog.find(sourceId).isPresent()
+                                && access.permitsSourceWide(technical, sourceId, AccessKind.CONTENT)
+                                && (!fillFollows || settings.syncFor(sourceId).backgroundFill()),
+                        BackgroundFill.Timing.DEFAULT,
+                        fillFollows ? settings.sync().backgroundFillAnywhere() : builder.backgroundFill);
+                opened.add(fill);
+                this.backgroundFill = fill;
+            } else {
+                this.backgroundFill = null;
+            }
             if (manager != null) {
                 scheduleConfigured(plannedSchedules(settings, false));
                 catchUpOnStart();
                 ConfigurationManager.Registration registration = manager.register(this::prepare);
                 opened.add(registration::close);
+            }
+            if (backgroundFill != null) {
+                backgroundFill.start();
             }
             this.resources = List.copyOf(opened);
         } catch (RuntimeException e) {
@@ -498,6 +569,13 @@ public final class Harvester implements AutoCloseable {
         SearchReranker nextReranker = reranker;
         return () -> {
             settings = next;
+            if (backgroundFill != null && fillFollows) {
+                // Regeln je Quelle liest die Füllung beim Einreihen und Laden; wake() sucht danach neu im Katalog.
+                backgroundFill.enabled(next.sync().backgroundFillAnywhere());
+            }
+            if (backgroundFill != null && parallelismFollows) {
+                acquisition.backgroundParallelism(next.sync().backgroundParallelism());
+            }
             if (nextModel != null) {
                 embeddingModel.swap(nextModel);
             }
@@ -693,6 +771,30 @@ public final class Harvester implements AutoCloseable {
     }
 
     /**
+     * Der Beschaffungsplaner (ADR 0016): eine Warteschlange für die Funde der Suche und die Hintergrundfüllung, mit
+     * reservierter Kapazität für den Vordergrund. {@link AcquisitionScheduler#pauseBackground()} hält den Hintergrund
+     * während einer Aktion des Benutzers an.
+     */
+    public AcquisitionScheduler acquisition() {
+        return acquisition;
+    }
+
+    /**
+     * Die Hintergrundfüllung (ADR 0016, Punkt 5), leer mit {@link Builder#backgroundFill(boolean) backgroundFill(false)}.
+     * {@link BackgroundFill#enabled(boolean)} schaltet sie zur Laufzeit an oder aus.
+     */
+    public Optional<BackgroundFill> backgroundFill() {
+        return Optional.ofNullable(backgroundFill);
+    }
+
+    /**
+     * Stand der Beschaffung (ADR 0016): Warteschlangen, Pause und Zähler je Quelle, nie Seiten-IDs oder Suchtexte.
+     */
+    public AcquisitionStatus acquisitionStatus() {
+        return backgroundFill != null ? backgroundFill.status() : BackgroundFill.withoutFill(acquisition);
+    }
+
+    /**
      * Progressive Suche (ADR 0017): die ursprüngliche Anfrage sofort, dann Varianten in Wellen, bewertet gegen die
      * ursprüngliche Anfrage, bis das Qualitätsziel des {@link SearchProfile} erreicht oder das Budget aufgebraucht ist.
      */
@@ -703,10 +805,18 @@ public final class Harvester implements AutoCloseable {
     /**
      * Das Standardprofil der progressiven Suche: Varianten vom Chat-Modell ({@link SearchProfile.Expansion#AI}), wenn
      * die wirksame Konfiguration eines hat, sonst nach Regeln.
+     *
+     * <p>Dieses Profil ist der Haken „Semantische Suche“ (ADR 0013): semantisch
+     * ({@link SearchProfile.Ranking#SEMANTIC}), wenn ein Embedding-Modell verfügbar ist, sonst wie bei den Varianten die
+     * wirksame Wahl, also die Schlagwortsuche. Semantisch finden die Varianten nur, und die Treffer kommen aus der
+     * Vektorsuche mit der ursprünglichen Anfrage; jede Suchanfrage hat dafür {@link SemanticVariantSearch#VARIANT_TIMEOUT}
+     * und die Suche {@link SemanticVariantSearch#TIME_BUDGET}. Eine ausdrücklich semantische Suche ohne Modell scheitert mit
+     * {@link com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException}.
      */
     public SearchProfile searchProfile() {
-        return SearchProfile.defaults().withExpansion(variantModels.get().isPresent() ? SearchProfile.Expansion.AI
-                : SearchProfile.Expansion.RULES);
+        SearchProfile profile = SearchProfile.defaults().withExpansion(variantModels.get().isPresent()
+                ? SearchProfile.Expansion.AI : SearchProfile.Expansion.RULES);
+        return relevance.semantic() ? SemanticVariantSearch.profile(profile) : profile;
     }
 
     /**
@@ -717,6 +827,24 @@ public final class Harvester implements AutoCloseable {
     }
 
     /** Anhänge und Bilder einer Seite, abgelegt unter dem Asset-Verzeichnis. */
+    /**
+     * Das Suchlauf-Protokoll (#182): Schlagwortsuche, semantische und progressive Suche legen je Lauf Anfrage, Quellen,
+     * Trefferzahlen je Stufe und Dauer ab (unter {@code cache/search-runs/}). Ein Lauf ist nur für seinen Aufrufer
+     * lesbar und für die mit {@link Builder#searchRuns} genannten Verwalter; ausschalten mit
+     * {@code searchRuns(false, …)}.
+     */
+    public SearchRuns searchRuns() {
+        return searchRuns;
+    }
+
+    /**
+     * Abfragbare Fakten je Seite aus den Anreicherungen (#182): Akronyme, Begriffe, Eigenschaften, mit den Rechten des
+     * Aufrufers je Seite.
+     */
+    public PageFacts facts() {
+        return facts;
+    }
+
     public Assets assets() {
         return assets;
     }
@@ -1113,7 +1241,17 @@ public final class Harvester implements AutoCloseable {
         private boolean prefetchSearchHits = true;
         private int discoveryQueries = KeywordSearch.DEFAULT_MAX_QUERIES;
         private boolean excerptRanking = true;
+        private boolean searchRuns = true;
+        private Duration searchRunMaxAge = DEFAULT_SEARCH_RUN_MAX_AGE;
+        private Predicate<AccessContext> searchRunAdministrators = context -> false;
         private int searchLoads = KeywordSearch.DEFAULT_LOADS;
+        private boolean searchLoadsSet;
+        private CandidateSelectionStrategy.Kind selectionKind;
+        private CandidateSelectionStrategy selection;
+        private boolean backgroundFill = true;
+        private int backgroundParallelism = BackgroundFill.DEFAULT_PARALLELISM;
+        private boolean backgroundFillFixed;
+        private boolean backgroundParallelismFixed;
         private Duration searchWait = Duration.ZERO;
         private CacheFreshness cacheFreshness = CacheFreshness.DEFAULT;
         private Duration withheldRetention = SpaceSync.DEFAULT_WITHHELD_RETENTION;
@@ -1169,6 +1307,8 @@ public final class Harvester implements AutoCloseable {
             this.aiFixed = false;
             this.freshnessFixed = false;
             this.retentionFixed = false;
+            this.backgroundFillFixed = false;
+            this.backgroundParallelismFixed = false;
             return this;
         }
 
@@ -1436,9 +1576,11 @@ public final class Harvester implements AutoCloseable {
         }
 
         /**
-         * Wie viele Funde je Stapel die Schlagwortsuche in den Cache lädt (1 bis {@value KeywordSearch#MAX_LIMIT},
-         * Standard alle): in der Rangfolge nach Titel und Auszug, die besten zuerst. Alle Funde erscheinen sofort als
-         * vorläufige Treffer ({@link KeywordSearch.Results#found()}); die Suche wartet nicht auf das Laden.
+         * Wie viele Funde je Stapel die Schlagwortsuche höchstens in den Cache lädt (1 bis
+         * {@value KeywordSearch#MAX_LIMIT}, Standard ohne Grenze): in der Rangfolge nach Titel und Auszug, die besten
+         * zuerst. Ohne {@link #candidateSelection} heißt das „die besten N“ ({@code top-n}, wie bisher), mit ihr ist es
+         * die Obergrenze der gewählten Strategie. Alle Funde erscheinen sofort als vorläufige Treffer
+         * ({@link KeywordSearch.Results#found()}); die Suche wartet nicht auf das Laden.
          */
         public Builder searchLoads(int searchLoads) {
             if (searchLoads < 1 || searchLoads > KeywordSearch.MAX_LIMIT) {
@@ -1446,6 +1588,66 @@ public final class Harvester implements AutoCloseable {
                         + " liegen");
             }
             this.searchLoads = searchLoads;
+            this.searchLoadsSet = true;
+            return this;
+        }
+
+        /**
+         * Welche Funde eines Stapels die Schlagwortsuche jetzt lädt (ADR 0016, Punkt 4): {@code ORDER} alle in der
+         * Reihenfolge der Quellen, {@code TOP_N} die besten {@link #searchLoads} nach Titel und Auszug, {@code ADAPTIVE}
+         * (Standard) so viele, wie der Vordergrund bald schafft ({@link CandidateSelectionStrategy.Adaptive}).
+         * {@link #searchLoads} begrenzt jede.
+         */
+        public Builder candidateSelection(CandidateSelectionStrategy.Kind kind) {
+            this.selectionKind = Objects.requireNonNull(kind, "kind");
+            this.selection = null;
+            return this;
+        }
+
+        /** Wie {@link #candidateSelection(CandidateSelectionStrategy.Kind)}, mit einer eigenen Strategie. */
+        public Builder candidateSelection(CandidateSelectionStrategy selection) {
+            this.selection = Objects.requireNonNull(selection, "selection");
+            this.selectionKind = null;
+            return this;
+        }
+
+        /** Die wirksame Auswahl: eigene, gewählte mit Obergrenze, sonst bei gesetztem {@code searchLoads} top-n. */
+        private CandidateSelectionStrategy selection() {
+            if (selection != null) {
+                return selection;
+            }
+            if (selectionKind != null) {
+                return CandidateSelectionStrategy.of(selectionKind, searchLoads);
+            }
+            return searchLoadsSet ? CandidateSelectionStrategy.topN(searchLoads)
+                    : CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.ADAPTIVE, searchLoads);
+        }
+
+        /**
+         * Ob die Hintergrundfüllung läuft (ADR 0016, Punkt 5; Standard {@code true}): Sie lädt in Leerlaufzeit Seiten,
+         * die der Katalog kennt, deren Inhalt aber fehlt oder veraltet ist, zuletzt geänderte zuerst, unabhängig von
+         * der Betriebsart ({@code sync.mode}). Die Warteschlange liegt unter {@code <dataDirectory>/cache/fill-queue}
+         * und überdauert das Beenden. Mit {@link #configuration} folgt die Füllung {@code sync.background-fill} und
+         * {@code sync.sources.<Quelle>.background-fill}, bis dieser Aufruf sie danach fest einstellt.
+         */
+        public Builder backgroundFill(boolean backgroundFill) {
+            this.backgroundFill = backgroundFill;
+            this.backgroundFillFixed = configuration != null;
+            return this;
+        }
+
+        /**
+         * So viele Seiten lädt der Hintergrund höchstens zugleich (1 bis {@value BackgroundFill#MAX_PARALLELISM},
+         * Standard {@value BackgroundFill#DEFAULT_PARALLELISM}); der Vordergrund behält seine eigenen Plätze. Mit
+         * {@link #configuration} gilt {@code sync.background-parallelism}, bis dieser Aufruf sie danach festlegt.
+         */
+        public Builder backgroundParallelism(int backgroundParallelism) {
+            if (backgroundParallelism < 1 || backgroundParallelism > BackgroundFill.MAX_PARALLELISM) {
+                throw new IllegalArgumentException("backgroundParallelism muss zwischen 1 und "
+                        + BackgroundFill.MAX_PARALLELISM + " liegen");
+            }
+            this.backgroundParallelism = backgroundParallelism;
+            this.backgroundParallelismFixed = configuration != null;
             return this;
         }
 
@@ -1471,6 +1673,30 @@ public final class Harvester implements AutoCloseable {
          */
         public Builder excerptRanking(boolean excerptRanking) {
             this.excerptRanking = excerptRanking;
+            return this;
+        }
+
+        /**
+         * Suchlauf-Protokoll (#182), Standard an mit {@link Harvester#DEFAULT_SEARCH_RUN_MAX_AGE}. Ein Lauf enthält den
+         * Suchtext (wie im Enterprise AI Client), nie im Log.
+         *
+         * @param enabled ob Läufe abgelegt werden
+         * @param maxAge  so lange bleiben sie, {@code null} ohne Frist (höchstens {@value SearchRunLog#MAX_RUNS} Läufe)
+         */
+        public Builder searchRuns(boolean enabled, Duration maxAge) {
+            if (maxAge != null && (maxAge.isNegative() || maxAge.isZero())) {
+                throw new IllegalArgumentException("maxAge muss positiv sein");
+            }
+            this.searchRuns = enabled;
+            this.searchRunMaxAge = maxAge;
+            return this;
+        }
+
+        /**
+         * Wer alle Läufe lesen darf, nicht nur die eigenen (Standard: niemand); durchgereichte Endnutzer nie.
+         */
+        public Builder searchRunAdministrators(Predicate<AccessContext> administrators) {
+            this.searchRunAdministrators = Objects.requireNonNull(administrators, "administrators");
             return this;
         }
 

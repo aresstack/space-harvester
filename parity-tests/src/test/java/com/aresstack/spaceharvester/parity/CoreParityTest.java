@@ -3,8 +3,10 @@ package com.aresstack.spaceharvester.parity;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
 import com.aresstack.spaceharvester.application.export.ExportConversions;
+import com.aresstack.spaceharvester.application.export.ExportRequest;
 import com.aresstack.spaceharvester.application.jobs.JobType;
 import com.aresstack.spaceharvester.application.jobs.JobState;
 import com.aresstack.spaceharvester.application.jobs.JobStatus;
@@ -15,6 +17,7 @@ import com.aresstack.spaceharvester.application.query.PageAddresses;
 import com.aresstack.spaceharvester.application.reading.ReadingView;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
+import com.aresstack.spaceharvester.source.TikaDocumentText;
 import com.aresstack.spaceharvester.core.Harvester;
 import com.aresstack.spaceharvester.core.SourceManagement;
 import com.aresstack.spaceharvester.parity.ParityComparison.Finding;
@@ -64,6 +67,8 @@ class CoreParityTest {
     @TempDir
     static Path data;
     private static final Map<String, Path> CORE = new LinkedHashMap<>();
+    /** Markdown der Exportumfänge (#186) wie {@code eac/scope-*.md}: Einzelseite und Teilbaum ab der Seite. */
+    private static final Map<String, Path> CORE_SCOPES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_READING = new LinkedHashMap<>();
     private static final Map<String, Integer> CORE_READING_IMAGES = new LinkedHashMap<>();
     private static final Map<String, String> CORE_NAVIGATION = new LinkedHashMap<>();
@@ -108,6 +113,11 @@ class CoreParityTest {
                         .map(notice -> notice.pageId() + " " + notice.reference() + " (" + notice.reason() + ")")
                         .toList());
             }
+            // Exportumfänge (#186) wie „Exportieren“ an einem Seitenknoten: die Seite allein und ihr Teilbaum
+            scope(harvester, "page", ExportRequest.of("wiki", ParitySpace.SPACE, Harvester.OWNER, List.of("json"))
+                    .withPage(ParitySpace.SCOPE_ROOT), exports);
+            scope(harvester, "subtree", ExportRequest.of("wiki", ParitySpace.SPACE, Harvester.OWNER, List.of("json"))
+                    .withRoot(ParitySpace.SCOPE_ROOT), exports);
             // Leseansicht je Seite (#176), aus derselben Quelle wie der Export
             AccessContext caller = AccessContext.technicalClient(Harvester.OWNER);
             for (String page : ParitySpace.PAGES) {
@@ -123,6 +133,20 @@ class CoreParityTest {
         assertThat(CORE).containsOnlyKeys("docx", "pdf", "md");
         sourceManagement();
         search();
+    }
+
+    /** Lädt einen Exportumfang herunter, wartet auf seine Bilder und konvertiert ihn wie den ganzen Space nach Markdown. */
+    private static void scope(Harvester harvester, String name, ExportRequest request, Path exports) throws Exception {
+        JobStatus export = harvester.await(harvester.exports().start(request).id(), Duration.ofSeconds(60));
+        assertThat(export.state()).as(name).isEqualTo(JobState.COMPLETED);
+        for (JobStatus assets : harvester.jobs().list(Harvester.OWNER, JobType.ASSETS)) {
+            harvester.await(assets.id(), Duration.ofSeconds(60));
+        }
+        Path target = exports.resolve("scope-" + name + ".md");
+        ExportConversions.ConvertedFile converted = harvester.conversions().convert(export.id(), Harvester.OWNER,
+                "markdown", Files.createTempDirectory("parity-scope-" + name));
+        Files.move(converted.path(), target, StandardCopyOption.REPLACE_EXISTING);
+        CORE_SCOPES.put(name, target);
     }
 
     /**
@@ -340,10 +364,66 @@ class CoreParityTest {
                         + finding.core() + "; " + finding.detail() + ")");
             }
         }
+        Map<String, String> eacTypes = eacProperties("documents/types.properties");
+        Map<String, String> coreTypes = new LinkedHashMap<>();
+        Map<String, String> coreTexts = new LinkedHashMap<>();
+        Map<String, String> eacTexts = documentTexts(eacTypes, coreTypes, coreTexts);
+        List<Finding> documents = ParityComparison.documents(eacTypes, coreTypes, eacTexts, coreTexts);
+        report.append('\n').append(ParityReport.section("Dokumenttext", documents, gaps));
+        for (Finding finding : documents) {
+            if (finding.verdict() == Verdict.CORE_WENIGER && !gaps.containsKey(finding.key())) {
+                regressions.add(finding.key() + " (" + finding.title() + ": EAC " + finding.eac() + ", Core "
+                        + finding.core() + "; " + finding.detail() + ")");
+            }
+        }
         Path file = reportFile();
         Files.createDirectories(file.getParent());
         Files.writeString(file, report, StandardCharsets.UTF_8);
         assertThat(regressions).as("Neue Paritätslücken (ADR 0012); Bericht:%n%s", report).isEmpty();
+    }
+
+    /**
+     * Exportumfang (#186) wie im Enterprise AI Client: Die Einzelseite enthält nur ihr eigenes Kapitel, der Teilbaum
+     * dieselben Kapitel in derselben Reihenfolge mit der Seite als Wurzel. Darüber hinaus gelten die Prüfungen des
+     * ganzen Space; der Core darf nirgends weniger haben und keine Seite außerhalb des Umfangs.
+     */
+    @Test
+    void singlePageAndSubtreeExportsMatchTheEac() throws IOException {
+        Map<String, String> gaps = knownGaps();
+        for (String name : List.of("page", "subtree")) {
+            DocumentOutline eac = ParityReport.read(reference("scope-" + name + ".md"));
+            DocumentOutline core = ParityReport.read(CORE_SCOPES.get(name));
+            for (Finding finding : ParityComparison.compare(eac, core)) {
+                if (!gaps.containsKey(finding.key())) {
+                    assertThat(finding.verdict()).as("%s %s: EAC %s, Core %s; %s", name, finding.title(),
+                            finding.eac(), finding.core(), finding.detail()).isNotEqualTo(Verdict.CORE_WENIGER);
+                }
+            }
+            assertThat(pageChapters(core)).as(name).isEqualTo(pageChapters(eac));
+        }
+        String single = ParityReport.read(CORE_SCOPES.get("page")).text();
+        assertThat(single).contains("Satz Charlie zur Architektur.").doesNotContain("Satz Echo")
+                .doesNotContain("Satz Alpha").doesNotContain("Satz Foxtrot");
+        String subtree = ParityReport.read(CORE_SCOPES.get("subtree")).text().replaceAll("\\s+", " ");
+        assertThat(subtree).contains("Satz Charlie", "Satz Echo", "Satz Ebene vier", "Satz Ebene sieben")
+                .doesNotContain("Satz Alpha").doesNotContain("Satz Foxtrot").doesNotContain("Satz Golf");
+    }
+
+    /** Seitenkapitel in Reihenfolge mit ihrer Ebene relativ zum ersten, ohne direkte Wiederholung des Titels. */
+    private static List<String> pageChapters(DocumentOutline outline) {
+        List<String> chapters = new ArrayList<>();
+        String previous = null;
+        int base = -1;
+        for (DocumentOutline.Heading heading : outline.headings()) {
+            String title = heading.text().strip();
+            if (title.equals(previous)) {
+                continue;
+            }
+            base = base < 0 ? heading.level() : base;
+            chapters.add((heading.level() - base) + " " + title);
+            previous = title;
+        }
+        return chapters;
     }
 
     @Test
@@ -440,6 +520,32 @@ class CoreParityTest {
             images.put(page, Integer.parseInt(properties.getProperty(page, "0").strip()));
         }
         return images;
+    }
+
+    /**
+     * Dokumenttext (#183): jede Datei aus {@code documents/} und die Referenzexporte {@code parity.docx} und
+     * {@code parity.pdf} durch {@link TikaDocumentText}, mit demselben Typ, mit dem der Enterprise AI Client extrahiert
+     * hat ({@code <datei>.type}). Füllt Typ nach dem Inhalt und Text des Core und liefert die Texte des Maßstabs.
+     */
+    private static Map<String, String> documentTexts(Map<String, String> eacTypes, Map<String, String> coreTypes,
+                                                     Map<String, String> coreTexts) throws Exception {
+        List<Path> files = new ArrayList<>();
+        try (var listing = Files.list(Path.of(CoreParityTest.class.getResource("/documents").toURI()))) {
+            listing.forEach(files::add);
+        }
+        files.add(reference("parity.docx"));
+        files.add(reference("parity.pdf"));
+        files.sort(java.util.Comparator.comparing(path -> path.getFileName().toString()));
+        DocumentText documents = TikaDocumentText.shared();
+        Map<String, String> eacTexts = new LinkedHashMap<>();
+        for (Path path : files) {
+            String name = path.getFileName().toString();
+            byte[] content = Files.readAllBytes(path);
+            eacTexts.put(name, Files.readString(reference("documents/" + name + ".txt")));
+            coreTypes.put(name + ".content-type", documents.detect(content).orElse("-"));
+            coreTexts.put(name, documents.extract(name, eacTypes.get(name + ".type"), content).text());
+        }
+        return eacTexts;
     }
 
     /** Bericht unter {@code build/reports/parity/} (Gradle setzt {@code parity.report}), sonst im Arbeitsordner. */

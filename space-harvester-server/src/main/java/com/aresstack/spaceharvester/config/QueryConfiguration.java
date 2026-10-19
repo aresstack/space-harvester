@@ -1,7 +1,11 @@
 package com.aresstack.spaceharvester.config;
 
 import com.aresstack.spaceharvester.api.ProgressiveSearches;
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
+import com.aresstack.spaceharvester.application.configuration.SyncSettings;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
@@ -9,6 +13,7 @@ import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIn
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.navigation.PageNavigation;
 import com.aresstack.spaceharvester.application.query.CachedPage;
+import com.aresstack.spaceharvester.application.query.CandidateSelectionStrategy;
 import com.aresstack.spaceharvester.application.query.ExcerptPriority;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageAddresses;
@@ -32,9 +37,18 @@ import com.aresstack.spaceharvester.application.ranking.RelevanceSearch;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
 import com.aresstack.spaceharvester.application.ranking.SemanticPreparation;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.reading.ReadingViewStore;
 import com.aresstack.spaceharvester.application.reading.ReadingViews;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
+import com.aresstack.spaceharvester.application.facts.FactStore;
+import com.aresstack.spaceharvester.application.facts.MetadataFact;
+import com.aresstack.spaceharvester.application.facts.PageFacts;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sync.PageFreshness;
 import com.aresstack.spaceharvester.persistence.lucene.LucenePageCache;
@@ -54,6 +68,13 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration(proxyBeanMethods = false)
 class QueryConfiguration {
+
+    /**
+     * Der technische Aufrufer der Hintergrundfüllung (ADR 0016): eine Aktion des Servers, nie im Auftrag eines Clients
+     * oder Benutzers. Erkannt wird er nur an genau dieser Instanz, nie an seinem Namen; der Name ist keine gültige
+     * Client-ID.
+     */
+    static final AccessContext BACKGROUND = AccessContext.technicalClient("space-harvester background (intern)");
 
     /**
      * Seitenabruf mit Cache (ADR 0010). {@code space-harvester.cache.max-age} (Standard {@code 0s}) ist das Zeitfenster,
@@ -105,15 +126,20 @@ class QueryConfiguration {
      * zu laden (nur Quellen in {@code external-processing-sources}). {@code space-harvester.search.loads} (Standard
      * {@value KeywordSearch#DEFAULT_LOADS}, alle) begrenzt, wie viele Funde je Stapel in den Cache laden, die besten
      * zuerst; alle Funde kommen sofort als vorläufige Treffer mit Titel und Auszug ({@code found}).
+     * {@code space-harvester.search.candidate-selection} ({@code order}, {@code top-n}, {@code adaptive}; ADR 0016)
+     * wählt, welche Funde jetzt laden; ohne Angabe {@code adaptive}, mit gesetztem {@code search.loads} aber
+     * {@code top-n} wie bisher.
      */
     @Bean
     KeywordSearch keywordSearch(SourceCatalog catalog, AccessGuard access, ObjectProvider<PageTextIndex> texts,
                                 SearchHitPrefetch prefetch, ObjectProvider<SearchReranker> reranker,
                                 @Value("${space-harvester.search.discovery.max-queries:4}") int maxQueries,
                                 @Value("${space-harvester.search.excerpt-ranking:true}") boolean excerptRanking,
-                                @Value("${space-harvester.search.loads:" + KeywordSearch.DEFAULT_LOADS + "}") int loads) {
+                                @Value("${space-harvester.search.loads:}") String loadsValue,
+                                @Value("${space-harvester.search.candidate-selection:}") String selectionValue,
+                                SearchRunLog runs) {
         return new KeywordSearch(catalog, access, texts.getIfAvailable(), prefetch, maxQueries,
-                excerpts(reranker.getIfUnique(), excerptRanking), loads);
+                excerpts(reranker.getIfUnique(), excerptRanking), selection(selectionValue, loadsValue), runs);
     }
 
     /** Der Cross-Encoder für Titel und Auszug, wenn {@code rerank-model} gesetzt ist; sonst keine Bewertung. */
@@ -133,18 +159,23 @@ class QueryConfiguration {
      * Progressive Suche (ADR 0017) wie {@code Harvester.progressiveSearch()}: die Schlagwortsuche mit ihren
      * Rechteprüfungen je Suchanfrage, Varianten vom Chat-Modell der wirksamen Konfiguration mit den Regeln als Rückfall,
      * bewertet gegen die ursprüngliche Anfrage vom Cross-Encoder ({@code rerank-model}, nur Quellen in
-     * {@code external-processing-sources}; ohne ihn keine Bewertung). Schließt vor der Schlagwortsuche und dem Cache:
-     * bricht laufende Suchen ab und wartet auf ihre Suchanfragen, ohne sie zu unterbrechen.
+     * {@code external-processing-sources}; ohne ihn keine Bewertung). Mit {@code ranking=semantic} läuft jede
+     * Suchanfrage über die {@link RelevanceSearch} ({@link SemanticVariantSearch}, ADR 0013): Die Variante findet und
+     * lädt nur, Treffer kommen aus den Vektoren mit der ursprünglichen Anfrage; ohne Embedding-Modell
+     * {@code semantic-search-unavailable}. Schließt vor der Schlagwortsuche und dem Cache: bricht laufende Suchen ab und
+     * wartet auf ihre Suchanfragen, ohne sie zu unterbrechen.
      */
     @Bean(destroyMethod = "close")
-    SearchOrchestrator searchOrchestrator(KeywordSearch keywords, ObjectProvider<SearchReranker> reranker,
-                                          QueryVariantModels models,
+    SearchOrchestrator searchOrchestrator(KeywordSearch keywords, RelevanceSearch relevance,
+                                          ObjectProvider<PageTextIndex> texts,
+                                          ObjectProvider<SearchReranker> reranker, QueryVariantModels models,
                                           @Value("${space-harvester.search.excerpt-ranking:true}")
-                                          boolean excerptRanking) {
+                                          boolean excerptRanking, SearchRunLog runs) {
         RuleBasedExpansion rules = new RuleBasedExpansion();
-        return new SearchOrchestrator(VariantSearch.of(keywords),
+        return new SearchOrchestrator(VariantSearch.of(keywords), new SemanticVariantSearch(relevance,
+                texts.getIfUnique()),
                 new AiQueryExpansion(models, rules, AiQueryExpansion.DEFAULT_TIMEOUT), rules,
-                HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)));
+                HitScorer.of(excerpts(reranker.getIfUnique(), excerptRanking)), runs);
     }
 
     /**
@@ -158,23 +189,70 @@ class QueryConfiguration {
     }
 
     /**
-     * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013): vier Abrufe zugleich, höchstens 200 wartende;
-     * ohne Cache nichts. Technische Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
-     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert. Der Hintergrund ist bewusst keine eigene Bean, damit er keinen Executor von Spring
-     * verdrängt.
+     * Die Auswahl der Beschaffung aus {@code search.candidate-selection} und {@code search.loads}.
+     *
+     * @throws IllegalArgumentException bei unbekannter Strategie oder Obergrenze außerhalb 1 bis 100
+     */
+    static CandidateSelectionStrategy selection(String selectionValue, String loadsValue) {
+        boolean loadsSet = loadsValue != null && !loadsValue.isBlank();
+        int loads;
+        try {
+            loads = loadsSet ? Integer.parseInt(loadsValue.strip()) : KeywordSearch.DEFAULT_LOADS;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("space-harvester.search.loads muss eine Zahl sein");
+        }
+        if (loads < 1 || loads > KeywordSearch.MAX_LIMIT) {
+            throw new IllegalArgumentException("space-harvester.search.loads muss zwischen 1 und "
+                    + KeywordSearch.MAX_LIMIT + " liegen");
+        }
+        if (selectionValue == null || selectionValue.isBlank()) {
+            return loadsSet ? CandidateSelectionStrategy.topN(loads)
+                    : CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.ADAPTIVE, loads);
+        }
+        return CandidateSelectionStrategy.of(CandidateSelectionStrategy.Kind.of(selectionValue), loads);
+    }
+
+    /**
+     * Der Beschaffungsplaner (ADR 0016): eine Warteschlange für die Funde der Suche (vier zugleich, reserviert) und die
+     * Hintergrundfüllung ({@code space-harvester.sync.background-parallelism}, Standard
+     * {@value SyncSettings#DEFAULT_BACKGROUND_PARALLELISM}, zur Laufzeit änderbar; siehe
+     * {@link AcquisitionConfiguration}), je Quelle höchstens vier, über denselben Beschaffungsweg {@link PageQueries#page}. Der Hintergrund lädt als Aktion
+     * des Servers ({@link #BACKGROUND}) über einen eigenen {@link PageQueries} mit demselben Cache, derselben Ablage und
+     * denselben Anreicherungen, dessen Rechte nur diesen Aufrufer kennen; kein Client erreicht ihn.
+     */
+    @Bean(destroyMethod = "close")
+    AcquisitionScheduler acquisitionScheduler(SourceCatalog catalog, ObjectProvider<PageCacheReader> cache,
+                                              PageQueries pages, PageFreshness freshness,
+                                              ObjectProvider<PageCacheFill> fill, LiveConfiguration live,
+                                              @Value("${space-harvester.query.max-tree-nodes:50000}") int maxTreeNodes) {
+        PageQueries technical = new PageQueries(catalog, cache.getIfAvailable(PageCacheReader::unavailable),
+                new AccessGuard((context, scope, kind) -> context == BACKGROUND ? AccessDecision.ALLOW
+                        : AccessDecision.DENY), freshness, fill.getIfAvailable(() -> PageCacheFill.NONE), maxTreeNodes,
+                live::freshnessFor, Clock.systemUTC());
+        AcquisitionScheduler.Limits defaults = AcquisitionScheduler.Limits.DEFAULT;
+        return new AcquisitionScheduler((caller, key, background) -> (caller == BACKGROUND ? technical : pages)
+                .acquire(caller, key, background),
+                new AcquisitionScheduler.Limits(defaults.foreground(), live.current().sync().backgroundParallelism(),
+                        defaults.perSource(), defaults.capacity()), null, AcquisitionScheduler.DEFAULT_RESUME_DELAY);
+    }
+
+    /**
+     * Lädt gefundene Seiten der Schlagwortsuche in den Cache (ADR 0013), als Vordergrund des
+     * {@link AcquisitionScheduler}: vier Abrufe zugleich, höchstens 200 wartende; ohne Cache nichts. Technische
+     * Clients warten nicht darauf ({@code progress}), delegierte Benutzer höchstens
+     * {@link SearchHitPrefetch#DEFAULT_WAIT}, weil ihre Anmeldung den Aufruf nicht überdauert.
      */
     @Bean(destroyMethod = "close")
     SearchHitPrefetch searchHitPrefetch(ObjectProvider<LucenePageCache> cache,
-                                        ObjectProvider<PageTextIndexing> texts, PageQueries pages) {
+                                        ObjectProvider<PageTextIndexing> texts, AcquisitionScheduler scheduler) {
         LucenePageCache available = cache.getIfAvailable();
         PageTextIndexing indexing = texts.getIfAvailable();
         if (available == null || indexing == null) {
             return SearchHitPrefetch.disabled();
         }
         return new SearchHitPrefetch(key -> indexing.cachedVersion(key, available::findHeader, available::find),
-                key -> available.findHeader(key).map(PageHeader::metadata),
-                (caller, key) -> pages.page(caller, key.sourceId(), key.pageId(), false),
-                SearchHitPrefetch.background(4, 200), SearchHitPrefetch.DEFAULT_WAIT, Duration.ZERO);
+                key -> available.findHeader(key).map(PageHeader::metadata), scheduler, SearchHitPrefetch.DEFAULT_WAIT,
+                Duration.ZERO);
     }
 
     /**
@@ -192,7 +270,7 @@ class QueryConfiguration {
                                     @Qualifier("relevanceRenewals") ObjectProvider<ExecutorService> renewals,
                                     ObjectProvider<PageTextIndex> texts, ObjectProvider<SearchReranker> reranker,
                                     KeywordSearch keywords, ObjectProvider<PageCacheReader> cache,
-                                    ObjectProvider<Enrichments> enrichments) {
+                                    ObjectProvider<Enrichments> enrichments, SearchRunLog runs) {
         ExecutorService background = renewals.getIfAvailable();
         EmbeddingProcessor processor = embedding.getIfUnique();
         PageCacheReader reader = cache.getIfAvailable();
@@ -206,6 +284,37 @@ class QueryConfiguration {
                 store.getIfUnique(), vectors.getIfUnique(), processor,
                 background == null ? null : new PageRenewal(pages, background),
                 reranker.getIfUnique(() -> SearchReranker.NONE),
-                texts.getIfUnique(), preparation);
+                texts.getIfUnique(), preparation, runs);
     }
+
+    /**
+     * Fakten je Seite aus den Anreicherungen (#182), aus derselben Ablage wie die Anreicherungen (Lucene-Cache oder
+     * Speicher). Rechte je Seite an ihrem Space im Cache.
+     */
+    @Bean
+    PageFacts pageFacts(SourceCatalog catalog, AccessGuard access, PageQueries pages,
+                        ObjectProvider<Enrichments> enrichments, ObjectProvider<FactStore> store,
+                        ObjectProvider<LucenePageCache> cache, ObjectProvider<PageCacheReader> reader) {
+        Enrichments available = enrichments.getIfAvailable();
+        FactStore facts = (available == null ? Optional.<FactStore>empty() : available.facts())
+                .orElseGet(() -> store.getIfUnique(() -> NO_FACTS));
+        LucenePageCache lucene = cache.getIfAvailable();
+        PageCacheReader any = reader.getIfAvailable();
+        Function<PageKey, Optional<PageHeader>> headers = lucene != null ? lucene::findHeader
+                : any != null ? key -> any.page(key).map(CachedPage::header) : key -> Optional.empty();
+        return new PageFacts(catalog, access, pages, available, facts, headers);
+    }
+
+    /** Ohne Ablage: keine Fakten. */
+    private static final FactStore NO_FACTS = new FactStore() {
+        @Override
+        public List<MetadataFact> factsOf(PageKey page) {
+            return List.of();
+        }
+
+        @Override
+        public List<MetadataFact> facts(Query query, String after, int limit) {
+            return List.of();
+        }
+    };
 }

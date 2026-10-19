@@ -6,6 +6,7 @@ import com.aresstack.spaceharvester.application.query.CacheUnavailableException;
 import com.aresstack.spaceharvester.application.query.RefreshUnavailableException;
 import com.aresstack.spaceharvester.application.query.TreeTooLargeException;
 import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,10 +62,13 @@ class QueryErrorHandler {
     }
 
     @ExceptionHandler(SemanticSearchUnavailableException.class)
-    ProblemDetail semanticSearchUnavailable(SemanticSearchUnavailableException e) {
-        // Die Meldung stammt aus der eigenen Prüfung und nennt nie den Anfragetext.
+    ProblemDetail semanticSearchUnavailable(SemanticSearchUnavailableException e, HttpServletRequest request) {
+        // Die Meldung stammt aus der eigenen Prüfung und nennt nie den Anfragetext. Der Hinweis passt zur Route.
+        String hint = request.getRequestURI().startsWith(ApiPaths.V1 + "/search/progressive")
+                ? "; ohne ranking=semantic sucht die progressive Suche über die Schlagwortsuche."
+                : "; mit title sucht sort=relevance in den Titeltreffern.";
         return problem(HttpStatus.SERVICE_UNAVAILABLE, "semantic-search-unavailable", "Semantische Suche nicht "
-                + "verfügbar", e.getMessage() + "; mit title sucht sort=relevance in den Titeltreffern.");
+                + "verfügbar", e.getMessage() + hint);
     }
 
     @ExceptionHandler(ProgressiveSearches.CapacityExceededException.class)

@@ -23,7 +23,10 @@ zwischengespeichert.
    - keine oder keine bestätigte Generation, oder `refresh`: den Space zuerst einlesen, dann exportieren.
    Mit `ExportRequest.withRoot(rootPageId)` exportiert derselbe Auftrag nur diese Seite und ihre Unterseiten nach
    den Elternbeziehungen der Generation; Einlesen, Rechte und Ergebnis bleiben dieselben, und `JobStatus` nennt
-   `rootPageId` und `rootTitle`.
+   `rootPageId` und `rootTitle`. `withDepth(n)` begrenzt den Teilbaum auf `n` Ebenen unter der Startseite,
+   `withPage(pageId)` (= Tiefe 0) exportiert die Seite allein ohne Unterseiten wie „Seite exportieren“ im Enterprise
+   AI Client (#186). Das Manifest nennt die Startseite (`rootPageId`); die Formate beginnen dann wie im Enterprise AI
+   Client mit ihr als Kapitel 1.
 2. **Einlesen = derselbe Weg wie der Abgleich, keine zweite Abruflogik.** Das Einlesen ist der Port
    `SpaceProvisioning`; `SpaceSyncJobs` setzt ihn um und ruft genau `SpaceSync.run` mit `PlanApplier` und dem
    konfigurierten Inhaltsabruf auf, samt Folgearbeit nach dem Bestätigen (Anreicherungen, Index). Raw-First bleibt:

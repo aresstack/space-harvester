@@ -152,6 +152,17 @@ class SearchApiTest {
     }
 
     @Test
+    void theSemanticProgressiveSearchWithoutAServiceIsUnavailable() throws Exception {
+        // ADR 0011: kein stiller Rückfall auf die Schlagwortsuche.
+        HttpResponse<String> response = http.send(TestClient.authenticated(HttpRequest.newBuilder(
+                        uri("/api/v1/search/progressive"))).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"q\":\"Nachtlauf\",\"ranking\":\"semantic\","
+                        + "\"wait\":true}")).build(), HttpResponse.BodyHandlers.ofString());
+
+        assertProblem(response, 503, "semantic-search-unavailable");
+    }
+
+    @Test
     void invalidParametersAre400() throws Exception {
         assertProblem(get("/api/v1/search?sourceId=wiki&sort=relevance"), 400, "invalid-request");
         assertProblem(get("/api/v1/search?sourceId=wiki&modifiedFrom=gestern"), 400, "invalid-request");

@@ -250,26 +250,29 @@ public class SearchController {
      * @param origin   immer {@code cache}: Titel- und Metadatensuche im Index
      * @param index    gelesener Indexstand; global {@code null}, wenn keine lesbare Quelle im Index liegt
      * @param reranker nur bei {@code sort=relevance}: Kennung des Rerankers, {@code none} ohne Modell
+     * @param searchRun nur bei {@code sort=relevance}: Kennung des Laufs im Suchlauf-Protokoll
+     *                  ({@code GET /api/v1/search/runs/{id}}), wenn protokolliert
      */
     public record SearchResponse(@Schema(allowableValues = {"source", "global"}) String scope,
                                  @Schema(nullable = true) String sourceId, String origin,
                                  @Schema(nullable = true) IndexResponse index, String metadataHashSchema,
                                  String attributesHashSchema, List<HitResponse> hits,
                                  @Schema(nullable = true) String nextCursor, boolean complete,
-                                 @JsonInclude(JsonInclude.Include.NON_NULL) String reranker) {
+                                 @JsonInclude(JsonInclude.Include.NON_NULL) String reranker,
+                                 @JsonInclude(JsonInclude.Include.NON_NULL) String searchRun) {
 
         static SearchResponse of(SearchResults results) {
             return new SearchResponse(scope(results.sourceId()), results.sourceId(),
                     "cache", IndexResponse.of(results.index()), MetadataHash.SCHEMA,
                     AttributesHash.SCHEMA, results.hits().stream().map(HitResponse::of).toList(),
-                    results.nextCursor(), results.complete(), null);
+                    results.nextCursor(), results.complete(), null, null);
         }
 
         static SearchResponse of(RelevanceSearch.RelevanceResults results) {
             return new SearchResponse(scope(results.sourceId()), results.sourceId(), "cache",
                     IndexResponse.of(results.index()), MetadataHash.SCHEMA, AttributesHash.SCHEMA,
                     results.hits().stream().map(HitResponse::of).toList(), null, results.complete(),
-                    results.reranker());
+                    results.reranker(), results.searchRun());
         }
 
         static String scope(String sourceId) {
@@ -291,6 +294,8 @@ public class SearchController {
      *                   nicht aus dem Cache; ein Fund verschwindet hier, sobald er in {@code hits} steht
      * @param progress   Stand des Ladens der besten Funde; mit {@code GET /api/v1/search/progress/{id}} abfragen und
      *                   neu suchen, sobald {@code loaded} steigt
+     * @param searchRun  Kennung des Laufs im Suchlauf-Protokoll ({@code GET /api/v1/search/runs/{id}}) oder
+     *                   {@code null}, wenn nicht protokolliert
      */
     public record KeywordResponse(@Schema(allowableValues = {"source", "global"}) String scope,
                                   @Schema(nullable = true) String sourceId,
@@ -298,7 +303,8 @@ public class SearchController {
                                   List<KeywordHitResponse> hits, List<SourceStateResponse> sources,
                                   @Schema(nullable = true) String nextCursor, boolean complete, int loading,
                                   List<KeywordHitResponse> found,
-                                  @Schema(nullable = true) ProgressResponse progress) {
+                                  @Schema(nullable = true) ProgressResponse progress,
+                                  @Schema(nullable = true) String searchRun) {
 
         static KeywordResponse of(boolean fromCache, KeywordSearch.Results results) {
             return new KeywordResponse(SearchResponse.scope(results.sourceId()), results.sourceId(),
@@ -306,7 +312,8 @@ public class SearchController {
                     results.sources().stream().map(SourceStateResponse::of).toList(), results.nextCursor(),
                     results.complete(), results.loading(),
                     results.found().stream().map(KeywordHitResponse::of).toList(),
-                    results.progress() == null ? null : ProgressResponse.of(results.progress()));
+                    results.progress() == null ? null : ProgressResponse.of(results.progress()),
+                    results.searchRun());
         }
     }
 

@@ -98,6 +98,7 @@ public final class StatusView implements View {
     private final JPanel root = new JPanel(new BorderLayout());
     private final JPanel attention = new JPanel();
     private final JComponent attentionPlate;
+    private final BackgroundPlate background;
     private final JComponent dashboard;
     private final JComponent welcome;
     private final JPanel dashboardAttention = new JPanel(new BorderLayout());
@@ -249,7 +250,12 @@ public final class StatusView implements View {
         JPanel board = new JPanel(new BorderLayout(0, 12));
         board.setBackground(Comic.SURFACE);
         board.setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
-        board.add(attentionPlate, BorderLayout.NORTH);
+        background = new BackgroundPlate(() -> acquisition(context.runtime()));
+        JPanel top = new JPanel(new BorderLayout(0, 12));
+        top.setOpaque(false);
+        top.add(attentionPlate, BorderLayout.NORTH);
+        top.add(Comic.plate("Hintergrundbefüllung", Comic.BLUE, background), BorderLayout.CENTER);
+        board.add(top, BorderLayout.NORTH);
         board.add(Comic.plate("Diagnose", Comic.PETROL, body), BorderLayout.CENTER);
         dashboard = board;
         welcome = Comic.column(welcomePlate(), welcomeAttention);
@@ -731,5 +737,14 @@ public final class StatusView implements View {
             }
             return c;
         }
+    }
+
+    /** Der Stand des Beschaffungsplaners; leer ohne Laufzeit. */
+    private static java.util.Optional<com.aresstack.spaceharvester.app.runtime.Acquisition> acquisition(AppRuntime runtime) {
+        return runtime == null ? java.util.Optional.empty() : runtime.workspace().acquisition();
+    }
+
+    BackgroundPlate background() {
+        return background;
     }
 }

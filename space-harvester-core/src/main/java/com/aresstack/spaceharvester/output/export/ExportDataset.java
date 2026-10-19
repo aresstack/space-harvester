@@ -45,6 +45,7 @@ final class ExportDataset implements ConversionInput {
     private final Path directory;
     private final String sourceId;
     private final String spaceKey;
+    private final String rootPageId;
     private final PageTree tree;
     private final Map<String, Entry> pages;
     private final JsonMapper json;
@@ -53,12 +54,13 @@ final class ExportDataset implements ConversionInput {
                          String revision, Instant retrievedAt) {
     }
 
-    private ExportDataset(String exportId, Path directory, String sourceId, String spaceKey, PageTree tree,
-                          Map<String, Entry> pages, JsonMapper json) {
+    private ExportDataset(String exportId, Path directory, String sourceId, String spaceKey, String rootPageId,
+                          PageTree tree, Map<String, Entry> pages, JsonMapper json) {
         this.exportId = exportId;
         this.directory = directory;
         this.sourceId = sourceId;
         this.spaceKey = spaceKey;
+        this.rootPageId = rootPageId;
         this.tree = tree;
         this.pages = pages;
         this.json = json;
@@ -93,7 +95,9 @@ final class ExportDataset implements ConversionInput {
             }
             String sourceId = manifest.path("sourceId").asString();
             String spaceKey = manifest.path("spaceKey").asString();
-            return new ExportDataset(exportId, directory, sourceId, spaceKey,
+            // Ältere Datenbestände nennen keine Startseite; sie bleiben Export des ganzen Space.
+            String rootPageId = manifest.hasNonNull("rootPageId") ? manifest.path("rootPageId").asString() : null;
+            return new ExportDataset(exportId, directory, sourceId, spaceKey, rootPageId,
                     new PageTree(roots, List.of(), stats[0], stats[1]), pages, json);
         } catch (IOException | UncheckedIOException e) {
             // Eine Datei des Datenbestands fehlt oder ist nicht lesbar.
@@ -153,6 +157,11 @@ final class ExportDataset implements ConversionInput {
             return spaceKey;
         }
         return SpaceNames.of(snapshot(pages.get(tree.roots().get(0).pageId())), spaceKey).orElse(spaceKey);
+    }
+
+    @Override
+    public String rootPageId() {
+        return rootPageId;
     }
 
     @Override

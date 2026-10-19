@@ -40,7 +40,7 @@ public final class AppContext {
     public enum Section {
         // Reihenfolge der Icon-Leiste: erst die Arbeitsbereiche, dann Verwaltung und Einstellungen; die Suche ist die
         // Startansicht.
-        SEARCH("Suche"), CONTENT("Inhalte"), ACTIVITIES("Aufträge"), STATUS("Status"),
+        SEARCH("Suche"), CONTENT("Inhalte"), TERMS("Begriffe"), ACTIVITIES("Aufträge"), STATUS("Status"),
         SOURCES("Wissensquellen verwalten"), SETTINGS("Einstellungen");
 
         /** Rechts in der Icon-Leiste, getrennt von den Arbeitsbereichen. */
@@ -84,6 +84,11 @@ public final class AppContext {
 
         /** Startet sofort den Download einer Seite samt Unterseiten, wie {@link #download(String, java.util.List)}. */
         default void downloadPage(String sourceId, String spaceKey, String pageId) {
+            downloadPage(sourceId, spaceKey, pageId, true);
+        }
+
+        /** Wie {@link #downloadPage(String, String, String)}, ohne {@code withChildren} nur die Seite selbst. */
+        default void downloadPage(String sourceId, String spaceKey, String pageId, boolean withChildren) {
         }
 
         void search(String text);

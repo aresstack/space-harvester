@@ -1,16 +1,23 @@
 package com.aresstack.spaceharvester.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
 import com.aresstack.spaceharvester.ai.AiServiceSettings;
+import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionStatus;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
 import com.aresstack.spaceharvester.application.configuration.HarvesterConfiguration;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.configuration.SyncSettings;
+import com.aresstack.spaceharvester.application.query.KeywordSearch;
+import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
+import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
+import com.aresstack.spaceharvester.application.ranking.SemanticVariantSearch;
 import com.aresstack.spaceharvester.application.sync.Reconciliation;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
 import com.aresstack.spaceharvester.source.SourceSettingsConfig;
@@ -94,6 +101,40 @@ class HarvesterConfigurationLiveTest {
     }
 
     @Test
+    void theBackgroundFillFollowsTheConfigurationGloballyAndPerSource() {
+        HarvesterConfiguration off = HarvesterConfiguration.DEFAULT.withSync(
+                HarvesterConfiguration.DEFAULT.sync().withBackground(false, 3));
+        ConfigurationManager manager = new ConfigurationManager(off);
+        try (Harvester harvester = harvester(manager)) {
+            // Die Warteschlange gibt es auch abgeschaltet, damit die Füllung ohne Neustart angeht.
+            assertThat(harvester.backgroundFill()).isPresent();
+            assertThat(harvester.acquisitionStatus().enabled()).isFalse();
+            assertThat(harvester.acquisitionStatus().pause()).isEqualTo(AcquisitionStatus.Pause.DISABLED);
+            assertThat(harvester.acquisition().limits().background()).isEqualTo(3);
+
+            // Nur für „wiki“ eingeschaltet: ein eigener Wert je Quelle geht dem globalen vor.
+            HarvesterConfiguration wikiOnly = off.withSync(off.sync().withSource("wiki", new SourceSyncOverride(
+                    null, null, null, null, null, null, null, null, null, true)));
+            assertThat(manager.apply(wikiOnly).activated()).isTrue();
+            assertThat(harvester.acquisitionStatus().enabled()).isTrue();
+
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
+            assertThat(harvester.acquisitionStatus().enabled()).isTrue();
+            assertThat(harvester.acquisition().limits().background())
+                    .isEqualTo(SyncSettings.DEFAULT_BACKGROUND_PARALLELISM);
+        }
+
+        // Nach configuration() fest eingestellt: folgt der Konfiguration nicht.
+        try (Harvester fixed = Harvester.builder().source(wiki()).dataDirectory(data.resolve("fest"))
+                .configuration(new ConfigurationManager(HarvesterConfiguration.DEFAULT)).backgroundFill(false)
+                .build()) {
+            assertThat(fixed.backgroundFill()).isEmpty();
+            assertThat(fixed.acquisitionStatus().enabled()).isFalse();
+            assertThat(fixed.acquisition().limits().background()).isZero();
+        }
+    }
+
+    @Test
     void theScheduleFollowsTheConfigurationAndOwnSchedulesStay() {
         ConfigurationManager manager = new ConfigurationManager(schedule(Duration.ofMinutes(10), List.of("wiki/DEV")));
         try (Harvester harvester = harvester(manager)) {
@@ -148,6 +189,29 @@ class HarvesterConfigurationLiveTest {
 
             assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
             assertThat(harvester.relevance().semantic()).isFalse();
+        }
+    }
+
+    @Test
+    void theProgressiveSearchFollowsTheEmbeddingModelAtRuntime() {
+        ConfigurationManager manager = new ConfigurationManager(HarvesterConfiguration.DEFAULT);
+        try (Harvester harvester = harvester(manager)) {
+            assertThat(harvester.searchProfile().ranking()).isEqualTo(SearchProfile.Ranking.KEYWORD);
+            // Ohne Modell keine semantische Suche, auch nicht ausdrücklich, und kein stiller Rückfall.
+            assertThatThrownBy(() -> harvester.progressiveSearch().searchAsync(AccessContext.technicalClient("app"),
+                    KeywordSearch.Query.of("Betrieb"), SearchProfile.defaults()
+                            .withRanking(SearchProfile.Ranking.SEMANTIC)))
+                    .isInstanceOf(SemanticSearchUnavailableException.class);
+
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT.withAi(ai("modell-a", null))).activated())
+                    .isTrue();
+            SearchProfile profile = harvester.searchProfile();
+            assertThat(profile.ranking()).isEqualTo(SearchProfile.Ranking.SEMANTIC);
+            assertThat(profile.execution().variantTimeout()).isEqualTo(SemanticVariantSearch.VARIANT_TIMEOUT);
+            assertThat(profile.timeBudget()).isEqualTo(SemanticVariantSearch.TIME_BUDGET);
+
+            assertThat(manager.apply(HarvesterConfiguration.DEFAULT).activated()).isTrue();
+            assertThat(harvester.searchProfile().ranking()).isEqualTo(SearchProfile.Ranking.KEYWORD);
         }
     }
 

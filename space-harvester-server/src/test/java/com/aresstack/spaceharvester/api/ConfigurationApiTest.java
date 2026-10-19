@@ -194,6 +194,23 @@ class ConfigurationApiTest {
     }
 
     @Test
+    void acquisitionStatusShowsCountsOnlyForAdministrators() throws Exception {
+        HttpResponse<String> status = http.send(HttpRequest.newBuilder(uri(AcquisitionController.ACQUISITION))
+                .header("Authorization", "Bearer " + ADMIN_TOKEN).GET().build(), HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> forbidden = http.send(HttpRequest.newBuilder(uri(AcquisitionController.ACQUISITION))
+                .header("Authorization", "Bearer " + TestClient.TOKEN).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertThat(status.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(status.body());
+        assertThat(body.has("pause")).isTrue();
+        assertThat(body.get("foregroundQueued").asInt()).isZero();
+        assertThat(body.get("sources").isArray()).isTrue();
+        assertThat(status.body()).doesNotContain("pageId");
+        assertThat(forbidden.statusCode()).isEqualTo(403);
+    }
+
+    @Test
     void noRefreshEndpointIsExposed() throws Exception {
         HttpResponse<String> refresh = http.send(HttpRequest.newBuilder(uri("/actuator/refresh"))
                         .header("Authorization", "Bearer " + ADMIN_TOKEN).POST(HttpRequest.BodyPublishers.noBody())

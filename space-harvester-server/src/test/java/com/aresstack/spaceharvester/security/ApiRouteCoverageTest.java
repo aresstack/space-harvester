@@ -46,9 +46,11 @@ class ApiRouteCoverageTest {
     // Die progressive Suche (ADR 0017) ist ebenso global; mit wait=true 200 ohne Treffer.
     private static final String PROGRESSIVE = "/api/v1/search/progressive";
     // Anmeldungen (ADR 0018) zeigen nur solche, auf die eigene Aufträge warten: 200 mit leerer Liste.
+    // Das Suchlauf-Protokoll (#182) zeigt nur eigene Läufe, Fakten (#182) nur lesbarer Seiten: 200 mit leerer Liste.
+    private static final String FACTS = "/api/v1/facts";
     private static final Set<String> WITHOUT_SOURCE = Set.of("/api/v1/info", "/api/v1/sources", "/api/v1/search",
             "/api/v1/exports", "/api/v1/syncs", "/api/v1/addresses", "/api/v1/reconciliations",
-            "/api/v1/sign-ins", PROGRESSIVE);
+            "/api/v1/sign-ins", PROGRESSIVE, "/api/v1/search/runs", FACTS);
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -118,7 +120,8 @@ class ApiRouteCoverageTest {
     }
 
     private HttpResponse<String> send(Route route, String token) throws Exception {
-        String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1") + query(route);
+        String path = route.path().replace("{sourceId}", "wiki").replaceAll("\\{[^}]+}", "x1") + query(route)
+                + (FACTS.equals(route.path()) ? "?type=MENTION" : "");
         HttpRequest.Builder request = HttpRequest.newBuilder(
                         URI.create("http://localhost:" + environment.getRequiredProperty("local.server.port") + path))
                 .header("Content-Type", "application/json")

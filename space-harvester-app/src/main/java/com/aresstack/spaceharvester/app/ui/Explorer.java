@@ -73,6 +73,8 @@ public final class Explorer {
     private static final int BATCH = 100;
     private static final int ACTION_WIDTH = 30;
     static final String DOWNLOAD_TIP = "Herunterladen: Auftrag startet sofort, exportiert wird unter Aufträge";
+    static final String PAGE_ONLY = "Nur diese Seite herunterladen";
+    static final String PAGE_ONLY_TIP = "Nur diese Seite ohne Unterseiten; Auftrag startet sofort";
 
     /** Umfang aus der Auswahl: eine Quelle, ein Space oder nichts (alle). */
     public record Scope(String sourceId, String spaceKey) {
@@ -820,6 +822,13 @@ public final class Explorer {
             download.setToolTipText(DOWNLOAD_TIP);
             download.addActionListener(e -> download(item));
             menu.add(download);
+        }
+        if (item instanceof PageItem page) {
+            javax.swing.JMenuItem only = new javax.swing.JMenuItem(PAGE_ONLY);
+            only.setToolTipText(PAGE_ONLY_TIP);
+            only.addActionListener(e -> context.navigator().downloadPage(page.sourceId(), page.spaceKey(),
+                    page.pageId(), false));
+            menu.add(only);
         }
         if (menu.getComponentCount() > 0) {
             menu.show(tree, event.getX(), event.getY());

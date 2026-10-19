@@ -3,8 +3,10 @@ package com.aresstack.spaceharvester.application.ranking;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
@@ -15,6 +17,7 @@ import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
@@ -57,8 +60,18 @@ class SemanticPreparationTest {
         assertThat(preparation().prepare(APP, query, "Nachtlauf")).isZero();
     }
 
+    @Test
+    void excludedSpacesAreNeitherFoundNorLoaded() {
+        found(new KeywordSearch.Results(null, List.of(), List.of(searched()), null, true, 0));
+
+        preparation().prepare(APP, query, "Nachtlauf", Set.of("OPS"));
+
+        verify(keywords).search(any(), argThat(q -> q.excludedSpaceKeys().equals(Set.of("OPS"))), isNull(),
+                anyInt(), isNull());
+    }
+
     private void found(KeywordSearch.Results results) {
-        when(keywords.search(any(), any(), isNull(), anyInt())).thenReturn(results);
+        when(keywords.search(any(), any(), isNull(), anyInt(), any())).thenReturn(results);
     }
 
     private static KeywordSearch.SourceState searched() {

@@ -7,9 +7,13 @@ import com.aresstack.spaceharvester.application.query.progressive.ProgressiveRes
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.RankedHit;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Status;
 import com.aresstack.spaceharvester.application.query.progressive.ProgressiveResult.Variant;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -37,10 +41,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * gegen die ursprüngliche Anfrage bewertet ({@link HitScorer}) und nach Quelle und Seiten-ID zusammengeführt. Nach
  * jeder Welle entscheidet die {@link SearchQualityPolicy}, ob weitergesucht wird; Zeit- und Abfragebudget begrenzen.
  *
+ * <p>Mit {@link SearchProfile.Ranking#SEMANTIC} läuft jede Suchanfrage über die semantische Suche (ADR 0013): Die
+ * Variante findet und lädt nur, Treffer kommen aus der Vektorsuche mit der ursprünglichen Anfrage und tragen ihre
+ * Kosinusähnlichkeit zu ihr als Bewertung ({@link VariantSearch.Outcome#scores()}); der {@link HitScorer} bewertet
+ * dann nicht, damit keine Werte verschiedener Modelle gemischt werden.
+ *
  * <p>Ein Agent wartet auf {@link ProgressiveSearch#result()}, eine Oberfläche bekommt unterwegs
  * {@link ProgressiveSearchListener}-Ereignisse; beides ist derselbe Vorgang. Rechte prüft die {@link VariantSearch}:
  * Was der Aufrufer nicht sehen darf, erscheint weder als Treffer noch in einer Zahl. Suchtexte und Seiten-IDs kommen
  * nie ins Log.
+ *
+ * <p>Jede Suche ist ein Lauf im Suchlauf-Protokoll ({@link SearchRunLog}, #182) mit der Kennung {@link ProgressiveSearch#id()}:
+ * ursprüngliche Anfrage, Quellen, Zahl der Suchanfragen, Treffer und bestätigte Treffer, Dauer und Abschlussgrund. Jede
+ * Suchanfrage ist ein eigener Lauf der Schlagwortsuche mit {@link SearchRun#partOf()} auf diesen.
  *
  * <p>Laufende Suchanfragen werden nie unterbrochen, nur nicht mehr abgewartet: Ein Interrupt mitten im Lesen eines
  * Lucene-Index schlösse dessen Dateikanäle.
@@ -50,10 +63,12 @@ public final class SearchOrchestrator implements AutoCloseable {
     private static final System.Logger LOG = System.getLogger(SearchOrchestrator.class.getName());
 
     private final VariantSearch search;
+    private final VariantSearch semantic;
     private final QueryExpansionStrategy expansion;
     private final QueryExpansionStrategy rules;
     private final HitScorer scorer;
     private final ExecutorService executor;
+    private final SearchRunLog runs;
     private final Set<Run> active = ConcurrentHashMap.newKeySet();
 
     /** Eine Strategie für beide Einstellungen von {@link SearchProfile#expansion()}. */
@@ -67,7 +82,34 @@ public final class SearchOrchestrator implements AutoCloseable {
      */
     public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, QueryExpansionStrategy rules,
                               HitScorer scorer) {
+        this(search, null, expansion, rules, scorer);
+    }
+
+    /** @param runs Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE} */
+    public SearchOrchestrator(VariantSearch search, QueryExpansionStrategy expansion, QueryExpansionStrategy rules,
+                              HitScorer scorer, SearchRunLog runs) {
+        this(search, null, expansion, rules, scorer, runs);
+    }
+
+    /**
+     * @param search   Suchanfragen für {@link SearchProfile.Ranking#KEYWORD}, die Schlagwortsuche
+     * @param semantic Suchanfragen für {@link SearchProfile.Ranking#SEMANTIC} oder {@code null}, dann gibt es keine
+     *                 semantische progressive Suche
+     */
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer) {
+        this(search, semantic, expansion, rules, scorer, SearchRunLog.NONE);
+    }
+
+    /**
+     * @param semantic wie oben; ihre Suchanfragen sind wie die der Schlagwortsuche Teilläufe der progressiven Suche
+     * @param runs     Suchlauf-Protokoll (#182) oder {@link SearchRunLog#NONE}
+     */
+    public SearchOrchestrator(VariantSearch search, VariantSearch semantic, QueryExpansionStrategy expansion,
+                              QueryExpansionStrategy rules, HitScorer scorer, SearchRunLog runs) {
+        this.runs = Objects.requireNonNull(runs, "runs");
         this.search = Objects.requireNonNull(search, "search");
+        this.semantic = semantic;
         this.expansion = Objects.requireNonNull(expansion, "expansion");
         this.rules = Objects.requireNonNull(rules, "rules");
         this.scorer = Objects.requireNonNull(scorer, "scorer");
@@ -84,10 +126,26 @@ public final class SearchOrchestrator implements AutoCloseable {
         return searchAsync(caller, query, profile, profile.quality(), listener);
     }
 
-    /** Mit eigener Qualitätsregel statt der des Profils. */
+    /**
+     * Mit eigener Qualitätsregel statt der des Profils.
+     *
+     * @throws IllegalArgumentException mit {@link SearchProfile.Ranking#SEMANTIC}, wenn keine semantische Suche
+     *                                  verdrahtet ist
+     * @throws RuntimeException         aus {@link VariantSearch#requireAvailable}, nach den Rechten am Umfang, wenn die gewählte Suche gerade
+     *                                  nicht möglich ist, etwa ohne Embedding-Modell; nie ein stiller Rückfall
+     */
     public ProgressiveSearch searchAsync(AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
                                          SearchQualityPolicy quality, ProgressiveSearchListener listener) {
-        Run run = new Run(caller, Objects.requireNonNull(query, "query"), Objects.requireNonNull(profile, "profile"),
+        Objects.requireNonNull(profile, "profile");
+        VariantSearch chosen = search;
+        if (profile.ranking() == SearchProfile.Ranking.SEMANTIC) {
+            if (semantic == null) {
+                throw new IllegalArgumentException("Keine semantische Suche eingerichtet");
+            }
+            chosen = semantic;
+        }
+        chosen.requireAvailable(caller, Objects.requireNonNull(query, "query"));
+        Run run = new Run(chosen, caller, query, profile,
                 Objects.requireNonNull(quality, "quality"), listener == null ? ProgressiveSearchListener.NONE
                 : listener);
         active.add(run);
@@ -140,6 +198,9 @@ public final class SearchOrchestrator implements AutoCloseable {
     private final class Run implements ProgressiveSearch {
 
         private final String id = UUID.randomUUID().toString();
+        private final VariantSearch search;
+        /** Semantisch bewertet die Suche selbst; Werte des Cross-Encoders kämen auf eine andere Skala. */
+        private final HitScorer scorer;
         private final AccessContext caller;
         private final KeywordSearch.Query query;
         private final SearchProfile profile;
@@ -150,14 +211,17 @@ public final class SearchOrchestrator implements AutoCloseable {
         private final AtomicBoolean finished = new AtomicBoolean();
         private final Semaphore slots;
         private final long started = System.nanoTime();
+        private final Instant startedAt = Instant.now();
         private final long deadline;
+        /** Ausgang je Quelle über alle Suchanfragen; ein Ausfall in einer macht die Quelle ausgefallen. */
+        private final Map<String, SearchRun.SourceOutcome> sources = new LinkedHashMap<>();
 
         // Nur der koordinierende Thread ändert diese Felder; die Listen gehen als Kopien hinaus.
         private final Map<PageKey, Entry> entries = new LinkedHashMap<>();
         private final List<QueryVariant> variants = new ArrayList<>();
         private final List<Status> states = new ArrayList<>();
         private final List<Integer> newHits = new ArrayList<>();
-        private final Map<Integer, CompletableFuture<KeywordSearch.Results>> late = new LinkedHashMap<>();
+        private final Map<Integer, CompletableFuture<VariantSearch.Outcome>> late = new LinkedHashMap<>();
         private final List<String> loads = new ArrayList<>();
         private long sequence;
         private int searches;
@@ -165,8 +229,11 @@ public final class SearchOrchestrator implements AutoCloseable {
         private int newInWave;
         private boolean budgetHit;
 
-        Run(AccessContext caller, KeywordSearch.Query query, SearchProfile profile, SearchQualityPolicy quality,
-            ProgressiveSearchListener listener) {
+        Run(VariantSearch search, AccessContext caller, KeywordSearch.Query query, SearchProfile profile,
+            SearchQualityPolicy quality, ProgressiveSearchListener listener) {
+            this.search = search;
+            this.scorer = profile.ranking() == SearchProfile.Ranking.SEMANTIC ? HitScorer.none()
+                    : SearchOrchestrator.this.scorer;
             this.caller = caller;
             this.query = query;
             this.profile = profile;
@@ -206,7 +273,7 @@ public final class SearchOrchestrator implements AutoCloseable {
                 variants.add(new QueryVariant(query.text(), 0));
                 states.add(Status.PENDING);
                 newHits.add(0);
-                CompletableFuture<KeywordSearch.Results> original = start(0);
+                CompletableFuture<VariantSearch.Outcome> original = start(0);
                 publishVariants();
                 await(0, original, Math.min(deadline, started + profile.execution().variantTimeout().toNanos()));
                 // Genügt schon die ursprüngliche Anfrage, wartet die Suche nicht auf das Modell.
@@ -267,7 +334,7 @@ public final class SearchOrchestrator implements AutoCloseable {
         private void runWave(int first, int count) {
             newInWave = 0;
             long waveStart = System.nanoTime();
-            List<CompletableFuture<KeywordSearch.Results>> wave = new ArrayList<>();
+            List<CompletableFuture<VariantSearch.Outcome>> wave = new ArrayList<>();
             for (int i = 0; i < count; i++) {
                 wave.add(start(first + i));
             }
@@ -285,12 +352,12 @@ public final class SearchOrchestrator implements AutoCloseable {
         }
 
         /** Startet die Suchanfrage {@code index}; höchstens {@code parallelism} zugleich. */
-        private CompletableFuture<KeywordSearch.Results> start(int index) {
+        private CompletableFuture<VariantSearch.Outcome> start(int index) {
             states.set(index, Status.RUNNING);
             searches++;
             KeywordSearch.Query variant = index == 0 ? query : new KeywordSearch.Query(variants.get(index).text(),
                     query.sourceId(), query.sourceIds(), query.spaceKeys(), query.excludedSpaceKeys());
-            CompletableFuture<KeywordSearch.Results> future = CompletableFuture.supplyAsync(() -> {
+            CompletableFuture<VariantSearch.Outcome> future = CompletableFuture.supplyAsync(() -> {
                 slots.acquireUninterruptibly();
                 try {
                     return attempt(variant);
@@ -299,22 +366,23 @@ public final class SearchOrchestrator implements AutoCloseable {
                 }
             }, executor);
             // Kehrt eine Suchanfrage erst nach dem Abbruch zurück, kennt finish ihr Laden nicht: hier abbrechen.
-            future.thenAccept(results -> {
-                if (cancelled() && results.progress() != null && !results.progress().done()) {
-                    cancelLoading(results.progress().id());
+            future.thenAccept(outcome -> {
+                KeywordSearch.Progress progress = outcome.results().progress();
+                if (cancelled() && progress != null && !progress.done()) {
+                    cancelLoading(progress.id());
                 }
             });
             return future;
         }
 
-        private KeywordSearch.Results attempt(KeywordSearch.Query variant) {
+        private VariantSearch.Outcome attempt(KeywordSearch.Query variant) {
             int retries = profile.execution().retries();
             for (int attempt = 0; ; attempt++) {
                 if (cancelled()) {
                     throw new IllegalStateException("abgebrochen");
                 }
                 try {
-                    return search.search(caller, variant, profile.limitPerSearch());
+                    return search.run(caller, variant, query.text(), profile.limitPerSearch(), runId());
                 } catch (InvalidQueryException | AccessDeniedException e) {
                     throw e;
                 } catch (RuntimeException e) {
@@ -328,7 +396,7 @@ public final class SearchOrchestrator implements AutoCloseable {
         }
 
         /** Wartet bis zur Frist auf die Suchanfrage {@code index} und gibt sie frei; sonst gilt sie als gescheitert. */
-        private void await(int index, CompletableFuture<KeywordSearch.Results> future, long until) {
+        private void await(int index, CompletableFuture<VariantSearch.Outcome> future, long until) {
             try {
                 CompletableFuture.anyOf(future, cancelSignal).get(Math.max(0, until - System.nanoTime()),
                         TimeUnit.NANOSECONDS);
@@ -380,7 +448,7 @@ public final class SearchOrchestrator implements AutoCloseable {
             var iterator = late.entrySet().iterator();
             while (iterator.hasNext()) {
                 var entry = iterator.next();
-                CompletableFuture<KeywordSearch.Results> future = entry.getValue();
+                CompletableFuture<VariantSearch.Outcome> future = entry.getValue();
                 if (!future.isDone()) {
                     continue;
                 }
@@ -391,8 +459,17 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
         }
 
-        private void release(int index, KeywordSearch.Results results) {
+        private void release(int index, VariantSearch.Outcome outcome) {
+            KeywordSearch.Results results = outcome.results();
             successes++;
+            for (KeywordSearch.SourceState state : results.sources()) {
+                SearchRun.SourceOutcome known = sources.get(state.sourceId());
+                if (known == null || state.status() == KeywordSearch.SourceState.Status.UNAVAILABLE
+                        && known.status() != SearchRun.SourceOutcome.Status.UNAVAILABLE) {
+                    sources.put(state.sourceId(), new SearchRun.SourceOutcome(state.sourceId(),
+                            SearchRun.SourceOutcome.Status.valueOf(state.status().name()), state.reason()));
+                }
+            }
             states.set(index, Status.DONE);
             if (results.progress() != null && !results.progress().done()) {
                 loads.add(results.progress().id());
@@ -400,10 +477,10 @@ public final class SearchOrchestrator implements AutoCloseable {
             List<Entry> unscored = new ArrayList<>();
             int added = 0;
             for (KeywordSearch.Hit hit : results.hits()) {
-                added += merge(index, hit, true, unscored);
+                added += merge(index, hit, true, unscored, outcome.scores());
             }
             for (KeywordSearch.Hit hit : results.found()) {
-                added += merge(index, hit, false, unscored);
+                added += merge(index, hit, false, unscored, outcome.scores());
             }
             newHits.set(index, newHits.get(index) + added);
             newInWave += added;
@@ -412,14 +489,26 @@ public final class SearchOrchestrator implements AutoCloseable {
             emit(() -> listener.ranked(ranked()));
         }
 
-        private int merge(int index, KeywordSearch.Hit hit, boolean confirmed, List<Entry> unscored) {
+        /** @param scores Bewertungen der Suche selbst; diese Treffer bewertet der {@link HitScorer} nicht */
+        private int merge(int index, KeywordSearch.Hit hit, boolean confirmed, List<Entry> unscored,
+                          Map<PageKey, Double> scores) {
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
+            Double given = scores.get(key);
             Entry known = entries.get(key);
             if (known == null) {
                 Entry entry = new Entry(sequence++, variants.get(index).priority(), hit, confirmed);
                 entries.put(key, entry);
-                unscored.add(entry);
+                if (usable(given)) {
+                    entry.score = given;
+                } else {
+                    unscored.add(entry);
+                }
                 return 1;
+            }
+            if (usable(given)) {
+                // Dieselbe ursprüngliche Anfrage; ein neuer Wert kommt etwa von einem inzwischen neu berechneten
+                // Embedding.
+                known.score = given;
             }
             if (confirmed && !known.confirmed) {
                 // Bestätigt aus dem Cache: Kopfdaten und Auszug aus dem Inhalt, Platz nach der Bewertung.
@@ -428,11 +517,15 @@ public final class SearchOrchestrator implements AutoCloseable {
                 known.hit = hit;
                 known.confirmed = true;
                 // Neue Eingabe der Bewertung, also neu bewerten.
-                if (changed || Double.isNaN(known.score)) {
+                if (!usable(given) && (changed || Double.isNaN(known.score))) {
                     unscored.add(known);
                 }
             }
             return 0;
+        }
+
+        private static boolean usable(Double score) {
+            return score != null && !score.isNaN() && !score.isInfinite();
         }
 
         /** Immer gegen die ursprüngliche Anfrage, nie gegen die Variante, die den Treffer fand. */
@@ -538,9 +631,32 @@ public final class SearchOrchestrator implements AutoCloseable {
             }
             ProgressiveResult done = new ProgressiveResult(ranked(), variants(), reason, loads,
                     Duration.ofNanos(System.nanoTime() - started));
+            record(done);
             emit(() -> listener.variants(done.variants()));
             emit(() -> listener.completed(done));
             result.complete(done);
+        }
+
+        /** Die Kennung im Suchlauf-Protokoll; die des Vorgangs, eine UUID. */
+        private SearchRunId runId() {
+            return new SearchRunId(id);
+        }
+
+        /** Legt den Lauf ab, bevor das Ergebnis herausgeht; ohne Treffer- oder Seitenangaben. */
+        private void record(ProgressiveResult done) {
+            if (runs == SearchRunLog.NONE) {
+                return;
+            }
+            int confirmed = (int) done.hits().stream().filter(RankedHit::confirmed).count();
+            boolean complete = done.reason() == Completion.QUALITY_REACHED
+                    || done.reason() == Completion.ALL_VARIANTS_DONE;
+            SearchRunLog.recordQuietly(runs, new SearchRun(runId(), null, SearchRun.Kind.PROGRESSIVE,
+                    SearchRun.ownerOf(caller), query.text(), startedAt, done.elapsed(),
+                    List.copyOf(sources.values()), List.of(
+                            new SearchRun.StageCount(SearchRun.Stage.QUERIES, searches),
+                            new SearchRun.StageCount(SearchRun.Stage.CONFIRMED, confirmed),
+                            new SearchRun.StageCount(SearchRun.Stage.DELIVERED, done.hits().size())),
+                    complete, done.reason().name()));
         }
 
         private void cancelLoading(String load) {

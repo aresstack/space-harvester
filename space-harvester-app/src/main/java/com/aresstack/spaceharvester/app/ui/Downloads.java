@@ -57,15 +57,18 @@ public final class Downloads {
         }, done, failed);
     }
 
-    /** Startet im Hintergrund den Download einer Seite mit allen Unterseiten (ein Auftrag). */
+    /**
+     * Startet im Hintergrund den Download einer Seite (ein Auftrag), mit {@code withChildren} samt allen Unterseiten,
+     * sonst nur die Seite selbst ({@code ExportRequest.withPage}).
+     */
     public static void startPage(AppContext context, String sourceId, String spaceKey, String pageId,
-                                 Consumer<Started> done, Consumer<Throwable> failed) {
+                                 boolean withChildren, Consumer<Started> done, Consumer<Throwable> failed) {
         AppRuntime runtime = context.runtime();
         if (runtime == null) {
             failed.accept(new IllegalStateException("Die Laufzeit ist nicht gestartet"));
             return;
         }
         Background.run(() -> new Started(List.of(runtime.workspace().startExport(sourceId, spaceKey, pageId,
-                List.of(FORMAT))), List.of()), done, failed);
+                withChildren ? null : 0, List.of(FORMAT))), List.of()), done, failed);
     }
 }

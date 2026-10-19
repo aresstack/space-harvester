@@ -1,6 +1,7 @@
 package com.aresstack.spaceharvester.application.query;
 
 import com.aresstack.spaceharvester.application.access.AccessContext;
+import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import java.time.Duration;
@@ -16,10 +17,8 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -29,9 +28,11 @@ import java.util.function.Function;
 
 /**
  * Lädt die gefundenen Seiten einer Schlagwortsuche in den Cache (ADR 0013, wie {@code KnowledgePrefetchService} im
- * Enterprise AI Client): jede sichtbare Seite eines Stapels, deren Version nicht im Cache liegt, geht an den
- * Beschaffungs-Use-Case ({@link PageQueries#page}, mit den Rechten des Aufrufers); der legt sie ab, und Volltextindex
- * und Anreicherungen folgen von selbst. Welche Seiten das sind, wählt die Suche aus (nur die besten eines Stapels).
+ * Enterprise AI Client): jede sichtbare Seite eines Stapels, deren Version nicht im Cache liegt, geht als Anfrage des
+ * Vordergrunds an den {@link AcquisitionScheduler} und von dort an den Beschaffungs-Use-Case ({@link PageQueries#page},
+ * mit den Rechten des Aufrufers); der legt sie ab, und Volltextindex und Anreicherungen folgen von selbst. Welche
+ * Seiten das sind, wählt die Suche mit ihrer {@link CandidateSelectionStrategy} aus. Lädt der Hintergrund dieselbe
+ * Seite gerade oder wartet sie dort, wird sie hochgestuft und nicht doppelt geladen (ADR 0016).
  *
  * <p>Technische Aufrufer (Desktop-App, Dienstkonto) warten höchstens {@code technicalWait}, Standard so lange wie
  * delegierte; mit {@link Duration#ZERO} kehrt die Suche sofort zurück, die Seiten laden im Hintergrund weiter, und
@@ -48,12 +49,10 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
 
     private final Function<PageKey, Optional<PageMetadata>> cachedMetadata;
     private final Function<PageKey, Optional<String>> cachedVersion;
-    private final BiConsumer<AccessContext, PageKey> load;
-    private final ExecutorService background;
+    private final AcquisitionScheduler scheduler;
     private final Duration wait;
     private final Duration technicalWait;
     private final AutoCloseable stop;
-    private final Map<PageKey, CompletableFuture<Boolean>> running = new ConcurrentHashMap<>();
     /** Fortschritt der letzten Stapel, ältester zuerst verdrängt. */
     private final Map<String, Batch> batches = new LinkedHashMap<>() {
         @Override
@@ -68,7 +67,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     /**
      * @param cachedVersion Version der Seite im Cache, leer, wenn sie dort fehlt
      * @param load          lädt eine Seite mit den Rechten des Aufrufers in den Cache, kehrt danach zurück
-     * @param background    begrenzter Hintergrund, etwa {@link #background(int)}; {@link #close()} beendet ihn
+     * @param background    begrenzter Hintergrund, etwa {@link #background(int, int)}; {@link #close()} beendet ihn
      */
     public SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
                              BiConsumer<AccessContext, PageKey> load, ExecutorService background) {
@@ -92,6 +91,9 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
     }
 
     /**
+     * Mit eigenem Planer auf {@code background}: so viele Abrufe zugleich, wie der Hintergrund Threads hat, ohne
+     * Hintergrundfüllung; {@link #close()} beendet beide.
+     *
      * @param cachedMetadata Kopfdaten der Seite im Cache, leer, wenn sie dort fehlt; damit braucht ein geladener Fund
      *                       keine zweite Rückfrage bei der Quelle
      */
@@ -99,77 +101,102 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
                              Function<PageKey, Optional<PageMetadata>> cachedMetadata,
                              BiConsumer<AccessContext, PageKey> load, ExecutorService background, Duration wait,
                              Duration technicalWait) {
+        this(cachedVersion, cachedMetadata, new AcquisitionScheduler(load, limits(background),
+                Objects.requireNonNull(background, "background")), wait, technicalWait, true, background);
+    }
+
+    /**
+     * Über einen gemeinsamen Planer, den auch die Hintergrundfüllung nutzt (ADR 0016); {@link #close()} schließt ihn
+     * nicht, das tut sein Eigentümer.
+     */
+    public SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
+                             Function<PageKey, Optional<PageMetadata>> cachedMetadata, AcquisitionScheduler scheduler,
+                             Duration wait, Duration technicalWait) {
+        this(cachedVersion, cachedMetadata, scheduler, wait, technicalWait, false, null);
+    }
+
+    private SearchHitPrefetch(Function<PageKey, Optional<String>> cachedVersion,
+                              Function<PageKey, Optional<PageMetadata>> cachedMetadata, AcquisitionScheduler scheduler,
+                              Duration wait, Duration technicalWait, boolean owned, ExecutorService background) {
         this.cachedMetadata = Objects.requireNonNull(cachedMetadata, "cachedMetadata");
         this.cachedVersion = Objects.requireNonNull(cachedVersion, "cachedVersion");
-        this.load = Objects.requireNonNull(load, "load");
-        this.background = Objects.requireNonNull(background, "background");
+        this.scheduler = Objects.requireNonNull(scheduler, "scheduler");
         this.wait = Objects.requireNonNull(wait, "wait");
         this.technicalWait = Objects.requireNonNull(technicalWait, "technicalWait");
-        this.stop = stopping(background);
+        if (owned) {
+            AutoCloseable executor = stopping(background);
+            this.stop = () -> {
+                try {
+                    scheduler.close();
+                } finally {
+                    executor.close();
+                }
+            };
+        } else {
+            this.stop = () -> { };
+        }
     }
 
     private SearchHitPrefetch() {
         this.cachedMetadata = key -> Optional.empty();
         this.cachedVersion = key -> Optional.empty();
-        this.load = (caller, key) -> { };
-        this.background = null;
+        this.scheduler = null;
         this.wait = Duration.ZERO;
         this.technicalWait = Duration.ZERO;
         this.stop = () -> { };
     }
 
+    /** Grenzen für einen eigenen Planer: so viele zugleich, wie {@code background} Threads hat, kein Hintergrund. */
+    private static AcquisitionScheduler.Limits limits(ExecutorService background) {
+        if (background instanceof ThreadPoolExecutor pool) {
+            int parallel = Math.max(1, pool.getMaximumPoolSize());
+            return new AcquisitionScheduler.Limits(parallel, 0, parallel,
+                    Math.max(1, pool.getQueue().remainingCapacity() + parallel));
+        }
+        AcquisitionScheduler.Limits defaults = AcquisitionScheduler.Limits.DEFAULT;
+        return new AcquisitionScheduler.Limits(defaults.foreground(), 0, defaults.perSource(), defaults.capacity());
+    }
+
+    @Override
+    public boolean current(KeywordSearch.Hit hit) {
+        if (scheduler == null || hit.version() == null) {
+            return false;
+        }
+        Optional<String> cached = cachedVersion.apply(new PageKey(hit.sourceId(), hit.pageId()));
+        return cached.isPresent() && hit.version().equals(cached.get());
+    }
+
+    @Override
+    public CandidateSelectionStrategy.Capacity capacity() {
+        return scheduler == null ? CandidateSelectionStrategy.Capacity.DEFAULT
+                : new CandidateSelectionStrategy.Capacity(scheduler.limits().foreground(),
+                        scheduler.foregroundBacklog());
+    }
+
     @Override
     public Fill prefetch(AccessContext caller, List<KeywordSearch.Hit> hits) {
-        if (background == null) {
+        if (scheduler == null) {
             return Fill.NONE;
         }
-        Map<KeywordSearch.Hit, CompletableFuture<Boolean>> waiting = new LinkedHashMap<>();
-        Set<CompletableFuture<Boolean>> own = new HashSet<>();
+        Map<KeywordSearch.Hit, AcquisitionScheduler.Ticket> waiting = new LinkedHashMap<>();
         List<KeywordSearch.Hit> pending = new ArrayList<>();
+        Set<PageKey> seen = new HashSet<>();
         for (KeywordSearch.Hit hit : hits) {
             PageKey key = new PageKey(hit.sourceId(), hit.pageId());
-            Optional<String> cached = cachedVersion.apply(key);
-            if (cached.isPresent() && hit.version() != null && hit.version().equals(cached.get())) {
-                continue;
-            }
-            CompletableFuture<Boolean> done = new CompletableFuture<>();
-            CompletableFuture<Boolean> existing = running.putIfAbsent(key, done);
-            if (existing != null) {
-                waiting.put(hit, existing);
+            if (!seen.add(key) || current(hit)) {
                 continue;
             }
             try {
-                Future<?> task = background.submit(() -> {
-                    boolean stored = false;
-                    try {
-                        load.accept(caller, key);
-                        stored = true;
-                    } catch (RuntimeException e) {
-                        // Ohne Seiten-ID; die Suche zeigt die Seite dann nicht und ist unvollständig.
-                        LOG.log(System.Logger.Level.INFO, "Laden eines Suchtreffers in {0} gescheitert ({1})",
-                                key.sourceId(), e.getClass().getName());
-                    } finally {
-                        running.remove(key, done);
-                        done.complete(stored);
-                    }
-                });
-                done.whenComplete((ignored, failure) -> {
-                    // Nur ein noch wartender Abruf entfällt; ein laufender schreibt zu Ende und gibt die Seite
-                    // erst dann frei, damit dieselbe Seite nicht doppelt lädt.
-                    if (done.isCancelled() && task.cancel(false)) {
-                        running.remove(key, done);
-                    }
-                });
-                waiting.put(hit, done);
-                own.add(done);
+                // Eine Seite, die schon wartet oder lädt, teilt sich den Abruf; ein Stapel bricht nur seine Anfrage ab.
+                waiting.put(hit, scheduler.request(caller, key, AcquisitionScheduler.Priority.FOREGROUND));
             } catch (RejectedExecutionException e) {
-                running.remove(key, done);
                 pending.add(hit);
             }
         }
-        Batch batch = new Batch(UUID.randomUUID().toString(), waiting.size() + pending.size(), own);
+        Batch batch = new Batch(UUID.randomUUID().toString(), waiting.size() + pending.size(),
+                List.copyOf(waiting.values()));
         pending.forEach(hit -> batch.finished(false));
-        waiting.values().forEach(future -> future.whenComplete((stored, failure) ->
+        waiting.values().forEach(ticket -> ticket.done().whenComplete((stored, failure) ->
                 batch.finished(failure == null && Boolean.TRUE.equals(stored))));
         synchronized (batches) {
             batches.put(batch.id, batch);
@@ -177,17 +204,18 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
         boolean delegated = caller.credential() != null;
         long deadline = System.nanoTime() + (delegated ? wait : technicalWait).toNanos();
         int failed = 0;
-        for (Map.Entry<KeywordSearch.Hit, CompletableFuture<Boolean>> entry : waiting.entrySet()) {
-            CompletableFuture<Boolean> future = entry.getValue();
+        for (Map.Entry<KeywordSearch.Hit, AcquisitionScheduler.Ticket> entry : waiting.entrySet()) {
+            AcquisitionScheduler.Ticket ticket = entry.getValue();
+            CompletableFuture<Boolean> future = ticket.done();
             try {
                 if (!future.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
                     failed++;
                 }
             } catch (TimeoutException e) {
                 pending.add(entry.getKey());
-                if (delegated && own.contains(future)) {
-                    // Die Anmeldung des Benutzers bleibt in seinem Aufruf.
-                    future.cancel(false);
+                if (delegated) {
+                    // Die Anmeldung des Benutzers bleibt in seinem Aufruf; ein laufender Abruf endet regulär.
+                    ticket.cancel();
                 }
             } catch (CancellationException e) {
                 // Ein delegierter Benutzer hat seinen Abruf beendet; die Seite fehlt noch.
@@ -237,16 +265,16 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
 
         private final String id;
         private final int total;
-        /** Abrufe, die dieser Stapel gestartet hat; nur sie bricht {@link #cancel()} ab. */
-        private final Set<CompletableFuture<Boolean>> own;
+        /** Die Anfragen dieses Stapels; nur sie zieht {@link #cancel()} zurück. */
+        private final List<AcquisitionScheduler.Ticket> own;
         private int loaded;
         private int failed;
         private boolean cancelled;
 
-        private Batch(String id, int total, Set<CompletableFuture<Boolean>> own) {
+        private Batch(String id, int total, List<AcquisitionScheduler.Ticket> own) {
             this.id = id;
             this.total = total;
-            this.own = Set.copyOf(own);
+            this.own = own;
         }
 
         /** Wartendes entfällt; ein schon laufender Abruf endet regulär. */
@@ -254,7 +282,7 @@ public final class SearchHitPrefetch implements KeywordSearch.Prefetch, AutoClos
             synchronized (this) {
                 cancelled = true;
             }
-            own.forEach(future -> future.cancel(false));
+            own.forEach(AcquisitionScheduler.Ticket::cancel);
         }
 
         private synchronized void finished(boolean stored) {

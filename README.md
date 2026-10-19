@@ -1,66 +1,109 @@
-# Space Harvester
+![Space Harvester – Vom Dokument zum Wissensnetz](docs/images/space-harvester-banner.png)
 
-Eigenständiger, headless Spring-Boot-Dienst (Java 21), der Wissensquellen erfasst und maschinenlesbar exportiert,
-zunächst Confluence Data Center. Über eine REST-API sollen Spaces aufgelistet, Seitenmetadaten mit Versionsinformationen
-und reproduzierbaren Hashwerten paginiert abgefragt und vollständige Spaces asynchron als JSON/NDJSON exportiert werden.
+**Space Harvester** erschließt Wissensquellen: Seiten und Dokumente finden, sicher abrufen, lokal indexieren,
+lesbar darstellen, aktuell halten, analysieren und in wiederverwendbare Formate exportieren.
 
-Die Umsetzung folgt der Roadmap in [#20](https://github.com/aresstack/space-harvester/issues/20).
-Vorhandene Knowledge-Source-Adapter aus [enterprise-ai-client](https://github.com/aresstack/enterprise-ai-client)
-werden wiederverwendet (siehe [#2](https://github.com/aresstack/space-harvester/issues/2)).
+Das Projekt ist inzwischen **mehr als ein Confluence-Exportdienst**. Ein gemeinsamer, Spring-unabhängiger Core
+trägt sowohl die **Swing-Desktop-Anwendung** als auch einen separat startbaren **Spring-Boot-Dienst mit REST-API und
+Weboberfläche**. Die Quelladapter stammen aus bzw. orientieren sich am
+[Enterprise AI Client](https://github.com/aresstack/enterprise-ai-client).
 
-## Voraussetzungen
+## Was Space Harvester kann
 
-- JDK 21
-- Kein lokales Gradle nötig; der Gradle Wrapper (8.14.3) wird mitgeliefert.
+| Bereich | Funktionsumfang |
+|---|---|
+| **Quellen** | Confluence Data Center und lokale Dateien; Erweiterung über Quellenadapter |
+| **Suche** | Lucene-Volltextindex, Live-Suche über Quellen, schrittweises Nachladen, optional semantische Suche |
+| **Lesen** | Seitenbaum, Breadcrumbs, Lesetext, Eigenschaften, Anhänge, Querverweise und gerenderte Diagramme |
+| **Synchronisieren** | Versions- und Bestandsabgleich, Aktualitätsprüfung, gesteuerte Hintergrundbefüllung und nachvollziehbare Aufträge |
+| **Exportieren** | Reproduzierbarer JSON-Datenbestand; daraus JSON, Markdown, Word und PDF ohne erneuten Quellenabruf |
+| **Anreichern** | Seitenbezogene Verarbeitung und Analyse, unter anderem Akronymerkennung; optionale KI- und Embedding-Funktionen |
+| **Betreiben** | Desktop-App ohne lokalen Server oder headless REST-Dienst; Rechteprüfung, Proxy/PAC, TLS/mTLS und Diagnose |
 
-## Bauen, testen, starten
+**Noch in Entwicklung:** Die globale Begriffsverwaltung mit **Akronymen, Bezeichnern, Beziehungen und Fachglossar**
+ist als eigener Desktop-Hauptbereich und seitenbezogene Ansicht geplant
+([#339](https://github.com/aresstack/space-harvester/issues/339)).
+Dafür werden der Begriffsindex ([#119](https://github.com/aresstack/space-harvester/issues/119)),
+kuratierbare Beziehungen ([#120](https://github.com/aresstack/space-harvester/issues/120)),
+die Akronymauflösung ([#122](https://github.com/aresstack/space-harvester/issues/122)) und
+automatische Synonymvorschläge ([#336](https://github.com/aresstack/space-harvester/issues/336)) weiterentwickelt.
+Das KI-gestützte Fachglossar ist noch keine fertige Funktion.
+
+## Schnellstart
+
+**Voraussetzung:** JDK 21. Der Gradle Wrapper ist enthalten, eine separate Gradle-Installation ist nicht nötig.
+
+### Desktop-App
+
+Die Desktop-Anwendung läuft eigenständig mit direktem Core-Zugriff – **ohne REST-Server und ohne Spring-Kontext**.
+
+1. Im Bereich [Releases](https://github.com/aresstack/space-harvester/releases) das Desktop-JAR
+   `space-harvester-app-<version>.jar` und bei Bedarf die `SHA256SUMS` herunterladen.
+2. Mit Java 21 starten:
 
 ```bash
-./gradlew build        # baut Core und Dienst, testet, Jar: space-harvester-server/build/libs/space-harvester-<version>.jar
-./gradlew bootRun      # startet den Dienst auf http://localhost:8080
+java -jar space-harvester-app-<version>.jar
 ```
 
-Alternativ das gebaute Jar starten:
+Beim ersten Start führt der Quellen-Assistent durch die Einrichtung. Die App bietet Suche, Explorer, Leseansicht,
+Quellenverwaltung, Synchronisierung, Downloads, Aufträge, Status und Einstellungen. Einzelheiten einschließlich
+Windows-Start und Konfiguration: [Desktop-Dokumentation](docs/DESKTOP_APP.md).
+
+### REST-Dienst und Weboberfläche
 
 ```bash
-java -jar space-harvester-server/build/libs/space-harvester-0.1.0-SNAPSHOT.jar
+./gradlew :space-harvester-server:bootRun
 ```
 
-Der Dienst startet ohne Confluence-Zugang. Der Port lässt sich mit `SPACE_HARVESTER_PORT` ändern. Die API verlangt
-ein Bearer-Token eines technischen Clients ([docs/SECURITY.md](docs/SECURITY.md)); lokal ohne Anmeldung:
+Der Dienst stellt seine API unter `http://localhost:8080/api/v1/` und seine Weboberfläche unter
+`http://localhost:8080/ui/` bereit. Für reguläre API-Zugriffe ist ein Bearer-Token vorgesehen
+([Sicherheit](docs/SECURITY.md)); für eine lokale Entwicklungsinstanz ohne Anmeldung:
 
 ```bash
-SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew bootRun
+SPRING_PROFILES_ACTIVE=local SPACE_HARVESTER_SECURITY_MODE=development ./gradlew :space-harvester-server:bootRun
 ```
-Ohne echte Confluence lässt sich der Dienst mit einer Fake-Confluence und dem Profil `demo` ausprobieren; die
-geprüften Curl-Beispiele dazu stehen in [docs/E2E.md](docs/E2E.md).
 
-Unter `http://localhost:8080/ui/` liegt eine schlanke Weboberfläche: Quellen und Spaces ansehen, Abgleich und Export
-starten, Fortschritt, Warnungen und Fehler verfolgen, Export-Dateien herunterladen. Sie ruft nur die REST-API auf; das
-Bearer-Token gibt man im Browser ein, es bleibt im sessionStorage des Tabs. Abschalten mit
-`SPACE_HARVESTER_UI_ENABLED=false`.
+Der Dienst kann ohne eingerichtete Confluence-Quelle starten. Mit dem Profil `demo` lässt sich der Ablauf anhand
+einer Fake-Confluence ausprobieren ([End-to-End-Beispiele](docs/E2E.md)).
+Port, Quellen, Authentifizierung und Netzwerkeinstellungen sind konfigurierbar
+([Konfiguration](docs/CONFIGURATION.md)).
 
-Strukturierte JSON-Logs (Elastic Common Schema) liefert das Profil `json-logs`:
+### Bauen und testen
 
 ```bash
-SPRING_PROFILES_ACTIVE=json-logs ./gradlew bootRun
+./gradlew build
 ```
+
+Der Build prüft Core, Server, Desktop und Vergleichstests. Unter Windows den Gradle Wrapper über `gradlew.bat`
+aufrufen. Für ein ausführbares Server-JAR siehe die Ausgabe von `:space-harvester-server:bootJar`.
+Strukturierte JSON-Logs (Elastic Common Schema) unterstützt das Profil `json-logs`.
+
+## Dokumentation
+
+- [Desktop-App](docs/DESKTOP_APP.md) – Bedienung, Einrichtung und Bereiche
+- [Module und Architektur](docs/MODULES.md) – Core, Server und Desktop
+- [Konfiguration](docs/CONFIGURATION.md) und [Quellenadapter](docs/SOURCE_ADAPTERS.md)
+- [Sicherheit](docs/SECURITY.md), [TLS/mTLS](docs/MTLS.md) und [Geheimnisse](docs/SECRETS.md)
+- [Funktionsparität mit dem Enterprise AI Client](docs/PARITY.md) – umgesetzte und noch offene Fähigkeiten
+- [Formatkonvertierung](docs/CONVERTERS.md), [Diagnose](docs/DIAGNOSTICS.md) und [Architekturentscheidungen](docs/adr/)
+
+Die folgenden Abschnitte dokumentieren die technischen Details und Schnittstellen.
 
 ## Module und Nutzung als Bibliothek
 
-Der Build hat drei eigene Module ([docs/MODULES.md](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
+Der Build umfasst drei produktive Module ([Modulübersicht](docs/MODULES.md), [ADR 0006](docs/adr/0006-core-bibliothek-und-server.md)):
 
 - `space-harvester-core`: Bibliothek ohne Spring Boot und ohne REST. Fachlogik, Quellenadapter (Confluence, Dateien),
   Lucene-Cache, Abgleich, Suche, Export und Embeddings.
 - `space-harvester-server`: der Spring-Boot-Dienst mit REST-API, Confluence-Fassade, Weboberfläche und Sicherheit; er
-  verwendet den Core. `./gradlew bootRun` und das Jar oben starten ihn.
+  verwendet den Core; starten lässt er sich mit `./gradlew :space-harvester-server:bootRun`.
 - `space-harvester-app`: Desktop-App (Swing, Comic-Design des Enterprise AI Client) direkt auf dem Core, ohne REST und
   ohne Spring-Kontext: `java -jar space-harvester-app/build/libs/space-harvester-app-<version>.jar`. Start unter
   Windows, Konfiguration und Funktionsumfang: [docs/DESKTOP_APP.md](docs/DESKTOP_APP.md).
 
-Der Core wird die gemeinsame Wissensquellen- und Dokumentverarbeitungsbibliothek, die auch der Enterprise AI Client
-verwendet ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)). Er muss dessen Fähigkeiten mindestens
-funktionsgleich bereitstellen; Stand und Lücken: [docs/PARITY.md](docs/PARITY.md).
+Der Core ist als gemeinsame Wissensquellen- und Dokumentverarbeitungsbibliothek für Space Harvester und den
+Enterprise AI Client ausgelegt ([ADR 0012](docs/adr/0012-core-als-gemeinsame-bibliothek.md)). Welche Fähigkeiten
+bereits gleichwertig sind und wo noch Lücken bestehen, dokumentiert [die Paritätsübersicht](docs/PARITY.md).
 
 Ohne Dienst nutzt ein Java-21-Programm den Core über `com.aresstack.spaceharvester.core.Harvester`. Er baut dieselben
 Anwendungsfälle wie der Dienst und gibt sie heraus (`sources()`, `pages()`, `search()`, `relevance()`, `syncs()`,
@@ -369,6 +412,8 @@ space-harvester:
 | `GET /api/v1/syncs/{syncId}`, `POST /api/v1/syncs/{syncId}/cancel` | Status samt Delta eines eigenen Abgleichs, Abbruch |
 | `GET /api/v1/search[?sourceId=…\|sourceIds=…]` | Mit `text` Schlagwortsuche über Titel und Inhalt in der Suche der Quellen, ohne Nachladen, mit Textauszügen; sonst Titel- und Metadatensuche über den Index (`title`, `spaceKey`, `pageId`, `parentPageId`, `version`, `modifiedFrom`, `modifiedBefore`), stapelweise; ohne `sourceId` global über alle freigegebenen Quellen oder nur die in `sourceIds` (#114) |
 | `POST /api/v1/search/progressive`, `GET`/`DELETE /api/v1/search/progressive/{id}` | Progressive Suche ([ADR 0017](docs/adr/0017-progressive-suche.md)): `q` sofort, dann Varianten in Wellen, bewertet gegen `q`; ohne `wait` 202 mit Stand und `Location`, mit `wait: true` 200 mit der fertigen Liste und `reason`; Abfrage und Abbruch nur für den eigenen Aufrufer |
+| `GET /api/v1/search/runs[?limit=…]`, `GET /api/v1/search/runs/{id}` | Suchlauf-Protokoll (#182): eigene Läufe von Schlagwort-, Relevanz- und progressiver Suche mit Quellen, Zählern je Stufe und Dauer; fremde nur mit `manage-configuration`; [docs/CONFIGURATION.md](docs/CONFIGURATION.md#suchlauf-protokoll-und-fakten-182) |
+| `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`, `GET /api/v1/facts?type=…\|argument=ROLLE:Wert` | Fakten aus den Anreicherungen (Akronyme, Entitäten, Eigenschaften) je Seite und über alle lesbaren Seiten, mit Cursor (#182) |
 | `GET /api/compat/confluence/{sourceId}/rest/api/content/{id}`, `…/content?spaceKey=…`, `…/content/{id}/child/page` | Confluence-kompatible Einzelseite und Seitenlisten aus dem Cache, Payloads Byte für Byte, nur lesend; eine fehlende Einzelseite wird wie bei der Seiten-API nachgeladen; Umfang und Abweichungen: [docs/CONFLUENCE_COMPAT.md](docs/CONFLUENCE_COMPAT.md) |
 | `GET /v3/api-docs` | OpenAPI-Dokument der REST-API (`/api/**`) |
 | `GET /swagger-ui.html` | Swagger UI |
@@ -495,7 +540,9 @@ ohne Cache `not-supported`). Nur von dort kommen Treffer (`origin: cache`); Erge
 zusammengeführt. Jeder Treffer verlangt `metadata` und `content`, weil Fundstelle und Auszug aus dem Inhalt stammen.
 Die Suche wartet nicht auf das Laden (Fortschreibung 18.10.): Alle Funde der Quellen kommen sofort als vorläufige
 Treffer mit Titel und Auszug der Quelle in `found`, nach Titel und Auszug bewertet, wenn ein Reranker eingerichtet ist,
-sonst in der Reihenfolge der Quelle; geladen wird in dieser Rangfolge (`space-harvester.search.loads`, Standard alle).
+sonst in der Reihenfolge der Quelle; geladen wird in dieser Rangfolge, so viele, wie
+`space-harvester.search.candidate-selection` auswählt (`adaptive`, Standard; `top-n`; `order`; ADR 0016) und
+`space-harvester.search.loads` zulässt (Standard ohne Grenze).
 Vorläufige Treffer brauchen die quellweite Freigabe für `metadata`, sonst werden sie wie bisher einzeln live geprüft;
 den Auszug zeigen sie nur mit quellweitem `content`. `progress` (`id`, `total`, `loaded`, `failed`, `cancelled`,
 `done`) zählt das Laden; `GET /api/v1/search/progress/{id}` fragt nach, `DELETE` bricht ab. Wer dieselbe Suche erneut
@@ -516,7 +563,9 @@ die ursprüngliche Anfrage sofort und erzeugt gleichzeitig Varianten (zuerst mit
 weniger). Die Varianten laufen in Wellen, und jeder Fund wird gegen die ursprüngliche Anfrage bewertet. Die Suche
 endet am Qualitätsziel des `SearchProfile` oder an Zeit- und Abfragebudget. `searchAsync` liefert die sortierte
 Liste mit Abschlussgrund, ein `ProgressiveSearchListener` meldet unterwegs Varianten und die neu geordnete Liste.
-Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
+Mit `SearchProfile.Ranking.SEMANTIC` (Standard von `Harvester.searchProfile()`, sobald ein Embedding-Modell da ist)
+finden die Varianten nur; die Treffer kommen aus der Vektorsuche mit der ursprünglichen
+Anfrage, bewertet nach Kosinusähnlichkeit (ADR 0013, ohne Fusion). Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 [ADR 0016](docs/adr/0016-auswahl-beschaffung-hintergrund.md).
 
 Über REST startet `POST /api/v1/search/progressive` dieselbe Suche, mit einem JSON-Körper: `q` (Pflicht, höchstens
@@ -524,12 +573,14 @@ Die Auswahl der Beschaffung und das Laden in Rangfolge beschreibt
 `mode` (`quality`, Standard, oder `all-variants` für einen Agenten, der alle Varianten will), `maxVariants` (0 bis 32,
 Standard 8), `minRelevantHits` (Standard 5), `minScore` (Standard 0,5), `timeBudgetMs` (bis 120000, Standard 30000),
 `searchBudget` (Standard 12), `limitPerSearch` (1 bis 100, Standard 20), `expansion` (`ai`, Standard, ohne
-`ai.chat-model` wie `rules`; oder `rules`) und `wait`. Ohne `wait` antwortet der Dienst sofort mit 202, `Location` und
+`ai.chat-model` wie `rules`; oder `rules`), `ranking` (`keyword`, Standard, oder `semantic`: Treffer aus den Vektoren
+im Cache, `score` ist die Kosinusähnlichkeit zu `q`, 20 s je Suchanfrage und 60 s Zeitbudget; ohne Embedding-Modell
+503 `semantic-search-unavailable`) und `wait`. Ohne `wait` antwortet der Dienst sofort mit 202, `Location` und
 dem Stand; `GET /api/v1/search/progressive/{id}` fragt nach, bis `done` wahr ist, `DELETE` bricht ab (204, danach
 `reason: cancelled`). Mit `wait: true` wartet die Anfrage bis zum Abschluss (höchstens Zeitbudget plus 5 s) und
 antwortet mit 200; delegierte Benutzer warten immer. Der Stand nennt `id`, `status` (`running`, `done`), `done`,
 `reason` (`null`, solange die Suche läuft; dann `quality-reached`, `all-variants-done`, `budget-exhausted`,
-`cancelled` oder `failed`), `mode`, `expansion`, `hits` (je Treffer `sourceId`, `pageId`, `spaceKey`, `title`,
+`cancelled` oder `failed`), `mode`, `expansion`, `ranking`, `hits` (je Treffer `sourceId`, `pageId`, `spaceKey`, `title`,
 `snippet`, `url`, `version`, `modifiedAt`, `parentPageId`, `score` oder `null` ohne Bewertung, `foundBy` als Priorität
 der findenden Suchanfrage, `confirmed`), `variants` (`text`, `priority`, `status`, `newHits`), `loads` (nach dem
 Abschluss die Kennungen für `/api/v1/search/progress/{id}`) und `elapsedMs`. Jede Suche gehört ihrem Aufrufer; ein
@@ -704,24 +755,21 @@ Geplante Endpunkte: Sync-Stand und Space-Fingerprint im Cache
 
 ## Aufbau
 
-Ein Gradle-Projekt, geschichtet nach Paketen unter `com.aresstack.spaceharvester`:
+Space Harvester ist ein Java-21-Gradle-Multimodulprojekt mit klar getrennten Schichten:
 
-- `api` – REST-Controller, Antwortmodelle, OpenAPI-Konfiguration
-- `application` – Anwendungsfälle, frameworkneutral (kein Spring)
-- `config` – Spring-Konfiguration, die Anwendungsfälle verdrahtet
-- `source` – Quellenadapter; `source.confluence` baut den übernommenen Confluence-Adapter headless zusammen,
-  `source.network` bestimmt die Proxy-Route je Ziel-URL
-- `output` – Exportformate und Artefakte (folgt mit #11)
-- `persistence` – Speicher hinter den Ports aus `application`; `persistence.lucene` ist der Seiten-Cache
+- **`space-harvester-core`** enthält Domäne, Anwendungsfälle und Ports sowie Quellenadapter, Lucene-Persistenz,
+  Indexierung, Synchronisierung, Suche, Anreicherung und Exportlogik. Er benötigt keinen Spring-Kontext.
+- **`space-harvester-app`** ist die eigenständige Swing-Oberfläche und nutzt die Ports und Anwendungsfälle des
+  Core direkt. App-spezifische Dialoge und Präsentationslogik bleiben außerhalb des Core.
+- **`space-harvester-server`** stellt dieselben fachlichen Fähigkeiten über Spring Boot, REST, Web-UI und
+  Server-Sicherheitskonfiguration bereit. Die Server-Schicht enthält keine Desktop-Logik.
+- **`parity-tests`** hält die Fähigkeiten im Vergleich zum Enterprise AI Client nachvollziehbar
+  ([Testverfahren](docs/PARITY.md#vergleichstests)).
 
-`source` und `output` kennen weder `api` noch einander, `persistence` nur `application`, Lucene steht nur in
-`persistence.lucene`; `LayeringTest` (ArchUnit) prüft diese Regeln. Desktop- oder Swing-Code aus dem Enterprise AI Client
-wird nicht übernommen.
+Abhängigkeiten verlaufen von den Oberflächen zu Anwendungsfällen und Ports; Infrastruktur implementiert Ports,
+anstatt die Fachlogik an ein Framework zu binden. Die Architekturentscheidungen beschreiben die Grenzen und
+bewussten Abweichungen im Detail ([ADRs](docs/adr/), [Module](docs/MODULES.md)).
 
-Der Confluence-Code stammt unverändert aus dem Enterprise AI Client und liegt als Kopie im Gradle-Subprojekt
-[`enterprise-ai-sources`](enterprise-ai-sources/UPSTREAM.md); dort stehen Herkunft, Regeln und der Abgleich. Der Build prüft per Prüfsummen, dass die Kopie unverändert ist.
-
-Versionen stehen zentral in `gradle/libs.versions.toml` (Spring Boot 4.1.1, springdoc-openapi 3.1.1);
-die Spring-Starter erhalten ihre Versionen aus der Spring-Boot-BOM. Das Jar wird reproduzierbar gebaut
-(feste Zeitstempel und Dateireihenfolge, keine Build-Zeit in `build-info.properties`); der Wrapper prüft
-die SHA-256 der Gradle-Distribution.
+Der Confluence-Adapter basiert auf den Bibliotheken des Enterprise AI Client. Die im Projekt geführte
+`enterprise-ai-sources`-Kopie und ihre Upstream-Regeln sind unter
+[UPSTREAM.md](enterprise-ai-sources/UPSTREAM.md) dokumentiert.

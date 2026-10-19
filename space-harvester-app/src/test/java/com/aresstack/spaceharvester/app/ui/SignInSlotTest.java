@@ -35,7 +35,9 @@ class SignInSlotTest {
             slot[0].submitButton().doClick();
             assertThat(slot[0].codeField().getPassword()).as("das Feld hält den Code nicht").isEmpty();
         });
-        await(() -> slot[0].errorText().contains("Code ungültig"));
+        // Der Fehler der Quelle kommt über ihre Änderungsmeldung, bevor das Senden abgeschlossen ist; erst danach
+        // nimmt die Abfrage den nächsten Code an.
+        await(() -> slot[0].errorText().contains("Code ungültig") && slot[0].submitButton().isEnabled());
         assertThat(waiting).isNotDone();
 
         SwingUtilities.invokeAndWait(() -> {

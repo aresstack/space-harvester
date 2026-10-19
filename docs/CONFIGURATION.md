@@ -80,6 +80,46 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
   `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
   gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
+## Suchlauf-Protokoll und Fakten (#182)
+
+Jede Schlagwortsuche (ein Stapel), Relevanzsuche und progressive Suche hinterlässt einen Lauf im Protokoll
+(`SearchRunLog` im Core, Vorbild `KnowledgeSearchRunPort` des Enterprise AI Client): Art, Aufrufer, Anfrage, Beginn,
+Dauer, Ergebnis je Quelle (`searched`, `indexed`, `not-supported`, `unavailable`) und Zähler je Stufe (`queries`,
+`discovered`, `load-queued`, `pending`, `confirmed`, `delivered`). Die Suchen einer progressiven Suche und die
+Schlagwortsuchen in der Vorbereitung einer Relevanzsuche sind Teile (`partOf`) ihres Laufs. Antworten nennen die
+Kennung als `searchRun`.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `space-harvester.search.run-log.enabled` | `true` | Protokoll führen; `false`: keine Läufe, `GET /api/v1/search/runs` liefert `enabled: false` |
+| `space-harvester.search.run-log.max-age` | `30d` | Läufe danach löschen (beim Start und laufend); höchstens 10 000 Läufe |
+
+Beides wirkt nur beim Start, nicht über `POST /api/v1/configuration`. Mit `space-harvester.cache.directory` liegt das
+Protokoll als eigener Lucene-Index in `search-runs/`, sonst im Speicher; in der Bibliothek
+`Harvester.builder().searchRuns(true, maxAge)` (unter `cache/search-runs`).
+
+- **Datenschutz:** Wie im Enterprise AI Client steht die Anfrage im Lauf (höchstens 1000 Zeichen), nie im Log;
+  scheitert das Protokoll, läuft die Suche weiter und das Log nennt nur den Fehlertyp. Lesen darf einen Lauf nur sein
+  Aufrufer (gleicher `jobOwner`) oder ein technischer Client mit `manage-configuration`; sonst 404, wie bei fremden
+  Aufträgen.
+- **Zähler ohne fremde Seiten:** Gezählt werden nur geprüfte Seiten. Für Endnutzer mit delegierter Prüfung entfallen
+  `discovered`, `load-queued` und `pending` (die Quelle hat die Treffer noch nicht für ihn bestätigt); ungeprüfte
+  Vektorkandidaten der Relevanzsuche zählen nie.
+- Die Kandidatenliste je Lauf, Vertiefen und der Trichter für den Chat bleiben im Client.
+
+**Fakten** entstehen beim Speichern einer Anreicherung aus ihrem Ergebnis, im selben Lucene-Index (`enrichments/`,
+Schema `enrichment-store/v3`; ein v1/v2-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
+ersetzt und gelöscht. Typen nach
+dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
+(aus `entities`), `PROPERTY` (aus `properties`); Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`,
+`VALUE`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
+
+- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
+  wie das Lesen der Seite und `freshness` je Fakt.
+- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&cursor&limit]`: Fakten über alle
+  Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
+  es gibt keine Gesamtzahl.
+
 ## Reihenfolge der Quellen
 
 Höhere zuerst, geprüft in `ConfigServerImportTest` und `AzureKeyVaultSecretsTest`:
@@ -175,6 +215,35 @@ setzt `Harvester.builder().webhookSecret(quelle, geheimnis)` das Geheimnis, `Har
 nimmt Aufrufe einer eigenen Empfangsstelle an.
 
 Dauern als ISO-8601 (`PT6H`, `P1D`) oder in Spring-Kurzform (`30s`, `10m`, `6h`, `1d`).
+
+### Beschaffung und Hintergrundfüllung (ADR 0016)
+
+Welche Funde einer Suche sofort laden, liest der Server beim Start; diese beiden Schlüssel wechseln nicht über
+`POST /api/v1/configuration`. Im Core heißen sie `Harvester.Builder.candidateSelection` und `searchLoads`.
+
+| Schlüssel (`space-harvester.`…) | Standard | Bedeutung |
+| --- | --- | --- |
+| `search.candidate-selection` | `adaptive` | welche Funde einer Suche jetzt laden: `order` (alle, Reihenfolge der Quellen), `top-n` (die besten `search.loads` nach Titel und Auszug), `adaptive` (so viele, wie der Vordergrund bald schafft; Regel in ADR 0016) |
+| `search.loads` | ohne Grenze (100) | Obergrenze je Stapel, 1 bis 100; allein gesetzt heißt es `top-n` wie bisher |
+
+Die Hintergrundfüllung (`sync.background-fill`, `sync.background-parallelism`, `sync.sources.<Quelle>.background-fill`,
+Tabellen oben) folgt dagegen der Laufzeitkonfiguration; im Core gilt das mit `Harvester.Builder.configuration`, sonst
+`backgroundFill` und `backgroundParallelism`. Ihre Warteschlange liegt unter `<cache.directory>/fill-queue` und
+überdauert einen Neustart; ohne Cache-Verzeichnis gibt es keine Füllung. Sie lädt als technische Aktion des Servers mit
+den Zugangsdaten der Quelle, nie mit der Anmeldung eines Benutzers, und über dieselbe Warteschlange wie die Suche:
+
+- Die Suche hat vier eigene Plätze; je Quelle bleibt ihr mindestens einer frei.
+- Solange eine Suche wartet oder lädt, eine Aktion des Benutzers den Hintergrund anhält und noch 5 s nach der letzten
+  Seite der Suche beginnt der Hintergrund keine neue Seite. Eine laufende Seite endet immer regulär; unterbrochen
+  wird nie.
+- Wartet eine Seite schon im Hintergrund, stuft die Suche sie hoch, statt sie ein zweites Mal zu laden; lädt sie
+  schon, wartet die Suche auf denselben Abruf.
+- Abschalten zieht übergebene Anfragen zurück; die Warteschlange bleibt und geht beim Einschalten weiter.
+
+`GET /api/v1/acquisition` (nur Clients mit `manage-configuration`, im Core `Harvester.acquisitionStatus()`) zeigt den
+Stand: `enabled`, `pause` (`NONE`, `FOREGROUND`, `USER_ACTION`, `COOLDOWN`, `DISABLED`, `IDLE`, `CLOSED`),
+Warteschlangen von Suche und Hintergrund, geladene und gescheiterte Seiten seit dem Start, `promoted`, `parallelism`,
+`lastScan` und dieselben Zähler je Quelle, nur Zähler, nie Seiten-IDs oder Suchtexte.
 
 Ein Wechsel des Embedding-Modells oder seiner Dimension versioniert den Vektorindex: Vorhandene Vektoren gelten als
 veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte werden dafür nicht erneut von der

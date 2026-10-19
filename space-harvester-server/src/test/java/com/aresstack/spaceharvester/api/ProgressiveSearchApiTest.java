@@ -9,6 +9,8 @@ import com.aresstack.spaceharvester.application.query.progressive.HitScorer;
 import com.aresstack.spaceharvester.application.query.progressive.RuleBasedExpansion;
 import com.aresstack.spaceharvester.application.query.progressive.SearchOrchestrator;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
+import com.aresstack.spaceharvester.application.ranking.SemanticSearchUnavailableException;
+import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,6 +21,8 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
@@ -44,6 +48,10 @@ class ProgressiveSearchApiTest {
 
     private static final String OTHER_TOKEN = "other-token-81d0";
     private static final CountDownLatch SLOW = new CountDownLatch(1);
+    /** Ob die semantische Suche ein Embedding-Modell hat. */
+    private static volatile boolean semanticAvailable = true;
+    /** Gegen welche Anfrage die semantischen Suchanfragen gesucht haben. */
+    private static final List<String> SEMANTIC_ORIGINALS = new CopyOnWriteArrayList<>();
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -80,7 +88,31 @@ class ProgressiveSearchApiTest {
             };
             HitScorer scorer = (original, hits) -> hits.stream()
                     .mapToDouble(hit -> hit.title().equals("Nachtlauf") ? 0.9 : 0.2).toArray();
-            return new SearchOrchestrator(search, new RuleBasedExpansion(), scorer);
+            // Semantisch: ein Treffer aus den Vektoren mit seiner Ähnlichkeit zu q, nie vom Cross-Encoder bewertet.
+            VariantSearch semantic = new VariantSearch() {
+                @Override
+                public KeywordSearch.Results search(AccessContext caller, KeywordSearch.Query query, int limit) {
+                    throw new AssertionError("ohne ursprüngliche Anfrage aufgerufen");
+                }
+
+                @Override
+                public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
+                    SEMANTIC_ORIGINALS.add(original);
+                    KeywordSearch.Hit hit = new KeywordSearch.Hit("wiki", "vektor", "DEV", "Vektor", "Stück", null,
+                            "1", null, null);
+                    return new Outcome(new KeywordSearch.Results("wiki", List.of(hit), List.of(), null, true, 0),
+                            Map.of(new PageKey("wiki", "vektor"), 0.95));
+                }
+
+                @Override
+                public void requireAvailable(AccessContext caller, KeywordSearch.Query query) {
+                    if (!semanticAvailable) {
+                        throw new SemanticSearchUnavailableException("Kein Embedding-Dienst eingerichtet");
+                    }
+                }
+            };
+            RuleBasedExpansion rules = new RuleBasedExpansion();
+            return new SearchOrchestrator(search, semantic, rules, rules, scorer);
         }
     }
 
@@ -101,6 +133,8 @@ class ProgressiveSearchApiTest {
         assertThat(started.headers().firstValue("Location")).contains("/api/v1/search/progressive/" + id);
         assertThat(body.get("mode").asString()).isEqualTo("all-variants");
         assertThat(body.get("expansion").asString()).isEqualTo("rules");
+        // Standard ist die Schlagwortsuche (ADR 0013).
+        assertThat(body.get("ranking").asString()).isEqualTo("keyword");
 
         JsonNode done = awaitDone(id);
         assertThat(done.get("status").asString()).isEqualTo("done");
@@ -140,6 +174,40 @@ class ProgressiveSearchApiTest {
         assertThat(body.get("hits").get(0).get("pageId").asString()).isEqualTo("nachtlauf");
         // Ohne Chat-Modell formulieren die Regeln die Varianten.
         assertThat(body.get("expansion").asString()).isEqualTo("rules");
+    }
+
+    @Test
+    void rankingSemanticSearchesEveryVariantOverTheVectorsAgainstQ() throws Exception {
+        SEMANTIC_ORIGINALS.clear();
+        HttpResponse<String> response = post(TestClient.TOKEN, "{\"q\":\"Nachtlauf Betrieb\",\"ranking\":\"semantic\","
+                + "\"mode\":\"all-variants\",\"expansion\":\"rules\",\"wait\":true}");
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        JsonNode body = json.readTree(response.body());
+        assertThat(body.get("ranking").asString()).isEqualTo("semantic");
+        assertThat(body.get("reason").asString()).isEqualTo("all-variants-done");
+        assertThat(body.get("hits")).extracting(hit -> hit.get("pageId").asString()).containsExactly("vektor");
+        assertThat(body.get("hits").get(0).get("score").asDouble()).isEqualTo(0.95);
+        assertThat(body.get("variants").size()).isGreaterThan(1);
+        assertThat(SEMANTIC_ORIGINALS).hasSize(body.get("variants").size()).containsOnly("Nachtlauf Betrieb");
+    }
+
+    @Test
+    void rankingSemanticWithoutAnEmbeddingModelIs503WithoutFallback() throws Exception {
+        semanticAvailable = false;
+        try {
+            HttpResponse<String> response = post(TestClient.TOKEN,
+                    "{\"q\":\"Nachtlauf\",\"ranking\":\"semantic\",\"wait\":true}");
+
+            assertThat(response.statusCode()).isEqualTo(503);
+            assertThat(response.headers().firstValue("Content-Type")).contains("application/problem+json");
+            JsonNode problem = json.readTree(response.body());
+            assertThat(problem.get("type").asString())
+                    .isEqualTo("https://github.com/aresstack/space-harvester/problems/semantic-search-unavailable");
+            assertThat(problem.get("detail").asString()).contains("ranking=semantic").doesNotContain("Nachtlauf");
+        } finally {
+            semanticAvailable = true;
+        }
     }
 
     @Test
@@ -183,6 +251,7 @@ class ProgressiveSearchApiTest {
                 400);
         assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"mode\":\"schnell\"}"), 400);
         assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"expansion\":\"llm\"}"), 400);
+        assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"ranking\":\"hybrid\"}"), 400);
         assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"maxVariants\":33}"), 400);
         assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"minRelevantHits\":0}"), 400);
         assertProblem(post(TestClient.TOKEN, "{\"q\":\"Nachtlauf\",\"timeBudgetMs\":0}"), 400);
