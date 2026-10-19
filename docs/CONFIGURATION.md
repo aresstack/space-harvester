@@ -346,9 +346,11 @@ veraltet und werden im Hintergrund aus dem Cache neu berechnet; Seiteninhalte we
 Quelle geladen.
 
 **Embedding je Absatz (#181, PR #388):** Mit Embedding-Modell bettet der Prozessor `embedding` je semantischem Absatz
-ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Ein Absatz über
-`ai.embedding-chunk-chars` Zeichen wird wie bisher geteilt; Budget und Überlappung der Zerlegung
-(`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
+ein (`EmbeddingProcessor.withPassages`, ADR 0020), im Server wie im Core, ohne eigenen Schlüssel. Wie im Client wird
+ein Absatz nur nach Tokens begrenzt; nur mit gesetztem `ai.embedding-chunk-chars` (Standard 0, ohne Zeichengrenze) wird
+ein Absatz darüber geteilt. Der Umstieg auf diese Standards bettet vorhandene Seiten beim nächsten Start einmal im gedrosselten
+Hintergrund neu ein; bis dahin findet die Relevanzsuche eine solche Seite nur über ihre Schlagworte. Budget und
+Überlappung der Zerlegung (`ai.embedding-chunk-tokens`, `ai.embedding-chunk-overlap-sentences`) stehen in [EMBEDDINGS.md](EMBEDDINGS.md). Die
 Version des Prozessors nennt die Absatzbildung (`+passages:<Fingerabdruck>`); beim Umstieg veralten vorhandene
 Embeddings und werden aus dem Cache neu berechnet. Die Dokumentnavigation (Prozessor `navigation`, PR #396) liest
 diese Embeddings je Absatz; sie hat keine eigenen Schlüssel und folgt `ai.embedding-model` und der Freigabe
