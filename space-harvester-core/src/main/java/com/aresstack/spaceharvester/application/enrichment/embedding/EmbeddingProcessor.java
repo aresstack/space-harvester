@@ -43,6 +43,8 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
     private final TextSegmentation segmentation;
     private final Predicate<String> sources;
     private final boolean remote;
+    /** Absätze wie askai arch statt fester Stücke; {@code null}: Zerlegung nach Token-Budget. */
+    private final PassageChunking passages;
 
     /** Für alle Quellen, im aufrufenden Thread (Tests, eingebettete Modelle). */
     public EmbeddingProcessor(EmbeddingProvider provider, int maxChunkChars, TextSegmentation segmentation) {
@@ -84,6 +86,26 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             throw new IllegalArgumentException("maxChunkChars muss mindestens 100 sein");
         }
         this.maxChunkChars = maxChunkChars;
+        this.passages = null;
+    }
+
+    private EmbeddingProcessor(EmbeddingProcessor base, PassageChunking passages) {
+        this.segmentation = base.segmentation;
+        this.sources = base.sources;
+        this.remote = base.remote;
+        this.provider = base.provider;
+        this.maxChunkChars = base.maxChunkChars;
+        this.passages = passages;
+    }
+
+    /**
+     * Derselbe Prozessor, der wie {@code IndexKnowledgeUseCase.withPassages} im Enterprise AI Client je semantischem
+     * Absatz ein eigenes Embedding bildet (#181, ADR 0020) statt Sätze bis zum Token-Budget zu packen. Die Sätze für die
+     * Themengrenzen bettet dasselbe Modell ein; ein Absatz über {@link #maxChunkChars} Zeichen wird wie bisher geteilt.
+     * Die Version nennt die Zerlegung: Vorhandene Embeddings veralten und werden aus dem Cache neu berechnet.
+     */
+    public EmbeddingProcessor withPassages(PassageChunking value) {
+        return new EmbeddingProcessor(this, Objects.requireNonNull(value, "passages"));
     }
 
     private static Supplier<EmbeddingProvider> fixed(EmbeddingProvider provider) {
@@ -147,14 +169,14 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
 
     private String version(EmbeddingProvider current) {
         return FORMAT + "+" + current.modelId() + "+" + current.dimensions() + "+" + maxChunkChars + "+"
-                + segmentation.id();
+                + segmentation.id() + (passages == null ? "" : "+passages:" + passages.fingerprint());
     }
 
     @Override
     public EnrichmentOutput process(PageText text) {
         // Ein Modell für den ganzen Lauf, auch wenn es währenddessen gewechselt wird.
         EmbeddingProvider provider = provider();
-        List<Chunk> chunks = chunks(text);
+        List<Chunk> chunks = passages == null ? chunks(text) : passageChunks(text, provider);
         List<String> warnings = new ArrayList<>();
         if (chunks.size() > MAX_CHUNKS) {
             warnings.add("Nur die ersten " + MAX_CHUNKS + " von " + chunks.size() + " Abschnitten eingebettet");
@@ -288,6 +310,23 @@ public class EmbeddingProcessor implements EnrichmentProcessor {
             json.append(k == 0 ? "" : ",").append(Float.toString(vector[k]));
         }
         json.append(']');
+    }
+
+    /** Je Absatz ein Stück, eingebettet ohne Vorspann wie im Client; zu lange Absätze wie bisher geteilt. */
+    private List<Chunk> passageChunks(PageText text, EmbeddingProvider provider) {
+        Generation generation = new Generation(provider, version(provider));
+        List<Chunk> chunks = new ArrayList<>();
+        for (PassageChunking.Piece piece : passages.passages(text, generation::embed)) {
+            if (piece.end() <= piece.start()) {
+                continue;
+            }
+            if (piece.end() - piece.start() <= maxChunkChars) {
+                chunks.add(new Chunk(piece.start(), piece.end(), "", piece.section()));
+            } else {
+                chunk(text.text(), new Span(piece.start(), piece.end(), piece.section(), null), chunks);
+            }
+        }
+        return chunks;
     }
 
     /** Stücke je Abschnitt, Sätze bis zum Budget gepackt, mit einem Satz Überlappung. */
