@@ -193,6 +193,12 @@ public final class PageDetailPanel extends JPanel {
         // Der Banner liegt als eigene Ebene über dem Lesetext und nimmt ihm keine Breite.
         readerPage = new NavigableDocumentPage(Comic.scroll(reader), reader, READER_PADDING_TOP);
         readerPanel.add(readerPage, BorderLayout.CENTER);
+        // Ein Themenabschnitt beginnt mit einem Absatz: unter „Absätze“ steht derselbe Absatz gewählt bereit.
+        readerPage.onJump(section -> {
+            if (section.passageId() != null) {
+                passages.select(section.passageId());
+            }
+        });
         readerPanel.add(acronymDetail, BorderLayout.SOUTH);
 
         JPanel attachmentList = new JPanel(new BorderLayout(0, 6));

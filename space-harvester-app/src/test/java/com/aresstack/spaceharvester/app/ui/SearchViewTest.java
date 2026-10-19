@@ -74,6 +74,10 @@ class SearchViewTest {
         assertThat(model.getValueAt(0, 3)).isEqualTo(hit.excerpt());
         assertThat(SearchView.Hit.of(new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki",
                 "8", "DEV", "Seite", "Text", null, "1", null, null)).excerpt()).isEqualTo("Text");
+        assertThat(hit.passageId()).isNull();
+        assertThat(SearchView.Hit.of(new com.aresstack.spaceharvester.application.query.KeywordSearch.Hit("wiki",
+                "8", "DEV", "Seite", "Text", null, "1", null, null, null, "passage:abc")).passageId())
+                .isEqualTo("passage:abc");
     }
 
     @Test

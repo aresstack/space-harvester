@@ -47,6 +47,8 @@ final class NavigableDocumentPage extends JLayeredPane {
     /** Zuletzt angesprungener Abschnitt und die Rollposition danach. */
     private Navigation.Section jumped;
     private int jumpedViewY = -1;
+    /** Hört nach jedem Sprung aus dem Banner mit; die Seite selbst rollt schon. */
+    private java.util.function.Consumer<Navigation.Section> onJump = section -> { };
 
     /**
      * @param page           der Lesetext in der Bildlauffläche
@@ -60,7 +62,10 @@ final class NavigableDocumentPage extends JLayeredPane {
         add(scroll, JLayeredPane.DEFAULT_LAYER);
         add(sky, JLayeredPane.PALETTE_LAYER);
         sky.addPropertyChangeListener(DocumentNavigationSky.TOP_INSET_PROPERTY, event -> applyTopInset());
-        sky.setListener(this::scrollTo);
+        sky.setListener(section -> {
+            scrollTo(section);
+            onJump.accept(section);
+        });
         scroll.getViewport().addChangeListener(event -> syncActive());
         page.addComponentListener(new ComponentAdapter() {
             @Override
@@ -119,6 +124,11 @@ final class NavigableDocumentPage extends JLayeredPane {
     }
 
     // ------------------------------------------------------------------ Springen und Mitlaufen
+
+    /** Wird nach jedem Sprung aus dem Banner mit dem gewählten Abschnitt aufgerufen. */
+    void onJump(java.util.function.Consumer<Navigation.Section> listener) {
+        onJump = listener == null ? section -> { } : listener;
+    }
 
     /** Rollt so, dass der Abschnitt direkt unter dem Banner steht. */
     void scrollTo(Navigation.Section section) {

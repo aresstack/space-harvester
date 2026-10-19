@@ -58,7 +58,7 @@ public record Navigation(State state, Analysis analysis, String reason, List<Sec
     private static Section section(NavigationSection section) {
         return new Section(section.id(), section.label(), Origin.valueOf(section.origin().name()), section.level(),
                 section.start(), section.end(), section.anchor(), section.parentId(),
-                section.children().stream().map(Navigation::section).toList());
+                section.children().stream().map(Navigation::section).toList(), section.passageId());
     }
 
     public boolean isEmpty() {
@@ -96,9 +96,15 @@ public record Navigation(State state, Analysis analysis, String reason, List<Sec
      * @param level    Tiefe: 1 = Hauptkapitel
      * @param end      Endposition (exklusiv) oder {@code -1}, wenn offen
      * @param parentId ID des übergeordneten Kapitels oder {@code null} für ein Hauptkapitel
+     * @param passageId bei einem Themenabschnitt die Passage-ID des Absatzes, mit dem er beginnt, sonst {@code null}
      */
     public record Section(String id, String label, Origin origin, int level, int start, int end, String anchor,
-                          String parentId, List<Section> children) {
+                          String parentId, List<Section> children, String passageId) {
+
+        public Section(String id, String label, Origin origin, int level, int start, int end, String anchor,
+                       String parentId, List<Section> children) {
+            this(id, label, origin, level, start, end, anchor, parentId, children, null);
+        }
 
         public Section {
             if (id == null || id.isEmpty() || origin == null) {

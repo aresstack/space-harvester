@@ -159,13 +159,16 @@ public final class SearchView implements View {
                 int row = table.getSelectedRow();
                 if (e.getClickCount() == 2 && row >= 0) {
                     Hit hit = model.rows.get(table.convertRowIndexToModel(row));
-                    // Sobald Suchtreffer die Passage-ID ihres Absatzes tragen (Core-PR nach #452), springt der Treffer
-                    // dorthin: context.navigator().openPassage(hit.sourceId(), passageId) statt openPage.
-                    context.navigator().openPage(hit.sourceId(), hit.pageId());
+                    // Mit der Passage-ID seines Absatzes springt der Treffer dorthin, sonst öffnet er die Seite.
+                    if (hit.passageId() != null) {
+                        context.navigator().openPassage(hit.sourceId(), hit.passageId());
+                    } else {
+                        context.navigator().openPage(hit.sourceId(), hit.pageId());
+                    }
                 }
             }
         });
-        table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte");
+        table.setToolTipText("Doppelklick öffnet die Seite unter Inhalte, beim Absatz des Auszugs");
 
         // Eine Suchleiste, daneben die semantische Suche; Erklärungen stehen im Tooltip des Infosymbols.
         JLabel info = new JLabel(com.aresstack.enterpriseai.ui.comic.paint.ComposerIcons.info());
@@ -960,12 +963,18 @@ public final class SearchView implements View {
      * Eine Zeile; die Quelle stammt aus dem Treffer selbst, nie aus der Auswahl.
      *
      * @param attachment Dateiname des Anhangs, in dessen Text der Treffer liegt (#183), oder {@code null}
+     * @param passageId  Passage-ID des Absatzes, aus dem der Auszug stammt, oder {@code null}
      */
     record Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
-               String attachment) {
+               String attachment, String passageId) {
 
         Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt) {
-            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, null);
+            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, null, null);
+        }
+
+        Hit(String sourceId, String pageId, String title, String spaceKey, String snippet, Instant modifiedAt,
+            String attachment) {
+            this(sourceId, pageId, title, spaceKey, snippet, modifiedAt, attachment, null);
         }
 
         /** Der Auszug in einer Zeile; bei einem Anhangstreffer vorn „Treffer im Anhang „Name““. */
@@ -987,7 +996,7 @@ public final class SearchView implements View {
         static Hit of(KeywordSearch.Hit hit) {
             return new Hit(hit.sourceId(), hit.pageId(), hit.title(), hit.spaceKey(), hit.snippet(), hit.modifiedAt(),
                     hit.attachment() == null ? null : hit.attachment().title().isBlank()
-                            ? hit.attachment().attachmentId() : hit.attachment().title());
+                            ? hit.attachment().attachmentId() : hit.attachment().title(), hit.passageId());
         }
     }
 
