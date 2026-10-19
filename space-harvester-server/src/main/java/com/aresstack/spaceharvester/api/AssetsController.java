@@ -28,6 +28,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
@@ -43,6 +45,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 /**
  * Anhänge und Bilder einer Seite getrennt vom Seiten-JSON ernten und ausliefern (#19). Jede Anfrage liest die
@@ -54,6 +58,8 @@ import org.springframework.web.bind.annotation.RestController;
         produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Assets", description = "Anhänge und Bilder einer Seite, getrennt geerntet und versioniert")
 public class AssetsController {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AssetsController.class);
 
     /** Anhang-IDs der Quellen (Confluence {@code att<Ziffern>}); alles andere ist unbekannt, bevor etwas geladen wird. */
     private static final Pattern ATTACHMENT_ID = Pattern.compile("[A-Za-z0-9_-]{1,64}");
@@ -220,7 +226,23 @@ public class AssetsController {
             return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
         }
         attachment(headers, asset);
+        // Der Konverter schließt den Strom nach dem Schreiben, auch wenn der Client abbricht; schreibt er gar nicht
+        // (etwa nach einem Fehler davor), gibt das Ende des Requests Strom und Platz frei.
+        RequestContextHolder.currentRequestAttributes().registerDestructionCallback(
+                AssetsController.class.getName() + ".stream", () -> closeQuietly(content),
+                RequestAttributes.SCOPE_REQUEST);
         InputStream body = new FilterInputStream(content.content()) {
+            @Override
+            public int read(byte[] bytes, int off, int len) throws IOException {
+                try {
+                    return super.read(bytes, off, len);
+                } catch (IOException e) {
+                    // Bricht die Antwort ab (keine abschließende Chunk-Grenze), der Client erkennt den Fehler.
+                    LOG.warn("Quelle {}: Auslieferung abgebrochen ({})", asset.sourceId(), e.getClass().getSimpleName());
+                    throw e;
+                }
+            }
+
             @Override
             public void close() throws IOException {
                 content.close();
