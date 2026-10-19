@@ -244,6 +244,18 @@ class MarkdownConverterTest {
                         + "| Nacht | 1 | 2 | a |\n| Nacht | 3 | 4 | b |\n| Tag | 5 | 6 |");
     }
 
+    /** Verschachtelte Tabelle wie im Enterprise AI Client: ihr Inhalt steht als flacher Text in der Zelle. */
+    @Test
+    void nestedTableKeepsItsTextInTheCell() throws Exception {
+        String markdown = convert(storagePage("100", null, 0, "<table><tbody><tr><th>Name</th><th>Werte</th></tr>"
+                + "<tr><td>Nacht</td><td><table><tbody><tr><td>Start</td><td>22:00</td></tr>"
+                + "<tr><td>Ende</td><td>04:00</td></tr></tbody></table></td></tr></tbody></table>"));
+
+        assertThat(markdown)
+                .contains("| Nacht | Start 22:00 Ende 04:00 |")
+                .doesNotContain("verschachtelte Tabelle");
+    }
+
     @Test
     void keepsReferencesAndPrefersTextualDiagramSources() throws Exception {
         String markdown = convert(
