@@ -33,6 +33,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.Confluen
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceKnowledgeSource;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ConfluenceSourceProvider;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingBatch;
 import com.aresstack.enterpriseai.embedding.api.EmbeddingPort;
 import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtraction;
@@ -84,7 +85,7 @@ public final class EacParityExport {
         if (!out.isDirectory() && !out.mkdirs()) {
             throw new IllegalStateException("Ordner fehlt: " + out);
         }
-        FakeConfluence confluence = ParitySpace.install(new FakeConfluence());
+        FakeConfluence confluence = ParityConfluence.install(new FakeConfluence());
         SecretProvider none = new SecretProvider() {
             @Override
             public SecretMaterial resolve(SecretRef ref) throws SecretUnavailableException {
@@ -94,7 +95,7 @@ public final class EacParityExport {
         ConfluenceKnowledgeSource source = new ConfluenceKnowledgeSource(SourceAddress.of("parity"),
                 ConfluenceConfig.builder(FakeConfluence.BASE).build(), confluence, none);
         NavigationNode space = source.position(KnowledgeResourceId.of("confluence",
-                FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + ParitySpace.HOME)).root();
+                FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + ParityConfluence.HOME)).root();
         BooleanSupplier never = new BooleanSupplier() {
             @Override
             public boolean getAsBoolean() {
@@ -196,7 +197,7 @@ public final class EacParityExport {
                             return KnowledgePrefetchService.Settings.defaults();
                         }
                     });
-            SourceSearchOutcome live = searchOne(search, confluence, ParitySpace.LIVE_SEARCH);
+            SourceSearchOutcome live = searchOne(search, confluence, ParityConfluence.LIVE_SEARCH);
             List<KnowledgePrefetchService.Candidate> candidates = new ArrayList<KnowledgePrefetchService.Candidate>();
             for (FoundResource hit : live.hits()) {
                 candidates.add(new KnowledgePrefetchService.Candidate(confluence, hit.resourceId(), hit.revision()));
@@ -207,7 +208,7 @@ public final class EacParityExport {
                         public void accept(int value) {
                         }
                     });
-            for (String page : ParitySpace.LIVE_HITS) {
+            for (String page : ParityConfluence.LIVE_HITS) {
                 KnowledgeResourceId id = KnowledgeResourceId.of("confluence",
                         FakeConfluence.BASE.getHost() + FakeConfluence.BASE.getPath() + "/page/" + page);
                 out.println("prefetch." + page + "=" + (raw.get(id).isPresent() ? "ja" : "nein"));
@@ -446,10 +447,10 @@ public final class EacParityExport {
     private static void navigation(ConfluenceKnowledgeSource source, File target) throws Exception {
         PrintWriter out = new PrintWriter(target, "UTF-8");
         try {
-            PagePosition home = source.position(pageId(ParitySpace.HOME));
+            PagePosition home = source.position(pageId(ParityConfluence.HOME));
             out.println("space.name=" + home.root().title());
             out.println("space.children=" + children(source, home.root()));
-            for (String page : ParitySpace.PAGES) {
+            for (String page : ParityConfluence.PAGES) {
                 PagePosition position = source.position(pageId(page));
                 StringBuilder ancestors = new StringBuilder();
                 for (NavigationNode ancestor : position.ancestors()) {
@@ -510,7 +511,7 @@ public final class EacParityExport {
         }
         PrintWriter images = new PrintWriter(new File(out, "images.properties"), "UTF-8");
         try {
-            for (String page : ParitySpace.PAGES) {
+            for (String page : ParityConfluence.PAGES) {
                 KnowledgeResourceId id = pageId(page);
                 PrintWriter text = new PrintWriter(new File(out, page + ".txt"), "UTF-8");
                 try {
@@ -528,7 +529,7 @@ public final class EacParityExport {
     /**
      * Exportumfang (#186) wie „Exportieren“ an einem Seitenknoten der Navigation: {@link KnowledgeExportUseCase#page}
      * für eine einzelne Seite ohne Unterseiten ({@code scope-page.md}) und {@link KnowledgeExportUseCase#subtree} ab
-     * der Seite {@link ParitySpace#SCOPE_ROOT} mit ihr als Kapitelwurzel ({@code scope-subtree.md}).
+     * der Seite {@link ParityConfluence#SCOPE_ROOT} mit ihr als Kapitelwurzel ({@code scope-subtree.md}).
      */
     private static void scopes(ConfluenceKnowledgeSource source, BooleanSupplier never, File out) throws Exception {
         KnowledgeExportUseCase.Progress quiet = new KnowledgeExportUseCase.Progress() {
@@ -537,7 +538,7 @@ public final class EacParityExport {
             }
         };
         KnowledgeExportUseCase export = new KnowledgeExportUseCase(new PageNavigationUseCase());
-        NavigationNode root = source.position(pageId(ParitySpace.SCOPE_ROOT)).page();
+        NavigationNode root = source.position(pageId(ParityConfluence.SCOPE_ROOT)).page();
         ExportDocumentNode page = export.page(source, root.resource(), root.title(), quiet, never);
         write(page, ExportFormat.MARKDOWN, new File(out, "scope-page.md"), new File(out, "problems-scope-page.txt"));
         ExportDocumentNode subtree = export.subtree(source, root, quiet, never);

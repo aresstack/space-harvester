@@ -26,4 +26,13 @@ class InMemoryEnrichmentStoreTest extends EnrichmentStoreContract {
             return store;
         }
     }
+
+    @Nested
+    class AsFactStore extends com.aresstack.spaceharvester.application.facts.FactStoreContract {
+
+        @Override
+        protected EnrichmentStore store() {
+            return store;
+        }
+    }
 }

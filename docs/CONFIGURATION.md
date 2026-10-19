@@ -80,6 +80,46 @@ Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvest
   `before-search`, `search.prefetch-hits` und `search.semantic` (Suche und Vorabladen werden beim Start
   gebaut) sowie das Chat-Modell (Bean `AiServiceSettings` aus den Properties).
 
+## Suchlauf-Protokoll und Fakten (#182)
+
+Jede Schlagwortsuche (ein Stapel), Relevanzsuche und progressive Suche hinterlässt einen Lauf im Protokoll
+(`SearchRunLog` im Core, Vorbild `KnowledgeSearchRunPort` des Enterprise AI Client): Art, Aufrufer, Anfrage, Beginn,
+Dauer, Ergebnis je Quelle (`searched`, `indexed`, `not-supported`, `unavailable`) und Zähler je Stufe (`queries`,
+`discovered`, `load-queued`, `pending`, `confirmed`, `delivered`). Die Suchen einer progressiven Suche und die
+Schlagwortsuchen in der Vorbereitung einer Relevanzsuche sind Teile (`partOf`) ihres Laufs. Antworten nennen die
+Kennung als `searchRun`.
+
+| Schlüssel | Standard | Bedeutung |
+|---|---|---|
+| `space-harvester.search.run-log.enabled` | `true` | Protokoll führen; `false`: keine Läufe, `GET /api/v1/search/runs` liefert `enabled: false` |
+| `space-harvester.search.run-log.max-age` | `30d` | Läufe danach löschen (beim Start und laufend); höchstens 10 000 Läufe |
+
+Beides wirkt nur beim Start, nicht über `POST /api/v1/configuration`. Mit `space-harvester.cache.directory` liegt das
+Protokoll als eigener Lucene-Index in `search-runs/`, sonst im Speicher; in der Bibliothek
+`Harvester.builder().searchRuns(true, maxAge)` (unter `cache/search-runs`).
+
+- **Datenschutz:** Wie im Enterprise AI Client steht die Anfrage im Lauf (höchstens 1000 Zeichen), nie im Log;
+  scheitert das Protokoll, läuft die Suche weiter und das Log nennt nur den Fehlertyp. Lesen darf einen Lauf nur sein
+  Aufrufer (gleicher `jobOwner`) oder ein technischer Client mit `manage-configuration`; sonst 404, wie bei fremden
+  Aufträgen.
+- **Zähler ohne fremde Seiten:** Gezählt werden nur geprüfte Seiten. Für Endnutzer mit delegierter Prüfung entfallen
+  `discovered`, `load-queued` und `pending` (die Quelle hat die Treffer noch nicht für ihn bestätigt); ungeprüfte
+  Vektorkandidaten der Relevanzsuche zählen nie.
+- Die Kandidatenliste je Lauf, Vertiefen und der Trichter für den Chat bleiben im Client.
+
+**Fakten** entstehen beim Speichern einer Anreicherung aus ihrem Ergebnis, im selben Lucene-Index (`enrichments/`,
+Schema `enrichment-store/v3`; ein v1/v2-Bestand erhält sie beim Öffnen; ohne Cache-Verzeichnis im Speicher) und mit ihm
+ersetzt und gelöscht. Typen nach
+dem Faktenkatalog des Enterprise AI Client: `ACRONYM_CANDIDATE` und `ACRONYM_DEFINITION` (aus `acronyms`), `MENTION`
+(aus `entities`), `PROPERTY` (aus `properties`); Argumente u. a. `SHORT_FORM`, `LONG_FORM`, `TERM`, `SUBJECT`,
+`VALUE`, normalisiert verglichen. Prozessor-Versionen und Hash-Schemata bleiben unverändert.
+
+- `GET /api/v1/sources/{sourceId}/pages/{pageId}/facts[?type=…]`: das Faktenblatt einer Seite mit derselben Prüfung
+  wie das Lesen der Seite und `freshness` je Fakt.
+- `GET /api/v1/facts?type=…&argument=SHORT_FORM:API[&sourceId|sourceIds|spaceKey][&cursor&limit]`: Fakten über alle
+  Seiten, für die der Aufrufer `metadata` und `content` hat (geprüft am Space im Cache); andere fallen ohne Spur weg,
+  es gibt keine Gesamtzahl.
+
 ## Reihenfolge der Quellen
 
 Höhere zuerst, geprüft in `ConfigServerImportTest` und `AzureKeyVaultSecretsTest`:

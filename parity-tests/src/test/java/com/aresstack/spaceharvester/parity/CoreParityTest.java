@@ -2,6 +2,7 @@ package com.aresstack.spaceharvester.parity;
 
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluence;
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.FakeConfluenceServer;
+import com.aresstack.enterpriseai.proasteion.emporion.holkas.confluence.ParityConfluence;
 import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.assets.DocumentText;
 import com.aresstack.spaceharvester.application.convert.ConversionNotice;
@@ -84,7 +85,7 @@ class CoreParityTest {
 
     @BeforeAll
     static void exportThroughTheCore() throws Exception {
-        server = new FakeConfluenceServer(ParitySpace.install(new FakeConfluence()));
+        server = new FakeConfluenceServer(ParityConfluence.install(new FakeConfluence()));
         try (Harvester harvester = Harvester.builder()
                 .source(new SourceSettingsConfig("wiki", "confluence", "Wiki", server.baseUrl(),
                         SourceSettingsConfig.Auth.anonymous(), Map.of("connectTimeoutMillis", "2000")))
@@ -92,7 +93,7 @@ class CoreParityTest {
                 .build()) {
             // Wie in der App: herunterladen (JSON-Datenbestand), Bilder beschaffen lassen, dann aus dem Datenbestand
             // konvertieren; die Konverter fragen die Quelle nicht an
-            JobStatus export = harvester.await(harvester.export("wiki", ParitySpace.SPACE, List.of("json")).id(),
+            JobStatus export = harvester.await(harvester.export("wiki", ParityConfluence.SPACE, List.of("json")).id(),
                     Duration.ofSeconds(60));
             assertThat(export.state()).isEqualTo(JobState.COMPLETED);
             JobStatus assets = harvester.await(harvester.jobs().list(Harvester.OWNER, JobType.ASSETS).get(0).id(),
@@ -114,13 +115,13 @@ class CoreParityTest {
                         .toList());
             }
             // Exportumfänge (#186) wie „Exportieren“ an einem Seitenknoten: die Seite allein und ihr Teilbaum
-            scope(harvester, "page", ExportRequest.of("wiki", ParitySpace.SPACE, Harvester.OWNER, List.of("json"))
-                    .withPage(ParitySpace.SCOPE_ROOT), exports);
-            scope(harvester, "subtree", ExportRequest.of("wiki", ParitySpace.SPACE, Harvester.OWNER, List.of("json"))
-                    .withRoot(ParitySpace.SCOPE_ROOT), exports);
+            scope(harvester, "page", ExportRequest.of("wiki", ParityConfluence.SPACE, Harvester.OWNER, List.of("json"))
+                    .withPage(ParityConfluence.SCOPE_ROOT), exports);
+            scope(harvester, "subtree", ExportRequest.of("wiki", ParityConfluence.SPACE, Harvester.OWNER, List.of("json"))
+                    .withRoot(ParityConfluence.SCOPE_ROOT), exports);
             // Leseansicht je Seite (#176), aus derselben Quelle wie der Export
             AccessContext caller = AccessContext.technicalClient(Harvester.OWNER);
-            for (String page : ParitySpace.PAGES) {
+            for (String page : ParityConfluence.PAGES) {
                 ReadingView view = harvester.readingViews().view(caller, "wiki", page, false);
                 if (view.status() == ReadingView.Status.AVAILABLE) {
                     CORE_READING.put(page, view.text());
@@ -186,14 +187,14 @@ class CoreParityTest {
             }
 
             harvester.keywordSearch().search(harvester.caller(),
-                    new KeywordSearch.Query(ParitySpace.LIVE_SEARCH, "wiki", Set.of(), Set.of()), null, 10);
+                    new KeywordSearch.Query(ParityConfluence.LIVE_SEARCH, "wiki", Set.of(), Set.of()), null, 10);
             Instant deadline = Instant.now().plusSeconds(30);
-            while (!cachedPages(harvester).containsAll(List.of(ParitySpace.LIVE_HITS))
+            while (!cachedPages(harvester).containsAll(List.of(ParityConfluence.LIVE_HITS))
                     && Instant.now().isBefore(deadline)) {
                 Thread.sleep(50);
             }
             Set<String> cached = cachedPages(harvester);
-            for (String page : ParitySpace.LIVE_HITS) {
+            for (String page : ParityConfluence.LIVE_HITS) {
                 CORE_SEARCH.put("prefetch." + page, cached.contains(page) ? "ja" : "nein");
             }
         }
@@ -202,7 +203,7 @@ class CoreParityTest {
     private static Set<String> cachedPages(Harvester harvester) {
         try {
             Set<String> pages = new TreeSet<>();
-            harvester.pages().pages(harvester.caller(), "wiki", ParitySpace.SPACE, null, 100).pages()
+            harvester.pages().pages(harvester.caller(), "wiki", ParityConfluence.SPACE, null, 100).pages()
                     .forEach(page -> pages.add(page.pageId()));
             return pages;
         } catch (CacheMissException e) {
@@ -282,14 +283,14 @@ class CoreParityTest {
     }
 
     private static void synced(Harvester harvester) throws Exception {
-        JobStatus sync = harvester.await(harvester.sync("wiki", ParitySpace.SPACE).id(), Duration.ofSeconds(60));
+        JobStatus sync = harvester.await(harvester.sync("wiki", ParityConfluence.SPACE).id(), Duration.ofSeconds(60));
         assertThat(sync.state()).isEqualTo(JobState.COMPLETED);
         assertThat(cached(harvester)).as("Seiten nach dem Abgleich im Cache").isTrue();
     }
 
     private static boolean cached(Harvester harvester) {
         try {
-            return !harvester.pages().pages(harvester.caller(), "wiki", ParitySpace.SPACE, null, 10).pages()
+            return !harvester.pages().pages(harvester.caller(), "wiki", ParityConfluence.SPACE, null, 10).pages()
                     .isEmpty();
         } catch (CacheMissException e) {
             return false;
@@ -313,7 +314,7 @@ class CoreParityTest {
             DocumentOutline eac = ParityReport.read(reference("parity." + extension));
             DocumentOutline core = ParityReport.read(CORE.get(extension));
             List<Finding> findings = new ArrayList<>(ParityComparison.compare(eac, core));
-            findings.add(ParityComparison.macros(extension, eac, core, List.of(ParitySpace.MACRO_SENTENCES),
+            findings.add(ParityComparison.macros(extension, eac, core, List.of(ParityConfluence.MACRO_SENTENCES),
                     CORE_OMITTED.get(extension)));
             report.append('\n').append(ParityReport.section(extension.toUpperCase(), findings, gaps));
             for (Finding finding : findings) {
@@ -430,7 +431,7 @@ class CoreParityTest {
     void everySentenceOfTheSpaceReachesEveryCoreExport() throws IOException {
         for (Path file : CORE.values()) {
             String text = ParityReport.read(file).text().replaceAll("\\s+", " ");
-            for (String sentence : ParitySpace.SENTENCES) {
+            for (String sentence : ParityConfluence.SENTENCES) {
                 assertThat(text).as(file.getFileName().toString()).contains(sentence);
             }
         }
@@ -439,10 +440,10 @@ class CoreParityTest {
     /** Navigation live über den Core (#177), in denselben Schlüsseln wie {@code eac/navigation.properties}. */
     private static void navigation(Harvester harvester, AccessContext caller) {
         PageNavigation navigation = harvester.navigation();
-        PageNavigation.Position home = navigation.position(caller, "wiki", ParitySpace.HOME);
+        PageNavigation.Position home = navigation.position(caller, "wiki", ParityConfluence.HOME);
         CORE_NAVIGATION.put("space.name", home.spaceName() == null ? "" : home.spaceName());
         CORE_NAVIGATION.put("space.children", children(navigation, caller, null));
-        for (String page : ParitySpace.PAGES) {
+        for (String page : ParityConfluence.PAGES) {
             CORE_NAVIGATION.put(page + ".children", children(navigation, caller, page));
             CORE_NAVIGATION.put(page + ".ancestors", ids(navigation.position(caller, "wiki", page).ancestors()));
             CORE_NAVIGATION.put(page + ".links", ids(navigation.references(caller, "wiki", page).outgoing()));
@@ -462,7 +463,7 @@ class CoreParityTest {
         List<HarvestSource.PageNode> pages = new ArrayList<>();
         String cursor = null;
         do {
-            PageNavigation.Children batch = navigation.children(caller, "wiki", ParitySpace.SPACE, parent, cursor);
+            PageNavigation.Children batch = navigation.children(caller, "wiki", ParityConfluence.SPACE, parent, cursor);
             pages.addAll(batch.pages());
             cursor = batch.nextCursor();
         } while (cursor != null);
@@ -504,7 +505,7 @@ class CoreParityTest {
 
     private static Map<String, String> eacReading() throws IOException {
         Map<String, String> texts = new LinkedHashMap<>();
-        for (String page : ParitySpace.PAGES) {
+        for (String page : ParityConfluence.PAGES) {
             texts.put(page, Files.readString(reference("reading/" + page + ".txt")));
         }
         return texts;
@@ -516,7 +517,7 @@ class CoreParityTest {
             properties.load(in);
         }
         Map<String, Integer> images = new LinkedHashMap<>();
-        for (String page : ParitySpace.PAGES) {
+        for (String page : ParityConfluence.PAGES) {
             images.put(page, Integer.parseInt(properties.getProperty(page, "0").strip()));
         }
         return images;

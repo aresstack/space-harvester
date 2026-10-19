@@ -8,6 +8,7 @@ import com.aresstack.spaceharvester.application.query.SearchSort;
 import com.aresstack.spaceharvester.application.query.progressive.SearchExecutionPolicy;
 import com.aresstack.spaceharvester.application.query.progressive.SearchProfile;
 import com.aresstack.spaceharvester.application.query.progressive.VariantSearch;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.snapshot.PageHeader;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
@@ -63,10 +64,22 @@ public final class SemanticVariantSearch implements VariantSearch {
      */
     @Override
     public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit) {
+        return run(caller, variant, original, limit, null);
+    }
+
+    /**
+     * Die Relevanzsuche der Suchanfrage ist ein Teillauf von {@code partOf} im Suchlauf-Protokoll (#182), ihre
+     * Schlagwortsuche zum Finden wiederum ein Teillauf von ihr.
+     *
+     * @throws SemanticSearchUnavailableException wenn kein Embedding-Dienst eingerichtet oder er nicht erreichbar ist
+     */
+    @Override
+    public Outcome run(AccessContext caller, KeywordSearch.Query variant, String original, int limit,
+                       SearchRunId partOf) {
         PageSearchQuery scope = scope(variant);
         // Ausgeschlossene Spaces laden nicht und sind keine Kandidaten: Erlaubte Treffer füllen das Limit.
         RelevanceSearch.RelevanceResults found = relevance.search(caller, scope, original, variant.text(),
-                variant.excludedSpaceKeys(), Math.min(limit, Reranking.MAX_WINDOW));
+                variant.excludedSpaceKeys(), Math.min(limit, Reranking.MAX_WINDOW), partOf);
         List<KeywordSearch.Hit> hits = new ArrayList<>(found.hits().size());
         Map<PageKey, Double> scores = new HashMap<>();
         for (RelevanceSearch.RankedHit ranked : found.hits()) {

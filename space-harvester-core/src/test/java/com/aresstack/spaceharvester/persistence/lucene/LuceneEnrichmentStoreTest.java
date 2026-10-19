@@ -7,6 +7,10 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStore;
 import com.aresstack.spaceharvester.application.enrichment.EnrichmentStoreContract;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
+import com.aresstack.spaceharvester.application.facts.FactStoreContract;
+import com.aresstack.spaceharvester.application.facts.FactTestResults;
+import com.aresstack.spaceharvester.application.facts.FactTypes;
+import com.aresstack.spaceharvester.application.facts.MetadataFact;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndex;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingIndexContract;
 import com.aresstack.spaceharvester.application.terms.TermIndex;
@@ -102,6 +106,55 @@ class LuceneEnrichmentStoreTest extends EnrichmentStoreContract {
             assertThat(store.postings(new TermIndex.Filter(BOTH, null, null, null, "1"), null, false, 10))
                     .extracting(posting -> posting.page()).containsExactly(B1);
         }
+    }
+
+    @Nested
+    class AsFactStore extends FactStoreContract {
+
+        @Override
+        protected EnrichmentStore store() {
+            return store;
+        }
+
+        @Test
+        void factsSurviveReopeningAndGoWithTheirSource() {
+            store.save(FactTestResults.acronyms(NIGHT, FactTestResults.TEXT));
+            store.save(FactTestResults.acronyms(FILE, FactTestResults.TEXT));
+            store.close();
+
+            store = LuceneEnrichmentStore.open(directory);
+            assertThat(store.factsOf(NIGHT)).hasSize(2);
+
+            store.removeSource("wiki");
+            assertThat(store.factsOf(NIGHT)).isEmpty();
+            assertThat(store.factsOf(FILE)).hasSize(2);
+        }
+    }
+
+    @Test
+    void aVersionTwoIndexGetsTheFactsOfItsResults() throws Exception {
+        store.close();
+        Path old = directory.resolve("v2");
+        Enrichment acronyms = FactTestResults.acronyms(new PageKey("wiki", "101"), FactTestResults.TEXT);
+        try (FSDirectory dir = FSDirectory.open(old);
+                IndexWriter writer = new IndexWriter(dir, new IndexWriterConfig(new StandardAnalyzer()))) {
+            Document doc = v1Document("acronyms", acronyms.payloadJson());
+            doc.removeFields("processorVersion");
+            doc.removeFields("inputSha256");
+            doc.add(new StoredField("processorVersion", acronyms.processorVersion()));
+            doc.add(new StoredField("inputSha256", acronyms.inputSha256()));
+            writer.addDocument(doc);
+            writer.setLiveCommitData(Map.of(PageCacheSchema.SCHEMA_KEY, LuceneEnrichmentStore.VERSION_2).entrySet());
+            writer.commit();
+        }
+
+        store = LuceneEnrichmentStore.open(old);
+
+        assertThat(store.factsOf(new PageKey("wiki", "101"))).extracting(MetadataFact::type)
+                .containsExactly(FactTypes.ACRONYM_CANDIDATE, FactTypes.ACRONYM_DEFINITION);
+        store.close();
+        store = LuceneEnrichmentStore.open(old);
+        assertThat(store.factsOf(new PageKey("wiki", "101"))).hasSize(2);
     }
 
     @Test

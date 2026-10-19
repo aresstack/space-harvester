@@ -5,6 +5,7 @@ import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.query.KeywordSearch;
 import com.aresstack.spaceharvester.application.query.PageSearchQuery;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
 import com.aresstack.spaceharvester.application.snapshot.PageKey;
 import com.aresstack.spaceharvester.application.snapshot.PageSnapshot;
 import java.time.Duration;
@@ -62,19 +63,29 @@ public final class SemanticPreparation implements RelevanceSearch.Preparation {
 
     @Override
     public int prepare(AccessContext caller, PageSearchQuery query, String text) {
-        return prepare(caller, query, text, Set.of());
+        return prepare(caller, query, text, Set.of(), null);
     }
 
     /** Seiten aus {@code excludedSpaceKeys} findet und lädt die Schlagwortsuche gar nicht erst. */
     @Override
     public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys) {
+        return prepare(caller, query, text, excludedSpaceKeys, null);
+    }
+
+    /**
+     * Die Schlagwortsuche der Vorbereitung ist ein Teillauf von {@code partOf} im Suchlauf-Protokoll (#182); Seiten aus
+     * {@code excludedSpaceKeys} findet und lädt sie gar nicht erst.
+     */
+    @Override
+    public int prepare(AccessContext caller, PageSearchQuery query, String text, Set<String> excludedSpaceKeys,
+                       SearchRunId partOf) {
         long deadline = System.nanoTime() + wait.toNanos();
         KeywordSearch.Query keywordQuery = new KeywordSearch.Query(shortened(text), query.sourceId(),
                 query.sourceIds(), query.spaceKeys(), excludedSpaceKeys);
-        KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES);
+        KeywordSearch.Results found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         if (awaitLoading(found.progress(), deadline)) {
             // Die Schlagwortsuche wartet nicht aufs Laden; erst danach findet der Volltextindex die Seiten.
-            found = keywords.search(caller, keywordQuery, null, MAX_PAGES);
+            found = keywords.search(caller, keywordQuery, null, MAX_PAGES, partOf);
         }
         int pending = found.loading() + (lostCandidates(found) ? 1 : 0);
         List<PageSnapshot> missing = new ArrayList<>();

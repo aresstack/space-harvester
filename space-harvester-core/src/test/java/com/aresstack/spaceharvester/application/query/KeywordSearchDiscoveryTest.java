@@ -12,6 +12,10 @@ import com.aresstack.spaceharvester.application.access.AccessContext;
 import com.aresstack.spaceharvester.application.access.AccessDecision;
 import com.aresstack.spaceharvester.application.access.AccessGuard;
 import com.aresstack.spaceharvester.application.access.AccessKind;
+import com.aresstack.spaceharvester.application.searchrun.InMemorySearchRunLog;
+import com.aresstack.spaceharvester.application.searchrun.SearchRun;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunId;
+import com.aresstack.spaceharvester.application.searchrun.SearchRunLog;
 import com.aresstack.spaceharvester.application.sources.HarvestSource;
 import com.aresstack.spaceharvester.application.sources.PageMetadata;
 import com.aresstack.spaceharvester.application.sources.PageMetadataBatch;
@@ -270,6 +274,129 @@ class KeywordSearchDiscoveryTest {
         String cursor = new String(java.util.Base64.getUrlDecoder().decode(results.nextCursor()
                 .substring(3)), java.nio.charset.StandardCharsets.UTF_8);
         assertThat(cursor).doesNotContain("\np\t");
+    }
+
+    @Test
+    void everyBatchIsARunWithSourcesAndCountsPerStage() {
+        wiki.results("HaVdB PoC PIMA", "1", "2").results("HaVdB", "2", "3").results("PoC", "3", "4")
+                .results("Hashicorp", "1", "5");
+        InMemorySearchRunLog log = new InMemorySearchRunLog();
+        KeywordSearch search = new KeywordSearch(catalog, access, texts, prefetch, KeywordSearch.DEFAULT_MAX_QUERIES,
+                ExcerptPriority.off(), KeywordSearch.DEFAULT_LOADS, log);
+
+        KeywordSearch.Results results = search.search(APP, KeywordSearch.Query.of(LONG_REQUEST), null, 50);
+
+        SearchRun run = log.find(new SearchRunId(results.searchRun())).orElseThrow();
+        assertThat(run.kind()).isEqualTo(SearchRun.Kind.KEYWORD);
+        assertThat(run.owner()).isEqualTo(APP.jobOwner());
+        assertThat(run.query()).isEqualTo(LONG_REQUEST);
+        assertThat(run.partOf()).isNull();
+        assertThat(run.sources()).containsExactly(new SearchRun.SourceOutcome("wiki",
+                SearchRun.SourceOutcome.Status.SEARCHED, null));
+        assertThat(run.count(SearchRun.Stage.QUERIES)).hasValue(4);
+        assertThat(run.count(SearchRun.Stage.DISCOVERED)).hasValue(5);
+        assertThat(run.count(SearchRun.Stage.LOAD_QUEUED)).hasValue(5);
+        assertThat(run.count(SearchRun.Stage.PENDING)).hasValue(0);
+        assertThat(run.count(SearchRun.Stage.CONFIRMED)).hasValue(5);
+        assertThat(run.count(SearchRun.Stage.DELIVERED)).hasValue(5);
+        assertThat(run.complete()).isTrue();
+        assertThat(run.duration().isNegative()).isFalse();
+    }
+
+    @Test
+    void aDelegatedUsersRunCountsOnlyTheCheckedFinalList() {
+        wiki.results("Hashicorp Vault", "1", "2", "3");
+        AccessGuard guard = new AccessGuard(new com.aresstack.spaceharvester.application.access.AccessPolicy() {
+            @Override
+            public AccessDecision decide(AccessContext context, com.aresstack.spaceharvester.application.access
+                    .ResourceScope scope, AccessKind kind) {
+                return scope.pageId() == null || "2".equals(scope.pageId()) ? AccessDecision.ALLOW
+                        : AccessDecision.DENY;
+            }
+
+            @Override
+            public AccessDecision decideSourceWide(AccessContext context, String sourceId, AccessKind kind) {
+                return AccessDecision.DENY;
+            }
+        });
+        AccessContext user = AccessContext.endUser("u", "app",
+                new com.aresstack.spaceharvester.application.access.UserCredential("wiki", "t"));
+        InMemorySearchRunLog log = new InMemorySearchRunLog();
+
+        KeywordSearch.Results results = new KeywordSearch(catalog, guard, texts, prefetch,
+                KeywordSearch.DEFAULT_MAX_QUERIES, ExcerptPriority.off(), KeywordSearch.DEFAULT_LOADS, log)
+                .search(user, KeywordSearch.Query.of("Hashicorp Vault"), null, 3);
+
+        SearchRun run = log.find(new SearchRunId(results.searchRun())).orElseThrow();
+        // Die ungeprüften Funde der Quelle erscheinen in keiner Zahl.
+        assertThat(run.stages()).extracting(SearchRun.StageCount::stage).containsExactly(SearchRun.Stage.QUERIES,
+                SearchRun.Stage.CONFIRMED, SearchRun.Stage.DELIVERED);
+        assertThat(run.count(SearchRun.Stage.DELIVERED)).hasValue(1);
+        assertThat(run.owner()).isEqualTo(user.jobOwner());
+    }
+
+    @Test
+    void aFailingRunLogNeverFailsTheSearchAndNeverLogsTheQuery() {
+        wiki.results("Geheimprojekt Vault", "1");
+        SearchRunLog failing = new SearchRunLog() {
+            @Override
+            public void record(SearchRun run) {
+                throw new IllegalStateException("kaputt: " + run.query());
+            }
+
+            @Override
+            public Optional<SearchRun> find(SearchRunId id) {
+                return Optional.empty();
+            }
+
+            @Override
+            public List<SearchRun> parts(SearchRunId id) {
+                return List.of();
+            }
+
+            @Override
+            public List<SearchRun> recent(String owner, int limit) {
+                return List.of();
+            }
+
+            @Override
+            public int deleteBefore(java.time.Instant before) {
+                return 0;
+            }
+        };
+
+        // System.Logger geht hier an java.util.logging; der Handler sieht jede Meldung samt Parametern.
+        java.util.logging.Logger logger = java.util.logging.Logger.getLogger(SearchRunLog.class.getName());
+        List<String> logged = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.logging.Handler handler = new java.util.logging.Handler() {
+            @Override
+            public void publish(java.util.logging.LogRecord record) {
+                logged.add(new java.util.logging.SimpleFormatter().formatMessage(record)
+                        + (record.getThrown() == null ? "" : " " + record.getThrown()));
+            }
+
+            @Override
+            public void flush() {
+            }
+
+            @Override
+            public void close() {
+            }
+        };
+        logger.addHandler(handler);
+        KeywordSearch.Results results;
+        try {
+            results = new KeywordSearch(catalog, access, texts, prefetch, 1, ExcerptPriority.off(),
+                    KeywordSearch.DEFAULT_LOADS, failing).search(APP, KeywordSearch.Query.of("Geheimprojekt Vault"),
+                    null, 10);
+        } finally {
+            logger.removeHandler(handler);
+        }
+
+        assertThat(results.hits()).extracting(KeywordSearch.Hit::pageId).containsExactly("1");
+        assertThat(results.searchRun()).isNull();
+        assertThat(logged).singleElement().asString().contains("Suchlauf nicht protokolliert")
+                .doesNotContain("Geheimprojekt");
     }
 
     private KeywordSearch search(int maxQueries, ExcerptPriority excerpts) {
