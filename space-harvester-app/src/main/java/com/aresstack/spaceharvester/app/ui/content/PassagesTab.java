@@ -1,6 +1,8 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
 import com.aresstack.spaceharvester.app.ui.Comic;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
+import com.aresstack.spaceharvester.application.passages.PassagePayload;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -22,7 +24,8 @@ import java.util.function.Consumer;
 /**
  * Der Reiter „Absätze“ der Leseansicht (#354): die semantischen Absätze der angezeigten Seite, wie die
  * Passagensegmentierung des Core (#181) sie an Themenwechseln bildet, nummeriert mit Themenzeile und kurzem Anriss.
- * Ein Klick markiert den Absatz im Lesetext ({@code onJump}). Die App segmentiert nichts selbst. Nur auf dem EDT.
+ * Ein Klick markiert den Absatz im Lesetext ({@code onJump}). Die Daten stammen aus {@link PagePassages}; die App
+ * segmentiert nichts selbst. Nur auf dem EDT.
  */
 final class PassagesTab extends JPanel {
 
@@ -66,6 +69,31 @@ final class PassagesTab extends JPanel {
         add(head, BorderLayout.NORTH);
         add(Comic.scroll(body), BorderLayout.CENTER);
         show(State.MISSING, List.of(), false);
+    }
+
+    /** Länge des Anrisses unter der Themenzeile. */
+    static final int PREVIEW_CHARS = 140;
+
+    /** Zeigt das Core-Ergebnis; {@code null} heißt: keine Seite oder noch nicht geladen. */
+    void show(PagePassages result) {
+        if (result == null) {
+            show(State.MISSING, List.of(), false);
+            return;
+        }
+        List<Passage> passages = new ArrayList<>();
+        for (PagePassages.Passage passage : result.passages()) {
+            passages.add(new Passage(passage.title(), preview(passage), passage.start(), passage.end()));
+        }
+        show(State.valueOf(result.state().name()), passages, result.mode() == PassagePayload.Mode.STRUCTURE);
+    }
+
+    /** Der Wortlaut nach der Themenzeile, gekürzt; leer, wenn der Absatz nur aus ihr besteht. */
+    static String preview(PagePassages.Passage passage) {
+        String text = passage.text() == null ? "" : passage.text().strip();
+        String title = passage.title() == null ? "" : passage.title().strip();
+        String rest = text.startsWith(title) ? text.substring(title.length()).strip() : text;
+        rest = rest.replaceAll("\\s+", " ");
+        return rest.length() <= PREVIEW_CHARS ? rest : rest.substring(0, PREVIEW_CHARS).strip() + " …";
     }
 
     void onJump(Consumer<List<TermsTab.Span>> listener) {

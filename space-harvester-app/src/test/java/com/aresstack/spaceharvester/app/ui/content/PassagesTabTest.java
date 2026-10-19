@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.ui.content;
 
+import com.aresstack.spaceharvester.application.passages.PagePassages;
 import org.junit.jupiter.api.Test;
 
 import javax.swing.SwingUtilities;
@@ -35,5 +36,15 @@ class PassagesTabTest {
         assertThat(seen).containsExactly("Nicht durchgeführt", "Aktuell", " ", "Architektur und Komponenten",
                 "Authentifizierung und Berechtigungen", PassagesTab.STRUCTURAL, "0", PassagesTab.hint(PassagesTab.State.STALE, 0));
         assertThat(jumped).containsExactly(List.of(new TermsTab.Span(120, 300)));
+    }
+
+    @Test
+    void thePreviewIsTheTextAfterTheTopicLineShortened() {
+        String text = "Architektur und Komponenten. " + "Die Bausteine sprechen über REST. ".repeat(10);
+        PagePassages.Passage passage = new PagePassages.Passage(0, 0, text.length(), "Architektur und Komponenten.",
+                text, null, 0, 11, null, null, null);
+        String preview = PassagesTab.preview(passage);
+        assertThat(preview).startsWith("Die Bausteine sprechen über REST.").endsWith(" …");
+        assertThat(preview.length()).isLessThanOrEqualTo(PassagesTab.PREVIEW_CHARS + 2);
     }
 }

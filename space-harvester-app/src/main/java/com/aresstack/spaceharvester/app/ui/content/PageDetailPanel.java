@@ -14,6 +14,7 @@ import com.aresstack.spaceharvester.application.assets.AssetHarvest;
 import com.aresstack.spaceharvester.application.assets.PageAssets;
 import com.aresstack.spaceharvester.application.enrichment.Enrichments;
 import com.aresstack.spaceharvester.application.enrichment.PageAcronyms;
+import com.aresstack.spaceharvester.application.passages.PagePassages;
 import com.aresstack.spaceharvester.application.terms.PageTerms;
 import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.query.DeliveredPage;
@@ -448,6 +449,7 @@ public final class PageDetailPanel extends JPanel {
     private void showReader(ReaderDocument document, boolean live) {
         shown = document;
         terms.show(document == null ? null : document.acronyms(), document == null ? null : document.terms());
+        passages.show(document == null ? null : document.passages());
         acronymDetail.setText(" ");
         if (document == null) {
             reader.setText("");
@@ -465,7 +467,8 @@ public final class PageDetailPanel extends JPanel {
     private static ReaderDocument document(String sourceId, String pageId, List<Enrichments.View> views, PageText text,
                                            Font font) {
         PageKey key = new PageKey(sourceId, pageId);
-        return ReaderDocument.build(text, PageAcronyms.read(key, views, text), PageTerms.read(key, views, text), font);
+        return ReaderDocument.build(text, PageAcronyms.read(key, views, text), PageTerms.read(key, views, text), font)
+                .withPassages(PagePassages.read(key, views, text));
     }
 
     private String acronymTooltip(Point point) {
