@@ -14,8 +14,10 @@ import com.aresstack.spaceharvester.application.sources.InvalidQueryException;
 import com.aresstack.spaceharvester.application.sources.SourceCatalog;
 import com.aresstack.spaceharvester.application.sources.UnknownSourceException;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -28,6 +30,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 
 /**
  * Globale Begriffsabfragen (#119, ADR 0019): Begriffsliste und Fundstellen über alle berechtigten, aktuell indexierten
@@ -54,6 +60,7 @@ public class TermQueries {
     static final int MAX_SCAN = 50_000;
 
     private static final String CURSOR_VERSION = "t1";
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private final SourceCatalog catalog;
     private final TermIndex index;
@@ -62,6 +69,7 @@ public class TermQueries {
     private final Function<PageKey, Optional<PageSnapshot>> snapshots;
     private final PageTextProjector projector;
     private final String processorVersion;
+    private final SecretKey cursorKey = newCursorKey();
 
     /**
      * @param headers          Kopfdaten einer Seite im Cache; leer, wenn sie dort nicht (mehr) liegt
@@ -432,22 +440,54 @@ public class TermQueries {
         }
     }
 
-    private static String encode(String fingerprint, String... position) {
+    private static SecretKey newCursorKey() {
+        try {
+            KeyGenerator generator = KeyGenerator.getInstance("AES");
+            generator.init(128, RANDOM);
+            return generator.generateKey();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("AES fehlt", e);
+        }
+    }
+
+    /**
+     * Cursor sind verschlüsselt (AES-GCM mit einem Schlüssel je Instanz): Eine Position nach vielen verborgenen
+     * Einträgen ist der Schlüssel eines Begriffs, den der Aufrufer nicht sehen darf, und darf nicht lesbar sein.
+     * Nach einem Neustart sind alte Cursor ungültig (400), die Abfrage beginnt dann von vorn.
+     */
+    private String encode(String fingerprint, String... position) {
         StringBuilder value = new StringBuilder(CURSOR_VERSION).append('\u0000').append(fingerprint);
         for (String part : position) {
             value.append('\u0000').append(part);
         }
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value.toString()
-                .getBytes(StandardCharsets.UTF_8));
+        try {
+            byte[] iv = new byte[12];
+            RANDOM.nextBytes(iv);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, cursorKey, new GCMParameterSpec(128, iv));
+            byte[] sealed = cipher.doFinal(value.toString().getBytes(StandardCharsets.UTF_8));
+            byte[] cursor = new byte[iv.length + sealed.length];
+            System.arraycopy(iv, 0, cursor, 0, iv.length);
+            System.arraycopy(sealed, 0, cursor, iv.length, sealed.length);
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(cursor);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("AES-GCM fehlt", e);
+        }
     }
 
     /** Die Position hinter Version und Fingerabdruck; Schlüssel enthalten selbst {@code U+0000}. */
-    private static String decode(String cursor, String fingerprint) {
+    private String decode(String cursor, String fingerprint) {
         String value;
         try {
-            value = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException e) {
-            throw new InvalidQueryException("cursor ist beschädigt");
+            byte[] bytes = Base64.getUrlDecoder().decode(cursor);
+            if (bytes.length < 13) {
+                throw new InvalidQueryException("cursor ist beschädigt");
+            }
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, cursorKey, new GCMParameterSpec(128, bytes, 0, 12));
+            value = new String(cipher.doFinal(bytes, 12, bytes.length - 12), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException | GeneralSecurityException e) {
+            throw new InvalidQueryException("cursor ist beschädigt oder abgelaufen");
         }
         String[] parts = value.split("\u0000", -1);
         if (parts.length < 3 || !CURSOR_VERSION.equals(parts[0])) {
@@ -465,6 +505,7 @@ public class TermQueries {
         private final AccessContext caller;
         private final String spaceKey;
         private final Map<PageKey, Optional<PageHeader>> checked = new HashMap<>();
+        private final Map<PageKey, Optional<String>> hashes = new HashMap<>();
 
         Visibility(AccessContext caller, String spaceKey) {
             this.caller = caller;
@@ -477,8 +518,14 @@ public class TermQueries {
                     .filter(found -> spaceKey == null || spaceKey.equals(found.metadata().partitionKey()))
                     .filter(found -> access.canRead(caller, key.sourceId(), found.metadata().partitionKey(),
                             key.pageId())));
-            return header.filter(found -> posting.revision() == null || found.revision() == null
-                    || posting.revision().equals(found.revision()));
+            return header.filter(found -> posting.revision() != null && found.revision() != null
+                    ? posting.revision().equals(found.revision())
+                    : currentText(posting.page()).filter(sha -> sha.equals(posting.inputSha256())).isPresent());
+        }
+
+        /** Ohne Revision entscheidet der Hash des aktuell gecachten Textes, je Seite einmal berechnet. */
+        private Optional<String> currentText(PageKey key) {
+            return hashes.computeIfAbsent(key, page -> text(page).map(PageText::inputSha256));
         }
     }
 

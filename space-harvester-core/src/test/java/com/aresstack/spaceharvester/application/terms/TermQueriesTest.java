@@ -258,4 +258,26 @@ class TermQueriesTest {
                 null, false, 10, null));
         assertThat(only(global, "rsl", TermKind.ACRONYM).sources()).isEqualTo(1);
     }
+
+    @Test
+    void withoutRevisionOnlyTermsOfTheCurrentTextCount() {
+        cached(page("wiki-a", "DEV", "9", null, "Die ZKV regelt alles."));
+        assertThat(list("wiki-a", null, TermKind.ACRONYM, "zkv", 50, null).terms()).hasSize(1);
+
+        // Neuer Inhalt im Cache, Anreicherung noch nicht gelaufen: die alten Begriffe zählen nicht mehr.
+        PageSnapshot changed = page("wiki-a", "DEV", "9", null, "Ohne Kürzel.");
+        cache.put(changed.key(), changed);
+
+        assertThat(list("wiki-a", null, TermKind.ACRONYM, "zkv", 50, null).terms()).isEmpty();
+    }
+
+    @Test
+    void cursorsDoNotRevealTermKeys() {
+        TermQueries.TermList first = list(null, null, TermKind.NOUN, null, 1, null);
+        String cursor = first.nextCursor();
+
+        assertThat(cursor).isNotNull();
+        assertThat(new String(java.util.Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8))
+                .doesNotContain(first.terms().get(0).normalized(), "noun");
+    }
 }
