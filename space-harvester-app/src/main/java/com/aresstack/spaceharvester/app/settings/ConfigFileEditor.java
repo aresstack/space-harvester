@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.source.network.TrustPolicy;
 import com.aresstack.spaceharvester.source.network.TrustSettings;
@@ -300,7 +301,7 @@ public final class ConfigFileEditor {
         }
         int rootEnd = blockEnd(lines, root, 0);
         int childIndent = childIndent(lines, root, rootEnd, 2);
-        int network = child(lines, root, rootEnd, childIndent, parent);
+        int network = child(lines, root, rootEnd, childIndent, AppSettingsLoader.normalize(parent));
         if (network < 0) {
             lines.add(root + 1, " ".repeat(childIndent) + parent + ":");
             add(lines, root + 2, yaml.apply(" ".repeat(childIndent * 2)));
@@ -368,6 +369,53 @@ public final class ConfigFileEditor {
                     + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
         }
         return new Draft(text, settings);
+    }
+
+    /**
+     * Der Entwurf {@code base} mit neuem Dateizugriff ({@code space-harvester.local-files.allow-all} und
+     * {@code .roots} als YAML-Liste), dieselben Schlüssel wie im Server; nur diese beiden Werte ändern sich.
+     *
+     * @param roots freigegebene Ordner, absolut (auch UNC-Pfade); leer gibt keinen Ordner über die Quellen hinaus frei
+     * @throws IllegalArgumentException bei einem relativen Pfad oder wenn die Datei danach etwas anderes liest
+     */
+    public Draft withFileAccess(Path file, Draft base, boolean allowAll, List<String> roots) {
+        List<Path> expected = new ArrayList<>();
+        for (String root : roots) {
+            Path path;
+            try {
+                path = Path.of(root.strip());
+            } catch (java.nio.file.InvalidPathException e) {
+                throw new IllegalArgumentException("Ungültiger Pfad: " + root);
+            }
+            if (!path.isAbsolute()) {
+                throw new IllegalArgumentException("Nur absolute Pfade lassen sich freigeben, z. B. D:\\Wissen oder "
+                        + "\\\\server\\freigabe: " + root);
+            }
+            expected.add(path);
+        }
+        String text = nested(base.text(), "local-files", "allow-all", indent -> indent + "allow-all: " + allowAll
+                + "\n");
+        text = nested(text, "local-files", "roots", indent -> rootsYaml(indent, roots));
+        AppSettings settings = loader.read(file, text);
+        if (!settings.localFiles().equals(new LocalFileSettings(allowAll, expected))) {
+            throw new IllegalArgumentException("Der Dateizugriff ließ sich nicht sicher in die Konfigurationsdatei "
+                    + "schreiben; bitte space-harvester.local-files von Hand bearbeiten."
+                    + (settings.problems().isEmpty() ? "" : " " + String.join(" ", settings.problems())));
+        }
+        return new Draft(text, settings);
+    }
+
+    /** {@code roots:} als Liste in Anführungszeichen; Backslashes von Windows- und UNC-Pfaden bleiben erhalten. */
+    private static String rootsYaml(String indent, List<String> roots) {
+        if (roots.isEmpty()) {
+            return indent + "roots: []\n";
+        }
+        StringBuilder yaml = new StringBuilder(indent).append("roots:\n");
+        for (String root : roots) {
+            yaml.append(indent).append("  - \"").append(root.strip().replace("\\", "\\\\").replace("\"", "\\\""))
+                    .append("\"\n");
+        }
+        return yaml.toString();
     }
 
     /**

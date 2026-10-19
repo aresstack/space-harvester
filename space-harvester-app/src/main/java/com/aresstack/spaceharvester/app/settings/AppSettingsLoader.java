@@ -1,5 +1,6 @@
 package com.aresstack.spaceharvester.app.settings;
 
+import com.aresstack.spaceharvester.application.configuration.LocalFileSettings;
 import com.aresstack.spaceharvester.application.configuration.RefreshStrategy;
 import com.aresstack.spaceharvester.application.configuration.SourceSyncOverride;
 import com.aresstack.spaceharvester.application.sync.SyncMode;
@@ -205,7 +206,42 @@ public final class AppSettingsLoader {
                 tls(get(network, "tls"), problems), cache,
                 flag(get(app, "setup-completed"), false, "space-harvester-app.setup-completed", problems),
                 syncRules(map(get(map(get(root, "sync")), "sources")), cache.maxAge(), problems),
-                sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems));
+                sync(map(get(root, "sync")), cache, problems), aiAccess(app, problems),
+                localFiles(map(get(root, "local-files")), problems));
+    }
+
+    /**
+     * {@code space-harvester.local-files}, geprüft wie im Core: {@code roots} als YAML-Liste oder als Text getrennt
+     * durch {@code ;}; ein relativer Pfad wird gemeldet (ohne ihn zu nennen) und gewährt nichts.
+     */
+    private LocalFileSettings localFiles(Map<?, ?> localFiles, List<String> problems) {
+        boolean allowAll = flag(get(localFiles, "allow-all"), false, ROOT + "." + LocalFileSettings.ALLOW_ALL,
+                problems);
+        List<Object> raw = new ArrayList<>();
+        Object roots = get(localFiles, "roots");
+        if (roots instanceof List<?> list) {
+            raw.addAll(list);
+        } else if (roots instanceof Map<?, ?>) {
+            problems.add(ROOT + "." + LocalFileSettings.ROOTS + " ist eine Liste von Ordnern, keine Zuordnung");
+        } else if (roots != null) {
+            String text = text(roots, problems);
+            if (text != null) {
+                raw.addAll(List.of(text.split(LocalFileSettings.SEPARATOR)));
+            }
+        }
+        List<Path> granted = new ArrayList<>();
+        for (Object entry : raw) {
+            Path root = path(entry, problems);
+            if (root == null) {
+                continue;
+            }
+            if (!root.isAbsolute()) {
+                problems.add(ROOT + "." + LocalFileSettings.ROOTS + ": nur absolute Pfade sind erlaubt");
+                continue;
+            }
+            granted.add(root);
+        }
+        return new LocalFileSettings(allowAll, granted);
     }
 
     /** {@code space-harvester-app.ai-access} und {@code .ai-keepass-entry}; Unbekanntes gilt als nicht gewählt. */

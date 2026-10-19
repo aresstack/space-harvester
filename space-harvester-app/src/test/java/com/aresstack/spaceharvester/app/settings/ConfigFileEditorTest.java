@@ -654,6 +654,64 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void fileAccessUsesTheCoreKeysAsAListAndLeavesTheRestAlone() throws Exception {
+        Path file = home.resolve("app.yml");
+        String before = """
+                # Kopf bleibt
+                space-harvester-app:
+                  data-directory: /daten   # Kommentar bleibt
+                space-harvester:
+                  local-files:
+                    roots: "/alt/eins;/alt/zwei"   # wird ersetzt
+                  sources: []
+                """;
+        Files.writeString(file, before);
+        assertThat(loader.load(file).localFiles().roots()).containsExactly(Path.of("/alt/eins"), Path.of("/alt/zwei"));
+        String unc = home.resolve("Team \"Wissen\"").toString();
+
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), true,
+                java.util.List.of("/srv/handbuecher", unc)));
+
+        String text = Files.readString(file);
+        assertThat(text).startsWith("# Kopf bleibt").contains("data-directory: /daten   # Kommentar bleibt",
+                "    allow-all: true", "    roots:\n      - \"/srv/handbuecher\"", "  sources: []")
+                .doesNotContain("/alt/eins", "wird ersetzt");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.problems()).isEmpty();
+        assertThat(settings.localFiles().allowAll()).isTrue();
+        assertThat(settings.localFiles().roots()).containsExactly(Path.of("/srv/handbuecher"), Path.of(unc));
+        assertThat(settings.storage().dataDirectory()).isEqualTo(Path.of("/daten"));
+
+        // Erneut setzen ersetzt beide Werte; ohne Ordner bleibt eine leere Liste, kein zweiter Block.
+        editor.save(file, editor.withFileAccess(file, new ConfigFileEditor.Draft(Files.readString(file), null), false,
+                java.util.List.of()));
+        String cleared = Files.readString(file);
+        assertThat(cleared.split("local-files", -1)).hasSize(2);
+        assertThat(cleared).contains("    allow-all: false", "    roots: []").doesNotContain("handbuecher");
+        assertThat(loader.load(file).localFiles())
+                .isEqualTo(com.aresstack.spaceharvester.application.configuration.LocalFileSettings.DEFAULT);
+        assertThatThrownBy(() -> editor.withFileAccess(file, new ConfigFileEditor.Draft(cleared, null), false,
+                java.util.List.of("relativ/ordner"))).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("absolute");
+    }
+
+    @Test
+    void aRelativeRootIsReportedWithoutThePathAndGrantsNothing() {
+        AppSettings settings = loader.read(home.resolve("app.yml"), """
+                space-harvester:
+                  local-files:
+                    allow-all: vielleicht
+                    roots:
+                      - geheim/relativ
+                      - /srv/doku
+                """);
+        assertThat(settings.localFiles().allowAll()).isFalse();
+        assertThat(settings.localFiles().roots()).containsExactly(Path.of("/srv/doku"));
+        assertThat(String.join(" ", settings.problems())).contains("space-harvester.local-files.roots",
+                "space-harvester.local-files.allow-all").doesNotContain("geheim");
+    }
+
+    @Test
     void disabledSourcesAreAListInTheAppBlockAndVanishWhenAllAreOn() throws Exception {
         Path file = home.resolve("app.yml");
         Files.writeString(file, """
