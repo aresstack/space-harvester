@@ -160,6 +160,13 @@ class SourceFormTest {
             f.kind.setSelectedItem("SharePoint");
             assertThat(f.credentialsNote.isVisible()).isFalse();
             assertThat(f.draft().yaml("    ")).contains("siteUrl: \"mvs.example.org\"");
+            // Ein Typ ohne Sonderbehandlung (MediaWiki, #370): Adresse unter options.url, kein Hinweis auf #188.
+            f.kind.setSelectedItem("MediaWiki");
+            assertThat(f.typeId()).isEqualTo("mediawiki");
+            assertThat(f.credentialsNote.isVisible()).isFalse();
+            assertThat(f.auth.isVisible()).isFalse();
+            assertThat(f.baseUrl.placeholder()).isNull();
+            assertThat(f.draft().yaml("    ")).contains("type: mediawiki", "url: \"mvs.example.org\"");
         });
     }
 
