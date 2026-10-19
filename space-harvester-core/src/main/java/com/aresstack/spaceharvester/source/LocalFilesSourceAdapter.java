@@ -7,6 +7,7 @@ import com.aresstack.enterpriseai.proasteion.emporion.deigma.tika.DocumentExtrac
 import com.aresstack.enterpriseai.proasteion.emporion.holkas.localfiles.LocalFilesSourceProvider;
 import com.aresstack.enterpriseai.source.api.files.LocalFileAccessPolicy;
 import com.aresstack.spaceharvester.application.sources.SourceField;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,8 +56,11 @@ public final class LocalFilesSourceAdapter implements SourceAdapter {
         this.provider = new LocalFilesSourceProvider(DocumentExtraction.detector(), DocumentExtraction.registry(),
                 () -> {
                     LocalFileGrants granted = grants.get();
+                    // Nur Verzeichnisse zählen, beim Zugriff statt beim Speichern der Konfiguration: Eine Datei als
+                    // Wurzel gäbe über den Präfixvergleich sonst genau sich selbst frei.
                     return granted == null ? LocalFileAccessPolicy.none()
-                            : LocalFileAccessPolicy.of(granted.allowAll(), granted.roots());
+                            : LocalFileAccessPolicy.of(granted.allowAll(),
+                                    granted.roots().stream().filter(Files::isDirectory).toList());
                 });
     }
 

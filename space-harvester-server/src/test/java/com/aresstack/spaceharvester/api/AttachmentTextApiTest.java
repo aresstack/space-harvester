@@ -205,10 +205,14 @@ class AttachmentTextApiTest {
         assertThat(hit.get("attachment").get("attachmentId").asString()).isEqualTo("att9");
         assertThat(hit.get("attachment").get("title").asString()).isEqualTo("betrieb.txt");
         assertThat(hit.get("snippet").asString()).contains("Wartungsfenster");
-        assertThat(limited.body()).doesNotContain("103").doesNotContain("geheim").doesNotContain("Tresorraum")
+        // Kennungen wie searchRun sind zufällig und können „103“ enthalten; die Seite prüft daher jedes pageId-Feld.
+        assertThat(reader.findValuesAsString("pageId")).doesNotContain("103");
+        assertThat(limited.body()).doesNotContain("att8").doesNotContain("geheim").doesNotContain("Tresorraum")
                 .doesNotContain("Panzerschrank");
-        assertThat(json.readTree(secret.body()).get("hits")).isEmpty();
-        assertThat(secret.body()).doesNotContain("103").doesNotContain("geheim");
+        JsonNode secretHits = json.readTree(secret.body());
+        assertThat(secretHits.get("hits")).isEmpty();
+        assertThat(secretHits.findValuesAsString("pageId")).doesNotContain("103");
+        assertThat(secret.body()).doesNotContain("att8").doesNotContain("geheim");
     }
 
     private int downloads() {

@@ -4,8 +4,8 @@
   Access Tokens, optionaler Azure Key Vault, Client-Zertifikate und Proxy korrekt einbinden).
 - Umgesetzt: `SourceSecrets` und `Harvester.builder().secretProvider` (#188), `ConfiguredSecrets` mit Rückfall auf den
   Anbieter, `Harvester.builder().sourceAdapter` (#187), `KnowledgeSourceProviderAdapter.connected` mit
-  `withoutTls`, `withCredentialRefPassThrough`, `requiringCredentials` und `named`; MediaWiki, FTP, JES, NDV,
-  SharePoint und BetaView laufen darüber.
+  `withoutTls`, `withCredentialRefPassThrough`, `requiringCredentials`, `acceptingToken` und `named`; MediaWiki, Git,
+  FTP, JES, NDV, SharePoint und BetaView laufen darüber.
 - Bezüge: #187, #188, #22 (Azure Key Vault), ADR 0015 (Konfiguration); Enterprise AI Client `AdapterAssembly`
   (Composition Root mit KeePass-Brücke), Corenth (Builder statt Framework im Core).
 
@@ -28,7 +28,10 @@ der Anbieter des Programms auflöste; `auth`, Client-Zertifikat und Server-Vertr
    Platzhalter verhindert den Start.
 3. **Durchreichung.** Ein eigener Verweis unter `options.credentialRef` (etwa `keepass:jes`) geht bei
    `auth.type none` unverändert an den Anbieter, damit Konfigurationen aus dem Enterprise AI Client weiter gelten.
-   Neben `auth.type basic` ist er ein Fehler, weil dann `source:<id>` gilt.
+   Neben `auth.type basic` oder `pat` ist er ein Fehler, weil dann `source:<id>` gilt. Ein Verweis auf `source:…` ist
+   immer ein Fehler: er holte die Zugangsdaten einer anderen Quelle und schickte sie an diesen Host.
+   `auth.type pat` (Token ohne Benutzer unter `source:<id>`) gilt für Typen, die es zulassen (`acceptingToken`, Git)
+   und für Confluence.
 4. **Netzweg je Quelle.** `connected` baut den Upstream-Provider je Quelle mit Proxy-Route (PAC je Ziel, nie still
    DIRECT), `SSLSocketFactory` aus `trust-bundle` und `client-certificate` und dem User-Agent. Typen, deren Protokoll
    upstream kein TLS kennt (FTP, JES, NDV), lehnen beide Angaben ab statt sie still zu übergehen.
@@ -39,4 +42,5 @@ der Anbieter des Programms auflöste; `auth`, Client-Zertifikat und Server-Vertr
 
 - Neue Typen mit Netz brauchen keinen eigenen Code für Anmeldung, Proxy und TLS.
 - FTPS fehlt, solange der Upstream-Adapter es nicht kann; es käme über die Kopie, nicht lokal.
+- `pat` gibt es nur bei Confluence und Git, wie im Enterprise AI Client; weitere Typen bekämen es über `acceptingToken`.
 - `ContextualSourceAdapter` bleibt für Typen ohne Netz (Outlook).

@@ -38,9 +38,10 @@ java -jar space-harvester.jar
 
 ## Laufzeitkonfiguration im Server
 
-KI-Dienst, Suche, Synchronisierung und Speicherort bilden die Laufzeitkonfiguration (ADR 0015) mit fortlaufender
+KI-Dienst, Suche, Synchronisierung, Speicherort und freigegebene Ordner bilden die Laufzeitkonfiguration (ADR 0015) mit fortlaufender
 Version; der Start ist Version 1. Gelesen wird sie beim Start aus `space-harvester.ai.*`, `space-harvester.search.*`,
-`space-harvester.sync.*`, `space-harvester.cache.directory`/`max-age`/`version-check` und `space-harvester.network.*`.
+`space-harvester.sync.*`, `space-harvester.cache.directory`/`max-age`/`version-check`, `space-harvester.local-files.*`
+und `space-harvester.network.*`.
 
 | Schlüssel | Standard | Bedeutung |
 |---|---|---|
@@ -190,6 +191,7 @@ Komponente ab (etwa ein Modell, das der KI-Dienst nicht kennt), bleibt die bishe
 | Abweichende Regeln je Quelle | `sync.sources.<Quelle>.*` (siehe unten) | ja |
 | Proxy und TLS | `network.proxy.*`, `network.tls.*` | ja, neue Verbindungen |
 | Quellen | `sources[]` bzw. Quellenverwaltung | ja, über die Quellenverwaltung |
+| Freigegebene Ordner für lokale Dateien (siehe unten) | `local-files.allow-all` (Standard `false`), `local-files.roots` | ja, beim nächsten Dateizugriff |
 | Speicherort von Cache und Indizes | `cache.directory` | **nein**, wirkt nach kontrolliertem Neustart |
 | Speicherort der Begriffsbeziehungen und Sperrlisten (#120, außerhalb des Caches) | `term-relations.directory` (Standard `data/term-relations`; im Core `<dataDirectory>/term-relations`) | **nein**, wirkt nach Neustart |
 
@@ -220,6 +222,35 @@ Inhalt haben (`NOT_LOADED`) oder deren Inhalt veraltet ist (`OUTDATED`), zuletzt
 Seiten (`WITHHELD`) und nie, was die Zugriffspolicy oder die KI-Freigabe der Quelle ausschließt. Abschalten geht
 global mit `sync.background-fill=false` oder je Quelle mit `sync.sources.<Quelle>.background-fill=false`; ein
 eigener Wert je Quelle geht dem globalen vor.
+
+### Freigegebene Ordner für lokale Dateien
+
+Wie „Dateizugriff“ im Enterprise AI Client (`files.access.allowAll`, `files.access.roots`): Die Quellenart `files`
+liest nur unterhalb ihres eigenen Verzeichnisses und der freigegebenen Ordner. Standard ist kein Zugriff darüber
+hinaus.
+
+| Schlüssel | Bedeutung |
+| --- | --- |
+| `local-files.allow-all` | `true`: alles, was das Konto des Dienstes lesen darf |
+| `local-files.roots` | weitere Ordner, absolut; als YAML-Liste oder als Text getrennt durch `;` (Kommas kommen in Pfaden vor) |
+
+```yaml
+space-harvester:
+  local-files:
+    roots:
+      - D:\Wissen\Handbücher
+      - \\fileserver\teams\doku
+```
+
+- Verglichen wird der wirkliche Ort (Links aufgelöst) bei jedem Dateizugriff; ein Link aus dem Verzeichnis einer
+  Quelle hinaus führt nur in einen freigegebenen Ordner.
+- Ein Ordner, den es noch nicht gibt, gewährt nichts, bis er da ist, etwa ein gemapptes oder UNC-Laufwerk, das
+  später verbunden wird; dafür ist kein Neustart nötig. Ebenso gewährt ein Eintrag, der eine Datei ist, nichts. Nur
+  ein relativer Pfad wird abgelehnt (`problems` mit `key: local-files.roots`, nie der Pfad); beim Speichern greift
+  die Prüfung nicht auf das Dateisystem zu.
+- Eine Freigabe liest nichts ein; eingelesen wird nur, was eine Quelle nennt.
+- `POST /api/v1/configuration` nimmt `local-files.allow-all` und `local-files.roots` (Text mit `;` oder Liste) an;
+  `GET` zeigt sie unter `localFiles`.
 
 ### Webhooks
 

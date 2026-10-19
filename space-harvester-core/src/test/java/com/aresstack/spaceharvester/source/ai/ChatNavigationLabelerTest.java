@@ -18,6 +18,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
@@ -79,6 +84,42 @@ class ChatNavigationLabelerTest {
     }
 
     @Test
+    void aCallerThatWaitedForASlotWhileTheOthersFailedStaysOffTheNetwork() throws Exception {
+        AiServiceSettings settings = settings("gpt-x", base());
+        AtomicInteger attempts = new AtomicInteger();
+        CountDownLatch busy = new CountDownLatch(ChatNavigationLabeler.PARALLELISM);
+        CountDownLatch fail = new CountDownLatch(1);
+        ChatNavigationLabeler labeler = new ChatNavigationLabeler(() -> settings, current -> {
+            attempts.incrementAndGet();
+            busy.countDown();
+            try {
+                fail.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new AiServiceException(AiServiceException.Reason.UNREACHABLE, "weg");
+        }, clock());
+        ExecutorService pool = Executors.newFixedThreadPool(ChatNavigationLabeler.PARALLELISM + 1);
+        try {
+            List<Future<?>> first = IntStream.range(0, ChatNavigationLabeler.PARALLELISM)
+                    .<Future<?>>mapToObj(i -> pool.submit(() -> labeler.labels("Titel", List.of("Belege."))))
+                    .toList();
+            assertThat(busy.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<?> waiting = pool.submit(() -> labeler.labels("Titel", List.of("Belege.")));
+            Thread.sleep(200); // wartet jetzt auf einen Platz
+            fail.countDown();
+
+            for (Future<?> future : first) {
+                assertThatThrownBy(future::get).hasCauseInstanceOf(AiServiceException.class);
+            }
+            assertThatThrownBy(waiting::get).hasCauseInstanceOf(AiServiceException.class);
+            assertThat(attempts).hasValue(ChatNavigationLabeler.PARALLELISM);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void anotherModelIsTriedAtOnce() {
         AtomicReference<AiServiceSettings> settings = new AtomicReference<>(settings("gpt-x", base()));
         ChatNavigationLabeler labeler = labeler(settings::get);
@@ -106,7 +147,13 @@ class ChatNavigationLabelerTest {
     }
 
     private ChatNavigationLabeler labeler(java.util.function.Supplier<AiServiceSettings> settings) {
-        Clock clock = new Clock() {
+        return new ChatNavigationLabeler(settings,
+                current -> new RemoteAi(current, HttpRoutePort.direct(), TrustBundles.NONE, "space-harvester-test"),
+                clock());
+    }
+
+    private Clock clock() {
+        return new Clock() {
             @Override
             public ZoneOffset getZone() {
                 return ZoneOffset.UTC;
@@ -122,9 +169,6 @@ class ChatNavigationLabelerTest {
                 return now.get();
             }
         };
-        return new ChatNavigationLabeler(settings,
-                current -> new RemoteAi(current, HttpRoutePort.direct(), TrustBundles.NONE, "space-harvester-test"),
-                clock);
     }
 
     private static AiServiceSettings settings(String chatModel, URI base) {

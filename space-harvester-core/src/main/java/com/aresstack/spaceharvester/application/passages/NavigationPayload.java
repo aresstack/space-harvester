@@ -22,6 +22,13 @@ public final class NavigationPayload {
     public static final String REASON_NOT_APPROVED = PassagePayload.REASON_NOT_APPROVED;
     /** Für diesen Text liegen noch keine aktuellen Embeddings je Absatz vor. */
     public static final String REASON_NOT_EMBEDDED = "not-embedded";
+    /**
+     * Kein OpenNLP-Satzmodell, die Absätze kämen aus dem Regel-Splitter: nur Überschriften, wie
+     * {@code NO_SENTENCE_MODEL} im Client.
+     */
+    public static final String REASON_NO_SENTENCE_MODEL = "no-sentence-model";
+    /** Die Embeddings dieses Textes sind gescheitert, wie {@code INDEXING_FAILED} im Client. */
+    public static final String REASON_INDEXING_FAILED = "indexing-failed";
     /** Keine Themenwechsel gefunden: die Überschriften reichen. */
     public static final String REASON_NO_TOPIC_CHANGE = "no-topic-change";
     /** Modell eingestellt, aber nicht erreichbar oder unbrauchbar. */
