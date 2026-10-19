@@ -14,7 +14,9 @@ import com.aresstack.spaceharvester.application.access.AccessKind;
 import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.enrichment.Enrichment;
 import com.aresstack.spaceharvester.application.enrichment.InMemoryEnrichmentStore;
+import com.aresstack.spaceharvester.application.enrichment.PageText;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
+import com.aresstack.spaceharvester.application.enrichment.embedding.PassageChunking;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProvider;
 import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingUnavailableException;
 import com.aresstack.spaceharvester.application.query.InMemorySearchIndex;
@@ -73,7 +75,7 @@ class RelevanceSearchTest {
     private final InMemoryEnrichmentStore store = new InMemoryEnrichmentStore();
     private final List<String> embeddedQueries = new ArrayList<>();
     private boolean modelDown;
-    private final EmbeddingProcessor processor = new EmbeddingProcessor(new EmbeddingProvider() {
+    private EmbeddingProcessor processor = new EmbeddingProcessor(new EmbeddingProvider() {
         @Override
         public String modelId() {
             return "axes";
@@ -200,6 +202,47 @@ class RelevanceSearchTest {
         assertThat(texts).containsExactly("nächtlicher Betrieb");
         // Der Text ist kürzer als das Fenster: ganz. OPS hat kein content, seine Seiten sind gar keine Kandidaten.
         assertThat(documents).containsOnlyKeys("11", "12", "10")
+                .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
+    }
+
+    @Test
+    void withCurrentPassagesTheRerankerSeesExactlyTheBestPassageOtherwiseTheWindow() {
+        Map<String, String> documents = new java.util.LinkedHashMap<>();
+        SearchReranker recording = new SearchReranker() {
+            @Override
+            public String id() {
+                return "aufzeichnung@1";
+            }
+
+            @Override
+            public List<SearchHit> rerank(PageSearchQuery query, List<SearchHit> candidates) {
+                throw new AssertionError("ohne Texte aufgerufen");
+            }
+
+            @Override
+            public List<SearchHit> rerank(Request request) {
+                request.candidates().forEach(hit -> documents.put(hit.page().pageId(), request.documents().apply(hit)));
+                return request.candidates();
+            }
+        };
+        // Embeddings je Absatz (ADR 0020): Stücke sind Absätze.
+        processor = processor.withPassages(new PassageChunking() {
+            @Override
+            public String fingerprint() {
+                return "absätze";
+            }
+
+            @Override
+            public List<Piece> passages(PageText text, java.util.function.Function<List<String>, List<float[]>> s) {
+                throw new AssertionError("Seiten werden in diesem Test nicht eingebettet");
+            }
+        });
+        publish();
+
+        withTexts(ALLOW_ALL, List.of(), recording).search(CALLER, query(null), "nächtlicher Betrieb", 10);
+
+        // 11 ist aktuell: genau der Absatz [10, 20). 12 ist veraltet (ältere Revision): das Fenster wie bisher.
+        assertThat(documents).containsEntry("11", "Nachtbetrieb\nLesetext v")
                 .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
     }
 
