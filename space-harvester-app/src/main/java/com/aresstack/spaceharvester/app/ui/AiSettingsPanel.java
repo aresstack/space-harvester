@@ -79,6 +79,7 @@ final class AiSettingsPanel {
     /** Bezugsart, wie {@link #render()} sie zeigte; Maßstab für „geändert“. */
     private AiAccess shownAccess = AiAccess.NONE;
     final JTextField rerankModel = Comic.field(24);
+    final JTextField visionModel = Comic.field(24);
     final JTextField chunkTokens = Comic.field(6);
     final JTextField chunkOverlap = Comic.field(6);
     private final SettingDialogs.Rows rows = new SettingDialogs.Rows();
@@ -95,6 +96,7 @@ final class AiSettingsPanel {
     final ComposerButton pickChat = Comic.button("▾", "Text-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickEmbedding = Comic.button("▾", "Embedding-Modell aus der Liste des Dienstes wählen");
     final ComposerButton pickRerank = Comic.button("▾", "Rerank-Modell aus der Liste des Dienstes wählen");
+    final ComposerButton pickVision = Comic.button("▾", "Vision-Modell aus der Liste des Dienstes wählen");
     /** Klappt Abschnittsgröße und Überlappung auf; sie sind keine Modelle, sondern gehören zur Zerlegung. */
     final ComposerButton advanced = Comic.button("▸ Erweitert", "Abschnittsgröße und Überlappung für Embeddings");
     private final PreferredModels preferred = PreferredModels.bundled();
@@ -126,6 +128,8 @@ final class AiSettingsPanel {
         modelRows.add("Embedding-Modell", Comic.row(embeddingModel, pickEmbedding),
                 "Für die semantische Suche, z. B. text-embedding-3-small");
         modelRows.add("Dimension", dimensions, "Leer: wird beim Speichern beim Dienst gemessen");
+        modelRows.add("Vision-Modell", Comic.row(visionModel, pickVision),
+                "Beschreibt die Bilder einer Seite (Leseansicht › Bilder); leer: keine Bildbeschreibung");
         {
             modelRows.add("Rerank-Modell", Comic.row(rerankModel, pickRerank),
                     "Cross-Encoder des Dienstes (/rerank); ordnet die Treffer aus dem Cache neu, leer: Reihenfolge "
@@ -140,10 +144,12 @@ final class AiSettingsPanel {
         pickChat.setEnabled(false);
         pickEmbedding.setEnabled(false);
         pickRerank.setEnabled(false);
+        pickVision.setEnabled(false);
         loadModels.addActionListener(e -> loadModels());
         pickChat.addActionListener(e -> pick(pickChat, chatModel, AiModel.CHAT));
         pickEmbedding.addActionListener(e -> pick(pickEmbedding, embeddingModel, AiModel.EMBEDDING));
         pickRerank.addActionListener(e -> pick(pickRerank, rerankModel, null));
+        pickVision.addActionListener(e -> pick(pickVision, visionModel, null));
         rows.add("Freigegeben", released, "Je Quelle im Formular unter Wissensquellen › Bearbeiten …; ohne Freigabe "
                 + "keine Embeddings und kein Reranking");
         root.add(Comic.note("Die semantische Suche (experimentell) braucht einen KI-Dienst mit Embedding-Modell; die "
@@ -193,6 +199,7 @@ final class AiSettingsPanel {
         embeddingModel.setText(current.embeddingModel() == null ? "" : current.embeddingModel());
         dimensions.setText(current.embeddingDimensions() == null ? "" : current.embeddingDimensions());
         rerankModel.setText(current.rerankModel() == null ? "" : current.rerankModel());
+        visionModel.setText(current.visionModel() == null ? "" : current.visionModel());
         chunkTokens.setText(current.chunkTokens() == null ? "" : current.chunkTokens());
         chunkOverlap.setText(current.chunkOverlapSentences() == null ? "" : current.chunkOverlapSentences());
         advanced(current.chunkTokens() != null || current.chunkOverlapSentences() != null);
@@ -336,7 +343,8 @@ final class AiSettingsPanel {
         AppSettings settings = context.settings();
         List<String> released = settings == null ? releasedIds : settings.ai().externalProcessingSources();
         return new AiDraft(baseUrl.getText(), chatModel.getText(), embeddingModel.getText(), dimensions.getText(),
-                timeout, released, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText());
+                timeout, released, rerankModel.getText(), chunkTokens.getText(), chunkOverlap.getText(),
+                visionModel.getText());
     }
 
     /** „2 von 3 Quellen“ mit ihren Namen, oder „keine“. */
@@ -636,6 +644,7 @@ final class AiSettingsPanel {
         pickChat.setEnabled(!choices(AiModel.CHAT).isEmpty());
         pickEmbedding.setEnabled(!choices(AiModel.EMBEDDING).isEmpty());
         pickRerank.setEnabled(!choices(null).isEmpty());
+        pickVision.setEnabled(!choices(null).isEmpty());
         long embeddings = this.loaded.stream().filter(m -> m.categories().contains(AiModel.EMBEDDING)).count();
         if (this.loaded.isEmpty()) {
             modelsFeedback.warning("Keine Modelle", "Der Dienst meldet keine Modelle; Namen bitte von Hand eintragen.");

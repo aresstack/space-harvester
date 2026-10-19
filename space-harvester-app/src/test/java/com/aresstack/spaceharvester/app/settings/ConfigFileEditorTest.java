@@ -490,6 +490,24 @@ class ConfigFileEditorTest {
     }
 
     @Test
+    void theVisionModelGoesIntoTheAiBlockAndSurvivesOtherModelChanges() throws Exception {
+        Path file = home.resolve("app.yml");
+        Files.writeString(file, "space-harvester:\n  sources: []\n");
+        AiDraft ai = new AiDraft("https://ki.firma.de/v1", "gpt-x", null, null, null, java.util.List.of(), null,
+                null, null, "gpt-vision");
+
+        editor.save(file, editor.withAi(file, new ConfigFileEditor.Draft(Files.readString(file), null), ai));
+
+        assertThat(Files.readString(file)).contains("vision-model: \"gpt-vision\"");
+        AppSettings settings = loader.load(file);
+        assertThat(settings.ai().visionModel()).isEqualTo("gpt-vision");
+        assertThat(AiDraft.of(settings.ai())).isEqualTo(ai);
+        assertThat(ai.withModels("gpt-y", null, null, null, null, null).visionModel()).isEqualTo("gpt-vision");
+        assertThat(new AiDraft(null, null, null, null, null, null, null, null, null, "gpt-vision").problems())
+                .anyMatch(p -> p.contains("Basisadresse"));
+    }
+
+    @Test
     void addsTheProxyWhereNetworkOrTheWholeBlockIsMissing() throws Exception {
         ProxyDraft pac = new ProxyDraft(ProxySettings.Mode.PAC_URL_MANUAL, "http://proxy.firma.de/proxy.pac", null,
                 null, null, null, null, null);

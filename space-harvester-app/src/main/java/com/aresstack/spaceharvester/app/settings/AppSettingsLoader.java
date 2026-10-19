@@ -602,7 +602,7 @@ public final class AppSettingsLoader {
                 text(get(ai, "embedding-model"), problems), text(get(ai, "embedding-dimensions"), problems),
                 optionalDuration(get(ai, "timeout"), "space-harvester.ai.timeout", problems), released,
                 text(get(ai, "rerank-model"), problems), text(get(ai, "embedding-chunk-tokens"), problems),
-                text(get(ai, "embedding-chunk-overlap-sentences"), problems));
+                text(get(ai, "embedding-chunk-overlap-sentences"), problems), text(get(ai, "vision-model"), problems));
         if (draft.empty()) {
             return AppSettings.AiSettings.NONE;
         }
@@ -610,7 +610,7 @@ public final class AppSettingsLoader {
         boolean valid = draft.problems().isEmpty();
         return new AppSettings.AiSettings(valid ? draft.baseUrl() : null, draft.chatModel(), draft.embeddingModel(),
                 draft.dimensions(), draft.timeout(), draft.externalProcessingSources(), draft.rerankModel(),
-                draft.tokens(), draft.overlap());
+                draft.tokens(), draft.overlap(), draft.visionModel());
     }
 
     // ------------------------------------------------------------------ Werte

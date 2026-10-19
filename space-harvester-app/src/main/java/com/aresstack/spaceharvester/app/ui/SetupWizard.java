@@ -300,6 +300,7 @@ final class SetupWizard {
         summary.add("Serverzertifikate", settings.tls().describe());
         summary.add("Embedding-Modell", blank(settings.ai().embeddingModel()));
         summary.add("Rerank-Modell", blank(settings.ai().rerankModel()));
+        summary.add("Vision-Modell", blank(settings.ai().visionModel()));
         summary.add("KI-Dienst", settings.ai().configured() ? settings.ai().baseUrl() : "nicht eingerichtet (optional)");
         AiAccess access = settings.aiAccess();
         summary.add("API-Key", !context.aiKeyAvailable() ? "fehlt" : access.fromKeePass()

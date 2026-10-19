@@ -183,12 +183,20 @@ public record AppSettings(Path file, List<SourceEntry> sources, ProxySettings pr
      */
     public record AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
                              Duration timeout, List<String> externalProcessingSources, String rerankModel,
-                             Integer chunkTokens, Integer chunkOverlapSentences) {
+                             Integer chunkTokens, Integer chunkOverlapSentences, String visionModel) {
 
         public static final AiSettings NONE = new AiSettings(null, null, null, null, null, List.of());
 
         public AiSettings {
             externalProcessingSources = List.copyOf(externalProcessingSources);
+        }
+
+        /** Ohne Vision-Modell: keine Bildbeschreibung (#362). */
+        public AiSettings(String baseUrl, String chatModel, String embeddingModel, Integer embeddingDimensions,
+                          Duration timeout, List<String> externalProcessingSources, String rerankModel,
+                          Integer chunkTokens, Integer chunkOverlapSentences) {
+            this(baseUrl, chatModel, embeddingModel, embeddingDimensions, timeout, externalProcessingSources,
+                    rerankModel, chunkTokens, chunkOverlapSentences, null);
         }
 
         /** Ohne Rerank-Modell und mit der Zerlegung des Core. */
