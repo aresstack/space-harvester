@@ -171,7 +171,7 @@ class RelevanceSearchTest {
     }
 
     @Test
-    void aRerankerSeesTheQueryTitlesAndOnlyWithContentAccessAnExcerptAroundTheBestChunk() {
+    void aRerankerSeesTheQueryTitlesAndOnlyWithContentAccessExactlyTheBestChunk() {
         Map<String, String> documents = new java.util.LinkedHashMap<>();
         List<String> texts = new ArrayList<>();
         SearchReranker recording = new SearchReranker() {
@@ -198,9 +198,10 @@ class RelevanceSearchTest {
         withTexts(noOpsContent, List.of(), recording).search(CALLER, query(null), "nächtlicher Betrieb", 10);
 
         assertThat(texts).containsExactly("nächtlicher Betrieb");
-        // Der Text ist kürzer als das Fenster: ganz. OPS hat kein content, seine Seiten sind gar keine Kandidaten.
+        // Genau das ähnlichste Stück, ohne Nachbartext (Absatzebene, ADR 0020). OPS hat kein content, seine Seiten sind
+        // gar keine Kandidaten.
         assertThat(documents).containsOnlyKeys("11", "12", "10")
-                .containsEntry("12", "Betrieb Handbuch\n0123456789Lesetext von 12");
+                .containsEntry("12", "Betrieb Handbuch\n0123456789").containsEntry("11", "Nachtbetrieb\nLesetext v");
     }
 
     @Test
