@@ -429,7 +429,8 @@ public class SearchController {
                     CacheResponse.of(ranked.hit().generation()),
                     relevance == null ? null : new RelevanceResponse(relevance.similarity(),
                             new ChunkResponse(relevance.charStart(), relevance.charEnd()),
-                            relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale"));
+                            relevance.freshness() == RelevanceSearch.Freshness.CURRENT ? "current" : "stale",
+                            relevance.passageId()));
         }
     }
 
@@ -439,9 +440,12 @@ public class SearchController {
      * @param similarity Kosinusähnlichkeit des ähnlichsten Abschnitts, -1 bis 1
      * @param chunk      dieser Abschnitt als Zeichenbereich der Textprojektion
      * @param freshness  {@code current} oder {@code stale}, wenn das Embedding aus einer älteren Revision stammt
+     * @param passageId  stabile Adresse des Absatzes, der diesen Abschnitt enthält (lesbar über GET …/passages?id=);
+     *                   {@code null}, wenn die Absätze der Seite nicht aus demselben Text stammen
      */
     public record RelevanceResponse(double similarity, ChunkResponse chunk,
-                                    @Schema(allowableValues = {"current", "stale"}) String freshness) {
+                                    @Schema(allowableValues = {"current", "stale"}) String freshness,
+                                    String passageId) {
     }
 
     /** Zeichenbereich {@code [charStart, charEnd)} in der Textprojektion {@code confluence-storage-text/v1}. */

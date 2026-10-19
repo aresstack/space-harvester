@@ -187,6 +187,31 @@ class PassageProcessorTest {
     }
 
     @Test
+    void theIdOfAHitsRangeIsTheIdTheReadingViewShowsAndNoneForABrokenResult() {
+        Enrichment stored = enrichment(processor.process(KEY, TEXT));
+        for (PagePassages.Passage passage : read(processor.process(KEY, TEXT)).passages()) {
+            assertThat(PagePassages.idAt(KEY, stored, TEXT.inputSha256(), passage.start(), passage.end()))
+                    .isEqualTo(passage.id());
+        }
+        // Ein Absatz hinter dem Textende wird nie gezeigt; die übrigen behalten ihre Stelle im Ergebnis.
+        String broken = stored.payloadJson().replaceFirst("\"end\":\\d+", "\"end\":999999");
+        Enrichment damaged = new Enrichment(KEY, PassageProcessor.ID, stored.processorVersion(), stored.inputSha256(),
+                "1", Enrichment.Status.OK, broken, List.of(), null, Instant.EPOCH);
+        List<PagePassages.Passage> shown = PagePassages.read(KEY, List.of(new Enrichments.View(damaged,
+                Enrichment.Freshness.CURRENT)), TEXT).passages();
+
+        assertThat(shown).singleElement().satisfies(passage -> {
+            assertThat(passage.index()).isEqualTo(1);
+            assertThat(PassageId.parse(passage.id()).position()).isEqualTo(1);
+            // Ohne Text ist der kaputte Absatz nur an der Überlappung zu erkennen: dann keine ID statt einer, die auf
+            // ihn zeigt.
+            assertThat(PagePassages.idAt(KEY, damaged, TEXT.inputSha256(), passage.start(), passage.end())).isNull();
+        });
+        assertThat(PagePassages.idAt(KEY, stored, "sha256:" + "0".repeat(64), shown.getFirst().start(),
+                shown.getFirst().end())).as("anderer Text").isNull();
+    }
+
+    @Test
     void payloadStoresPositionsButNoText() {
         String json = processor.process(KEY, TEXT).payloadJson();
 
