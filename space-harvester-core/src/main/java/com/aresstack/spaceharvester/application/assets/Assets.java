@@ -57,6 +57,7 @@ public class Assets {
     private final ImageDescriber describer;
     private final DocumentText documents;
     private final PageTextIndex texts;
+    private final LargeFileGate gate;
 
     /** @param maxBytes größte Datei, die heruntergeladen und abgelegt wird */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock) {
@@ -90,6 +91,19 @@ public class Assets {
      */
     public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
                   DocumentText documents, PageTextIndex texts) {
+        this(catalog, store, maxBytes, clock, describer, documents, texts, LargeFileGate.defaults());
+    }
+
+    /**
+     * @param maxBytes  größte Datei, die heruntergeladen und abgelegt wird
+     * @param describer Bildbeschreiber oder {@code null}, wenn keiner konfiguriert ist
+     * @param documents Typerkennung am Inhalt und Textextraktion (#183) oder {@code null}
+     * @param texts     Volltextindex für die Texte der Anhänge (#183) oder {@code null} ohne Cache
+     * @param gate      Schranke für große Dateien, gemeinsam für alle speicherintensiven Wege dieser Instanz
+     */
+    public Assets(SourceCatalog catalog, AssetStore store, long maxBytes, Clock clock, ImageDescriber describer,
+                  DocumentText documents, PageTextIndex texts, LargeFileGate gate) {
+        this.gate = Objects.requireNonNull(gate, "gate");
         this.texts = texts;
         this.describer = describer;
         this.documents = documents;
@@ -158,7 +172,8 @@ public class Assets {
                         stored.get(), null));
                 continue;
             }
-            try {
+            // Download und Textextraktion derselben Datei belegen zusammen einen Platz der Schranke.
+            try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
                 AssetContent content = download(source, pageId, attachment);
                 harvestText(content);
                 indexed |= indexStored(list, content.asset());
@@ -204,9 +219,16 @@ public class Assets {
         PageAttachment attachment = attachment(list, attachmentId);
         Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
         if (stored.isPresent()) {
-            return new AssetContent(stored.get(), store.read(stored.get()));
+            return read(stored.get());
         }
         return download(source(list.sourceId()), list.attachments().pageId(), attachment, mayStore);
+    }
+
+    /** Liest einen abgelegten Inhalt, für große Dateien unter der Schranke ({@link LargeFileGate}). */
+    private AssetContent read(Asset asset) {
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            return new AssetContent(asset, store.read(asset));
+        }
     }
 
     /**
@@ -225,7 +247,7 @@ public class Assets {
         String version = image.attachmentId() != null ? image.version() : pageVersion;
         Optional<Asset> stored = store.find(sourceId, attachmentId, version);
         if (stored.isPresent()) {
-            return new AssetContent(stored.get(), store.read(stored.get()));
+            return read(stored.get());
         }
         byte[] content;
         try {
@@ -248,12 +270,16 @@ public class Assets {
         if (content.length > maxBytes) {
             throw new AssetTooLargeException(sourceId, maxBytes);
         }
-        String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
-                ? image.mediaType() : sniff(content), content, viewFileName(image));
-        Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
-                AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
-        store.put(asset, content);
-        return new AssetContent(asset, content);
+        // Die Größe eines Bildes der Lese-Ansicht steht erst nach dem Download fest; Typerkennung und Ablegen laufen
+        // dann unter der Schranke.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, (long) content.length)) {
+            String mediaType = mediaType(sourceId, image.mediaType() != null && !image.mediaType().isBlank()
+                    ? image.mediaType() : sniff(content), content, viewFileName(image));
+            Asset asset = new Asset(sourceId, pageId, attachmentId, version, image.title(), mediaType,
+                    AssetKind.of(mediaType, image.title()), content.length, sha256(content), clock.instant());
+            store.put(asset, content);
+            return new AssetContent(asset, content);
+        }
     }
 
     /**
@@ -286,9 +312,12 @@ public class Assets {
             return Optional.empty();
         }
         PageAttachment found = diagram;
-        byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
-                .orElseGet(() -> download(source, pageId, found).content());
-        Rendered rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
+        Rendered rendered;
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.fileSize())) {
+            byte[] mxfile = store.find(sourceId, found.attachmentId(), found.version()).map(store::read)
+                    .orElseGet(() -> download(source, pageId, found).content());
+            rendered = rendition(sourceId, pageId, DRAWIO_PNG_RENDITION, mxfile);
+        }
         if (rendered.asset() == null) {
             return Optional.empty();
         }
@@ -364,11 +393,12 @@ public class Assets {
         if (sha256 == null) {
             return Optional.empty();
         }
-        Asset asset = store.find(sourceId, attachmentId, version).filter(found -> found.sha256().equals(sha256))
-                .orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId, version, null,
-                        null, AssetKind.OTHER, 0, sha256, clock.instant()));
+        Optional<Asset> found = store.find(sourceId, attachmentId, version).filter(a -> a.sha256().equals(sha256));
+        Asset asset = found.orElseGet(() -> new Asset(sourceId, "-", attachmentId == null ? "-" : attachmentId,
+                version, null, null, AssetKind.OTHER, 0, sha256, clock.instant()));
         byte[] content;
-        try {
+        // Ohne Eintrag ist die Größe unbekannt und zählt als groß.
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, found.map(Asset::size).orElse(null))) {
             content = store.read(asset);
         } catch (AssetStoreException e) {
             return Optional.empty();
@@ -450,11 +480,25 @@ public class Assets {
      */
     public AssetText text(PageAttachmentList list, String attachmentId, boolean mayStore) {
         DocumentText extraction = documents();
-        AssetContent content = content(list, attachmentId, mayStore);
-        Optional<AssetText> existing = storedText(extraction, content.asset());
-        AssetText text = existing.orElseGet(() -> extract(extraction, content, mayStore));
-        if ((mayStore || existing.isPresent()) && indexText(list, content.asset(), text.text(),
-                extractionKey(extraction))) {
+        PageAttachment attachment = attachment(list, attachmentId);
+        Optional<Asset> stored = store.find(list.sourceId(), attachment.attachmentId(), attachment.version());
+        // Ein abgelegter Text braucht die Bytes nicht: weder Lesen der Datei noch ein Platz der Schranke.
+        Optional<AssetText> existing = stored.isPresent() ? storedText(extraction, stored.get()) : Optional.empty();
+        Asset asset;
+        AssetText text;
+        if (existing.isPresent()) {
+            asset = stored.get();
+            text = existing.get();
+        } else {
+            try (LargeFileGate.Permit permit = gate.enter(list.sourceId(),
+                    stored.map(Asset::size).orElse(attachment.fileSize()))) {
+                AssetContent content = content(list, attachmentId, mayStore);
+                asset = content.asset();
+                existing = storedText(extraction, asset);
+                text = existing.isPresent() ? existing.get() : extract(extraction, content, mayStore);
+            }
+        }
+        if ((mayStore || existing.isPresent()) && indexText(list, asset, text.text(), extractionKey(extraction))) {
             flushIndex();
         }
         return text;
@@ -655,15 +699,22 @@ public class Assets {
         if (!backfilled.add(asset.sha256())) {
             return;
         }
-        byte[] content;
-        try {
-            content = store.read(asset);
-        } catch (AssetStoreException e) {
-            LOG.log(System.Logger.Level.WARNING, "Dokument nicht lesbar: source={0} ({1})", asset.sourceId(),
-                    e.getClass().getName());
-            return;
+        try (LargeFileGate.Permit permit = gate.enter(asset.sourceId(), asset.size())) {
+            byte[] content;
+            try {
+                content = store.read(asset);
+            } catch (AssetStoreException e) {
+                LOG.log(System.Logger.Level.WARNING, "Dokument nicht lesbar: source={0} ({1})", asset.sourceId(),
+                        e.getClass().getName());
+                return;
+            }
+            harvestText(new AssetContent(asset, content));
+        } catch (SourceAccessException e) {
+            // Schranke für große Dateien voll: vorübergehend, die nächste Ernte versucht es erneut.
+            backfilled.remove(asset.sha256());
+            LOG.log(System.Logger.Level.INFO, "Dokumenttext später nachholen: source={0}, code={1}",
+                    asset.sourceId(), code(e.reason()));
         }
-        harvestText(new AssetContent(asset, content));
     }
 
     private DocumentText documents() {
@@ -788,7 +839,7 @@ public class Assets {
         for (AttachmentPreview kind : kinds) {
             Optional<Asset> stored = store.find(sourceId, previewId(attachmentId, kind), version);
             if (stored.isPresent()) {
-                return new AssetContent(stored.get(), store.read(stored.get()));
+                return read(stored.get());
             }
         }
         HarvestSource source = source(sourceId);
@@ -796,6 +847,16 @@ public class Assets {
             throw new SourceAccessException(sourceId, SourceAccessException.Reason.UNSUPPORTED,
                     "Quelle erzeugt keine Vorschauen von Anhängen", null);
         }
+        // Die Größe der Vorschau ist vorher unbekannt; es gilt die des Anhangs (unbekannt zählt als groß).
+        try (LargeFileGate.Permit permit = gate.enter(sourceId, attachment.fileSize())) {
+            return fetchPreview(list, attachment, source, kinds, version, mayStore);
+        }
+    }
+
+    private AssetContent fetchPreview(PageAttachmentList list, PageAttachment attachment, HarvestSource source,
+                                      List<AttachmentPreview> kinds, String version, boolean mayStore) {
+        String sourceId = list.sourceId();
+        String attachmentId = attachment.attachmentId();
         SourceAccessException last = null;
         for (AttachmentPreview kind : kinds) {
             byte[] content;
@@ -920,6 +981,8 @@ public class Assets {
         ImageDescriber model = describer(list.sourceId());
         PageAttachment attachment = attachment(list, attachmentId);
         requireImage(attachment.mediaType(), attachment.title());
+        // Laden bzw. Lesen und der Modellaufruf belegen die Schranke je für sich (content, generate): Der Modellaufruf
+        // kann Minuten dauern und hält einen Platz nur, wenn das Bild nach seiner bekannten Größe groß ist.
         return indexed(list, describe(model, content(list, attachmentId)));
     }
 
@@ -1000,6 +1063,12 @@ public class Assets {
     }
 
     private ImageDescription generate(ImageDescriber model, AssetContent content) {
+        try (LargeFileGate.Permit permit = gate.enter(content.asset().sourceId(), content.asset().size())) {
+            return generateGated(model, content);
+        }
+    }
+
+    private ImageDescription generateGated(ImageDescriber model, AssetContent content) {
         if (!descriptions.tryAcquire()) {
             throw new ImageDescriptionException(ImageDescriptionException.Reason.BUSY,
                     "Zu viele gleichzeitige Bildbeschreibungen", null);
@@ -1084,6 +1153,13 @@ public class Assets {
         if (attachment.fileSize() != null && attachment.fileSize() > maxBytes) {
             throw new AssetTooLargeException(source.id(), maxBytes);
         }
+        // Große Dateien zusätzlich unter der gemeinsamen Schranke, bis Typerkennung, Hash und Ablegen fertig sind.
+        try (LargeFileGate.Permit permit = gate.enter(source.id(), attachment.fileSize())) {
+            return downloadGated(source, pageId, attachment, keep);
+        }
+    }
+
+    private AssetContent downloadGated(HarvestSource source, String pageId, PageAttachment attachment, boolean keep) {
         AttachmentFile file;
         // Höchstens wenige Downloads gleichzeitig: jeder hält die Datei bis zur Grenze des Transports im Speicher.
         try {

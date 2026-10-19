@@ -10,6 +10,7 @@ import com.aresstack.spaceharvester.application.access.AccessPolicy;
 import com.aresstack.spaceharvester.application.access.ResourceScope;
 import com.aresstack.spaceharvester.application.assets.Assets;
 import com.aresstack.spaceharvester.application.assets.ImageDescriber;
+import com.aresstack.spaceharvester.application.assets.LargeFileGate;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationChange;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationListener;
 import com.aresstack.spaceharvester.application.acquisition.AcquisitionScheduler;
@@ -560,7 +561,8 @@ public final class Harvester implements AutoCloseable {
             // #183: Typerkennung am Inhalt beim Ablegen, Text von Dokument-Anhängen über Tika, im Volltextindex mit
             // der Seite als Eltern; Bildanhänge dort mit ihrer vorhandenen Beschreibung (#371)
             this.assets = new Assets(catalog, assetStore, builder.maxAssetBytes, clock, describer,
-                    TikaDocumentText.shared(), textIndex);
+                    TikaDocumentText.shared(), textIndex, new LargeFileGate(builder.largeAssetThresholdBytes,
+                            builder.maxConcurrentLargeAssets, LargeFileGate.DEFAULT_WAIT));
             this.imageAnalysis = new PageImageAnalysis(assets, enrichments, clock);
             // Bilder gehören zum Datenbestand: nach jedem veröffentlichten Export ein eigener Auftrag ASSETS.
             this.caller = AccessContext.technicalClient(OWNER);
@@ -1449,7 +1451,9 @@ public final class Harvester implements AutoCloseable {
         private Path pdfFont;
         private Path exportDirectory;
         private Path assetDirectory;
-        private long maxAssetBytes = 50L * 1024 * 1024;
+        private long maxAssetBytes = 100L * 1024 * 1024;
+        private long largeAssetThresholdBytes = LargeFileGate.DEFAULT_THRESHOLD_BYTES;
+        private int maxConcurrentLargeAssets = LargeFileGate.DEFAULT_MAX_CONCURRENT;
         private Duration signInWait = Duration.ZERO;
         private boolean changeEvents;
         private final Map<String, char[]> webhookSecrets = new HashMap<>();
@@ -1629,9 +1633,33 @@ public final class Harvester implements AutoCloseable {
             return this;
         }
 
-        /** Größte einzelne Datei, die als Asset abgelegt wird; Standard 50 MiB wie im Server. */
+        /**
+         * Größte einzelne Datei, die als Asset abgelegt wird; Standard 100 MiB wie im Server und wie
+         * {@code READER_MAX_BYTES} im Enterprise AI Client.
+         */
         public Builder maxAssetBytes(long maxAssetBytes) {
             this.maxAssetBytes = maxAssetBytes;
+            return this;
+        }
+
+        /**
+         * Ab welcher Größe (ausschließlich) eine Datei als groß gilt und unter die gemeinsame Schranke fällt
+         * ({@link LargeFileGate}); Standard 20 MiB.
+         */
+        public Builder largeAssetThresholdBytes(long largeAssetThresholdBytes) {
+            if (largeAssetThresholdBytes < 0) {
+                throw new IllegalArgumentException("largeAssetThresholdBytes darf nicht negativ sein");
+            }
+            this.largeAssetThresholdBytes = largeAssetThresholdBytes;
+            return this;
+        }
+
+        /** Wie viele große Dateien höchstens gleichzeitig verarbeitet werden ({@link LargeFileGate}); Standard 2. */
+        public Builder maxConcurrentLargeAssets(int maxConcurrentLargeAssets) {
+            if (maxConcurrentLargeAssets < 1) {
+                throw new IllegalArgumentException("maxConcurrentLargeAssets muss positiv sein");
+            }
+            this.maxConcurrentLargeAssets = maxConcurrentLargeAssets;
             return this;
         }
 
