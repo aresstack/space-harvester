@@ -105,7 +105,7 @@ class EnrichmentApiTest {
                         "relations", "terms");
         JsonNode acronyms = enrichments.get(0);
         assertThat(acronyms.get("processor").asString()).isEqualTo("acronyms");
-        assertThat(acronyms.get("processorVersion").asString()).isEqualTo("2");
+        assertThat(acronyms.get("processorVersion").asString()).isEqualTo("3");
         assertThat(acronyms.get("status").asString()).isEqualTo("ok");
         assertThat(acronyms.get("freshness").asString()).isEqualTo("current");
         assertThat(acronyms.get("inputSha256").asString()).startsWith("sha256:");
