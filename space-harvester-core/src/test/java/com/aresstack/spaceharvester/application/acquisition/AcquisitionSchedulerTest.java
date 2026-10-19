@@ -132,6 +132,50 @@ class AcquisitionSchedulerTest {
     }
 
     @Test
+    void aForegroundRequestSharingARunningBackgroundLoadHoldsTheBackground() throws Exception {
+        gate("b1");
+        AcquisitionScheduler planner = scheduler(4, 2, 4, Duration.ofMillis(50));
+        AcquisitionScheduler.Ticket first = planner.request(SERVER, key("b1"), AcquisitionScheduler.Priority.BACKGROUND);
+        awaitRunning("b1");
+        AcquisitionScheduler.Ticket search = planner.request(APP, key("b1"), AcquisitionScheduler.Priority.FOREGROUND);
+
+        // Länger als der Nachlauf: Solange die Suche auf b1 wartet, beginnt kein weiterer Hintergrundabruf.
+        TimeUnit.MILLISECONDS.sleep(200);
+        AcquisitionScheduler.Ticket next = planner.request(SERVER, key("b2"), AcquisitionScheduler.Priority.BACKGROUND);
+        TimeUnit.MILLISECONDS.sleep(200);
+        assertThat(planner.status().pause()).isEqualTo(AcquisitionStatus.Pause.FOREGROUND);
+        assertThat(started).containsExactly("b1");
+
+        release("b1");
+        assertThat(search.done().get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(first.done().get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(next.done().get(10, TimeUnit.SECONDS)).isTrue();
+        assertThat(started).containsExactly("b1", "b2");
+    }
+
+    @Test
+    void theLoadKnowsWhetherTheBackgroundNeedsThePage() throws Exception {
+        Map<String, Boolean> strict = new ConcurrentHashMap<>();
+        AutoCloseable pause;
+        try (AcquisitionScheduler planner = new AcquisitionScheduler(
+                (caller, key, background) -> strict.put(key.pageId(), background),
+                new AcquisitionScheduler.Limits(4, 1, 4, 50), null, Duration.ZERO)) {
+            assertThat(planner.request(APP, key("f"), AcquisitionScheduler.Priority.FOREGROUND).done()
+                    .get(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(planner.request(SERVER, key("b"), AcquisitionScheduler.Priority.BACKGROUND).done()
+                    .get(10, TimeUnit.SECONDS)).isTrue();
+            // Hochgestuft: lädt im Vordergrund, zählt aber weiter für den Hintergrund, also ohne Rückfall.
+            pause = planner.pauseBackground();
+            AcquisitionScheduler.Ticket both = planner.request(SERVER, key("p"),
+                    AcquisitionScheduler.Priority.BACKGROUND);
+            planner.request(APP, key("p"), AcquisitionScheduler.Priority.FOREGROUND);
+            assertThat(both.done().get(10, TimeUnit.SECONDS)).isTrue();
+            pause.close();
+        }
+        assertThat(strict).containsExactlyInAnyOrderEntriesOf(Map.of("f", false, "b", true, "p", true));
+    }
+
+    @Test
     void theForegroundPreemptsTheBackgroundAtTheNextPage() throws Exception {
         gate("b1", "f1");
         AcquisitionScheduler planner = scheduler(2, 1, 4);

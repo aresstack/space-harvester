@@ -178,6 +178,11 @@ public final class BackgroundFill implements AutoCloseable {
     private long failed;
     /** Zählt beendete Abrufe; ein Blick in die Warteschlange gilt nur, solange keiner dazukam. */
     private long completions;
+    /**
+     * Gescheiterte Seiten und wann (nur im Speicher, höchstens {@link Timing#maxQueued()}): Eine Suche im Katalog reiht
+     * sie erst nach {@link Timing#idle()} wieder ein, damit dauerhafte Fehlschläge die übrigen Lücken nicht blockieren.
+     */
+    private final LinkedHashMap<PageKey, Instant> failedAt = new LinkedHashMap<>();
     private final Map<String, long[]> bySource = new TreeMap<>();
     private Instant lastScan;
     private Thread worker;
@@ -220,14 +225,31 @@ public final class BackgroundFill implements AutoCloseable {
 
     /**
      * Schaltet die Füllung ein oder aus. Aus zieht die übergebenen Anfragen zurück (laufende Abrufe enden regulär); die
-     * Warteschlange bleibt und geht beim Einschalten weiter.
+     * Warteschlange bleibt und geht beim Einschalten weiter. An prüft die übergebenen Anfragen neu gegen
+     * {@code eligible} und zieht die von Quellen zurück, deren Füllung inzwischen aus ist; nach einem Wechsel der
+     * Konfiguration je Quelle genügt deshalb dieser Aufruf.
      */
     public void enabled(boolean value) {
         enabled = value;
         if (!value) {
             withdraw();
+        } else {
+            revalidate();
         }
         wake();
+    }
+
+    /** Zieht übergebene Anfragen von Quellen zurück, die nicht mehr geladen werden dürfen; laufende enden regulär. */
+    public void revalidate() {
+        List<AcquisitionScheduler.Ticket> tickets = new ArrayList<>();
+        synchronized (monitor) {
+            inFlight.forEach((key, ticket) -> {
+                if (!allowed(key.sourceId())) {
+                    tickets.add(ticket);
+                }
+            });
+        }
+        tickets.forEach(AcquisitionScheduler.Ticket::cancel);
     }
 
     /** Sucht bald wieder im Katalog, etwa nach einem Abgleich. */
@@ -457,6 +479,11 @@ public final class BackgroundFill implements AutoCloseable {
                 } else {
                     failed++;
                     counts[1]++;
+                    failedAt.remove(key);
+                    failedAt.put(key, clock.instant());
+                    while (failedAt.size() > timing.maxQueued()) {
+                        failedAt.remove(failedAt.keySet().iterator().next());
+                    }
                 }
             }
             signalled = true;
@@ -475,6 +502,13 @@ public final class BackgroundFill implements AutoCloseable {
             rescan = false;
         }
         List<Gap> found = new ArrayList<>();
+        int skipped;
+        synchronized (monitor) {
+            skipped = failedAt.size();
+        }
+        // Je Space so viele mehr, wie gescheiterte Seiten übersprungen werden, damit sie die Tranche nicht füllen, und
+        // eine darüber, damit „es gibt mehr“ auch bei nur einem Space auffällt.
+        int limit = (int) Math.min(Integer.MAX_VALUE, (long) timing.maxQueued() + skipped + 1);
         for (SyncBaselineStore.SpaceRef space : catalog.spaces()) {
             if (closed || !enabled) {
                 break;
@@ -483,11 +517,18 @@ public final class BackgroundFill implements AutoCloseable {
             if (!allowed(sourceId)) {
                 continue;
             }
-            for (Gap gap : catalog.gaps(sourceId, space.spaceKey(), timing.maxQueued())) {
+            for (Gap gap : catalog.gaps(sourceId, space.spaceKey(), limit)) {
                 if (gap.key().sourceId().equals(sourceId)) {
                     found.add(gap);
                 }
             }
+        }
+        synchronized (monitor) {
+            // Kürzlich Gescheitertes erst nach der Wartezeit wieder, sonst käme bei übervoller Schlange immer dieselbe
+            // Tranche dran.
+            Instant retry = clock.instant().minus(timing.idle());
+            failedAt.values().removeIf(at -> !at.isAfter(retry));
+            found.removeIf(gap -> failedAt.containsKey(gap.key()));
         }
         found.sort(RANK);
         boolean more = found.size() > timing.maxQueued();

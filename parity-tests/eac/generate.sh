@@ -7,7 +7,8 @@
 # aktueller Stand genommen und COMMIT danach auf ihn gesetzt. Ergebnis unter parity-tests/src/test/resources/eac/:
 # parity.docx, parity.pdf, parity.md, problems-<format>.txt (nicht eingebettete Bilder), reading/ (Leseansicht),
 # navigation.properties (Kinder, Breadcrumbs, Querverweise), management.properties (Quellenverwaltung),
-# addresses.properties (Adressformen) und search.properties (Index-Rückfall, Auszüge, Vorladen).
+# addresses.properties (Adressformen), search.properties (Index-Rückfall, Auszüge, Vorladen) und documents/
+# (Typerkennung und Dokumenttext der Dateien aus src/test/resources/documents).
 # Braucht JDK 8 oder neuer (übersetzt mit --release 8, läuft headless). PARITY_KEEP=1 behält den Arbeitsordner zur Fehlersuche.
 set -euo pipefail
 
@@ -54,7 +55,9 @@ cp="$(cat "$work/cp.txt")"
 mkdir -p "$work/classes"
 javac --release 8 -nowarn -encoding UTF-8 -cp "$cp" -d "$work/classes" \
   "$repo/parity-tests/src/test/java/com/aresstack/spaceharvester/parity/ParitySpace.java" \
-  "$here/EacParityExport.java"
+  "$here/EacParityExport.java" "$here/EacDocumentText.java"
 java -Djava.awt.headless=true -cp "$work/classes${cp:+:$cp}" EacParityExport "$target"
+java -Djava.awt.headless=true -cp "$work/classes${cp:+:$cp}" EacDocumentText \
+  "$repo/parity-tests/src/test/resources/documents" "$target"
 git -C "$eac" rev-parse HEAD > "$target/COMMIT"
 echo "Referenzexporte unter $target (Enterprise AI Client $(cat "$target/COMMIT"))"

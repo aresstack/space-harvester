@@ -66,8 +66,8 @@ class ConfigurationManagerConfiguration {
 
     /**
      * Die Konfiguration aus den gebundenen Properties, beim Start und nach einem Refresh. Ereignisse und Abgleich vor
-     * jeder Suche ({@code sync.events}, {@code sync.before-search}) kennt der Server noch nicht als Properties; sie
-     * beginnen aus und lassen sich über {@code POST /api/v1/configuration} setzen.
+     * jeder Suche ({@code sync.events}, {@code sync.before-search}) liest {@link #withSyncRules} aus dem Environment;
+     * sie beginnen aus und lassen sich auch über {@code POST /api/v1/configuration} setzen.
      *
      * @param maxAge       {@code space-harvester.cache.max-age}
      * @param versionCheck {@code space-harvester.cache.version-check}

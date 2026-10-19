@@ -75,9 +75,18 @@ und 6, soweit sie widersprechen, drei voneinander unabhängige Ebenen:
    (`space-harvester.sync.load-unknown`, Standard aus), außer wer ausdrücklich den ganzen Space halten will.
 3. **Änderungsquellen: optional, Standard aus.** Sie geben nur Beschaffungs- und Invalidierungsaufträge in dieselbe
    Pipeline und sind keine Voraussetzung für Ebene 1 und 2:
-   - **Webhooks**, wo ein Administrator sie einrichten kann (Geheimnis je Quelle, asynchron, idempotent): eine
-     angelegte oder geänderte Seite wird sofort mit Inhalt übernommen, eine entfernte bestätigt und als `DELETED`
-     entfernt, eine Rechteänderung lässt das technische Konto die Seite neu prüfen.
+   - **Webhooks**, wo ein Administrator sie einrichten kann (Geheimnis je Quelle, asynchron, idempotent). Korrigiert
+     am 18.10. (Strang M, Freigabe des Koordinators 22:26): **nur Katalog-Markierung, kein Inhaltsabruf.** Jede
+     gemeldete Seite wird einzeln nachgefragt (eine Kopfdatenanfrage); eine bekannte Seite mit neuer Version gilt als
+     veraltet (`OUTDATED`), eine unbekannte kommt nur in den Katalog (`NOT_LOADED`), eine entfernte wird nach der
+     Einzelabfrage als `DELETED` entfernt, eine Rechteänderung markiert die Seite als veraltet oder sperrt sie, wenn das
+     technische Konto sie nicht mehr sieht. Begründung: Inhalte lädt nach Ebene 1 und 2 die Suche mit ihrer
+     Versionsprüfung, sobald eine Seite gebraucht wird; ein Webhook, der sofort lädt, würde bei vielen Änderungen
+     Inhalte beschaffen, die niemand sucht, und die Last der Quelle vom Verhalten fremder Redakteure abhängig machen.
+     Ereignisse wirken nur in Spaces mit bestätigter Generation, sonst gibt es keinen Katalog zu markieren. Umsetzung:
+     `ConfluenceWebhooks` im Adapter, `ChangeEvents`/`EventSync` im Core (`Harvester.changeEvents()`), Server
+     `POST /webhooks/v1/sources/{id}/events` mit HMAC-SHA256 (`X-Hub-Signature`, Geheimnis
+     `space-harvester.webhooks.secrets.<Quelle>`), wirksam nur mit `sync.events`.
    - **Nachholen** per Änderungssuche (CQL `lastmodified` seit dem letzten Stand, mit Überlappung) plus
      Papierkorbabfrage je Space: manuell mit optionalem Zeitpunkt (`POST …/syncs?listing=changes&since=…`), beim Start
      (`space-harvester.sync.catch-up-on-start`), nach Zeitplan oder vor jeder Suche, alles Standard aus. Geänderte
