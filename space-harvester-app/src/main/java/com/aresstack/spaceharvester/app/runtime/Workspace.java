@@ -325,6 +325,14 @@ public final class Workspace {
         return harvester.progressiveSearch().searchAsync(caller, query, harvester.searchProfile(), listener);
     }
 
+    /**
+     * Ob die progressive Suche semantisch ordnet ({@code SearchProfile.Ranking.SEMANTIC}): nur mit einem wirksamen
+     * Embedding-Modell; ohne Modell gibt es keine semantische Suche (ADR 0017).
+     */
+    public boolean semanticRanking() {
+        return harvester.searchProfile().ranking() == SearchProfile.Ranking.SEMANTIC;
+    }
+
     /** Ob die Varianten der progressiven Suche vom Chat-Modell kommen; sonst nach Regeln. */
     public boolean aiVariants() {
         return harvester.searchProfile().expansion() == SearchProfile.Expansion.AI;
