@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.aresstack.spaceharvester.TestClient;
 import com.aresstack.spaceharvester.api.ConfigurationOverlay;
 import com.aresstack.spaceharvester.application.configuration.ConfigurationManager;
+import com.aresstack.spaceharvester.application.enrichment.embedding.EmbeddingProcessor;
 import com.aresstack.spaceharvester.application.ranking.ModelReranker;
 import com.aresstack.spaceharvester.application.ranking.SearchReranker;
 import com.aresstack.spaceharvester.application.ranking.SwappableReranker;
@@ -53,6 +54,12 @@ class LiveConfigurationTest {
 
     @Autowired
     private Reconciliation reconciliation;
+
+    @Autowired
+    private QueryVariantModels variants;
+
+    @Autowired
+    private EmbeddingProcessor embedding;
 
     @Autowired
     private SyncConfiguration.InventorySchedule inventory;
@@ -119,6 +126,21 @@ class LiveConfigurationTest {
 
         activate(Map.of("sync.spaces", List.of()));
         assertThat(inventory.inventories().schedules()).isEmpty();
+    }
+
+    @Test
+    void theChatModelAndTheSemanticSearchFollowTheConfigurationWithoutRestart() {
+        assertThat(variants.get()).isEmpty();
+        assertThat(embedding.available()).isFalse();
+
+        activate(Map.of("ai.chat-model", "gpt-mini", "ai.embedding-model", "nomic-embed",
+                "ai.embedding-dimensions", "768", "search.semantic", "true"));
+        assertThat(variants.get()).isPresent();
+        assertThat(embedding.available()).isTrue();
+
+        activate(Map.of("ai.chat-model", "", "ai.embedding-model", "", "ai.embedding-dimensions", ""));
+        assertThat(variants.get()).isEmpty();
+        assertThat(embedding.available()).isFalse();
     }
 
     private void activate(Map<String, ?> values) {
